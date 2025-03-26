@@ -12,6 +12,7 @@
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
 		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
+		21A87CAA2D938CA00062F8E9 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A87CA92D938CA00062F8E9 /* Petrel */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
 /* End PBXBuildFile section */
 
@@ -80,6 +81,7 @@
 				212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
+				21A87CAA2D938CA00062F8E9 /* Petrel in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -154,6 +156,7 @@
 				212E946C2D6183D600D3E1DD /* NukeUI */,
 				218B7A8B2D70B1AE0053987F /* LazyPager */,
 				21E108292D70BE6F0030A71C /* OrderedCollections */,
+				21A87CA92D938CA00062F8E9 /* Petrel */,
 			);
 			productName = Catbird;
 			productReference = 212E93FD2D60132700D3E1DD /* Catbird.app */;
@@ -238,10 +241,10 @@
 			mainGroup = 212E93F42D60132700D3E1DD;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				212E94382D61003F00D3E1DD /* XCLocalSwiftPackageReference "../../Developer/Petrel" */,
 				212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */,
 				2194B3C42D70AA13004268BE /* XCRemoteSwiftPackageReference "swift-collections" */,
 				218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */,
+				21A87CA82D938CA00062F8E9 /* XCRemoteSwiftPackageReference "Petrel" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 212E93FE2D60132700D3E1DD /* Products */;
@@ -611,13 +614,6 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		212E94382D61003F00D3E1DD /* XCLocalSwiftPackageReference "../../Developer/Petrel" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../Developer/Petrel;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCRemoteSwiftPackageReference section */
 		212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -641,6 +637,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.1.4;
+			};
+		};
+		21A87CA82D938CA00062F8E9 /* XCRemoteSwiftPackageReference "Petrel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/joshlacal/Petrel.git";
+			requirement = {
+				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -669,6 +673,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */;
 			productName = LazyPager;
+		};
+		21A87CA92D938CA00062F8E9 /* Petrel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21A87CA82D938CA00062F8E9 /* XCRemoteSwiftPackageReference "Petrel" */;
+			productName = Petrel;
 		};
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
 			isa = XCSwiftPackageProductDependency;
