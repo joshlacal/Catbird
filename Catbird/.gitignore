@@ -134,6 +134,7 @@ iOSInjectionProject/
 # Xcode user state (not relevant to the project)
 *.xcuserstate
 *.xcsettings
+**/*.xcuserstate
 
 # Workspace-specific user data
 *.xcworkspace/xcuserdata/
