@@ -17,19 +17,23 @@ func getAvailableLanguages() -> [LanguageCodeContainer] {
     // Common language codes (ISO 639-1)
     "ar", "de", "en", "es", "fr", "hi", "id", "it", "ja", "ko",
     "nl", "pl", "pt", "ru", "th", "tr", "uk", "vi", "zh",
-    
+
     // Common regional variants
     "en-US", "en-GB", "es-ES", "es-MX", "pt-BR", "pt-PT",
-    "zh-CN", "zh-TW", "fr-FR", "fr-CA", "de-DE", "de-AT", "de-CH"
+    "zh-CN", "zh-TW", "fr-FR", "fr-CA", "de-DE", "de-AT", "de-CH",
   ]
-  
+
   return commonLanguageTags.compactMap { tag in
     let locale = Locale(identifier: tag)
     return LanguageCodeContainer(lang: locale.language)
   }.sorted { lhs, rhs in
     // Sort by language name in the user's current locale
-    let lhsName = Locale.current.localizedString(forLanguageCode: lhs.lang.languageCode?.identifier ?? "") ?? lhs.lang.minimalIdentifier
-    let rhsName = Locale.current.localizedString(forLanguageCode: rhs.lang.languageCode?.identifier ?? "") ?? rhs.lang.minimalIdentifier
+    let lhsName =
+      Locale.current.localizedString(forLanguageCode: lhs.lang.languageCode?.identifier ?? "")
+      ?? lhs.lang.minimalIdentifier
+    let rhsName =
+      Locale.current.localizedString(forLanguageCode: rhs.lang.languageCode?.identifier ?? "")
+      ?? rhs.lang.minimalIdentifier
     return lhsName < rhsName
   }
 }
@@ -51,7 +55,10 @@ struct PostComposerView: View {
   @State private var photoPickerVisible = false
   @State private var videoPickerVisible = false
   @State private var photoPickerItems: [PhotosPickerItem] = []
-    @State private var videoPickerItems: [PhotosPickerItem] = []
+  @State private var videoPickerItems: [PhotosPickerItem] = []
+
+  // Thread UI state
+  @State private var showThreadOptions: Bool = false
 
   init(parentPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
     self._viewModel = State(
@@ -61,6 +68,11 @@ struct PostComposerView: View {
   var body: some View {
     NavigationStack {
       VStack(spacing: 0) {
+        // Thread indicator if in thread mode
+        if viewModel.isThreadMode {
+          threadIndicatorView
+        }
+
         // Parent post reply view if needed
         if viewModel.parentPost != nil {
           ReplyingToView(parentPost: viewModel.parentPost!)
@@ -79,10 +91,15 @@ struct PostComposerView: View {
           .padding()
         }
 
+        // Thread navigation if in thread mode
+        if viewModel.isThreadMode {
+          threadNavigationView
+        }
+
         // Bottom toolbar
         bottomToolbar
       }
-      .navigationTitle(viewModel.parentPost == nil ? "New Post" : "Reply")
+      .navigationTitle(getNavigationTitle())
       .navigationBarTitleDisplayMode(.inline)
       .task {
         await viewModel.loadUserLanguagePreference()
@@ -108,20 +125,20 @@ struct PostComposerView: View {
         }
       }
       .photosPicker(
-          isPresented: $videoPickerVisible,
-          selection: $videoPickerItems,
-          maxSelectionCount: 1,
-          matching: .videos
+        isPresented: $videoPickerVisible,
+        selection: $videoPickerItems,
+        maxSelectionCount: 1,
+        matching: .videos
       )
       .onChange(of: videoPickerItems) {
-          Task {
-              if let item = videoPickerItems.first {
-                  await viewModel.processVideoSelection(item)
-                  videoPickerItems.removeAll()
-              }
+        Task {
+          if let item = videoPickerItems.first {
+            await viewModel.processVideoSelection(item)
+            videoPickerItems.removeAll()
           }
+        }
       }
-        // Sheets
+      // Sheets
       .sheet(isPresented: $viewModel.showLabelSelector) {
         LabelSelectorView(selectedLabels: $viewModel.selectedLabels)
       }
@@ -163,7 +180,105 @@ struct PostComposerView: View {
     }
   }
 
-  // MARK: - UI Components
+  // MARK: - New Thread UI Components
+
+  // Get appropriate navigation title based on compose mode
+  private func getNavigationTitle() -> String {
+    if viewModel.isThreadMode {
+      return "New Thread"
+    } else if viewModel.parentPost == nil {
+      return "New Post"
+    } else {
+      return "Reply"
+    }
+  }
+
+  // Thread indicator showing current post in thread
+  private var threadIndicatorView: some View {
+    HStack(spacing: 4) {
+      Text("Thread")
+        .font(.subheadline)
+        .fontWeight(.medium)
+
+      Text("\(viewModel.currentThreadEntryIndex + 1)/\(viewModel.threadEntries.count)")
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(Color.accentColor.opacity(0.2))
+        .foregroundColor(.accentColor)
+        .cornerRadius(10)
+
+      Spacer()
+
+      Button(action: {
+        showThreadOptions.toggle()
+      }) {
+        Image(systemName: "ellipsis.circle")
+          .foregroundColor(.accentColor)
+      }
+      .actionSheet(isPresented: $showThreadOptions) {
+        ActionSheet(
+          title: Text("Thread Options"),
+          buttons: [
+            .default(Text("Remove this post")) {
+              viewModel.removeThreadEntry(at: viewModel.currentThreadEntryIndex)
+            },
+            .destructive(Text("Exit thread mode")) {
+              viewModel.disableThreadMode()
+            },
+            .cancel(),
+          ]
+        )
+      }
+    }
+    .padding()
+    .background(Color(.systemBackground))
+    .shadow(color: .black.opacity(0.05), radius: 2, y: 2)
+  }
+
+  // Thread navigation buttons for moving between thread posts
+  private var threadNavigationView: some View {
+    HStack {
+      Button(action: {
+        viewModel.previousThreadEntry()
+      }) {
+        HStack {
+          Image(systemName: "arrow.left")
+          Text("Previous")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.1))
+        .foregroundColor(.accentColor)
+        .cornerRadius(8)
+      }
+      .disabled(viewModel.currentThreadEntryIndex == 0)
+      .opacity(viewModel.currentThreadEntryIndex == 0 ? 0.5 : 1)
+
+      Spacer()
+
+      Button(action: {
+        viewModel.nextThreadEntry()
+      }) {
+        HStack {
+          Text(
+            viewModel.currentThreadEntryIndex < viewModel.threadEntries.count - 1
+              ? "Next" : "Add Post")
+          Image(systemName: "arrow.right")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.accentColor)
+        .foregroundColor(.white)
+        .cornerRadius(8)
+      }
+    }
+    .padding()
+    .background(Color(.systemBackground))
+    .shadow(color: .black.opacity(0.05), radius: 2, y: -2)
+  }
+
+  // MARK: - Existing UI Components
 
   private var textEditorSection: some View {
     ZStack(alignment: .topLeading) {
@@ -198,7 +313,7 @@ struct PostComposerView: View {
           viewModel.insertMention(profile)
         }) {
           HStack {
-            Text("@\(profile.handle)")
+              Text("@\(profile.handle.description)")
             Text(profile.displayName ?? "")
               .foregroundColor(.secondary)
           }
@@ -217,15 +332,15 @@ struct PostComposerView: View {
 
   private var mediaSection: some View {
     Group {
-        if viewModel.videoItem != nil {
+      if viewModel.videoItem != nil {
         // Fix the VideoPickerView call by providing all required parameters
-          VideoPickerView(
-              videoItem: $viewModel.videoItem,
-              isUploading: $viewModel.isVideoUploading,
-              mediaUploadManager: viewModel.mediaUploadManager,
-              onEditAlt: viewModel.beginEditingAltText
-          )
-          .padding(.vertical, 8)
+        VideoPickerView(
+          videoItem: $viewModel.videoItem,
+          isUploading: $viewModel.isVideoUploading,
+          mediaUploadManager: viewModel.mediaUploadManager,
+          onEditAlt: viewModel.beginEditingAltText
+        )
+        .padding(.vertical, 8)
       } else if !viewModel.mediaItems.isEmpty {
         MediaGalleryView(
           mediaItems: $viewModel.mediaItems,
@@ -238,8 +353,8 @@ struct PostComposerView: View {
       } else if let image = viewModel.selectedImage {
         singleImageView(image)
       } else {
-//        mediaButtonsView
-          EmptyView()
+        //        mediaButtonsView
+        EmptyView()
       }
     }
   }
@@ -270,7 +385,6 @@ struct PostComposerView: View {
     }
   }
 
-    
   private var urlCardsSection: some View {
     Group {
       ForEach(viewModel.detectedURLs, id: \.self) { url in
@@ -343,8 +457,27 @@ struct PostComposerView: View {
     }
   }
 
+  // Modified bottom toolbar to include thread toggle
   private var bottomToolbar: some View {
     HStack {
+      // Thread toggle button (only show if not replying)
+      if viewModel.parentPost == nil {
+        Button(action: {
+          if viewModel.isThreadMode {
+            viewModel.disableThreadMode()
+          } else {
+            viewModel.enableThreadMode()
+          }
+        }) {
+          Image(
+            systemName: viewModel.isThreadMode
+              ? "arrow.triangle.branch.filled" : "arrow.triangle.branch"
+          )
+          .font(.system(size: 20))
+          .foregroundStyle(.primary)
+        }
+      }
+
       // Language button
       Menu {
         ForEach(getAvailableLanguages(), id: \.self) { lang in
@@ -373,24 +506,24 @@ struct PostComposerView: View {
           .font(.system(size: 20))
           .foregroundStyle(.primary)
       }
-        
-        // Add video button
-        Button(action: {
-            videoPickerVisible = true
-        }) {
-            Image(systemName: "video")
-                .font(.system(size: 20))
-                .foregroundStyle(.primary)
-        }
-        
-        // Add photo button
-        Button(action: {
-            photoPickerVisible = true
-        }) {
-            Image(systemName: "photo")
-                .font(.system(size: 20))
-                .foregroundStyle(.primary)
-        }
+
+      // Add video button
+      Button(action: {
+        videoPickerVisible = true
+      }) {
+        Image(systemName: "video")
+          .font(.system(size: 20))
+          .foregroundStyle(.primary)
+      }
+
+      // Add photo button
+      Button(action: {
+        photoPickerVisible = true
+      }) {
+        Image(systemName: "photo")
+          .font(.system(size: 20))
+          .foregroundStyle(.primary)
+      }
 
       Spacer()
 
@@ -399,9 +532,9 @@ struct PostComposerView: View {
         .font(.footnote)
         .foregroundColor(viewModel.isOverCharacterLimit ? .red : .secondary)
 
-      // Post button
+      // Post button with dynamic text
       Button(action: createPost) {
-        Text(viewModel.parentPost == nil ? "Post" : "Reply")
+        Text(getPostButtonText())
           .font(.headline)
           .padding(.horizontal, 16)
           .padding(.vertical, 8)
@@ -420,12 +553,28 @@ struct PostComposerView: View {
     )
   }
 
-  // MARK: - View Modifiers
+  // Get the appropriate text for the post button
+  private func getPostButtonText() -> String {
+    if viewModel.isThreadMode {
+      return "Post Thread"
+    } else if viewModel.parentPost != nil {
+      return "Reply"
+    } else {
+      return "Post"
+    }
+  }
 
+  // MARK: - Post Creation
+
+  // Create post or thread based on current mode
   private func createPost() {
     Task {
       do {
-        try await viewModel.createPost()
+        if viewModel.isThreadMode {
+          try await viewModel.createThread()
+        } else {
+          try await viewModel.createPost()
+        }
         dismiss()
       } catch {
         viewModel.alertItem = AlertItem(

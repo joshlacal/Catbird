@@ -26,7 +26,7 @@ struct ListView: View {
                         
                         ForEach(listItems, id: \.uri) { item in
                             Button {
-                                path.append(NavigationDestination.profile(item.subject.did))
+                                path.append(NavigationDestination.profile(item.subject.did.didString()))
                             } label: {
                                 ListItemRow(item: item)
                             }
@@ -63,37 +63,11 @@ struct ListView: View {
         // This would fetch the list details and initial items
         isLoading = false
         
-        // Placeholder implementation - in a real app, this would fetch actual data
-        listData = AppBskyGraphDefs.ListView(
-            uri: listURI,
-            cid: "sample",
-            creator: AppBskyActorDefs.ProfileView(
-                did: "did:example",
-                handle: "example",
-                displayName: "Example User",
-                description: nil,
-                avatar: nil,
-                associated: nil,
-                indexedAt: ATProtocolDate(date: Date()),
-                createdAt: ATProtocolDate(date: Date()),
-                viewer: nil,
-                labels: nil
-            ),
-            name: "List",
-            purpose: .appbskygraphdefsmodlist,
-            description: "This is a placeholder list",
-            descriptionFacets: nil,
-            avatar: nil,
-            listItemCount: 0,
-            labels: nil,
-            viewer: nil,
-            indexedAt: ATProtocolDate(date: Date())
-        )
+        // TODO: load list data
     }
     
     private func loadMoreItems() async {
         // This would load more list items with pagination
-        // Placeholder implementation
     }
 }
 
@@ -184,7 +158,7 @@ struct ListItemRow: View {
             }
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.subject.displayName ?? item.subject.handle)
+                Text(item.subject.displayName ?? item.subject.handle.description)
                     .font(.headline)
                 
                 Text("@\(item.subject.handle)")

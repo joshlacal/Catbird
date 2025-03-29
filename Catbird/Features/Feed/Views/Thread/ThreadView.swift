@@ -142,11 +142,11 @@ struct ThreadView: View {
 
   private var repliesSection: some View {
     VStack(spacing: 0) {
-      ForEach(replyWrappers, id: \.id) { wrapper in
+        ForEach(replyWrappers, id: \.id) { wrapper in
         if case .appBskyFeedDefsThreadViewPost(let replyPost) = wrapper.reply {
           recursiveReplyView(
             reply: replyPost,
-            opAuthorID: mainPost?.author.did ?? "",
+            opAuthorID: mainPost?.author.did.didString() ?? "",
             depth: 0,
             maxDepth: 3  // Show up to 3 levels deep
           )
@@ -158,7 +158,7 @@ struct ThreadView: View {
 //            .scaleEffect(x: 1, y: -1, anchor: .center)
         } else {
           // Handle other reply types (not found, blocked, etc.)
-          replyView(for: wrapper, opAuthorID: mainPost?.author.did ?? "")
+            replyView(for: wrapper, opAuthorID: mainPost?.author.did.didString() ?? "")
         }
       }
     }
@@ -256,7 +256,6 @@ struct ThreadView: View {
       }
 
       // If we found a valid URI, load more parents
-        // Inside loadMoreParents Task block:
         if let postURI = postURI {
             // Keep original call
             let success = await threadManager.loadMoreParents(uri: postURI)
@@ -322,7 +321,7 @@ struct ThreadView: View {
       logger.debug("processThreadData: Set main post: \(threadViewPost.post.uri.uriString())")
 
       if let replies = threadViewPost.replies {
-        replyWrappers = selectRelevantReplies(replies, opAuthorID: threadViewPost.post.author.did)
+          replyWrappers = selectRelevantReplies(replies, opAuthorID: threadViewPost.post.author.did.didString())
         logger.debug(
           "processThreadData: Processed \(replies.count) replies into \(replyWrappers.count) wrappers"
         )
@@ -472,7 +471,7 @@ struct ThreadView: View {
     // Check for replies from OP
     if let opReply = replies.first(where: { reply in
       if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-        return post.post.author.did == opAuthorID
+          return post.post.author.did.didString() == opAuthorID
       }
       return false
     }) {
@@ -500,7 +499,7 @@ struct ThreadView: View {
       let id = getReplyID(reply)
       let isFromOP =
         if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-          post.post.author.did == opAuthorID
+            post.post.author.did.didString() == opAuthorID
         } else {
           false
         }

@@ -61,7 +61,7 @@ struct ThreadViewMainPostView: View {
         }
       }
       .onTapGesture {
-        path.append(NavigationDestination.profile(post.author.did))
+          path.append(NavigationDestination.profile(post.author.did.didString()))
       }
 
     }
@@ -80,7 +80,7 @@ struct ThreadViewMainPostView: View {
               authorAvatarColumn
 
               VStack(alignment: .leading, spacing: 0) {
-                  Text((post.author.displayName ?? post.author.handle).truncated(to: 30))
+                  Text((post.author.displayName ?? post.author.handle.description).truncated(to: 30))
                       .lineLimit(1, reservesSpace: true)
                   .font(.headline)
                   .foregroundColor(.primary)
@@ -103,7 +103,7 @@ struct ThreadViewMainPostView: View {
               .padding(.bottom, 4)
               .onTapGesture {
 
-                path.append(NavigationDestination.profile(post.author.did))
+                  path.append(NavigationDestination.profile(post.author.did.didString()))
 
               }
             }

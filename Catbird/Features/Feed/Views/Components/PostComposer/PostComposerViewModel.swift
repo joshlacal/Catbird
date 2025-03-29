@@ -10,6 +10,18 @@ import AVFoundation
   import AppKit
 #endif
 
+// Define ThreadEntry model to represent each post in a thread
+struct ThreadEntry: Identifiable {
+    let id = UUID()
+    var text: String = ""
+    var mediaItems: [PostComposerViewModel.MediaItem] = []
+    var videoItem: PostComposerViewModel.MediaItem? = nil
+    var detectedURLs: [String] = []
+    var urlCards: [String: URLCardResponse] = [:]
+    var facets: [AppBskyRichtextFacet]? = nil
+    var hashtags: [String] = []
+}
+
 #if os(iOS)
   typealias PlatformImage = UIImage
 #elseif os(macOS)
@@ -44,6 +56,19 @@ final class PostComposerViewModel {
   let parentPost: AppBskyFeedDefs.PostView?
   let maxCharacterCount = 300
 
+  // Thread-related properties
+  var isThreadMode: Bool = false
+  var threadEntries: [ThreadEntry] = []
+  var currentThreadEntryIndex: Int = 0
+  
+  // Computed properties for thread handling
+  var currentThreadEntry: ThreadEntry? {
+    guard isThreadMode, !threadEntries.isEmpty, currentThreadEntryIndex < threadEntries.count else { 
+        return nil 
+    }
+    return threadEntries[currentThreadEntryIndex]
+  }
+    
   var characterCount: Int { postText.count }
   var isOverCharacterLimit: Bool { characterCount > maxCharacterCount }
     var isPostButtonDisabled: Bool {
@@ -985,7 +1010,7 @@ final class PostComposerViewModel {
     postText = postText.replacingCharacters(in: range, with: mention)
 
     // Store the resolved profile
-    resolvedProfiles[profile.handle] = profile
+      resolvedProfiles[profile.handle.description] = profile
 
     mentionSuggestions = []
   }
@@ -1342,6 +1367,186 @@ final class PostComposerViewModel {
   // MARK: - Legacy Properties (keeping for compatibility)
   var selectedImageItem: PhotosPickerItem?
   var selectedImage: Image?
+}
+
+extension PostComposerViewModel {
+  // MARK: - Thread Management
+  
+  // Enable thread mode and initialize with a single entry
+    func enableThreadMode() {
+      // Save the current post state before enabling thread mode
+      let currentPostState = ThreadEntry(
+        text: postText,
+        mediaItems: mediaItems,
+        videoItem: videoItem,
+        detectedURLs: detectedURLs,
+        urlCards: urlCards
+      )
+      
+      isThreadMode = true
+      
+      // Initialize with the current post as the first entry
+      threadEntries = [currentPostState]
+      currentThreadEntryIndex = 0
+    }
+    
+  // Disable thread mode
+  func disableThreadMode() {
+    isThreadMode = false
+    // Save the current post state for when we exit thread mode
+    let currentPostState = ThreadEntry(
+      text: postText,
+      mediaItems: mediaItems,
+      videoItem: videoItem,
+      detectedURLs: detectedURLs,
+      urlCards: urlCards
+    )
+    threadEntries = [currentPostState]
+    currentThreadEntryIndex = 0
+  }
+  
+  // Add a new thread entry
+  func addThreadEntry() {
+    // Save current state first if we're in thread mode
+    if isThreadMode {
+      saveCurrentEntryState()
+    }
+    
+    let newEntry = ThreadEntry()
+    threadEntries.append(newEntry)
+    currentThreadEntryIndex = threadEntries.count - 1
+    
+    // Load the new (empty) entry
+    loadEntryState()
+  }
+  
+  // Remove a thread entry
+  func removeThreadEntry(at index: Int) {
+    guard index < threadEntries.count, threadEntries.count > 1 else { return }
+    
+    threadEntries.remove(at: index)
+    
+    // Adjust current index if needed
+    if currentThreadEntryIndex >= threadEntries.count {
+      currentThreadEntryIndex = threadEntries.count - 1
+    }
+    
+    // Load the entry at the new current index
+    loadEntryState()
+  }
+  
+  // Navigate to next thread entry
+  func nextThreadEntry() {
+    if currentThreadEntryIndex < threadEntries.count - 1 {
+      saveCurrentEntryState()
+      currentThreadEntryIndex += 1
+      loadEntryState()
+    } else {
+      addThreadEntry()
+    }
+  }
+  
+  // Navigate to previous thread entry
+  func previousThreadEntry() {
+    if currentThreadEntryIndex > 0 {
+      saveCurrentEntryState()
+      currentThreadEntryIndex -= 1
+      loadEntryState()
+    }
+  }
+  
+  // Save current UI state to the current thread entry
+  func saveCurrentEntryState() {
+    guard isThreadMode, currentThreadEntryIndex < threadEntries.count else { return }
+    
+    // Get the parsed content with facets and hashtags
+    let parsedContent = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+    
+    threadEntries[currentThreadEntryIndex].text = postText
+    threadEntries[currentThreadEntryIndex].mediaItems = mediaItems
+    threadEntries[currentThreadEntryIndex].videoItem = videoItem
+    threadEntries[currentThreadEntryIndex].detectedURLs = detectedURLs
+    threadEntries[currentThreadEntryIndex].urlCards = urlCards
+    threadEntries[currentThreadEntryIndex].facets = parsedContent.facets
+    threadEntries[currentThreadEntryIndex].hashtags = parsedContent.hashtags
+  }
+  
+  // Load state from current thread entry into UI
+  func loadEntryState() {
+    guard isThreadMode, let entry = currentThreadEntry else { return }
+    
+    postText = entry.text
+    mediaItems = entry.mediaItems
+    videoItem = entry.videoItem
+    detectedURLs = entry.detectedURLs
+    urlCards = entry.urlCards
+    
+    // Update any UI that depends on the text
+    updatePostContent()
+  }
+  
+  // Create and publish a thread
+  @MainActor
+  func createThread() async throws {
+    // First save the current state
+    saveCurrentEntryState()
+    
+    // Setup arrays to hold processed content for each post
+    var postTexts: [String] = []
+    var embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?] = []
+    var facets: [[AppBskyRichtextFacet]?] = []
+    var hashtags: [[String]] = []
+    
+    // Process each entry
+    for entry in threadEntries {
+      // Add the post text
+      postTexts.append(entry.text)
+      
+      // Add facets if available, or calculate them if not
+      if let existingFacets = entry.facets {
+        facets.append(existingFacets)
+      } else {
+        let parsedContent = PostParser.parsePostContent(entry.text, resolvedProfiles: resolvedProfiles)
+        facets.append(parsedContent.facets)
+      }
+      
+      // Add hashtags
+      hashtags.append(entry.hashtags)
+      
+      // Determine embed for this entry
+      if let videoItem = entry.videoItem {
+        // Set the current videoItem to the entry's videoItem for processing
+        self.videoItem = videoItem
+        let videoEmbed = try await createVideoEmbed()
+        embeds.append(videoEmbed)
+      } else if !entry.mediaItems.isEmpty {
+        // Set the current mediaItems to the entry's mediaItems for processing
+        self.mediaItems = entry.mediaItems
+        let imagesEmbed = try await createImagesEmbed()
+        embeds.append(imagesEmbed)
+      } else if let firstURL = entry.detectedURLs.first, let card = entry.urlCards[firstURL] {
+        let urlEmbed = try await createExternalEmbed(from: card, originalURL: firstURL)
+        embeds.append(urlEmbed)
+      } else {
+        embeds.append(nil)
+      }
+    }
+    
+    // Create self-labels
+    let selfLabels = ComAtprotoLabelDefs.SelfLabels(
+      values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) }
+    )
+    
+    // Post the thread
+    try await appState.createThread(
+      posts: postTexts,
+      languages: selectedLanguages,
+      selfLabels: selfLabels,
+      hashtags: hashtags.first ?? [],
+      facets: facets,
+      embeds: embeds
+    )
+  }
 }
 
 extension Data {

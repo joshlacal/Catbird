@@ -256,7 +256,7 @@ final class NotificationManager: NSObject {
 
     do {
       // Get the user's DID
-      let did = try await client.getDid()
+         let did = try await client.getDid()
 
       // Convert token to string format
       let tokenString = token.map { String(format: "%02.2hhx", $0) }.joined()
@@ -362,9 +362,9 @@ final class NotificationManager: NSObject {
     }
 
     do {
+        
       // Get the user's DID
-      let did = try await client.getDid()
-
+        let did = try await client.getDid() 
       // Create a payload with explicit types
       let payload = PreferencesPayload(
         did: did,

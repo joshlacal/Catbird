@@ -12,8 +12,8 @@
 	"argv": [
 		"/usr/local/bin/xcode-build-server"
 	],
-	"workspace": "/Users/joshlacalamito/Desktop/Catbird/Catbird.xcodeproj/project.xcworkspace",
-	"build_root": "/Users/joshlacalamito/Library/Developer/Xcode/DerivedData/Catbird-azilnipgvalmzqfobjjnqtrlmmbp",
+	"workspace": "/Users/joshlacalamito/Developer/Catbird/Catbird.xcodeproj/project.xcworkspace",
+	"build_root": "/Users/joshlacalamito/Library/Developer/Xcode/DerivedData/Catbird-edqygtqhynnjfucnveqztjhcdsan",
 	"scheme": "Catbird",
 	"kind": "xcode"
 }

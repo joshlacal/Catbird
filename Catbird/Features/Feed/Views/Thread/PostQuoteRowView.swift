@@ -30,7 +30,7 @@ struct PostQuoteRowView: View {
                 .clipShape(Circle())
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(post.author.displayName ?? post.author.handle)
+                    Text(post.author.displayName ?? post.author.handle.description)
                         .font(.headline)
                         .lineLimit(1)
                     

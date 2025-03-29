@@ -24,7 +24,7 @@ struct DiscoveryView: View {
                     RecentProfilesSection(
                         profiles: viewModel.recentProfileSearches,
                         onSelect: { profile in
-                            path.append(NavigationDestination.profile(profile.did))
+                            path.append(NavigationDestination.profile(profile.did.didString()))
                         },
                         onClear: {
                             viewModel.clearRecentProfileSearches()
@@ -66,7 +66,7 @@ struct DiscoveryView: View {
                     SuggestedProfilesSection(
                         profiles: viewModel.suggestedProfiles,
                         onSelect: { profile in
-                            path.append(NavigationDestination.profile(profile.did))
+                            path.append(NavigationDestination.profile(profile.did.didString()))
                         },
                         onRefresh: {
                             Task {

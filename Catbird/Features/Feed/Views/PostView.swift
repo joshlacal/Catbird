@@ -32,7 +32,7 @@ struct PostView: View {
 
   // MARK: - Computed Properties
   private var uniqueID: String {
-    let postID = post.uri.uriString() + post.cid
+      let postID = post.uri.uriString() + post.cid.string
     if let feedPostID = feedPostID {
       return "\(feedPostID)-\(postID)"
     } else {
@@ -148,7 +148,7 @@ struct PostView: View {
           ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: Self.avatarSize, height: Self.avatarSize))
         ])
         .onTapGesture {
-          path.append(NavigationDestination.profile(currentPost.author.did))
+            path.append(NavigationDestination.profile(currentPost.author.did.didString()))
         }
       } else {
         noAvatarView
@@ -169,8 +169,8 @@ struct PostView: View {
         
         HStack(alignment: .top, spacing: 0) {
           PostHeaderView(
-            displayName: currentPost.author.displayName ?? currentPost.author.handle,
-            handle: currentPost.author.handle,
+            displayName: currentPost.author.displayName ?? currentPost.author.handle.description,
+            handle: currentPost.author.handle.description,
             timeAgo: formatTimeAgo(from: feedPost.createdAt.date)
           )
           
@@ -203,7 +203,7 @@ struct PostView: View {
       .frame(width: Self.avatarSize, height: Self.avatarSize)
       .foregroundColor(.gray)
       .onTapGesture {
-        path.append(NavigationDestination.profile(currentPost.author.did))
+          path.append(NavigationDestination.profile(currentPost.author.did.didString()))
       }
   }
   
@@ -241,7 +241,7 @@ struct PostView: View {
         Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
       }
 
-      if let currentUserDid = currentUserDid, currentPost.author.did == currentUserDid {
+        if let currentUserDid = currentUserDid, currentPost.author.did.didString() == currentUserDid {
         Button(action: {
           Task { await contextMenuViewModel.deletePost() }
         }) {
@@ -281,7 +281,7 @@ struct PostView: View {
                     .offset(y: -1)
                     .foregroundStyle(Color.accentColor)
                     .onTapGesture {
-                        path.append(NavigationDestination.profile(grandparentAuthor.did))
+                        path.append(NavigationDestination.profile(grandparentAuthor.did.didString()))
                     }
             }
         }

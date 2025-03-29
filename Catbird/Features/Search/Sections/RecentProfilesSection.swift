@@ -67,16 +67,16 @@ struct RecentProfilesSection: View {
 
 /// Model representing a recently viewed profile
 struct RecentProfileSearch: Identifiable, Codable, Equatable {
-    let id: String
-    let did: String
-    let handle: String
+    let id: DID
+    let did: DID
+    let handle: Handle
     let displayName: String?
     let avatarURL: String?
     let timestamp: Date
     
     init(
-        did: String,
-        handle: String,
+        did: DID,
+        handle: Handle,
         displayName: String?,
         avatarURL: String?
     ) {

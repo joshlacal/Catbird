@@ -55,10 +55,10 @@ struct EnhancedFollowButton: View {
         
         do {
             if isFollowing {
-                try await appState.unfollow(did: profile.did)
+                try await appState.unfollow(did: profile.did.didString())
                 isFollowing = false
             } else {
-                try await appState.follow(did: profile.did)
+                try await appState.follow(did: profile.did.didString())
                 isFollowing = true
             }
         } catch {

@@ -10,8 +10,8 @@ import Petrel
 
 /// Protocol for any profile-like object that can be displayed in a row
 protocol ProfileDisplayable {
-    var did: String { get }
-    var handle: String { get }
+    var did: DID { get }
+    var handle: Handle { get }
     var displayName: String? { get }
     var avatar: URI? { get }
 }

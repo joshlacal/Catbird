@@ -66,7 +66,7 @@ struct RecordEmbedView: View {
                         .clipShape(Circle())
                     }
                     
-                    PostHeaderView(displayName: post.author.displayName ?? post.author.handle, handle: post.author.handle, timeAgo: formatTimeAgo(from: post.indexedAt.date))
+                    PostHeaderView(displayName: post.author.displayName ?? post.author.handle.description, handle: post.author.handle.description, timeAgo: formatTimeAgo(from: post.indexedAt.date))
                         .textScale(.secondary)
                     
                     Spacer()

@@ -69,7 +69,7 @@ struct ReportFormView: View {
                                 Text("Moderation service")
                                 Spacer()
                                 if let selectedLabeler = selectedLabeler {
-                                    Text(selectedLabeler.creator.displayName ?? selectedLabeler.creator.handle)
+                                    Text(selectedLabeler.creator.displayName ?? selectedLabeler.creator.handle.description)
                                         .foregroundStyle(.secondary)
                                 } else {
                                     Text("Select")
@@ -153,7 +153,7 @@ struct ReportFormView: View {
             
             // Default to Bluesky moderation service if available
             if selectedLabeler == nil, let bskyLabeler = availableLabelers.first(where: { 
-                $0.creator.handle == "moderation.bsky.app" 
+                $0.creator.handle.description == "moderation.bsky.app" 
             }) {
                 selectedLabeler = bskyLabeler
             }
@@ -176,7 +176,7 @@ struct ReportFormView: View {
                 subject: subject,
                 reasonType: selectedReason,
                 reason: customReason.isEmpty ? nil : customReason,
-                labelerDid: labeler.creator.did
+                labelerDid: labeler.creator.did.didString()
             )
             
             if success {

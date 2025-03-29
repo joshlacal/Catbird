@@ -28,7 +28,7 @@ struct LabelerView: View {
                 ProfileImageView(url: labeler.creator.avatar?.url, size: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(labeler.creator.displayName ?? labeler.creator.handle)
+                    Text(labeler.creator.displayName ?? labeler.creator.handle.description)
                         .font(.headline)
                         .fontWeight(.semibold)
                     
@@ -153,7 +153,7 @@ struct LabelerDetailedView: View {
                 ProfileImageView(url: labeler.creator.avatar?.url, size: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(labeler.creator.displayName ?? labeler.creator.handle)
+                    Text(labeler.creator.displayName ?? labeler.creator.handle.description)
                         .font(.headline)
                         .fontWeight(.semibold)
                     

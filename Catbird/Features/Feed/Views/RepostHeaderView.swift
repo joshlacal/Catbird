@@ -18,7 +18,7 @@ struct RepostHeaderView: View {
                 .foregroundColor(.secondary)
                 .font(.subheadline)
             
-            Text("reposted by \(reposter.displayName ?? reposter.handle)")
+            Text("reposted by \(reposter.displayName ?? reposter.handle.description)")
                 .font(.body)
                 .textScale(.secondary)
                 .foregroundColor(.secondary)
@@ -30,7 +30,7 @@ struct RepostHeaderView: View {
 
         }
         .onTapGesture {
-            path.append(NavigationDestination.profile(reposter.did))
+            path.append(NavigationDestination.profile(reposter.did.didString()))
         }
         // No padding here - controlled by parent for consistency
         .padding(.leading, 3)

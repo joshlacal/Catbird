@@ -106,7 +106,7 @@ final class FeedManager {
         cursor: String?
     ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-            actor: did,
+            actor: try ATIdentifier(string: did),
             limit: 50,
             cursor: cursor
         )
@@ -126,7 +126,7 @@ final class FeedManager {
         cursor: String?
     ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
         let params = AppBskyFeedGetActorLikes.Parameters(
-            actor: did,
+            actor: try ATIdentifier(string: did),
             limit: 50,
             cursor: cursor
         )

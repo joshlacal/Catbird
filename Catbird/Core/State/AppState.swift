@@ -96,13 +96,24 @@ final class AppState {
               Task { @MainActor in
                 await self.notificationManager.requestNotificationsAfterLogin()
               }
+              
+              // When we authenticate, also try to refresh preferences
+              Task {
+                do {
+                  try await self.preferencesManager.fetchPreferences(forceRefresh: true)
+                } catch {
+                  self.logger.error(
+                    "Error fetching preferences after authentication: \(error.localizedDescription)"
+                  )
+                }
+              }
             }
           } else if case .unauthenticated = state {
             // Clear client on logout
             self.postManager.updateClient(nil)
             self.preferencesManager.updateClient(nil)
             self.notificationManager.updateClient(nil)
-            // Reset graph manager with empty client
+            self.graphManager = GraphManager(atProtoClient: nil)
           }
         }
       }
@@ -139,7 +150,44 @@ final class AppState {
     setupPreferencesRefreshTimer()
     setupNotifications()
 
+    // Get accounts list if authenticated
+    if isAuthenticated {
+      Task {
+        await authManager.refreshAvailableAccounts()
+      }
+    }
+
     logger.info("🏁 AppState.initialize() completed")
+  }
+
+  /// Refresh all data after account switching
+  @MainActor
+  func refreshAfterAccountSwitch() async {
+    logger.info("Refreshing data after account switch")
+
+    // Clear old prefetched data
+    prefetchedFeeds.removeAll()
+
+    // Update client references in all managers
+    postManager.updateClient(authManager.client)
+    preferencesManager.updateClient(authManager.client)
+    notificationManager.updateClient(authManager.client)
+    if let client = authManager.client {
+      graphManager = GraphManager(atProtoClient: client)
+    } else {
+      graphManager = GraphManager(atProtoClient: nil)
+    }
+
+    // Reload preferences
+    do {
+      try await preferencesManager.fetchPreferences(forceRefresh: true)
+      logger.info("Successfully refreshed preferences after account switch")
+    } catch {
+      logger.error("Failed to refresh preferences after account switch: \(error)")
+    }
+
+    // Refresh other data as needed
+    // Any other state that needs resetting
   }
 
   /// Set up a timer to periodically prune old feed models
@@ -336,5 +384,74 @@ final class AppState {
 
     // Perform the actual logout
     await authManager.logout()
+  }
+
+  /// Switch to another account
+  @MainActor
+  func switchToAccount(did: String) async throws {
+    logger.info("Switching to account: \(did)")
+
+    // First switch account through auth manager
+    try await authManager.switchToAccount(did: did)
+
+    // Then refresh all app state with new account data
+    await refreshAfterAccountSwitch()
+  }
+
+  /// Add a new account
+  @MainActor
+  func addAccount(handle: String) async throws -> URL {
+    logger.info("Adding new account: \(handle)")
+    return try await authManager.addAccount(handle: handle)
+  }
+
+  /// Remove an account
+  @MainActor
+  func removeAccount(did: String) async throws {
+    logger.info("Removing account: \(did)")
+    try await authManager.removeAccount(did: did)
+
+    // Check if we still have any accounts
+    if isAuthenticated {
+      await refreshAfterAccountSwitch()
+    }
+  }
+
+  // MARK: - Social Graph Methods
+
+    @discardableResult
+    func follow(did: String) async throws -> Bool {
+    // graphManager is non-optional, direct access is safe if initialized correctly
+    // Throwing an error if client isn't set might be handled within GraphManager itself
+    return try await self.graphManager.follow(did: did)
+  }
+
+  // Using GraphError instead of AuthError
+    @discardableResult
+  func unfollow(did: String) async throws -> Bool {
+    // graphManager is non-optional, direct access is safe if initialized correctly
+    // Throwing an error if client isn't set might be handled within GraphManager itself
+    return try await self.graphManager.unfollow(did: did)
+  }
+
+  // MARK: - Post Management
+
+  // Add support for thread creation
+  func createThread(
+    posts: [String],
+    languages: [LanguageCodeContainer],
+    selfLabels: ComAtprotoLabelDefs.SelfLabels,
+    hashtags: [String] = [],
+    facets: [[AppBskyRichtextFacet]?] = [],
+    embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil
+  ) async throws {
+    try await postManager.createThread(
+      posts: posts,
+      languages: languages,
+      selfLabels: selfLabels,
+      hashtags: hashtags,
+      facets: facets,
+      embeds: embeds
+    )
   }
 }

@@ -69,7 +69,7 @@ struct TypeaheadView: View {
                             // Save to recent profiles and navigate
                             // Save recent profile search
                             viewModel.addRecentProfileSearchBasic(profile: profile)
-                            path.append(NavigationDestination.profile(profile.did))
+                            path.append(NavigationDestination.profile(profile.did.didString()))
                         } label: {
                             // Use the profile directly
                             ProfileRowView(profile: profile)

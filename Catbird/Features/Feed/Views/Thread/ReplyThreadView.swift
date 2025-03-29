@@ -53,7 +53,7 @@ struct ReplyThreadView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             // Author info
                             HStack {
-                                Text(parent.author.displayName ?? parent.author.handle)
+                                Text(parent.author.displayName ?? parent.author.handle.description)
                                     .font(.subheadline.weight(.medium))
                                 Text("@\(parent.author.handle)")
                                     .font(.subheadline)

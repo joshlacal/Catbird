@@ -20,7 +20,7 @@ struct BlockedPostView: View {
             
             // Direct navigation - no abstraction!
             Button {
-                path.append(NavigationDestination.profile(blockedPost.author.did))
+                path.append(NavigationDestination.profile(blockedPost.author.did.description))
             } label: {
                 Text("View Profile")
                     .padding(.vertical, 4)

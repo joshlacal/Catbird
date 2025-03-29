@@ -10,8 +10,8 @@ extension View {
     ///   - presentingFrom: The view controller to present the report form from
     /// - Returns: The view with a report button added to its context menu
     func withPostReportButton(
-        uri: String,
-        cid: String,
+        uri: ATProtocolURI,
+        cid: CID,
         author: String,
         client: ATProtoClient,
         presentingFrom viewController: UIViewController? = nil
@@ -49,7 +49,7 @@ extension View {
     ///   - presentingFrom: The view controller to present the report form from
     /// - Returns: The view with a report button added to its context menu
     func withProfileReportButton(
-        did: String,
+        did: DID,
         handle: String,
         client: ATProtoClient,
         presentingFrom viewController: UIViewController? = nil

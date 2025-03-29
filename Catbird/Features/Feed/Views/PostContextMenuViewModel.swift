@@ -26,12 +26,13 @@ final class PostContextMenuViewModel {
 
     func deletePost() async {
         guard let did = appState.currentUserDID else { return }
-        let input = ComAtprotoRepoDeleteRecord.Input(
-            repo: did,
-            collection: "app.bsky.feed.post",
-            rkey: post.uri.recordKey ?? ""
-        )
         do {
+            let input = ComAtprotoRepoDeleteRecord.Input(
+                repo: try ATIdentifier(string:did),
+                collection: try NSID(nsidString:"app.bsky.feed.post"),
+                rkey: try RecordKey(keyString:post.uri.recordKey ?? "")
+            )
+
             let responseCode = try await appState.atProtoClient?.com.atproto.repo.deleteRecord(input: input).responseCode
             if responseCode == 200 {
                 print("Post deleted successfully")
@@ -41,15 +42,16 @@ final class PostContextMenuViewModel {
         }
     }
 
-    func blockUser() async {
+    func blockUser() async  {
         guard let did = appState.currentUserDID else { return }
         let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
-        let input = ComAtprotoRepoCreateRecord.Input(
-            repo: did,
-            collection: "app.bsky.graph.block",
-            record: ATProtocolValueContainer.knownType(block)
-        )
         do {
+            let input = ComAtprotoRepoCreateRecord.Input(
+                repo: try ATIdentifier(string: did),
+                collection: try NSID(nsidString: "app.bsky.graph.block"),
+                record: ATProtocolValueContainer.knownType(block)
+            )
+
             let result = try await appState.atProtoClient?.com.atproto.repo.createRecord(input: input)
             if let (responseCode, data) = result {
                 if responseCode == 200 {
@@ -63,8 +65,9 @@ final class PostContextMenuViewModel {
     }
 
     func muteUser() async {
-        let input = AppBskyGraphMuteActor.Input(actor: post.author.did)
         do {
+            let input = AppBskyGraphMuteActor.Input(actor: try ATIdentifier(string: post.author.did.didString()))
+
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteActor(input: input)
             if responseCode == 200 {
                 print("User muted successfully")

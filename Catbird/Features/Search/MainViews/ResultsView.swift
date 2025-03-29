@@ -92,7 +92,7 @@ struct ResultsView: View {
                         VStack(spacing: 0) {
                             ForEach(viewModel.profileResults.prefix(3), id: \.did) { profile in
                                 Button {
-                                    path.append(NavigationDestination.profile(profile.did))
+                                    path.append(NavigationDestination.profile(profile.did.didString()))
                                 } label: {
                                     ProfileRowView(profile: profile)
                                 }
@@ -239,7 +239,7 @@ struct ResultsView: View {
         LazyVStack(spacing: 0) {
             ForEach(viewModel.profileResults, id: \.did) { profile in
                 Button {
-                    path.append(NavigationDestination.profile(profile.did))
+                    path.append(NavigationDestination.profile(profile.did.didString()))
                 } label: {
                     ProfileRowView(profile: profile)
                 }

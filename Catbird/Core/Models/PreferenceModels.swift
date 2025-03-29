@@ -1,10 +1,11 @@
 import Foundation
+import Petrel
 
 // Models for Bluesky preferences, following the AT Protocol specifications
 
 /// Represents content label preference for controlling visibility of labeled content
 struct ContentLabelPreference: Codable, Hashable {
-  let labelerDid: String?
+  let labelerDid: DID?
   let label: String
   let visibility: String  // "hide", "warn", or "ignore"
 }
@@ -35,7 +36,7 @@ struct MutedWord: Codable, Hashable, Identifiable {
 
 /// Represents a labeler preference
 struct LabelerPreference: Codable, Hashable {
-  let did: String
+  let did: DID
 }
 
 /// Represents a new user experience state

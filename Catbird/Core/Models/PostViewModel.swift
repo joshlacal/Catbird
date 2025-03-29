@@ -18,7 +18,7 @@ final class PostViewModel {
     let postId: String
     
     /// The content identifier (CID) for the post
-    let postCid: String
+    let postCid: CID
     
     /// Reference to the app state
     private(set) var appState: AppState
@@ -45,7 +45,7 @@ final class PostViewModel {
     ///   - postId: The URI string of the post
     ///   - postCid: The CID of the post
     ///   - appState: The app state
-    init(postId: String, postCid: String, appState: AppState) {
+    init(postId: String, postCid: CID, appState: AppState) {
         self.postId = postId
         self.postCid = postCid
         self.appState = appState
@@ -171,9 +171,11 @@ final class PostViewModel {
                     createdAt: .init(date: Date())
                 )
                 
+                 let did = try await client.getDid()
+                        
                 let input = ComAtprotoRepoCreateRecord.Input(
-                    repo: try await client.getDid(),
-                    collection: "app.bsky.feed.like",
+                    repo: try ATIdentifier(string:did),
+                    collection: try NSID(nsidString: "app.bsky.feed.like"),
                     record: .knownType(likeRecord)
                 )
                 
@@ -206,7 +208,7 @@ final class PostViewModel {
                 
             } else {  // Deleting an existing like
                 // Delete like record
-                let userDid = try await client.getDid()
+//                let userDid = try await client.getDid()
                 let collection = "app.bsky.feed.like"
                 
                 // First try using our locally cached URI
@@ -238,11 +240,12 @@ final class PostViewModel {
                 }
                 
                 print("Deleting like with record key: \(recordKey)")
-                
+                let did = try await client.getDid()
+
                 let input = ComAtprotoRepoDeleteRecord.Input(
-                    repo: userDid,
-                    collection: collection,
-                    rkey: recordKey  // Use just the record key
+                    repo: try ATIdentifier(string: did),
+                    collection: try NSID(nsidString: collection),
+                    rkey: try RecordKey(keyString: recordKey)   // Use just the record key
                 )
                 let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
@@ -307,10 +310,12 @@ final class PostViewModel {
                     subject: post,
                     createdAt: .init(date: Date())
                 )
+                let did = try await client.getDid()
+
                 
                 let input = ComAtprotoRepoCreateRecord.Input(
-                    repo: try await client.getDid(),
-                    collection: "app.bsky.feed.repost",
+                    repo: try ATIdentifier(string: did),
+                    collection: try NSID(nsidString: "app.bsky.feed.repost"),
                     record: .knownType(repostRecord)
                 )
                 
@@ -343,7 +348,6 @@ final class PostViewModel {
                 
             } else {  // Deleting an existing repost
                 // Delete repost record
-                let userDid = try await client.getDid()
                 let collection = "app.bsky.feed.repost"
                 
                 // First try using our locally cached URI
@@ -375,11 +379,12 @@ final class PostViewModel {
                 }
                 
                 print("Deleting repost with record key: \(recordKey)")
-                
+                let did = try await client.getDid()
+
                 let input = ComAtprotoRepoDeleteRecord.Input(
-                    repo: userDid,
-                    collection: collection,
-                    rkey: recordKey  // Use just the record key
+                    repo: try ATIdentifier(string: did),
+                    collection: try NSID(nsidString: collection),
+                    rkey: try RecordKey(keyString: recordKey)  // Use just the record key
                 )
                 let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
@@ -449,10 +454,11 @@ final class PostViewModel {
                 tags: [],
                 createdAt: .init(date: Date())
             )
-            
+            let did = try await client.getDid()
+
             let input = ComAtprotoRepoCreateRecord.Input(
-                repo: try await client.getDid(),
-                collection: "app.bsky.feed.post",
+                repo: try ATIdentifier(string: did),
+                collection: try NSID(nsidString:"app.bsky.feed.post"),
                 record: .knownType(quotePost)
             )
             
@@ -491,4 +497,10 @@ final class PostViewModel {
             return false
         }
     }
+    
+    // Errors
+    enum PostViewModelError: Error {
+        case missingClient
+    }
 }
+

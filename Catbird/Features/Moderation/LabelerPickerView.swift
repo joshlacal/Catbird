@@ -18,10 +18,10 @@ struct LabelerPickerView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {
-                                Text(labeler.creator.displayName ?? labeler.creator.handle)
+                                Text(labeler.creator.displayName ?? labeler.creator.handle.description)
                                     .font(.headline)
                                 
-                                Text("@\(labeler.creator.handle)")
+                                Text("@\(labeler.creator.handle.description)")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }

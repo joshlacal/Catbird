@@ -324,10 +324,10 @@ final class Preferences {
   }
 
   // New helper methods for content label preferences
-  func setContentLabelVisibility(for label: String, visibility: String, labelerDid: String? = nil) {
+  func setContentLabelVisibility(for label: String, visibility: String, labelerDid: DID? = nil) {
     // Remove existing preference if any
     contentLabelPrefs.removeAll {
-      $0.label == label && $0.labelerDid == labelerDid
+        $0.label == label && $0.labelerDid?.didString() == labelerDid?.didString()
     }
 
     // Add new preference
@@ -358,9 +358,9 @@ final class Preferences {
       mutedWords.append(mutedWord)
     } else {
       Task {
-        let wordId = await TID.next()
+        let wordId = await TIDGenerator.next()
         let mutedWord = MutedWord(
-          id: wordId,
+            id: wordId.description,
           value: word,
           targets: targets,
           actorTarget: actorTarget,
@@ -387,13 +387,13 @@ final class Preferences {
   }
 
   // Helper for labelers
-  func addLabeler(_ did: String) {
+  func addLabeler(_ did: DID) {
     if !labelers.contains(where: { $0.did == did }) {
       labelers.append(LabelerPreference(did: did))
     }
   }
 
-  func removeLabeler(_ did: String) {
+  func removeLabeler(_ did: DID) {
     labelers.removeAll { $0.did == did }
   }
 

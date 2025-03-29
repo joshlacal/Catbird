@@ -210,7 +210,7 @@ struct NotificationCard: View {
             
             ForEach(group.notifications, id: \.cid) { notification in
                 Button {
-                    onTap(NavigationDestination.profile(notification.author.did))
+                    onTap(NavigationDestination.profile(notification.author.did.didString()))
                 } label: {
                     HStack(spacing: 12) {
                         // Follower avatar
@@ -228,7 +228,7 @@ struct NotificationCard: View {
                         
                         // Follower info
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(notification.author.displayName ?? notification.author.handle)
+                            Text(notification.author.displayName ?? notification.author.handle.description)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.primary)
                             
@@ -273,7 +273,7 @@ struct NotificationCard: View {
                 
                 // Author info from the notification
                 let author = group.notifications.first?.author
-                Text(author?.displayName ?? author?.handle ?? "Someone")
+                Text(author?.displayName ?? author?.handle.description ?? "Someone")
                     .fontWeight(.semibold)
                 
                 Text(group.type == .reply ? "replied to your post" : "quoted your post")
@@ -349,7 +349,7 @@ struct NotificationCard: View {
     private var notificationText: String {
         let count = group.notifications.count
         let firstAuthor = group.notifications.first?.author
-        let authorName = firstAuthor?.displayName ?? firstAuthor?.handle ?? "Someone"
+        let authorName = firstAuthor?.displayName ?? firstAuthor?.handle.description ?? "Someone"
         
         switch (group.type, count) {
         case (.like, 1):

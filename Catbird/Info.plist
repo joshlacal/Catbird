@@ -8,6 +8,8 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:catbird.blue</string>

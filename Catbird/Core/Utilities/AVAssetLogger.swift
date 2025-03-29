@@ -35,7 +35,7 @@ struct AVAssetPropertyTracker {
         // 2. Add a breakpoint action to log the stack trace
         // 3. Allow the breakpoint to continue
         
-        logger.debug("Set a symbolic breakpoint on -[AVAsset preferredTransform] to track access points")
+//        logger.debug("Set a symbolic breakpoint on -[AVAsset preferredTransform] to track access points")
         #endif
     }
 }

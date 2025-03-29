@@ -241,7 +241,7 @@ struct StarterPackView: View {
                     let subject = item.subject
                     
                     Button {
-                        path.append(NavigationDestination.profile(subject.did))
+                        path.append(NavigationDestination.profile(subject.did.didString()))
                     } label: {
                         HStack(spacing: 12) {
                             AsyncProfileImage(url: URL(string: subject.avatar?.uriString() ?? ""), size: 44)

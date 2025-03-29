@@ -37,7 +37,7 @@ import SwiftUI
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
     guard let profile = profile else { return false }
-    return profile.did == currentUserDID
+      return profile.did.didString() == currentUserDID
   }
 
   // MARK: - Initialization
@@ -64,7 +64,7 @@ import SwiftUI
 
     do {
       let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
-        input: .init(actor: userDID)
+        input: .init(actor: try ATIdentifier(string: userDID))
       )
 
       await MainActor.run {
@@ -115,7 +115,7 @@ import SwiftUI
 
     do {
       let params = AppBskyGraphGetLists.Parameters(
-        actor: profile.did,
+        actor: try ATIdentifier(string: profile.did.didString()),
         limit: 20,
         cursor: listsCursor
       )
@@ -154,7 +154,7 @@ import SwiftUI
       switch type {
       case .posts:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: profile.did,
+            actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : postsCursor,
           filter: "posts_no_replies"
@@ -175,7 +175,7 @@ import SwiftUI
 
       case .replies:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: profile.did,
+            actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : repliesCursor,
           filter: "posts_with_replies"
@@ -213,7 +213,7 @@ import SwiftUI
 
       case .media:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: profile.did,
+            actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : mediaPostsCursor
         )
@@ -248,7 +248,7 @@ import SwiftUI
 
       case .likes:
         let params = AppBskyFeedGetActorLikes.Parameters(
-          actor: profile.did,
+            actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : likesCursor
         )
@@ -298,9 +298,9 @@ import SwiftUI
 
         // Get the profile record
         let getRecordParams = ComAtprotoRepoGetRecord.Parameters(
-            repo: currentUserDID,
-            collection: "app.bsky.actor.profile",
-            rkey: "self"
+            repo: try ATIdentifier(string: currentUserDID),
+            collection: try NSID(nsidString:"app.bsky.actor.profile"),
+            rkey: try RecordKey(keyString: "self")
         )
         let (getRecordCode, getRecordOutput) = try await client.com.atproto.repo.getRecord(input: getRecordParams)
         
@@ -326,9 +326,9 @@ import SwiftUI
             
             // Put the updated record
             let putRecordInput = ComAtprotoRepoPutRecord.Input(
-                repo: currentUserDID,
-                collection: "app.bsky.actor.profile",
-                rkey: "self",
+                repo: try ATIdentifier(string: currentUserDID),
+                collection: try NSID(nsidString: "app.bsky.actor.profile"),
+                rkey: try RecordKey(keyString: "self"),
                 record: ATProtocolValueContainer.knownType(updatedProfile),
                 swapRecord: existingRecord.cid  // Use the CID of the existing record for optimistic concurrency
             )
@@ -354,9 +354,9 @@ import SwiftUI
 
             
             let createRecordInput = ComAtprotoRepoCreateRecord.Input(
-                repo: currentUserDID,
-                collection: "app.bsky.actor.profile",
-                rkey: "self",
+                repo: try ATIdentifier(string: currentUserDID),
+                collection: try NSID(nsidString:"app.bsky.actor.profile"),
+                rkey: try RecordKey(keyString:"self"),
                 record: ATProtocolValueContainer.knownType(updatedProfile)
             )
             

@@ -212,7 +212,7 @@ final class PreferencesManager {
         case .contentLabelPref(let value):
           contentLabelPrefs.append(
             ContentLabelPreference(
-              labelerDid: value.labelerDid,
+                labelerDid: value.labelerDid,
               label: value.label,
               visibility: value.visibility
             ))
@@ -255,7 +255,7 @@ final class PreferencesManager {
           hiddenPosts = value.items.map { $0.uriString() }
 
         case .labelersPref(let value):
-          labelers = value.labelers.map { LabelerPreference(did: $0.did) }
+            labelers = value.labelers.map { LabelerPreference(did: $0.did) }
 
         case .bskyAppStatePref(let value):
           activeProgressGuide = value.activeProgressGuide?.guide
@@ -488,7 +488,7 @@ final class PreferencesManager {
       prefsToSync.pinnedFeeds.insert(timelineFeed, at: 0)
     }
 
-    // Create V2 saved feeds format (with TIDs instead of UUIDs)
+    // Create V2 saved feeds format
     var savedItems: [AppBskyActorDefs.SavedFeed] = []
 
     // Add pinned feeds
@@ -496,7 +496,7 @@ final class PreferencesManager {
       let feedType = SystemFeedTypes.isTimelineFeed(uri) ? "timeline" : "feed"
       savedItems.append(
         AppBskyActorDefs.SavedFeed(
-          id: await TID.next(),  // Use TID instead of UUID
+            id: await TIDGenerator.next(),
           type: feedType,
           value: uri,
           pinned: true
@@ -508,7 +508,7 @@ final class PreferencesManager {
     for uri in prefsToSync.savedFeeds {
       savedItems.append(
         AppBskyActorDefs.SavedFeed(
-          id: await TID.next(),  // Use TID instead of UUID
+            id: await TIDGenerator.next(),
           type: "feed",
           value: uri,
           pinned: false
@@ -772,7 +772,7 @@ final class PreferencesManager {
   // MARK: - Convenience Methods for All Preference Types
 
   @MainActor
-  func setContentLabelVisibility(label: String, visibility: String, labelerDid: String? = nil)
+  func setContentLabelVisibility(label: String, visibility: String, labelerDid: DID? = nil)
     async throws
   {
     let preferences = try await getPreferences()
@@ -892,14 +892,14 @@ final class PreferencesManager {
   }
 
   @MainActor
-  func addLabeler(_ did: String) async throws {
+  func addLabeler(_ did: DID) async throws {
     let preferences = try await getPreferences()
     preferences.addLabeler(did)
     try await saveAndSyncPreferences(preferences)
   }
 
   @MainActor
-  func removeLabeler(_ did: String) async throws {
+  func removeLabeler(_ did: DID) async throws {
     let preferences = try await getPreferences()
     preferences.removeLabeler(did)
     try await saveAndSyncPreferences(preferences)

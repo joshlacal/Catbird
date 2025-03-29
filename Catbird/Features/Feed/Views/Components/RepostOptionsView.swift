@@ -141,7 +141,7 @@ struct RepostOptionsView: View {
                 )
             
             VStack(alignment: .leading, spacing: 8) {
-                Text(post.author.displayName ?? post.author.handle)
+                Text(post.author.displayName ?? post.author.handle.description)
                     .font(.headline)
                 Text(post.record.textRepresentation)
                     .font(.subheadline)

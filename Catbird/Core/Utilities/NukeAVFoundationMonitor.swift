@@ -27,13 +27,13 @@ enum DebugMonitor {
         
         // 3. Use Instruments' Time Profiler to identify main thread blocking
         
-        logger.debug("""
-        📊 Debug recommendations:
-        1. Set symbolic breakpoint on -[AVAsset preferredTransform]
-        2. Set symbolic breakpoint on UIImage imageWithCGImage:scale:orientation:
-        3. Use Instruments' Time Profiler to identify main thread blocking
-        4. Check Console app for "Main thread blocked" messages
-        """)
+//        logger.debug("""
+//        📊 Debug recommendations:
+//        1. Set symbolic breakpoint on -[AVAsset preferredTransform]
+//        2. Set symbolic breakpoint on UIImage imageWithCGImage:scale:orientation:
+//        3. Use Instruments' Time Profiler to identify main thread blocking
+//        4. Check Console app for "Main thread blocked" messages
+//        """)
         #endif
     }
 }

@@ -45,28 +45,21 @@ final class ReportingService {
     ///   - uri: URI of the post to report
     ///   - cid: CID of the post to report
     /// - Returns: A report subject for the post
-    func createPostSubject(uri: String, cid: String) throws -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+    func createPostSubject(uri: ATProtocolURI, cid: CID) throws -> ComAtprotoModerationCreateReport.InputSubjectUnion {
         
-        do {
-            let aTProtocolURI = try ATProtocolURI(uriString: uri)
             let strongRef = ComAtprotoRepoStrongRef(
-                uri: aTProtocolURI,
+                uri: uri,
                 cid: cid
             )
             return .comAtprotoRepoStrongRef(strongRef)
 
-        } catch {
-            // Handle invalid URI format
-            print("Invalid URI format: \(error)")
-            throw error
-        }
         
     }
     
     /// Create a subject for reporting a user
     /// - Parameter did: DID of the user to report
     /// - Returns: A report subject for the user
-    func createUserSubject(did: String) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+    func createUserSubject(did: DID) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
         let repoRef = ComAtprotoAdminDefs.RepoRef(did: did)
         return .comAtprotoAdminDefsRepoRef(repoRef)
     }
@@ -78,7 +71,7 @@ final class ReportingService {
         let response = try await client.app.bsky.actor.getPreferences(input: AppBskyActorGetPreferences.Parameters())
         
         // Extract labeler DIDs from preferences
-        let labelerPrefs = response.data?.preferences.items.compactMap { item -> [String]? in
+        let labelerPrefs = response.data?.preferences.items.compactMap { item -> [DID]? in
             if case let .labelersPref(pref) = item {
                 return pref.labelers.map { $0.did }
             }
@@ -108,7 +101,7 @@ final class ReportingService {
     func getBlueSkyModerationService() async throws -> AppBskyLabelerDefs.LabelerViewDetailed? {
         // The official Bluesky moderation service has a known DID
         let params = AppBskyLabelerGetServices.Parameters(
-            dids: ["did:plc:ar7c4by46qjdydhdevvrndac"],
+            dids: [try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")],
             detailed: true
         )
         
@@ -116,7 +109,7 @@ final class ReportingService {
         
         return response.data?.views.first(where: { view in
             if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view,
-               detailed.creator.handle == "moderation.bsky.app" {
+               detailed.creator.handle.description == "moderation.bsky.app" {
                 return true
             }
             return false

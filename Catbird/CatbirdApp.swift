@@ -81,14 +81,14 @@ struct CatbirdApp: App {
     DebugMonitor.setupDebuggingRecommendations()
 
     // Log common debugging steps
-    logger.info(
-      """
-      📊 PreferredTransform tracking enabled.
-      You can diagnose the issue by:
-      1. Looking for "PreferredTransform accessed on Main Thread" warnings in console
-      2. Setting breakpoints as recommended by DebugMonitor
-      3. Monitoring main thread blocking warnings
-      """)
+//    logger.info(
+//      """
+//      📊 PreferredTransform tracking enabled.
+//      You can diagnose the issue by:
+//      1. Looking for "PreferredTransform accessed on Main Thread" warnings in console
+//      2. Setting breakpoints as recommended by DebugMonitor
+//      3. Monitoring main thread blocking warnings
+//      """)
   }
 
   // MARK: - Body

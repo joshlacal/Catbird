@@ -88,9 +88,9 @@ import SwiftUI
       print("DEBUG: Using DID: \(didValue)")
       
       let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-        aud: "did:web:video.bsky.app",
+        aud: try DID(didString:"did:web:video.bsky.app"),
         exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
-        lxm: "app.bsky.video.getUploadLimits"
+        lxm: try NSID(nsidString:"app.bsky.video.getUploadLimits")
       )
       
       let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
@@ -118,9 +118,9 @@ import SwiftUI
     print("DEBUG: Using DID: \(didValue)")
     
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-      aud: "did:web:\(await client.baseURL.host ?? "bsky.social")",
+        aud: try DID(didString:"did:web:\(await client.baseURL.host ?? "bsky.social")"),
       exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
-      lxm: "com.atproto.repo.uploadBlob"
+        lxm: try NSID(nsidString:"com.atproto.repo.uploadBlob")
     )
     
     let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(

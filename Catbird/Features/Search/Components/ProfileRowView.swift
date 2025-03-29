@@ -47,7 +47,7 @@ struct ProfileRowView: View {
             Spacer()
             
             // Follow button if logged in and not self
-            if let did = currentUserDid, did != profile.did {
+            if let did = currentUserDid, did != profile.did.didString() {
                 followButton()
             }
         }
