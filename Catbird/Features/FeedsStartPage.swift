@@ -128,13 +128,13 @@ struct FeedsStartPage: View {
   }
 
   // More compact icon size for better space utilization
-  private var iconSize: CGFloat {
-    switch screenWidth {
-    case ..<320: return 45
-    case ..<375: return 50
-    default: return 52
+    private var iconSize: CGFloat {
+      switch screenWidth {
+      case ..<320: return 55  // Increased from 45
+      case ..<375: return 60  // Increased from 50
+      default: return 65  // Increased from 52
+      }
     }
-  }
 
   init(
     appState: AppState, selectedFeed: Binding<FetchType>, currentFeedName: Binding<String>,
@@ -164,7 +164,7 @@ struct FeedsStartPage: View {
 
             HStack {
               Text("Feeds")
-                .font(.title)
+                    .font(.customSystemFont(size: 28, weight: .bold, width: 0.7, design: .default, relativeTo: .largeTitle))
                 .fontWeight(.bold)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -237,12 +237,12 @@ struct FeedsStartPage: View {
                 .padding(.top, 4)
 
               if !filteredPinnedFeeds.isEmpty {
-                sectionHeader("Pinned Feeds")
+                sectionHeader("Pinned")
                 gridSection(for: filteredPinnedFeeds, category: "pinned")
               }
 
               if !filteredSavedFeeds.isEmpty {
-                sectionHeader("Saved Feeds")
+                sectionHeader("Saved")
                 gridSection(for: filteredSavedFeeds, category: "saved")
               }
 
@@ -259,7 +259,7 @@ struct FeedsStartPage: View {
                 
                 // Safety timer - reset drag state after a timeout
                 if isActive {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                         if isDragging {
                             withAnimation {
                                 isDragging = false
@@ -366,7 +366,7 @@ struct FeedsStartPage: View {
         }
       }
       .sheet(isPresented: $showAddFeedSheet) {
-        addFeedSheet
+          AddFeedSheet()
       }
       .alert("System Feed Protected", isPresented: $showProtectedSystemFeedAlert) {
         Button("OK", role: .cancel) {}
@@ -398,17 +398,18 @@ struct FeedsStartPage: View {
   private func sectionHeader(_ title: String) -> some View {
     HStack {
       Text(title)
+            .font(.customSystemFont(size: 22, weight: .bold, width: 0.7, design: .default, relativeTo: .title))
         .font(.headline)
         .foregroundColor(.primary)
       
       Spacer()
       
       // Show appropriate icon based on section
-      if title == "Pinned Feeds" {
+      if title == "Pinned" {
         Image(systemName: "pin.fill")
           .font(.caption)
           .foregroundColor(.secondary)
-      } else if title == "Saved Feeds" {
+      } else if title == "Saved" {
         Image(systemName: "bookmark.fill")
           .font(.caption)
           .foregroundColor(.secondary)
@@ -475,52 +476,65 @@ struct FeedsStartPage: View {
     )
   }
 
-  @ViewBuilder
-  private var timelineButton: some View {
-    Button {
-      let impact = UIImpactFeedbackGenerator(style: .rigid)
-      impact.impactOccurred()
+    @ViewBuilder
+    private var timelineButton: some View {
+        Button {
+            let impact = UIImpactFeedbackGenerator(style: .rigid)
+            impact.impactOccurred()
 
-      selectedFeed = .timeline
-      currentFeedName = "Timeline"
-      isDrawerOpen = false
-    } label: {
-      VStack(spacing: 6) {
-        // Timeline icon with iOS app icon styling
-        ZStack {
-          LinearGradient(
-            gradient: Gradient(colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)]),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-          
-          Image(systemName: "clock")
-            .font(.system(size: 24, weight: .semibold))
-            .foregroundColor(.white)
+            selectedFeed = .timeline
+            currentFeedName = "Timeline"
+            isDrawerOpen = false
+        } label: {
+            HStack(spacing: 15) {
+                ZStack {
+                    LinearGradient(
+                        gradient: Gradient(colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    
+                    Image(systemName: "clock")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .frame(width: iconSize, height: iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+                )
+                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                
+                // Timeline label
+                Text("Timeline")
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color(UIColor.secondarySystemBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+            )
         }
-        .frame(width: iconSize, height: iconSize)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-          RoundedRectangle(cornerRadius: 12)
-            .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
-        )
-        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-        
-        // Timeline label
-        Text("Timeline")
-          .font(.caption2)
-          .foregroundStyle(.primary)
-          .padding(.top, 4)
-          .lineLimit(1)
-      }
-      .frame(width: itemWidth - 12)
-      .padding(6)
+        .buttonStyle(PlainButtonStyle())
+        .padding(.vertical, 8)
+        .scaleEffect(isLoaded ? 1 : 0.8)
+        .opacity(isLoaded ? 1 : 0)
     }
-    .buttonStyle(PlainButtonStyle())
-    .scaleEffect(isLoaded ? 1 : 0.8)
-    .opacity(isLoaded ? 1 : 0)
-  }
-
   @ViewBuilder
   private func feedLink(for uri: ATProtocolURI, feedURI: String, category: String) -> some View {
     Button {
@@ -533,7 +547,6 @@ struct FeedsStartPage: View {
       isDrawerOpen = false
     } label: {
       VStack(spacing: 6) {
-        // Avatar or placeholder in iOS-style icon shape
         Group {
           if let generator = viewModel.feedGenerators[uri] {
             LazyImage(url: URL(string: generator.avatar?.uriString() ?? "")) { state in
@@ -567,7 +580,7 @@ struct FeedsStartPage: View {
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
       }
-      .frame(width: itemWidth - 12) 
+      .frame(width: itemWidth - 6)
       .padding(6)
       // Remove background to match iOS app icon feel
     }
@@ -600,21 +613,21 @@ struct FeedsStartPage: View {
         }
         
         // Show a pin badge for pinned feeds
-        if category == "pinned" && !editMode.isEditing {
-          VStack {
-            HStack {
-              Spacer()
-              Image(systemName: "pin.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.white)
-                .padding(4)
-                .background(Circle().fill(Color.accentColor.opacity(0.8)))
-                .shadow(color: Color.black.opacity(0.2), radius: 1, x: 0, y: 1)
-            }
-            Spacer()
-          }
-          .padding(4)
-        }
+//        if category == "pinned" && !editMode.isEditing {
+//          VStack {
+//            HStack {
+//              Spacer()
+//              Image(systemName: "pin.fill")
+//                .font(.system(size: 12))
+//                .foregroundColor(.white)
+//                .padding(4)
+//                .background(Circle().fill(Color.accentColor.opacity(0.8)))
+//                .shadow(color: Color.black.opacity(0.2), radius: 1, x: 0, y: 1)
+//            }
+//            Spacer()
+//          }
+//          .padding(4)
+//        }
       }
     )
     .onDrag {
@@ -661,52 +674,52 @@ struct FeedsStartPage: View {
   }
 
   // Add feed sheet
-  @ViewBuilder
-  private var addFeedSheet: some View {
-    NavigationStack {
-      Form {
-        Section(header: Text("Feed URI")) {
-          TextField("at://did:plc.../app.bsky.feed.generator/feed-id", text: $newFeedURI)
-            .autocapitalization(.none)
-            .autocorrectionDisabled()
-        }
-
-        Section {
-          Toggle("Pin this feed", isOn: $pinNewFeed)
-        }
-
-        if !viewModel.errorMessage.isNilOrEmpty {
-          Section {
-            Text(viewModel.errorMessage ?? "")
-              .foregroundColor(.red)
-          }
-        }
-
-        Section {
-          Button("Add Feed") {
-            Task {
-              if !newFeedURI.isEmpty {
-                await viewModel.addFeed(newFeedURI, pinned: pinNewFeed)
-                if viewModel.errorMessage == nil {
-                  newFeedURI = ""
-                  pinNewFeed = false
-                  showAddFeedSheet = false
-                }
-              }
-            }
-          }
-          .disabled(newFeedURI.isEmpty)
-        }
-      }
-      .navigationTitle("Add Feed")
-      .navigationBarItems(
-        trailing: Button("Cancel") {
-          showAddFeedSheet = false
-          newFeedURI = ""
-          pinNewFeed = false
-        })
-    }
-  }
+//  @ViewBuilder
+//  private var addFeedSheet: some View {
+//    NavigationStack {
+//      Form {
+//        Section(header: Text("Feed URI")) {
+//          TextField("at://did:plc.../app.bsky.feed.generator/feed-id", text: $newFeedURI)
+//            .autocapitalization(.none)
+//            .autocorrectionDisabled()
+//        }
+//
+//        Section {
+//          Toggle("Pin this feed", isOn: $pinNewFeed)
+//        }
+//
+//        if !viewModel.errorMessage.isNilOrEmpty {
+//          Section {
+//            Text(viewModel.errorMessage ?? "")
+//              .foregroundColor(.red)
+//          }
+//        }
+//
+//        Section {
+//          Button("Add Feed") {
+//            Task {
+//              if !newFeedURI.isEmpty {
+//                await viewModel.addFeed(newFeedURI, pinned: pinNewFeed)
+//                if viewModel.errorMessage == nil {
+//                  newFeedURI = ""
+//                  pinNewFeed = false
+//                  showAddFeedSheet = false
+//                }
+//              }
+//            }
+//          }
+//          .disabled(newFeedURI.isEmpty)
+//        }
+//      }
+//      .navigationTitle("Add Feed")
+//      .navigationBarItems(
+//        trailing: Button("Cancel") {
+//          showAddFeedSheet = false
+//          newFeedURI = ""
+//          pinNewFeed = false
+//        })
+//    }
+//  }
 
   private func ensureTimelineProtection() async {
     do {

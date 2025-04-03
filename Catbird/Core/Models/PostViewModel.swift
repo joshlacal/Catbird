@@ -8,6 +8,7 @@
 import Foundation
 import Petrel
 import Observation
+import OSLog
 
 /// ViewModel for managing post state and interactions
 @Observable
@@ -38,6 +39,12 @@ final class PostViewModel {
     private var likeUri: ATProtocolURI?
     private var repostUri: ATProtocolURI?
     
+    // Task for initialization
+    private var initializationTask: Task<Void, Never>?
+    
+    /// Logger for debugging
+    let logger = Logger(subsystem: "blue.catbird", category: "PostViewModel")
+    
     // MARK: - Initialization
     
     /// Initialize the view model with a post ID and app state
@@ -65,9 +72,18 @@ final class PostViewModel {
         )
         
         // Initialize shadow state from the server's post data
-        Task {
+        // Properly managed task
+        initializationTask = Task {
+            // Check for cancellation before starting
+            guard !Task.isCancelled else { return }
             await initializeFromServerState(post: post)
         }
+    }
+    
+    // MARK: - Deinitialization
+    
+    deinit {
+        initializationTask?.cancel()
     }
     
     // MARK: - State Management
@@ -89,23 +105,31 @@ final class PostViewModel {
         // Check if shadow already exists to avoid redundant initialization
         let existingShadow = await appState.postShadowManager.getShadow(forUri: postId)
         
-        // Only initialize if needed
+        // Batch shadow updates if needed
+        var needsShadowUpdate = false
+        var likeUriToSet: ATProtocolURI? = nil
+        var repostUriToSet: ATProtocolURI? = nil
+        
         if let likeUri = post.viewer?.like, existingShadow?.likeUri == nil {
-            await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                shadow.likeUri = likeUri
-                shadow.likeCount = post.likeCount
-                print("Initialized shadow with like URI: \(likeUri.uriString())")
-                if let recordKey = likeUri.recordKey {
-                    print("Like record key: \(recordKey)")
-                }
-            }
+            likeUriToSet = likeUri
+            needsShadowUpdate = true
         }
         
         if let repostUri = post.viewer?.repost, existingShadow?.repostUri == nil {
+            repostUriToSet = repostUri
+            needsShadowUpdate = true
+        }
+        
+        if needsShadowUpdate {
             await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                shadow.repostUri = repostUri
-                shadow.repostCount = post.repostCount
-                print("Initialized shadow with repost URI: \(repostUri.uriString())")
+                if let likeUri = likeUriToSet {
+                    shadow.likeUri = likeUri
+                    shadow.likeCount = post.likeCount
+                }
+                if let repostUri = repostUriToSet {
+                    shadow.repostUri = repostUri
+                    shadow.repostCount = post.repostCount
+                }
             }
         }
     }
@@ -142,365 +166,329 @@ final class PostViewModel {
     
     // MARK: - Post Interactions
     
+    /// Reverts the like state optimistically
+    private func revertLikeState(wasLiked: Bool, originalCount: Int) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                self.isLiked = wasLiked
+                // Note: likeCount is already @MainActor, direct update is fine if needed,
+                // but shadow manager handles count revert.
+            }
+            
+            group.addTask {
+                await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: wasLiked)
+                await self.appState.postShadowManager.setLikeCount(postUri: self.postId, count: originalCount)
+            }
+        }
+    }
+    
+    /// Reverts the repost state optimistically
+    private func revertRepostState(wasReposted: Bool, originalCount: Int) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                self.isReposted = wasReposted
+                // Note: repostCount is already @MainActor.
+            }
+            
+            group.addTask {
+                await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: wasReposted)
+                await self.appState.postShadowManager.setRepostCount(postUri: self.postId, count: originalCount)
+            }
+        }
+    }
+    
     /// Toggle the like status of the post
     @discardableResult
     func toggleLike() async throws -> Bool {
-        guard let client = appState.atProtoClient else { return false }
-        
-        // Local copy of state variables in case we need to revert
-        let wasLiked = isLiked
-        let currentLikeCount = await likeCount
-        
-        // Start with optimistic update
-        await MainActor.run {
-            isLiked.toggle()
+        guard let client = appState.atProtoClient else {
+            throw PostViewModelError.missingClient // Throw error instead of returning false
         }
         
-        // Optimistically update shadow state
-        await appState.postShadowManager.setLiked(postUri: postId, isLiked: !wasLiked)
+        // Local copy for reverting if needed
+        let wasLiked = isLiked
+        let currentLikeCount = await likeCount // Read MainActor property
+        
+        // Use task groups for optimistic updates
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                self.isLiked.toggle()
+            }
+            
+            group.addTask {
+                await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: !wasLiked)
+                // Optimistically update count in shadow
+                await self.appState.postShadowManager.setLikeCount(
+                    postUri: self.postId,
+                    count: wasLiked ? max(0, currentLikeCount - 1) : currentLikeCount + 1
+                )
+            }
+        }
         
         do {
-            if !wasLiked {  // Creating a new like
-                // Create like record
-                let post = ComAtprotoRepoStrongRef(
+            if !wasLiked { // Creating a new like
+                let postRef = ComAtprotoRepoStrongRef(
                     uri: try ATProtocolURI(uriString: postId),
                     cid: postCid
                 )
                 let likeRecord = AppBskyFeedLike(
-                    subject: post,
+                    subject: postRef,
                     createdAt: .init(date: Date())
                 )
                 
-                 let did = try await client.getDid()
-                        
+                let did = try await client.getDid()
                 let input = ComAtprotoRepoCreateRecord.Input(
-                    repo: try ATIdentifier(string:did),
+                    repo: try ATIdentifier(string: did),
                     collection: try NSID(nsidString: "app.bsky.feed.like"),
                     record: .knownType(likeRecord)
                 )
                 
-                let (responseCode, response) = try await client.com.atproto.repo.createRecord(input: input)
+                // Use try for result handling
+                let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
                 
-                if responseCode == 200, let uri = response?.uri {
-                    // Save the URI both in shadow manager and locally
-                    self.likeUri = uri
-                    
-                    // Update shadow with real URI
-                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.likeUri = uri
-                        print("Created like with URI: \(uri.uriString())")
-                        
-                        // Store the record key explicitly for easier access later
-                        if let recordKey = uri.recordKey {
-                            print("Like record key: \(recordKey)")
-                        }
-                    }
-                    return true
-                } else {
-                    // Revert optimistic update on failure
-                    await MainActor.run {
-                        isLiked = wasLiked
-                    }
-                    await appState.postShadowManager.setLiked(postUri: postId, isLiked: wasLiked)
-                    await appState.postShadowManager.setLikeCount(postUri: postId, count: currentLikeCount)
-                    return false
+                guard code == 200, let response = data else {
+                    throw PostViewModelError.requestFailed
                 }
+                // Save the URI both in shadow manager and locally
+                self.likeUri = response.uri
                 
-            } else {  // Deleting an existing like
-                // Delete like record
-//                let userDid = try await client.getDid()
+                // Update shadow with real URI
+                await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                    shadow.likeUri = response.uri
+                }
+                return true
+                
+            } else { // Deleting an existing like
                 let collection = "app.bsky.feed.like"
                 
-                // First try using our locally cached URI
+                // Determine record key (prefer local, fallback to shadow)
                 var recordKey = ""
                 if let uri = self.likeUri {
-                    print("Using locally cached like URI: \(uri.uriString())")
                     recordKey = uri.recordKey ?? ""
                 }
                 
-                // If that fails, try shadow manager
                 if recordKey.isEmpty {
                     if let shadow = await appState.postShadowManager.getShadow(forUri: postId),
                        let likeUri = shadow.likeUri {
-                        print("Found like URI in shadow: \(likeUri.uriString())")
                         recordKey = likeUri.recordKey ?? ""
                     }
                 }
                 
-                // If we still don't have a valid rkey, we can't proceed
-                if recordKey.isEmpty {
-                    print("Error: Unable to find valid like record key")
+                guard !recordKey.isEmpty else {
+                    #if DEBUG
+                    logger.error("Error: Unable to find valid like record key for deletion.")
+                    #endif
                     // Revert optimistic update
-                    await MainActor.run {
-                        isLiked = wasLiked
-                    }
-                    await appState.postShadowManager.setLiked(postUri: postId, isLiked: wasLiked)
-                    await appState.postShadowManager.setLikeCount(postUri: postId, count: currentLikeCount)
-                    return false
+                    await revertLikeState(wasLiked: wasLiked, originalCount: currentLikeCount)
+                    return false // Indicate failure
                 }
                 
-                print("Deleting like with record key: \(recordKey)")
                 let did = try await client.getDid()
-
                 let input = ComAtprotoRepoDeleteRecord.Input(
                     repo: try ATIdentifier(string: did),
                     collection: try NSID(nsidString: collection),
-                    rkey: try RecordKey(keyString: recordKey)   // Use just the record key
+                    rkey: try RecordKey(keyString: recordKey)
                 )
-                let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
-                if response.responseCode == 200 {
-                    // Clear the local URI since we've successfully deleted it
-                    self.likeUri = nil
-                    return true
-                } else {
-                    print("Failed to delete like: HTTP \(response.responseCode)")
-                    // Revert optimistic update on failure
-                    await MainActor.run {
-                        isLiked = wasLiked
-                    }
-                    await appState.postShadowManager.setLiked(postUri: postId, isLiked: wasLiked)
-                    await appState.postShadowManager.setLikeCount(postUri: postId, count: currentLikeCount)
-                    return false
-                }
+                // Use try for result handling
+                _ = try await client.com.atproto.repo.deleteRecord(input: input)
+                
+                // Clear the local URI since we've successfully deleted it
+                self.likeUri = nil
+                // Shadow state already updated optimistically, confirm with server state later if needed
+                return true
             }
         } catch {
-            // Revert optimistic update on error
-            await MainActor.run {
-                isLiked = wasLiked
-            }
-            
-            await appState.postShadowManager.setLiked(postUri: postId, isLiked: wasLiked)
-            await appState.postShadowManager.setLikeCount(postUri: postId, count: currentLikeCount)
-            
-            print("Error toggling like: \(error)")
-            return false
+            // Revert optimistic update on any error
+            await revertLikeState(wasLiked: wasLiked, originalCount: currentLikeCount)
+            #if DEBUG
+            logger.error("Error toggling like: \(error)")
+            #endif
+            // Re-throw the error for the caller to handle if necessary
+            throw error
         }
     }
     
     /// Toggle the repost status of the post
     @discardableResult
     func toggleRepost() async throws -> Bool {
-        guard let client = appState.atProtoClient else { return false }
-        
-        // Local copy of state variables in case we need to revert
-        let wasReposted = isReposted
-        let currentRepostCount = await repostCount
-        
-        // Start with optimistic update
-        await MainActor.run {
-            isReposted.toggle()
+        guard let client = appState.atProtoClient else {
+            throw PostViewModelError.missingClient
         }
         
-        // Optimistically update shadow state
-        await appState.postShadowManager.setReposted(postUri: postId, isReposted: !wasReposted)
-        await appState.postShadowManager.setRepostCount(
-            postUri: postId,
-            count: wasReposted ? max(0, currentRepostCount - 1) : currentRepostCount + 1
-        )
+        // Local copy for reverting if needed
+        let wasReposted = isReposted
+        let currentRepostCount = await repostCount // Read MainActor property
+        
+        // Use task groups for optimistic updates
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                self.isReposted.toggle()
+            }
+            
+            group.addTask {
+                await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: !wasReposted)
+                await self.appState.postShadowManager.setRepostCount(
+                    postUri: self.postId,
+                    count: wasReposted ? max(0, currentRepostCount - 1) : currentRepostCount + 1
+                )
+            }
+        }
         
         do {
-            if !wasReposted {  // Creating a new repost
-                // Create repost record
-                let post = ComAtprotoRepoStrongRef(
+            if !wasReposted { // Creating a new repost
+                let postRef = ComAtprotoRepoStrongRef(
                     uri: try ATProtocolURI(uriString: postId),
                     cid: postCid
                 )
                 let repostRecord = AppBskyFeedRepost(
-                    subject: post,
+                    subject: postRef,
                     createdAt: .init(date: Date())
                 )
                 let did = try await client.getDid()
-
-                
                 let input = ComAtprotoRepoCreateRecord.Input(
                     repo: try ATIdentifier(string: did),
                     collection: try NSID(nsidString: "app.bsky.feed.repost"),
                     record: .knownType(repostRecord)
                 )
                 
-                let (responseCode, response) = try await client.com.atproto.repo.createRecord(input: input)
+                let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
                 
-                if responseCode == 200, let uri = response?.uri {
-                    // Save the URI both in shadow manager and locally
-                    self.repostUri = uri
-                    
-                    // Update shadow with real URI
-                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.repostUri = uri
-                        print("Created repost with URI: \(uri.uriString())")
-                        
-                        // Store the record key explicitly for easier access later
-                        if let recordKey = uri.recordKey {
-                            print("Repost record key: \(recordKey)")
-                        }
-                    }
-                    return true
-                } else {
-                    // Revert optimistic update on failure
-                    await MainActor.run {
-                        isReposted = wasReposted
-                    }
-                    await appState.postShadowManager.setReposted(postUri: postId, isReposted: wasReposted)
-                    await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
-                    return false
+                guard code == 200, let response = data else {
+                    throw PostViewModelError.requestFailed
                 }
+
+                // Save the URI both in shadow manager and locally
+                self.repostUri = response.uri
                 
-            } else {  // Deleting an existing repost
-                // Delete repost record
+                // Update shadow with real URI
+                await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                    shadow.repostUri = response.uri
+                }
+                return true
+                
+            } else { // Deleting an existing repost
                 let collection = "app.bsky.feed.repost"
                 
-                // First try using our locally cached URI
+                // Determine record key (prefer local, fallback to shadow)
                 var recordKey = ""
                 if let uri = self.repostUri {
-                    print("Using locally cached repost URI: \(uri.uriString())")
                     recordKey = uri.recordKey ?? ""
                 }
                 
-                // If that fails, try shadow manager
                 if recordKey.isEmpty {
                     if let shadow = await appState.postShadowManager.getShadow(forUri: postId),
                        let repostUri = shadow.repostUri {
-                        print("Found repost URI in shadow: \(repostUri.uriString())")
                         recordKey = repostUri.recordKey ?? ""
                     }
                 }
                 
-                // If we still don't have a valid rkey, we can't proceed
-                if recordKey.isEmpty {
-                    print("Error: Unable to find valid repost record key")
+                guard !recordKey.isEmpty else {
                     // Revert optimistic update
-                    await MainActor.run {
-                        isReposted = wasReposted
-                    }
-                    await appState.postShadowManager.setReposted(postUri: postId, isReposted: wasReposted)
-                    await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
-                    return false
+                    await revertRepostState(wasReposted: wasReposted, originalCount: currentRepostCount)
+                    return false // Indicate failure
                 }
                 
-                print("Deleting repost with record key: \(recordKey)")
                 let did = try await client.getDid()
-
                 let input = ComAtprotoRepoDeleteRecord.Input(
                     repo: try ATIdentifier(string: did),
                     collection: try NSID(nsidString: collection),
-                    rkey: try RecordKey(keyString: recordKey)  // Use just the record key
+                    rkey: try RecordKey(keyString: recordKey)
                 )
-                let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
-                if response.responseCode == 200 {
-                    // Clear the local URI since we've successfully deleted it
-                    self.repostUri = nil
-                    return true
-                } else {
-                    print("Failed to delete repost: HTTP \(response.responseCode)")
-                    // Revert optimistic update on failure
-                    await MainActor.run {
-                        isReposted = wasReposted
-                    }
-                    await appState.postShadowManager.setReposted(postUri: postId, isReposted: wasReposted)
-                    await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
-                    return false
-                }
+                // Use try for result handling
+                _ = try await client.com.atproto.repo.deleteRecord(input: input)
+                
+                // Clear the local URI since we've successfully deleted it
+                self.repostUri = nil
+                // Shadow state already updated optimistically
+                return true
             }
         } catch {
-            // Revert optimistic update on error
-            await MainActor.run {
-                isReposted = wasReposted
-            }
-            
-            await appState.postShadowManager.setReposted(postUri: postId, isReposted: wasReposted)
-            await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
-            
-            print("Error toggling repost: \(error)")
-            return false
+            // Revert optimistic update on any error
+            await revertRepostState(wasReposted: wasReposted, originalCount: currentRepostCount)
+            #if DEBUG
+            logger.error("Error toggling repost: \(error)")
+            #endif
+            // Re-throw the error
+            throw error
         }
     }
     
     /// Create a quote post
     @discardableResult
     func createQuotePost(text: String) async throws -> Bool {
-        guard let client = appState.atProtoClient else { return false }
-        
-        // Get current state for reverting if needed
-        let wasReposted = isReposted
-        let currentRepostCount = await repostCount
-        
-        // Optimistically update repost state
-        await MainActor.run {
-            isReposted = true
+        guard let client = appState.atProtoClient else {
+            throw PostViewModelError.missingClient
         }
         
-        // Optimistically update shadow state
-        await appState.postShadowManager.setReposted(postUri: postId, isReposted: true)
+        // Get current state for reverting if needed
+        // Note: Quote posting *adds* a new post, it doesn't modify the original's repost state directly
+        // in the same way a simple repost does. The UI might show the original as "reposted"
+        // conceptually, but the action creates a *new* post record.
+        // We'll optimistically update the shadow's repost count for immediate feedback,
+        // but we won't toggle `isReposted` here as it refers to a direct repost record.
+        // The server response doesn't give us a direct repost URI for the *original* post
+        // when quoting.
+        
+        let currentRepostCount = await repostCount // Read MainActor property
+        
+        // Optimistically update shadow state count
         await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount + 1)
+        // We don't set `isReposted = true` or `setReposted` because this isn't a direct repost record.
         
         do {
             // Create quote post record
-            let post = ComAtprotoRepoStrongRef(
+            let postRef = ComAtprotoRepoStrongRef(
                 uri: try ATProtocolURI(uriString: postId),
                 cid: postCid
             )
             
-            let embed = AppBskyEmbedRecord(record: post)
+            let embed = AppBskyEmbedRecord(record: postRef)
             let quotePost = AppBskyFeedPost(
                 text: text,
-                entities: [],
-                facets: [],
+                entities: [], // Consider adding entity/facet detection later
+                facets: [],   // Consider adding entity/facet detection later
                 reply: nil,
                 embed: .appBskyEmbedRecord(embed),
-                langs: [],
+                langs: [], // Detect language later if needed
                 labels: nil,
-                tags: [],
+                tags: [], // Extract tags later if needed
                 createdAt: .init(date: Date())
             )
             let did = try await client.getDid()
-
             let input = ComAtprotoRepoCreateRecord.Input(
                 repo: try ATIdentifier(string: did),
-                collection: try NSID(nsidString:"app.bsky.feed.post"),
+                collection: try NSID(nsidString: "app.bsky.feed.post"),
                 record: .knownType(quotePost)
             )
             
-            let (responseCode, response) = try await client.com.atproto.repo.createRecord(input: input)
+            // Use try for result handling
+            let response = try await client.com.atproto.repo.createRecord(input: input)
             
-            if responseCode == 200 {
-                // Save URI locally
-                if let uri = response?.uri {
-                    self.repostUri = uri
-                }
-                
-                // Update shadow state to indicate it's a quote post
-                await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                    shadow.repostUri = response?.uri
-                }
-                
-                return true
-            } else {
-                // Revert optimistic update on failure
-                await MainActor.run {
-                    isReposted = wasReposted
-                }
-                await appState.postShadowManager.setReposted(postUri: postId, isReposted: wasReposted)
-                await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
-                return false
-            }
+            // We don't save this URI as `self.repostUri` because it's the URI of the *new* quote post,
+            // not a direct repost record of the original post.
+            // We also don't update the shadow's `repostUri` for the original post.
+                        
+            // The optimistic count update remains.
+            return true
+            
         } catch {
-            // Revert optimistic update on error
-            await MainActor.run {
-                isReposted = wasReposted
-            }
-            await appState.postShadowManager.setReposted(postUri: postId, isReposted: wasReposted)
+            // Revert optimistic count update on error
             await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
             
-            print("Error creating quote post: \(error)")
-            return false
+            #if DEBUG
+            logger.error("Error creating quote post: \(error)")
+            #endif
+            // Re-throw the error
+            throw error
         }
     }
     
     // Errors
     enum PostViewModelError: Error {
         case missingClient
+        case unableToFindRecordKey
+        case requestFailed
     }
 }
 

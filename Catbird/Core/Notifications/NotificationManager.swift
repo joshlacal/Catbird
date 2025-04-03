@@ -59,6 +59,21 @@ final class NotificationManager: NSObject {
     let quotes: Bool
   }
 
+  /// A payload for updating user relationships (mutes and blocks)
+  struct RelationshipsPayload: Codable {
+    let did: String
+    let deviceToken: String
+    let mutes: [String]
+    let blocks: [String]
+
+    enum CodingKeys: String, CodingKey {
+      case did
+      case deviceToken = "device_token"
+      case mutes
+      case blocks
+    }
+  }
+
   /// Current status of notification setup
   private(set) var status: NotificationStatus = .unknown
 
@@ -67,6 +82,21 @@ final class NotificationManager: NSObject {
 
   /// Base URL for the notification service API
   private let serviceBaseURL: URL
+
+  /// Cache of muted users
+  private(set) var mutedUsers = Set<String>()
+
+  /// Cache of blocked users
+  private(set) var blockedUsers = Set<String>()
+
+  /// When the relationship data was last synced with the server
+  private var lastRelationshipSync: Date?
+  
+  /// Current count of unread notifications
+  private(set) var unreadCount: Int = 0
+  
+  /// Timer for checking unread notifications
+  private var unreadCheckTimer: Timer?
 
   // MARK: - Initialization
 
@@ -87,6 +117,9 @@ final class NotificationManager: NSObject {
   func configure(with appState: AppState) {
     self.appState = appState
     logger.debug("NotificationManager configured with AppState reference")
+
+    // Set up observers
+    setupGraphObservers()
   }
 
   // MARK: - Public API
@@ -212,7 +245,7 @@ final class NotificationManager: NSObject {
     preferences = newPreferences
 
     // Only send update if we're in a good state
-    guard status == .registered, let token = deviceToken else {
+    guard status == .registered else {
       logger.warning("Not updating preferences - not properly registered")
       return
     }
@@ -242,6 +275,252 @@ final class NotificationManager: NSObject {
 
     await updatePreferences(newPreferences)
   }
+  
+  /// Starts periodic checking of unread notifications
+  func startUnreadNotificationChecking() {
+    // Stop any existing timer
+    unreadCheckTimer?.invalidate()
+    
+    // Create a new timer (every 60 seconds)
+    unreadCheckTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+      Task { [weak self] in
+        await self?.checkUnreadNotifications()
+      }
+    }
+    
+    // Initial check
+    Task {
+      await checkUnreadNotifications()
+    }
+    
+    logger.info("Started background notification checking")
+  }
+  
+  /// Checks for unread notifications and updates count
+  @MainActor
+  func checkUnreadNotifications() async {
+    // Only check when notifications are enabled and we are registered
+    guard notificationsEnabled, status == .registered, let client = client else {
+      logger.warning("Cannot check unread notifications - not properly configured")
+      return
+    }
+    
+    do {
+      let (responseCode, output) = try await client.app.bsky.notification.getUnreadCount(
+        input: .init()
+      )
+      
+      guard responseCode == 200, let output = output else {
+        logger.error("Failed to get unread notification count: \(responseCode)")
+        return
+      }
+      
+      if output.count != unreadCount {
+        unreadCount = output.count
+        
+        // Update app badge
+        if #available(iOS 17.0, *) {
+          UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
+            if let error = error {
+              self.logger.error("Failed to update badge count: \(error.localizedDescription)")
+            }
+          }
+        } else {
+          UIApplication.shared.applicationIconBadgeNumber = self.unreadCount
+        }
+        
+        // Post notification for observers
+        NotificationCenter.default.post(
+          name: NSNotification.Name("UnreadNotificationCountChanged"),
+          object: nil,
+          userInfo: ["count": self.unreadCount]
+        )
+        
+        logger.info("Unread notification count updated: \(self.unreadCount)")
+      }
+    } catch {
+      logger.error("Error checking unread notifications: \(error.localizedDescription)")
+    }
+  }
+  
+  /// Update unread count after notifications are marked as seen
+  func updateUnreadCountAfterSeen() {
+    Task { @MainActor in
+      unreadCount = 0
+      
+      // Update app badge
+      if #available(iOS 17.0, *) {
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+          if let error = error {
+            self.logger.error("Failed to reset badge count: \(error.localizedDescription)")
+          }
+        }
+      } else {
+        UIApplication.shared.applicationIconBadgeNumber = 0
+      }
+      
+      // Post notification for observers
+      NotificationCenter.default.post(
+        name: NSNotification.Name("UnreadNotificationCountChanged"),
+        object: nil,
+        userInfo: ["count": 0]
+      )
+      
+      logger.info("Reset unread notification count after marking as seen")
+    }
+  }
+
+  // MARK: - Relationship Sync Methods
+
+  /// Synchronizes muted and blocked users with the notification server
+  func syncRelationships() async {
+    // Add guard to prevent syncing when notifications are disabled
+    guard notificationsEnabled else {
+      logger.info("Not syncing relationships - notifications are disabled")
+      return
+    }
+
+    guard let client = client else {
+      logger.warning("Cannot sync relationships - no client available")
+      return
+    }
+
+    // Gather relationships from GraphManager
+    await gatherRelationships()
+
+    // Send to notification server
+    await updateRelationshipsOnServer()
+  }
+
+  /// Gathers current relationships from the graph manager
+  private func gatherRelationships() async {
+    guard let appState = appState else {
+      logger.warning("Cannot gather relationships - no AppState reference")
+      return
+    }
+
+    do {
+      // Use existing graph manager to refresh caches
+      try await appState.graphManager.refreshMuteCache()
+      try await appState.graphManager.refreshBlockCache()
+
+      // Get muted and blocked users
+      await MainActor.run {
+        // Access GraphManager's cached values
+        mutedUsers = appState.graphManager.muteCache
+        blockedUsers = appState.graphManager.blockCache
+      }
+
+      logger.info(
+        "Gathered relationships: \(self.mutedUsers.count) mutes, \(self.blockedUsers.count) blocks")
+    } catch {
+      logger.error("Error gathering relationships: \(error.localizedDescription)")
+    }
+  }
+
+  /// Updates relationships on the notification server
+  private func updateRelationshipsOnServer() async {
+    // Add guard to prevent sending when notifications are disabled
+    guard notificationsEnabled else {
+      logger.info("Not updating relationships on server - notifications are disabled")
+      return
+    }
+
+    guard let client = client else {
+      logger.warning("Cannot update relationships - no client available")
+      return
+    }
+
+    guard let deviceToken = deviceToken else {
+      logger.warning("Cannot update relationships - no device token")
+      return
+    }
+
+    do {
+      // Get the user's DID
+      let did = try await client.getDid()
+
+      // Create request
+      var request = URLRequest(url: serviceBaseURL.appendingPathComponent("relationships"))
+      request.httpMethod = "PUT"
+      request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+      // Convert token to string format
+      let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
+
+      // Create payload
+      let payload = RelationshipsPayload(
+        did: did,
+        deviceToken: tokenString,
+        mutes: Array(mutedUsers),
+        blocks: Array(blockedUsers)
+      )
+
+      // Encode payload
+      request.httpBody = try JSONEncoder().encode(payload)
+
+      // Send request
+      let (data, response) = try await URLSession.shared.data(for: request)
+
+      // Check response
+      guard let httpResponse = response as? HTTPURLResponse,
+        httpResponse.statusCode == 200 || httpResponse.statusCode == 204
+      else {
+        let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+        logger.error("Failed to update relationships: HTTP \(response)")
+        throw NSError(
+          domain: "NotificationManager", code: -1,
+          userInfo: [NSLocalizedDescriptionKey: "Invalid response: \(errorMessage)"])
+      }
+
+      logger.info("Successfully updated relationships on notification server")
+      lastRelationshipSync = Date()
+    } catch {
+      logger.error("Error updating relationships: \(error.localizedDescription)")
+    }
+  }
+
+  /// Set up observers for graph changes
+  private func setupGraphObservers() {
+    // Observe changes to mutes and blocks
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleGraphChange),
+      name: NSNotification.Name("UserGraphChanged"),
+      object: nil
+    )
+  }
+
+  @objc private func handleGraphChange() {
+    Task {
+      await syncRelationships()
+    }
+  }
+
+  /// Syncs all user data (preferences and relationships) with the notification server
+  func syncAllUserData() async {
+    // Add guard to prevent syncing when notifications are disabled
+    guard notificationsEnabled else {
+      logger.info("Not syncing user data - notifications are disabled")
+      return
+    }
+
+    guard status == .registered else {
+      logger.warning("Cannot sync - not properly registered")
+      return
+    }
+
+    // Fetch notification preferences
+    await fetchNotificationPreferences()
+
+    // Update preferences on server
+    await updateNotificationPreferences()
+
+    // Sync relationships
+    await syncRelationships()
+
+    logger.info("Completed full user data sync with notification server")
+  }
 
   // MARK: - Private Methods
 
@@ -256,7 +535,7 @@ final class NotificationManager: NSObject {
 
     do {
       // Get the user's DID
-         let did = try await client.getDid()
+      let did = try await client.getDid()
 
       // Convert token to string format
       let tokenString = token.map { String(format: "%02.2hhx", $0) }.joined()
@@ -291,6 +570,9 @@ final class NotificationManager: NSObject {
 
         // Now that we're registered, fetch the current preferences
         await fetchNotificationPreferences()
+
+        // Also sync relationships
+        await syncRelationships()
       } else {
         let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
         logger.error(
@@ -362,9 +644,9 @@ final class NotificationManager: NSObject {
     }
 
     do {
-        
       // Get the user's DID
-        let did = try await client.getDid() 
+      let did = try await client.getDid()
+      
       // Create a payload with explicit types
       let payload = PreferencesPayload(
         did: did,
@@ -409,6 +691,16 @@ final class NotificationManager: NSObject {
     // Check notification status when app becomes active
     Task {
       await checkNotificationStatus()
+      
+      // Also check for unread notifications
+      await checkUnreadNotifications()
+
+      // Sync relationships if we haven't in a while
+      if let lastSync = lastRelationshipSync,
+        Date().timeIntervalSince(lastSync) > 3600
+      {  // If it's been over an hour
+        await syncRelationships()
+      }
     }
   }
 }
@@ -422,7 +714,6 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-
     logger.info("Received notification while app in foreground")
 
     // Show notification banner even when app is in foreground
@@ -435,7 +726,6 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
-
     let userInfo = response.notification.request.content.userInfo
     logger.info("User interacted with notification: \(userInfo)")
 
@@ -443,7 +733,6 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     if let uriString = userInfo["uri"] as? String,
       let typeString = userInfo["type"] as? String
     {
-
       logger.info("Notification contains URI: \(uriString) of type: \(typeString)")
 
       // Parse the URI and navigate

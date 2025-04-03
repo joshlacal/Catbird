@@ -81,25 +81,22 @@ final class AuthenticationManager {
   }
 
   /// Update the authentication state and emit the change
-  @MainActor
-  private func updateState(_ newState: AuthState) {
-    guard newState != state else { return }  // Avoid duplicate updates
+    @MainActor
+    private func updateState(_ newState: AuthState) {
+      guard newState != state else { return }
+      
+      logger.debug(
+        "Updating auth state: \(String(describing: self.state)) -> \(String(describing: newState))")
 
-    logger.debug(
-      "Updating auth state: \(String(describing: self.state)) -> \(String(describing: newState))")
-
-    // To ensure SwiftUI detects the state change properly, we update on the MainActor
-    Task { @MainActor in
-      // This explicit task and temporary variable ensures proper invalidation
-      // of SwiftUI's dependency tracking system
-      let _ = self.state
+      // Directly update the state on the MainActor
       self.state = newState
-
-      // Also emit through the continuation for other observers
-      stateSubject.continuation.yield(newState)
+      
+      // Then yield to any async observers
+      Task {
+        stateSubject.continuation.yield(newState)
+      }
     }
-  }
-
+    
   // MARK: - Public API
 
   /// Initialize the client and check authentication state

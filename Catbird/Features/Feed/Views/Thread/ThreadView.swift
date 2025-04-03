@@ -1,6 +1,7 @@
 import Petrel
 import SwiftUI
 import os
+import SwiftUIIntrospect
 
 struct ThreadView: View {
   @Environment(AppState.self) private var appState: AppState
@@ -49,6 +50,15 @@ struct ThreadView: View {
         Text("Could not load thread")
       }
     }
+    .overlay(
+      VStack {
+        Color.clear
+          .frame(height: 1)
+        Spacer()
+      },
+      alignment: .top
+    )
+
     .globalBackgroundColor(Color.primaryBackground)
     .task {
       guard !hasInitialized else { return }
@@ -82,6 +92,10 @@ struct ThreadView: View {
     .scrollIndicators(.hidden)
     .scrollPosition($scrollPosition, anchor: .bottom)
     .rotationEffect(.degrees(180))
+    .introspect(.scrollView, on: .iOS(.v16, .v17, .v18)) { scrollView in
+        // Disable standard scrollsToTop because it just goes down
+        scrollView.scrollsToTop = false
+    }
   }
 
   private var parentsSection: some View {
@@ -305,7 +319,6 @@ struct ThreadView: View {
     guard let threadManager = threadManager,
       let threadUnion = threadManager.threadViewPost
     else {
-      logger.debug("processThreadData: No thread manager or thread view post available")
       return
     }
 
@@ -313,25 +326,16 @@ struct ThreadView: View {
     case .appBskyFeedDefsThreadViewPost(let threadViewPost):
       let oldParentCount = parentPosts.count
       parentPosts = collectParentPosts(from: threadViewPost.parent)
-      logger.debug(
-        "processThreadData: Updated parent posts. Old count: \(oldParentCount), New count: \(parentPosts.count)"
-      )
 
       mainPost = threadViewPost.post
-      logger.debug("processThreadData: Set main post: \(threadViewPost.post.uri.uriString())")
 
       if let replies = threadViewPost.replies {
           replyWrappers = selectRelevantReplies(replies, opAuthorID: threadViewPost.post.author.did.didString())
-        logger.debug(
-          "processThreadData: Processed \(replies.count) replies into \(replyWrappers.count) wrappers"
-        )
       } else {
         replyWrappers = []
-        logger.debug("processThreadData: No replies to process")
       }
 
     default:
-      logger.debug("processThreadData: Received non-standard thread type")
       parentPosts = []
       mainPost = nil
       replyWrappers = []
@@ -345,9 +349,7 @@ struct ThreadView: View {
       var currentPost = initialPost
       var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil
       var depth = 0
-      
-      logger.debug("collectParentPosts: Starting collection iteratively")
-      
+            
       while let post = currentPost {
         depth += 1
         switch post {
@@ -356,24 +358,21 @@ struct ThreadView: View {
           parents.append(ParentPost(id: postURI, post: post, grandparentAuthor: grandparentAuthor))
           grandparentAuthor = threadViewPost.post.author
           currentPost = threadViewPost.parent
-          logger.debug("collectParentPosts: Added parent at depth \(depth): \(postURI)")
           
         case .appBskyFeedDefsNotFoundPost(let notFoundPost):
           let uri = notFoundPost.uri.uriString()
-          logger.debug("collectParentPosts: Found not-found post at depth \(depth): \(uri)")
           parents.append(ParentPost(id: uri, post: post, grandparentAuthor: grandparentAuthor))
           currentPost = nil
           
         case .appBskyFeedDefsBlockedPost(let blockedPost):
           let uri = blockedPost.uri.uriString()
-          logger.debug("collectParentPosts: Found blocked post at depth \(depth): \(uri)")
           parents.append(ParentPost(id: uri, post: post, grandparentAuthor: grandparentAuthor))
           currentPost = nil
           
         case .pending(let pendingData):
           // Generate a more consistent ID for pending posts based on the type
           let pendingID = "pending-\(pendingData.type)-\(depth)"
-          logger.debug("collectParentPosts: Found pending post at depth \(depth): \(pendingID)")
+
           parents.append(ParentPost(id: pendingID, post: post, grandparentAuthor: grandparentAuthor))
           
           // Important: Don't terminate the chain, try to access parent if possible
@@ -393,9 +392,8 @@ struct ThreadView: View {
         }
       }
       
-      logger.debug("collectParentPosts: Finished collecting \(parents.count) parent posts")
       if !parents.isEmpty {
-        logger.debug("collectParentPosts: Parent URIs in order: \(parents.map { $0.id }.joined(separator: ", "))")
+//        logger.debug("collectParentPosts: Parent URIs in order: \(parents.map { $0.id }.joined(separator: ", "))")
       }
       
       return parents
@@ -581,9 +579,11 @@ struct ThreadView: View {
               .font(.subheadline)
               .foregroundColor(.accentColor)
           }
+          .padding(.vertical, 8)
+          .padding(.horizontal, 12)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
       }
       // If we haven't reached max depth and there are replies, show the next post
       else if depth < maxDepth, let replies = reply.replies, !replies.isEmpty {
@@ -657,3 +657,4 @@ extension AppBskyFeedDefs.ThreadViewPostParentUnion {
     }
   }
 }
+

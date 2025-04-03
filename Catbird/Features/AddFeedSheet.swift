@@ -1,3 +1,11 @@
+//
+//  AddFeedSheet.swift
+//  Catbird
+//
+//  Created by Josh LaCalamito on 4/2/25.
+//
+
+
 import NukeUI
 import OSLog
 import Petrel
@@ -174,7 +182,7 @@ struct AddFeedSheet: View {
             columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2),
             spacing: 16
         ) {
-            ForEach(feeds, id: \.uri.uriString) { feed in
+            ForEach(feeds, id: \.uri) { feed in
                 feedCard(feed: feed)
                     .onTapGesture {
                         selectedFeedForPinning = feed

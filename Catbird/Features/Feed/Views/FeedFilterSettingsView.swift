@@ -1,22 +1,24 @@
 import SwiftUI
 
+import SwiftUI
+
 struct FeedFilterSettingsView: View {
   @Environment(AppState.self) private var appState
-
+  
   var body: some View {
     List {
       Section(header: Text("Filter Settings")) {
-        ForEach(appState.feedFilterSettings.filters) { filter in
+        ForEach(appState.feedFilterSettings.filters.indices, id: \.self) { index in
           Toggle(
             isOn: Binding(
-              get: { filter.isEnabled },
-              set: { _ in appState.feedFilterSettings.toggleFilter(id: filter.id) }
+              get: { appState.feedFilterSettings.filters[index].isEnabled },
+              set: { _ in appState.feedFilterSettings.toggleFilter(id: appState.feedFilterSettings.filters[index].id) }
             )
           ) {
             VStack(alignment: .leading, spacing: 4) {
-              Text(filter.name)
+              Text(appState.feedFilterSettings.filters[index].name)
                 .font(.headline)
-              Text(filter.description)
+              Text(appState.feedFilterSettings.filters[index].description)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -35,8 +37,6 @@ struct FeedFilterSettingsView: View {
 }
 
 #Preview {
-  NavigationStack {
     FeedFilterSettingsView()
       .environment(AppState())
-  }
 }

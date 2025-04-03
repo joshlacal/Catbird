@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Typography Constants
 
@@ -219,14 +220,14 @@ struct CustomFontModifier: ViewModifier {
     let size: CGFloat?
     let weight: Font.Weight
     let design: Font.Design
-    let width: Int?
+    let width: CGFloat?   // Note: Changed type to CGFloat for precision control
     let relativeTo: Font.TextStyle?
     
     init(
         size: CGFloat? = nil,
         weight: Font.Weight = .regular,
         design: Font.Design = .default,
-        width: Int? = nil,
+        width: CGFloat? = nil,
         relativeTo: Font.TextStyle? = nil
     ) {
         self.size = size
@@ -238,13 +239,15 @@ struct CustomFontModifier: ViewModifier {
     
     func body(content: Content) -> some View {
         if let textStyle = relativeTo {
-            // Use text style if provided
             content.font(.system(textStyle, design: design).weight(weight))
         } else if let explicitSize = size {
-            // Fall back to explicit size
-            content.font(.system(size: explicitSize, weight: weight, design: design))
+            // Use our custom font if a width is provided.
+            if let width = width {
+                content.font(Font.customSystemFont(size: explicitSize, weight: weight, width: width, design: design))
+            } else {
+                content.font(.system(size: explicitSize, weight: weight, design: design))
+            }
         } else {
-            // Last resort default
             content.font(.system(size: 17, weight: weight, design: design))
         }
     }
@@ -280,7 +283,7 @@ extension View {
     func customScaledFont(
         size: CGFloat? = nil,
         weight: Font.Weight = .regular,
-        width: Int? = nil,
+        width: CGFloat? = nil,
         relativeTo: Font.TextStyle? = nil,
         design: Font.Design = .default
     ) -> some View {
@@ -293,6 +296,82 @@ extension View {
         ))
     }
 }
+
+
+extension Font {
+    /// Creates a custom system font that supports width variants and dynamic type scaling.
+    /// - Parameters:
+    ///   - size: The base font size.
+    ///   - weight: The font weight.
+    ///   - width: The width trait adjustment (if nil, it uses standard width).
+    ///   - design: The font design.
+    ///   - relativeTo: The SwiftUI text style to scale relative to.
+    /// - Returns: A SwiftUI Font that scales dynamically.
+    static func customSystemFont(
+        size: CGFloat,
+        weight: Font.Weight,
+        width: CGFloat? = nil,
+        design: Font.Design = .default,
+        relativeTo textStyle: Font.TextStyle? = nil
+    ) -> Font {
+        // Convert SwiftUI weight to UIFont.Weight.
+        let uiWeight: UIFont.Weight = {
+            switch weight {
+            case .ultraLight: return .ultraLight
+            case .thin:       return .thin
+            case .light:      return .light
+            case .regular:    return .regular
+            case .medium:     return .medium
+            case .semibold:   return .semibold
+            case .bold:       return .bold
+            case .heavy:      return .heavy
+            case .black:      return .black
+            default:          return .regular
+            }
+        }()
+        
+        // Create the base UIFont.
+        let baseUIFont = UIFont.systemFont(ofSize: size, weight: uiWeight)
+        
+        // Optionally apply a width trait.
+        let finalUIFont: UIFont
+        if let width = width {
+            let traits: [UIFontDescriptor.TraitKey: Any] = [.width: width]
+            let descriptor = baseUIFont.fontDescriptor.addingAttributes([UIFontDescriptor.AttributeName.traits: traits])
+            finalUIFont = UIFont(descriptor: descriptor, size: size)
+        } else {
+            finalUIFont = baseUIFont
+        }
+        
+        // If a text style is provided, scale using UIFontMetrics.
+        if let textStyle = textStyle {
+            // Map SwiftUI Font.TextStyle to UIFont.TextStyle.
+            let uiTextStyle: UIFont.TextStyle
+            switch textStyle {
+            case .largeTitle: uiTextStyle = .largeTitle
+            case .title:      uiTextStyle = .title1
+            case .title2:     uiTextStyle = .title2
+            case .title3:     uiTextStyle = .title3
+            case .headline:   uiTextStyle = .headline
+            case .subheadline: uiTextStyle = .subheadline
+            case .body:       uiTextStyle = .body
+            case .callout:    uiTextStyle = .callout
+            case .footnote:   uiTextStyle = .footnote
+            case .caption:    uiTextStyle = .caption1
+            case .caption2:   uiTextStyle = .caption2
+            default:          uiTextStyle = .body
+            }
+            
+            let metrics = UIFontMetrics(forTextStyle: uiTextStyle)
+            let scaledFont = metrics.scaledFont(for: finalUIFont)
+            return Font(scaledFont)
+        } else {
+            // Fallback to no scaling.
+            return Font(finalUIFont)
+        }
+    }
+}
+
 
 // MARK: - Preview Examples
 
@@ -346,3 +425,49 @@ extension View {
         .background(Color(.systemGroupedBackground))
     }
 }
+/*
+extension Font {
+    /// Creates a custom font that supports a width variant by leveraging UIKit's UIFontDescriptor.
+    /// - Parameters:
+    ///   - size: The font size.
+    ///   - weight: The font weight.
+    ///   - width: A CGFloat representing the width trait. Negative values produce a condensed variant, while positive values produce an expanded variant.
+    ///   - design: The font design (default, serif, rounded, monospaced).
+    /// - Returns: A SwiftUI Font that applies the specified width variant.
+    static func customSystemFont(size: CGFloat, weight: Font.Weight, width: CGFloat? = nil, design: Font.Design = .default) -> Font {
+        // If no width is provided, fallback to the standard system font.
+        guard let width = width else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        
+        // Convert SwiftUI weight to UIFont.Weight
+        let uiWeight: UIFont.Weight = {
+            switch weight {
+            case .ultraLight: return .ultraLight
+            case .thin:       return .thin
+            case .light:      return .light
+            case .regular:    return .regular
+            case .medium:     return .medium
+            case .semibold:   return .semibold
+            case .bold:       return .bold
+            case .heavy:      return .heavy
+            case .black:      return .black
+            default:          return .regular
+            }
+        }()
+        
+        // Create the base UIFont from the system font.
+        let baseUIFont = UIFont.systemFont(ofSize: size, weight: uiWeight)
+        
+        // Create a new font descriptor by adding the width trait.
+        let traits: [UIFontDescriptor.TraitKey: Any] = [.width: width]
+        let descriptor = baseUIFont.fontDescriptor.addingAttributes([UIFontDescriptor.AttributeName.traits: traits])
+        
+        // Create a new UIFont with the modified descriptor.
+        let customUIFont = UIFont(descriptor: descriptor, size: size)
+        
+        // Convert it to SwiftUI Font.
+        return Font(customUIFont)
+    }
+}
+*/

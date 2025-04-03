@@ -7,6 +7,8 @@ struct LoginView: View {
     // MARK: - Environment
     @Environment(AppState.self) private var appState
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.colorScheme) private var colorScheme
     
     // MARK: - State
     @State private var handle = ""
@@ -15,154 +17,175 @@ struct LoginView: View {
     @State private var validationError: String? = nil
     @State private var showInvalidAnimation = false
     @State private var authenticationCancelled = false
-    
+    enum Field: Hashable {
+        case username
+    }
+    @FocusState private var focusedField: Field?
+
+
     // Logger
     private let logger = Logger(subsystem: "blue.catbird", category: "Auth")
     
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                // Logo/Header Area
-                VStack(spacing: 20) {
-                    Image(systemName: "bird.fill")
-                        .font(.system(size: 70))
-                        .foregroundStyle(
-                            .linearGradient(
-                                colors: [.blue, .cyan],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .symbolEffect(.bounce, options: .repeating, value: isLoggingIn)
-                        .padding(.bottom, 8)
-                    
-                    Text("Catbird")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(.primary)
-                    
-                    Text("for Bluesky")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 40)
-                .padding(.bottom, 16)
-                
-                // Login Form
-                VStack(spacing: 16) {
-                    ValidatingTextField(
-                        text: $handle,
-                        prompt: "username.bsky.social",
-                        icon: "at",
-                        validationError: validationError,
-                        isDisabled: isLoggingIn,
-                        keyboardType: .emailAddress,
-                        submitLabel: .go,
-                        onSubmit: {
-                            handleLogin()
-                        }
-                    )
-                    .shake(animatableParameter: showInvalidAnimation)
-
-                    if isLoggingIn {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                                .controlSize(.small)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: adaptiveSpacing(geometry)) {
+                    // Logo/Header Area
+                    VStack(spacing: adaptiveSpacing(geometry, factor: 0.4)) {
+                        Image("CatbirdIcon")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: adaptiveSize(geometry, base: 250, min: 120),
+                                   height: adaptiveSize(geometry, base: 250, min: 120))
+                            .symbolEffect(.bounce, options: .repeating, value: isLoggingIn)
+                            .padding(.bottom, adaptiveSpacing(geometry, factor: 0.2))
+                            .shadow(color: colorScheme == .dark ? .black.opacity(0.3) : .white.opacity(0.3), radius: 25, x: 0, y: 1)
+                        
+                        VStack(spacing: 3) {
+                            Text("Catbird")
+                                .font(.customSystemFont(size: adaptiveSize(geometry, base: 34, min: 28), weight: .bold, width: 0.7, design: .default, relativeTo: .largeTitle))
+                                .foregroundStyle(.primary)
                             
-                            Text("Authenticating with Bluesky...")
-                                .font(.subheadline)
+                            Text("for Bluesky")
+                                .font(.customSystemFont(size: adaptiveSize(geometry, base: 20, min: 16), weight: .medium, width: 0.7, design: .default, relativeTo: .title))
                                 .foregroundStyle(.secondary)
                         }
-                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(.top, adaptiveSpacing(geometry, factor: 1))
+                    .padding(.bottom, adaptiveSpacing(geometry, factor: 0.6))
+                    
+                    // Login Form
+                    VStack(spacing: adaptiveSpacing(geometry, factor: 0.7)) {
+                        ValidatingTextField(
+                            text: $handle,
+                            prompt: "username.bsky.social",
+                            icon: "at",
+                            validationError: validationError,
+                            isDisabled: isLoggingIn,
+                            keyboardType: .emailAddress,
+                            submitLabel: .go,
+                            onSubmit: {
+                                handleLogin()
+                            }
+                        )
+                        .focused($focusedField, equals: .username)
+                        .shake(animatableParameter: showInvalidAnimation)
+                        .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+
+                        if isLoggingIn {
+                            HStack(spacing: 12) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                
+                                Text("Authenticating with Bluesky...")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+                            .padding()
+                            .backgroundStyle(.quaternary)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        } else {
+                            Button {
+                                handleLogin()
+                            } label: {
+                                Label {
+                                    Text("Sign In with Bluesky")
+                                        .font(.headline)
+                                } icon: {
+                                    Image(systemName: "bird.fill")
+                                }
+                                .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(handle.isEmpty)
+                        }
+                    }
+                    .padding(.horizontal)
+                    
+                    // Error Display
+                    if let errorMessage = error {
+                        VStack(spacing: adaptiveSpacing(geometry, factor: 0.3)) {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .symbolEffect(.pulse)
+                                Text("Login Error")
+                                    .font(.headline)
+                                Spacer()
+                                Button(action: { error = nil }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                        .imageScale(.large)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            
+                            Text(errorMessage)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            
+                            Button("Try Again") {
+                                // Reset error state
+                                error = nil
+                                appState.authManager.resetError()
+                            }
+                            .buttonStyle(.bordered)
+                            .padding(.top, 4)
+                        }
                         .padding()
+                        .frame(maxWidth: min(geometry.size.width * 0.9, 400))
                         .backgroundStyle(.quaternary)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        Button {
-                            handleLogin()
-                        } label: {
-                            Label {
-                                Text("Sign In with Bluesky")
-                                    .font(.headline)
-                            } icon: {
-                                Image(systemName: "bird.fill")
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(handle.isEmpty)
+                        .padding(.horizontal)
                     }
-                }
-                .padding(.horizontal)
-                
-                // Error Display
-                if let errorMessage = error {
-                    VStack(spacing: 8) {
+                    
+                    // Auth cancelled toast
+                    if authenticationCancelled {
                         HStack {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .symbolEffect(.pulse)
-                            Text("Login Error")
-                                .font(.headline)
-                            Spacer()
-                            Button(action: { error = nil }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.secondary)
-                                    .imageScale(.large)
-                            }
-                            .buttonStyle(.plain)
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                            Text("Authentication cancelled")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
                         }
-                        
-                        Text(errorMessage)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        
-                        Button("Try Again") {
-                            // Reset error state
-                            error = nil
-                            appState.authManager.resetError()
-                        }
-                        .buttonStyle(.bordered)
-                        .padding(.top, 4)
-                    }
-                    .padding()
-                    .backgroundStyle(.quaternary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal)
-                }
-                
-                // Auth cancelled toast
-                if authenticationCancelled {
-                    HStack {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                        Text("Authentication cancelled")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemBackground).opacity(0.8))
-                    .clipShape(Capsule())
-                    .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .onAppear {
-                        // Reset the cancelled state after 3 seconds
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation {
-                                authenticationCancelled = false
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(.systemBackground).opacity(0.8))
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .onAppear {
+                            // Reset the cancelled state after 3 seconds
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                withAnimation {
+                                    authenticationCancelled = false
+                                }
                             }
                         }
                     }
+                    
+                    Spacer(minLength: adaptiveSize(geometry, base: 40, min: 20))
                 }
-                
-                Spacer()
+                .frame(minHeight: geometry.size.height)
+                .padding(.horizontal)
+            }
+            .onAppear {
+                focusedField = .username
             }
             .navigationBarTitleDisplayMode(.inline)
+            .background(
+                .conicGradient(
+                    colors: [.accentColor, colorScheme == .dark ? .black : .white],
+                    center: UnitPoint(x: 1.5, y: -0.5), // Values outside 0-1 range
+                    angle: .degrees(-45)
+                )
+            )
         }
         .onChange(of: appState.authState) { oldValue, newValue in
             // Update local error state based on auth manager errors
@@ -170,6 +193,45 @@ struct LoginView: View {
                 error = message
                 isLoggingIn = false
             }
+        }
+    }
+    
+    // MARK: - Adaptive Layout Helpers
+    
+    /// Returns spacing that adapts to screen size
+    private func adaptiveSpacing(_ geometry: GeometryProxy, factor: CGFloat = 1.0) -> CGFloat {
+        let baseSpacing: CGFloat = 24.0
+        let minSpacing: CGFloat = 16.0
+        
+        let screenWidth = geometry.size.width
+        let isCompact = horizontalSizeClass == .compact
+        
+        // Adjust spacing based on screen size and size class
+        if screenWidth < 375 {
+            // For small screens like iPhone SE
+            return max(minSpacing, baseSpacing * 0.6) * factor
+        } else if isCompact {
+            // For medium screens with compact size class
+            return max(minSpacing, baseSpacing * 0.8) * factor
+        } else {
+            // For large screens
+            return baseSpacing * factor
+        }
+    }
+    
+    /// Returns a size that adapts to screen dimensions
+    private func adaptiveSize(_ geometry: GeometryProxy, base: CGFloat, min: CGFloat) -> CGFloat {
+        let screenWidth = geometry.size.width
+        let isCompact = horizontalSizeClass == .compact
+        
+        // Scale size based on screen width while respecting minimum
+        if screenWidth < 375 {
+            return min
+        } else if isCompact {
+            let scaleFactor = screenWidth / 428 > 1.0 ? 1.0 : screenWidth / 428
+            return max(min, base * scaleFactor)
+        } else {
+            return base
         }
     }
     
@@ -239,7 +301,7 @@ struct LoginView: View {
                 
             } catch let authSessionError as ASWebAuthenticationSessionError {
                 // User cancelled authentication
-                logger.notice("Authentication was cancelled by user")
+                logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                 authenticationCancelled = true
                 isLoggingIn = false
             } catch {
@@ -259,3 +321,10 @@ struct LoginView: View {
 }
 
 
+#Preview {
+    // Preview provider for LoginView
+    @Previewable @State var appState = AppState()
+    
+        LoginView()
+            .environment(appState)
+}

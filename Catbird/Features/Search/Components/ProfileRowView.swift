@@ -22,10 +22,10 @@ struct ProfileRowView: View {
                     // Handle "Follows you" badge if available
                     if let profileView = profile as? AppBskyActorDefs.ProfileView,
                        let viewer = profileView.viewer, viewer.followedBy != nil {
-                        followsBadge()
+                        FollowsBadgeView()
                     } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic,
                               let viewer = profileViewBasic.viewer, viewer.followedBy != nil {
-                        followsBadge()
+                        FollowsBadgeView()
                     }
                 }
                 
@@ -59,19 +59,6 @@ struct ProfileRowView: View {
         }
     }
     
-    // "Follows you" badge
-    @ViewBuilder
-    private func followsBadge() -> some View {
-        Text("Follows you")
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.accentColor.opacity(0.1))
-            )
-    }
     
     // Follow button with appropriate state
     @ViewBuilder

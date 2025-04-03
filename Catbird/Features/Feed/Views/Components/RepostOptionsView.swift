@@ -4,9 +4,7 @@ import Petrel
 struct RepostOptionsView: View {
     let post: AppBskyFeedDefs.PostView
     let viewModel: ActionButtonViewModel
-    
-    // Remove the onRepost callback
-    
+        
     @Environment(\.dismiss) private var dismiss
     @State private var quoteText = ""
     @State private var isComposing = false
@@ -120,7 +118,10 @@ struct RepostOptionsView: View {
                 .padding()
                 .background(Color(.systemBackground))
                 .cornerRadius(12)
+                .opacity(post.viewer?.embeddingDisabled ?? false ? 0.3 : 1)
             }
+            .disabled(post.viewer?.embeddingDisabled ?? false)
+
         }
         .padding(.horizontal)
     }

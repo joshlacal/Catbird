@@ -130,7 +130,7 @@ struct ResultsView: View {
                                 Button {
                                     path.append(NavigationDestination.post(post.uri))
                                 } label: {
-                                    PostPreview(post: post)
+                                    PostView(post: post, grandparentAuthor: nil, isParentPost: false, isSelectable: false, path: $path, appState: appState)
                                 }
                                 .buttonStyle(.plain)
                                 
@@ -265,7 +265,8 @@ struct ResultsView: View {
                 Button {
                     path.append(NavigationDestination.post(post.uri))
                 } label: {
-                    PostPreview(post: post)
+//                    PostPreview(post: post)
+                    PostView(post: post, grandparentAuthor: nil, isParentPost: false, isSelectable: false, path: $path, appState: appState)
                 }
                 .buttonStyle(.plain)
                 
@@ -370,101 +371,101 @@ struct ResultsView: View {
 }
 
 /// A simplified post preview for search results
-struct PostPreview: View {
-    let post: AppBskyFeedDefs.PostView
-    
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Author avatar
-            AsyncProfileImage(url: URL(string: post.author.avatar?.uriString() ?? ""), size: 44)
-                .padding(.top, 2)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                // Author info
-                HStack {
-                    Text(post.author.displayName ?? "@\(post.author.handle)")
-                        .font(.headline)
-                        .lineLimit(1)
-                    
-                    Text("@\(post.author.handle)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    
-                    Spacer()
-                    
-                    // Post time
-                    if case .knownType(let postObj) = post.record,
-                       let feedPost = postObj as? AppBskyFeedPost {
-                        Text(formatTimeAgo(from: feedPost.createdAt.date))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                // Post content
-                if case .knownType(let postObj) = post.record,
-                   let feedPost = postObj as? AppBskyFeedPost {
-                    Text(feedPost.text)
-                        .font(.body)
-                        .lineLimit(3)
-                        .padding(.vertical, 2)
-                }
-                
-                // Post stats
-                HStack(spacing: 16) {
-                    // Reply count
-                    Label("\(post.replyCount ?? 0)", systemImage: "bubble.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    // Repost count
-                    Label("\(post.repostCount ?? 0)", systemImage: "arrow.2.squarepath")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    // Like count
-                    Label("\(post.likeCount ?? 0)", systemImage: "heart")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 4)
-            }
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal)
-    }
-    
-    // Format a date to a relative "time ago" string
-    private func formatTimeAgo(from date: Date) -> String {
-        let now = Date()
-        let components = Calendar.current.dateComponents([.second, .minute, .hour, .day, .weekOfYear, .month, .year], from: date, to: now)
-        
-        if let years = components.year, years > 0 {
-            return years == 1 ? "1y" : "\(years)y"
-        }
-        
-        if let months = components.month, months > 0 {
-            return months == 1 ? "1mo" : "\(months)mo"
-        }
-        
-        if let weeks = components.weekOfYear, weeks > 0 {
-            return weeks == 1 ? "1w" : "\(weeks)w"
-        }
-        
-        if let days = components.day, days > 0 {
-            return days == 1 ? "1d" : "\(days)d"
-        }
-        
-        if let hours = components.hour, hours > 0 {
-            return hours == 1 ? "1h" : "\(hours)h"
-        }
-        
-        if let minutes = components.minute, minutes > 0 {
-            return minutes == 1 ? "1m" : "\(minutes)m"
-        }
-        
-        return "now"
-    }
-}
+//struct PostPreview: View {
+//    let post: AppBskyFeedDefs.PostView
+//    
+//    var body: some View {
+//        HStack(alignment: .top, spacing: 12) {
+//            // Author avatar
+//            AsyncProfileImage(url: URL(string: post.author.avatar?.uriString() ?? ""), size: 44)
+//                .padding(.top, 2)
+//            
+//            VStack(alignment: .leading, spacing: 4) {
+//                // Author info
+//                HStack {
+//                    Text(post.author.displayName ?? "@\(post.author.handle)")
+//                        .font(.headline)
+//                        .lineLimit(1)
+//                    
+//                    Text("@\(post.author.handle)")
+//                        .font(.subheadline)
+//                        .foregroundColor(.secondary)
+//                        .lineLimit(1)
+//                    
+//                    Spacer()
+//                    
+//                    // Post time
+//                    if case .knownType(let postObj) = post.record,
+//                       let feedPost = postObj as? AppBskyFeedPost {
+//                        Text(formatTimeAgo(from: feedPost.createdAt.date))
+//                            .font(.caption)
+//                            .foregroundColor(.secondary)
+//                    }
+//                }
+//                
+//                // Post content
+//                if case .knownType(let postObj) = post.record,
+//                   let feedPost = postObj as? AppBskyFeedPost {
+//                    Text(feedPost.text)
+//                        .font(.body)
+//                        .lineLimit(3)
+//                        .padding(.vertical, 2)
+//                }
+//                
+//                // Post stats
+//                HStack(spacing: 16) {
+//                    // Reply count
+//                    Label("\(post.replyCount ?? 0)", systemImage: "bubble.right")
+//                        .font(.caption)
+//                        .foregroundColor(.secondary)
+//                    
+//                    // Repost count
+//                    Label("\(post.repostCount ?? 0)", systemImage: "arrow.2.squarepath")
+//                        .font(.caption)
+//                        .foregroundColor(.secondary)
+//                    
+//                    // Like count
+//                    Label("\(post.likeCount ?? 0)", systemImage: "heart")
+//                        .font(.caption)
+//                        .foregroundColor(.secondary)
+//                }
+//                .padding(.top, 4)
+//            }
+//        }
+//        .padding(.vertical, 10)
+//        .padding(.horizontal)
+//    }
+//    
+//    // Format a date to a relative "time ago" string
+//    private func formatTimeAgo(from date: Date) -> String {
+//        let now = Date()
+//        let components = Calendar.current.dateComponents([.second, .minute, .hour, .day, .weekOfYear, .month, .year], from: date, to: now)
+//        
+//        if let years = components.year, years > 0 {
+//            return years == 1 ? "1y" : "\(years)y"
+//        }
+//        
+//        if let months = components.month, months > 0 {
+//            return months == 1 ? "1mo" : "\(months)mo"
+//        }
+//        
+//        if let weeks = components.weekOfYear, weeks > 0 {
+//            return weeks == 1 ? "1w" : "\(weeks)w"
+//        }
+//        
+//        if let days = components.day, days > 0 {
+//            return days == 1 ? "1d" : "\(days)d"
+//        }
+//        
+//        if let hours = components.hour, hours > 0 {
+//            return hours == 1 ? "1h" : "\(hours)h"
+//        }
+//        
+//        if let minutes = components.minute, minutes > 0 {
+//            return minutes == 1 ? "1m" : "\(minutes)m"
+//        }
+//        
+//        return "now"
+//    }
+//}
 

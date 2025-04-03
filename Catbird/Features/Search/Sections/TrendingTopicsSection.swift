@@ -36,9 +36,9 @@ struct TrendingTopicsSection: View {
             HStack {
                 
                 
-                Text("Trending Topics")
-                    .font(.headline)
-                
+                Text("Trending")
+                    .font(.customSystemFont(size: 17, weight: .bold, width: 0.7, relativeTo: .headline))
+
                 Spacer()
                 
                 if topics.count > maxItems {
@@ -127,7 +127,7 @@ struct TrendingTopicsSection: View {
                     HStack(spacing: 10) {
                         Image(systemName: "chart.line.uptrend.xyaxis")
                     Text(topic.displayName ?? topic.topic)
-                        .font(.headline)
+                            .font(.customSystemFont(size: 17, weight: .medium, width: 0.1, relativeTo: .headline))
                         .foregroundColor(.primary)
                     }
 
@@ -139,7 +139,7 @@ struct TrendingTopicsSection: View {
                     }
                     
 //                    HStack(spacing: 12) {
-//                        Label("\(topic.link) posts", systemImage: "text.bubble")
+//                        Label("\(topic.) posts", systemImage: "text.bubble")
 //                            .font(.caption2)
 //                            .foregroundColor(.secondary)
 //                    }

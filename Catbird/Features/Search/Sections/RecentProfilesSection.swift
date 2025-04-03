@@ -18,9 +18,9 @@ struct RecentProfilesSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Recently Viewed Profiles")
-                    .font(.headline)
-                
+                Text("Recently Viewed")
+                    .font(.customSystemFont(size: 17, weight: .bold, width: 0.1, relativeTo: .headline))
+
                 Spacer()
                 
                 Button("Clear", action: onClear)
@@ -30,7 +30,7 @@ struct RecentProfilesSection: View {
             .padding(.horizontal)
             
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
+                HStack(alignment: .top, spacing: 16) {
                     ForEach(profiles.prefix(10)) { profile in
                         Button {
                             onSelect(profile)
@@ -41,18 +41,16 @@ struct RecentProfilesSection: View {
                                     url: URL(string: profile.avatarURL ?? ""),
                                     size: 56
                                 )
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.accentColor, lineWidth: 2)
-                                        .opacity(0.3)
-                                )
+                                .shadow(color: colorScheme == .dark ? .white.opacity(0.2) : .black.opacity(0.2), radius: 3)
+                                .padding(6)
                                 
                                 // Display name or handle
                                 Text(profile.displayName ?? "@\(profile.handle)")
                                     .font(.caption)
+                                    .multilineTextAlignment(.center)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
                                     .frame(width: 70)
                             }
                         }

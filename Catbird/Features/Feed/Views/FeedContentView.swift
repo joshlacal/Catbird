@@ -28,29 +28,28 @@ struct FeedContentView: View {
   // MARK: - Body
   var body: some View {
     ZStack {
-    ScrollViewReader { proxy in
-      FeedListView(
-        posts: posts,
-        path: $path,
-        proxy: proxy,
-        appState: appState,
-        loadMoreAction: { await loadMoreAction() },
-        refreshAction: { await refreshAction() },
-        feedType: feedType
-      )
-      .id(feedType.identifier)  // Use stable ID based on feed type
-      // Simple clean transition - just fade in and out
-      .transition(.opacity)
-    }
-
+      ScrollViewReader { proxy in
+        FeedListView(
+          posts: posts,
+          path: $path,
+          proxy: proxy,
+          appState: appState,
+          loadMoreAction: { await loadMoreAction() },
+          refreshAction: { await refreshAction() },
+          feedType: feedType
+        )
+        .id(feedType.identifier)  // Use stable ID based on feed type
+        // Simple clean transition - just fade in and out
+        .transition(.opacity)
+      }
 
       // Show filter loading indicator when applying filters
-      if isApplyingFilters {
-        VStack {
-          FilterLoadingIndicator()
-          Spacer()
-        }
-      }
+//      if isApplyingFilters {
+//        VStack {
+//          FilterLoadingIndicator()
+//          Spacer()
+//        }
+//      }
     }
     .task {
       await applyFilters()
@@ -160,6 +159,7 @@ struct FeedListView: View {
           index: indexedPost.index,
           path: $path
         )
+        .compositingGroup()
 
         // Trigger load more if near the bottom
         if indexedPost.index >= posts.count - 5 && posts.count >= 10 {

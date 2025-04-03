@@ -1,4 +1,5 @@
 import Foundation
+import Nuke
 import OSLog
 import Petrel
 import SwiftData
@@ -27,6 +28,8 @@ final class AppState {
 
   // Used to track which tab was tapped twice to trigger scroll to top
   var tabTappedAgain: Int? = nil
+
+  var currentUserProfile: AppBskyActorDefs.ProfileViewDetailed? = nil
 
   // MARK: - Component Managers
 
@@ -84,7 +87,7 @@ final class AppState {
       guard let self = self else { return }
 
       for await state in authManager.stateChanges {
-        await MainActor.run {
+        Task { @MainActor in
           // When auth state changes, update ALL manager client references
           if case .authenticated = state {
             self.postManager.updateClient(self.authManager.client)
@@ -96,15 +99,34 @@ final class AppState {
               Task { @MainActor in
                 await self.notificationManager.requestNotificationsAfterLogin()
               }
-              
+
               // When we authenticate, also try to refresh preferences
-              Task {
+              Task { @MainActor in
+
                 do {
                   try await self.preferencesManager.fetchPreferences(forceRefresh: true)
                 } catch {
                   self.logger.error(
                     "Error fetching preferences after authentication: \(error.localizedDescription)"
                   )
+                }
+
+                guard let currentUserDID = self.currentUserDID else {
+                  self.logger.error("No current user DID after authentication")
+                  return
+                }
+
+                // Fetch the current user profile after authentication
+                do {
+                  let profile = try await self.atProtoClient?.app.bsky.actor.getProfile(
+                    input: .init(actor: ATIdentifier(string: currentUserDID))
+                  ).data
+
+                  self.currentUserProfile = profile
+                  self.logger.info("Successfully fetched current user profile after authentication")
+                } catch {
+                  self.logger.error(
+                    "Failed to fetch current user profile: \(error.localizedDescription)")
                 }
               }
             }
@@ -114,6 +136,13 @@ final class AppState {
             self.preferencesManager.updateClient(nil)
             self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
+          } else if case .initializing = state {
+            // Force profile clear during account switch transition
+            await MainActor.run {
+              self.currentUserProfile = nil
+              self.logger.info(
+                "AUTH CHANGE: Force cleared currentUserProfile during initializing state")
+            }
           }
         }
       }
@@ -160,9 +189,107 @@ final class AppState {
     logger.info("🏁 AppState.initialize() completed")
   }
 
-  /// Refresh all data after account switching
+  @MainActor
+  func switchToAccount(did: String) async throws {
+    logger.info("Switching to account: \(did)")
+
+    // 1. Capture the old avatar URL *before* clearing the profile
+    let _ = currentUserProfile?.avatar?.url
+
+    // 2. COMPLETELY CLEAR the current user profile including avatar URL
+    // Set to nil FORCEFULLY on the main thread to ensure immediate UI update
+    await MainActor.run {
+      self.currentUserProfile = nil
+      logger.debug("SWITCH: currentUserProfile thoroughly cleared to nil")
+    }
+
+    // 3. Give SwiftUI a chance to process the nil state update
+    await Task.yield()
+    logger.debug("SWITCH: Yielded after setting profile to nil")
+
+    // 4. Use a more aggressive cache clearing approach
+    ImageLoadingManager.shared.pipeline.cache.removeAll()
+    logger.info("SWITCH: Cleared ALL image caches for clean switch")
+
+    // 5. Switch account in AuthManager
+    try await authManager.switchToAccount(did: did)
+    logger.debug("SWITCH: AuthManager switched account")
+
+    // 6. Refresh app state
+    await refreshAfterAccountSwitch()
+
+    // NEW: Add a deliberate delay to ensure client is fully ready
+    try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+
+    // 7. Now fetch profile when we're sure client is ready
+    await reloadCurrentUserProfile()
+
+    // 8. Final verification of profile state
+    if let newURL = currentUserProfile?.avatar?.url {
+      logger.info("SWITCH: New profile has avatar URL: \(newURL.absoluteString)")
+    } else {
+      logger.warning("SWITCH: New profile has nil avatar URL after reload")
+    }
+
+    // 9. Verify profile switch completion
+    try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+    logger.info("SWITCH: Additional verification check after reload")
+    if let actualProfileDID = currentUserProfile?.did.didString(),
+      actualProfileDID != did
+    {
+      logger.error("SWITCH: Profile DID mismatch! Expected \(did) but got \(actualProfileDID)")
+      // Force another reload
+      await reloadCurrentUserProfile()
+    }
+
+    NotificationCenter.default.post(name: .init("ForceToolbarRecreation"), object: nil)
+
+  }
+
+  @MainActor
+  func reloadCurrentUserProfile() async {
+    guard let client = authManager.client, let did = currentUserDID else {
+      logger.warning("Cannot reload profile: Missing client or DID.")
+      await MainActor.run { currentUserProfile = nil }
+      return
+    }
+
+    // Retry mechanism - try up to 5 times with increasing delays
+    for attempt in 1...5 {
+      do {
+        logger.debug("RELOAD: Profile fetch attempt \(attempt) for DID: \(did)")
+        let profile = try await client.app.bsky.actor.getProfile(
+          input: .init(actor: ATIdentifier(string: did))
+        ).data
+
+        await MainActor.run {
+          self.currentUserProfile = profile
+          logger.info("RELOAD: Successfully loaded profile on attempt \(attempt)")
+          NotificationCenter.default.post(name: .init("UserProfileUpdated"), object: nil)
+          NotificationCenter.default.post(name: .init("AccountSwitchComplete"), object: nil)
+          NotificationCenter.default.post(name: .init("ForceToolbarRecreation"), object: nil)
+        }
+
+        return  // Success - exit the function
+      } catch {
+        logger.error("RELOAD: Attempt \(attempt) failed: \(error.localizedDescription)")
+
+        if attempt < 5 {
+          // Exponential backoff - 200ms, 400ms, 800ms, 1600ms
+          try? await Task.sleep(nanoseconds: UInt64(200_000_000 * pow(2.0, Double(attempt - 1))))
+        } else {
+          // Last attempt failed
+          await MainActor.run { currentUserProfile = nil }
+        }
+      }
+    }
+  }
+
   @MainActor
   func refreshAfterAccountSwitch() async {
+    // **Important:** DO NOT set currentUserProfile = nil here.
+    // It should be handled by the calling function (switchToAccount)
+    // or reloadCurrentUserProfile if needed.
     logger.info("Refreshing data after account switch")
 
     // Clear old prefetched data
@@ -180,14 +307,13 @@ final class AppState {
 
     // Reload preferences
     do {
+      // Fetch preferences, but maybe don't force refresh if profile load failed? Or handle error better.
       try await preferencesManager.fetchPreferences(forceRefresh: true)
       logger.info("Successfully refreshed preferences after account switch")
     } catch {
       logger.error("Failed to refresh preferences after account switch: \(error)")
     }
-
-    // Refresh other data as needed
-    // Any other state that needs resetting
+    // Any other state that needs resetting after managers have new clients
   }
 
   /// Set up a timer to periodically prune old feed models
@@ -314,7 +440,6 @@ final class AppState {
   // MARK: Navigation
   func configureURLHandler() {
     urlHandler.navigateAction = { [weak self] destination, tabIndex in
-      print("NavigateAction called with destination: \(destination)")
 
       self?.navigationManager.navigate(to: destination, in: tabIndex)
     }
@@ -340,9 +465,10 @@ final class AppState {
     facets: [AppBskyRichtextFacet],
     parentPost: AppBskyFeedDefs.PostView?,
     selfLabels: ComAtprotoLabelDefs.SelfLabels,
-    embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
+    embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?,
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
   ) async throws {
-    // Delegate to PostManager
+    // Delegate to PostManager with the threadgate rules
     try await postManager.createPost(
       postText,
       languages: languages,
@@ -351,7 +477,8 @@ final class AppState {
       facets: facets,
       parentPost: parentPost,
       selfLabels: selfLabels,
-      embed: embed
+      embed: embed,
+      threadgateAllowRules: threadgateAllowRules
     )
   }
 
@@ -369,6 +496,37 @@ final class AppState {
     Task {
       await notificationManager.checkNotificationStatus()
     }
+
+    // Start background unread notification checking
+    notificationManager.startUnreadNotificationChecking()
+
+    // Observe notifications marked as seen
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleNotificationsMarkedAsSeen),
+      name: NSNotification.Name("NotificationsMarkedAsSeen"),
+      object: nil
+    )
+
+    // Also check when app comes to foreground
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { [weak self] in
+        await self?.notificationManager.checkUnreadNotifications()
+      }
+    }
+  }
+
+  @objc private func handleNotificationsMarkedAsSeen() {
+    notificationManager.updateUnreadCountAfterSeen()
+  }
+
+  /// Syncs notification-related user data with the server
+  func syncNotificationData() async {
+    await notificationManager.syncAllUserData()
   }
 
   // MARK: - Authentication Methods (for backward compatibility)
@@ -384,18 +542,6 @@ final class AppState {
 
     // Perform the actual logout
     await authManager.logout()
-  }
-
-  /// Switch to another account
-  @MainActor
-  func switchToAccount(did: String) async throws {
-    logger.info("Switching to account: \(did)")
-
-    // First switch account through auth manager
-    try await authManager.switchToAccount(did: did)
-
-    // Then refresh all app state with new account data
-    await refreshAfterAccountSwitch()
   }
 
   /// Add a new account
@@ -419,31 +565,32 @@ final class AppState {
 
   // MARK: - Social Graph Methods
 
-    @discardableResult
-    func follow(did: String) async throws -> Bool {
+  @discardableResult
+  func follow(did: String) async throws -> Bool {
     // graphManager is non-optional, direct access is safe if initialized correctly
     // Throwing an error if client isn't set might be handled within GraphManager itself
     return try await self.graphManager.follow(did: did)
   }
 
   // Using GraphError instead of AuthError
-    @discardableResult
+  @discardableResult
   func unfollow(did: String) async throws -> Bool {
     // graphManager is non-optional, direct access is safe if initialized correctly
     // Throwing an error if client isn't set might be handled within GraphManager itself
     return try await self.graphManager.unfollow(did: did)
   }
 
-  // MARK: - Post Management
+  // MARK: - Thread Creation / Post Management
 
-  // Add support for thread creation
+  // Add support for thread creation with threadgates
   func createThread(
     posts: [String],
     languages: [LanguageCodeContainer],
     selfLabels: ComAtprotoLabelDefs.SelfLabels,
     hashtags: [String] = [],
     facets: [[AppBskyRichtextFacet]?] = [],
-    embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil
+    embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil,
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
   ) async throws {
     try await postManager.createThread(
       posts: posts,
@@ -451,7 +598,44 @@ final class AppState {
       selfLabels: selfLabels,
       hashtags: hashtags,
       facets: facets,
-      embeds: embeds
+      embeds: embeds,
+      threadgateAllowRules: threadgateAllowRules
     )
+  }
+  
+  // MARK: - Performance Optimization Methods
+
+  /// Waits for the next refresh cycle of the app state
+  /// This is a performance optimization method that allows components to wait for a good moment to update
+  /// rather than using arbitrary fixed delays
+  func waitForNextRefreshCycle() async {
+    // Default implementation: a small but adaptive delay
+    // In the future, this could be connected to actual app refresh cycles
+    let baseDelay: UInt64 = 100_000_000  // 100ms base delay
+
+    // Adjust based on current system load if needed
+    let processingPressure = ProcessInfo.processInfo.thermalState
+
+    let finalDelay: UInt64
+    switch processingPressure {
+    case .nominal:
+      finalDelay = baseDelay
+    case .fair:
+      finalDelay = baseDelay * 2  // 200ms
+    case .serious:
+      finalDelay = baseDelay * 3  // 300ms
+    case .critical:
+      finalDelay = baseDelay * 4  // 400ms
+    @unknown default:
+      finalDelay = baseDelay
+    }
+
+    // Wait for the calculated delay
+    try? await Task.sleep(nanoseconds: finalDelay)
+
+    // Log at debug level for performance profiling
+    //    logger.debug(
+    //      "Completed waitForNextRefreshCycle (delay: \(Double(finalDelay) / 1_000_000_000.0))s"
+    //    )
   }
 }

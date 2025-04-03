@@ -23,7 +23,7 @@ struct TappableTextView: View {
   private var letterSpacing: CGFloat
   private var textStyle: Font.TextStyle
   private var textSize: CGFloat?
-  private var fontWidth: Int?
+    private var fontWidth: CGFloat?
   @State private var animateText = false
 
   // Public initializer
@@ -44,7 +44,7 @@ struct TappableTextView: View {
         textStyle: Font.TextStyle = .body,
         textDesign: Font.Design = .default,
         textWeight: Font.Weight = .regular,
-        fontWidth: Int? = nil,
+        fontWidth: CGFloat? = nil,
         lineSpacing: CGFloat = 1.2,
         letterSpacing: CGFloat = 0.2
     ) {

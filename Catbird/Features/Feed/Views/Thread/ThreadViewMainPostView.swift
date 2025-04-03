@@ -30,7 +30,6 @@ struct ThreadViewMainPostView: View {
     post: AppBskyFeedDefs.PostView, showLine: Bool, path: Binding<NavigationPath>,
     appState: AppState
   ) {
-      print("⚠️ ThreadViewMainPostView initialized with post: \(post.uri)")
     self.post = post
     self.showLine = showLine
     self._path = path
@@ -40,7 +39,6 @@ struct ThreadViewMainPostView: View {
 
   private var authorAvatarColumn: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Avatar image (no direct padding here)
       LazyImage(url: URL(string: post.author.avatar?.uriString() ?? "")) { state in
         if let image = state.image {
           image
@@ -137,26 +135,10 @@ struct ThreadViewMainPostView: View {
           }
         }
 
-        // Display stats only if they are available
-        //                if post.replyCount != nil || post.repostCount != nil || post.likeCount != nil || post.quoteCount != nil {
         PostStatsView(post: post, path: $path)
           .padding(.top, Self.baseUnit * 3)
           .padding(.horizontal, 6)
 
-        //                            }
-
-        //        // Display only if there are any stats
-        //        if post.replyCount != nil && post.repostCount != nil && post.likeCount != nil && post.quoteCount != nil {
-        //            PostStatsView(post: post, path: $path)
-        //                .padding(.vertical, Self.baseUnit * 3)
-        //                .padding(.horizontal, 6)
-        //
-        //
-        //
-        //        }
-        //
-
-        // Then update the ActionButtonsView to use the new parameters
         ActionButtonsView(
           post: post,
           postViewModel: viewModel,

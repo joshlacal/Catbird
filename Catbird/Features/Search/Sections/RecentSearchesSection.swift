@@ -17,8 +17,8 @@ struct RecentSearchesSection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Recent Searches")
-                    .font(.headline)
-                
+                    .font(.customSystemFont(size: 17, weight: .bold, width: 0.1, relativeTo: .headline))
+
                 Spacer()
                 
                 Button("Clear", action: onClear)

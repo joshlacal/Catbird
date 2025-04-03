@@ -8,7 +8,7 @@ import UIKit
 import UserNotifications
 
 // App-wide logger
-private let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
+let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
 @main
 struct CatbirdApp: App {
@@ -45,6 +45,63 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     logger.info("🚀 CatbirdApp initializing")
+      
+      // MARK: - Customizing Navigation Bar Fonts
+      let size: CGFloat = 28 // Standard large title size
+      let uiWeight: UIFont.Weight = .bold
+      let width: CGFloat = 0.7 // (-1.0 to 1.0)
+      
+      let baseUIFont = UIFont.systemFont(ofSize: size, weight: uiWeight)
+      let traits: [UIFontDescriptor.TraitKey: Any] = [.width: width]
+      let descriptor = baseUIFont.fontDescriptor.addingAttributes([UIFontDescriptor.AttributeName.traits: traits])
+      let customUIFont = UIFont(descriptor: descriptor, size: size)
+//      
+//      // Now use UIFontMetrics to make it scale with Dynamic Type
+//      let scalableLargeTitleFont = UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: customUIFont)
+//      
+//      // Apply to navigation bar large title
+//      UINavigationBar.appearance().largeTitleTextAttributes = [
+//          NSAttributedString.Key.font: scalableLargeTitleFont
+//      ]
+//      
+//          UILabel.appearance().adjustsFontForContentSizeCategory = true
+//      
+//      // Do the same for regular title
+      let titleFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+      let titleTraits: [UIFontDescriptor.TraitKey: Any] = [.width: width]
+      let titleDescriptor = titleFont.fontDescriptor.addingAttributes([UIFontDescriptor.AttributeName.traits: titleTraits])
+      let customTitleFont = UIFont(descriptor: titleDescriptor, size: 17)
+//      let scalableTitleFont = UIFontMetrics(forTextStyle: .headline).scaledFont(for: customTitleFont)
+//      
+//      UINavigationBar.appearance().titleTextAttributes = [
+//          NSAttributedString.Key.font: scalableTitleFont
+//      ]
+//      
+      // Create appearances for different states
+      let largeTitle = UINavigationBarAppearance()
+      largeTitle.configureWithTransparentBackground() // Transparent for large title state
+
+      let standardAppearance = UINavigationBarAppearance()
+      standardAppearance.configureWithDefaultBackground() // Default background for inline/standard state
+
+      // Apply your custom fonts to both appearances
+      let scalableTitleFont = UIFontMetrics(forTextStyle: .headline).scaledFont(for: customTitleFont)
+      let scalableLargeTitleFont = UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: customUIFont)
+
+      largeTitle.titleTextAttributes = [.font: scalableTitleFont]
+      largeTitle.largeTitleTextAttributes = [.font: scalableLargeTitleFont]
+
+      standardAppearance.titleTextAttributes = [.font: scalableTitleFont]
+      standardAppearance.largeTitleTextAttributes = [.font: scalableLargeTitleFont]
+
+      // Key difference: assign appearances to the right properties
+      UINavigationBar.appearance().scrollEdgeAppearance = largeTitle  // Large title state (top of scroll)
+      UINavigationBar.appearance().standardAppearance = standardAppearance  // When scrolled/compact
+      UINavigationBar.appearance().compactAppearance = standardAppearance  // Compact height state
+
+
+
+      
 
     // Configure audio session at app launch
     do {

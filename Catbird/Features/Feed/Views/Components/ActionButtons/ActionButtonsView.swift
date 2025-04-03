@@ -5,238 +5,281 @@
 //  Created by Josh LaCalamito on 7/28/24.
 //
 
-import SwiftUI
-import Petrel
 import Observation
+import Petrel
+import SwiftUI
+
+/// Observable class to hold interaction state for a post
+@Observable class PostInteractionState {
+  var isLiked: Bool
+  var isReposted: Bool
+  var likeCount: Int
+  var repostCount: Int
+  var replyCount: Int
+  var animateLike: Bool = false
+  var animateRepost: Bool = false  // Keep separate for distinct animations
+
+  init(post: AppBskyFeedDefs.PostView) {
+    self.isLiked = post.viewer?.like != nil
+    self.isReposted = post.viewer?.repost != nil
+    self.likeCount = post.likeCount ?? 0
+    self.repostCount = post.repostCount ?? 0
+    self.replyCount = post.replyCount ?? 0
+      
+  }
+
+  func update(from post: AppBskyFeedDefs.PostView) {
+    let oldLikeCount = self.likeCount  // For debug logging
+
+    self.isLiked = post.viewer?.like != nil
+    self.isReposted = post.viewer?.repost != nil
+    self.likeCount = post.likeCount ?? 0
+    self.repostCount = post.repostCount ?? 0
+    self.replyCount = post.replyCount ?? 0
+
+    #if DEBUG
+      if oldLikeCount != self.likeCount {
+        print("Like count changed: \(oldLikeCount) -> \(self.likeCount)")
+      }
+    #endif
+  }
+}
 
 /// A view displaying interaction buttons for a post (like, reply, repost, share)
 struct ActionButtonsView: View {
-    // MARK: - Environment & Properties
-    @Environment(AppState.self) private var appState
-    
-    // Post to display actions for
-    let post: AppBskyFeedDefs.PostView
-    
-    @State private var isFirstAppear = true
-    
-    // View model for handling actions
-    @State private var viewModel: ActionButtonViewModel
-    @State private var showRepostOptions: Bool = false
-    @State private var showingPostComposer: Bool = false
-    
-    // States for displaying interaction counts
-    @State private var isLiked: Bool = false
-    @State private var isReposted: Bool = false
-    @State private var likeCount: Int = 0
-    @State private var repostCount: Int = 0
-    @State private var replyCount: Int = 0
-    
-    @State private var animateLike: Bool = false
-    @State private var animateRepost: Bool = false
-    @State private var initialLoadComplete: Bool = false
-    
-    // Customization option - just one flag as requested
-    let isBig: Bool
-    @Binding var path: NavigationPath
-    
-    // Using multiples of 3 for spacing
-    private static let baseUnit: CGFloat = 3
-    
-    // MARK: - Initialization
-    init(post: AppBskyFeedDefs.PostView, postViewModel: PostViewModel, path: Binding<NavigationPath>, isBig: Bool = false) {
-        self.post = post
-        self._viewModel = State(wrappedValue: ActionButtonViewModel(
-            postId: post.uri.uriString(),
-            postViewModel: postViewModel,
-            appState: postViewModel.appState
-        ))
-        self._path = path
-        self.isBig = isBig
-        
-        // Initialize like/repost state directly from post
-        self._isLiked = State(initialValue: post.viewer?.like != nil)
-        self._isReposted = State(initialValue: post.viewer?.repost != nil)
-        
-        // Initialize counts
-        self._likeCount = State(initialValue: post.likeCount ?? 0)
-        self._repostCount = State(initialValue: post.repostCount ?? 0)
-        self._replyCount = State(initialValue: post.replyCount ?? 0)
+  // MARK: - Environment & Properties
+  @Environment(AppState.self) private var appState
+
+  // Post to display actions for
+  let post: AppBskyFeedDefs.PostView
+
+  @State private var isFirstAppear = true
+
+  // View model for handling actions
+  @State private var viewModel: ActionButtonViewModel
+  @State private var showRepostOptions: Bool = false
+  @State private var showingPostComposer: Bool = false
+
+  // Consolidated interaction state
+  @State private var interactionState: PostInteractionState
+
+  // State for managing animations and loading
+  @State private var initialLoadComplete: Bool = false
+  @State private var updateTask: Task<Void, Error>?  // Task for shadow updates
+
+  // Customization option
+  let isBig: Bool
+  @Binding var path: NavigationPath
+
+  // Shared haptic feedback generator
+  @State private var feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+
+  // Using multiples of 3 for spacing
+  private static let baseUnit: CGFloat = 3
+
+  // MARK: - Initialization
+  init(
+    post: AppBskyFeedDefs.PostView, postViewModel: PostViewModel, path: Binding<NavigationPath>,
+    isBig: Bool = false
+  ) {
+    self.post = post
+    self._viewModel = State(
+      wrappedValue: ActionButtonViewModel(
+        postId: post.uri.uriString(),
+        postViewModel: postViewModel,
+        appState: postViewModel.appState
+      ))
+    self._path = path
+    self.isBig = isBig
+
+    // Initialize consolidated state
+    self._interactionState = State(initialValue: PostInteractionState(post: post))
+      
+//      if case let .knownType(threadgate) = post.threadgate?.record,
+//         let threadgate = threadgate as? AppBskyFeedThreadgate {
+//          if threadgate.allow
+//      }
+
+  }
+
+  // MARK: - Body
+  var body: some View {
+    HStack {
+      // Reply Button
+      InteractionButton(
+        iconName: "bubble.left",
+        count: isBig ? nil : interactionState.replyCount,
+        isActive: false,
+        isFirstAppear: isFirstAppear,
+        color: .secondary,
+        isBig: isBig
+      ) {
+        showingPostComposer = true
+      }
+      .disabled(post.viewer?.replyDisabled ?? false)
+      Spacer()
+
+      // Repost Button (includes quote option)
+      InteractionButton(
+        iconName: "arrow.2.squarepath",
+        count: isBig ? nil : interactionState.repostCount,
+        isActive: interactionState.isReposted,
+        animateActivation: interactionState.animateRepost,  // Use state property
+        animateScale: initialLoadComplete,
+        isFirstAppear: isFirstAppear,
+        color: interactionState.isReposted ? .green : .secondary,
+        isBig: isBig
+      ) {
+        showRepostOptions = true
+        // Trigger repost animation if needed (logic might go in RepostOptionsView or viewModel)
+        // interactionState.animateRepost = true // Example trigger point
+      }
+
+      Spacer()
+
+      // Like Button
+      InteractionButton(
+        iconName: interactionState.isLiked ? "heart.fill" : "heart",
+        count: isBig ? nil : interactionState.likeCount,
+        isActive: interactionState.isLiked,
+        animateActivation: interactionState.animateLike,  // Use state property
+        animateScale: initialLoadComplete,
+        isFirstAppear: isFirstAppear,
+        color: interactionState.isLiked ? .red : .secondary,
+        isBig: isBig
+      ) {
+        // Haptic feedback using shared generator
+        feedbackGenerator.impactOccurred()
+
+        // Set animation flag to true
+        interactionState.animateLike = true
+
+        Task {
+          try? await viewModel.toggleLike()
+          // UI state will be updated via the shadow manager and refreshState
+          // Reset animation flag after a short delay if needed
+          try? await Task.sleep(for: .milliseconds(500))  // Adjust delay as needed
+          await MainActor.run { interactionState.animateLike = false }
+        }
+      }
+      Spacer()
+
+      // Share Button (system share sheet only)
+      InteractionButton(
+        iconName: "square.and.arrow.up",
+        count: nil,  // Share doesn't have a count
+        isActive: false,
+        isFirstAppear: isFirstAppear,
+        color: .secondary,
+        isBig: isBig
+      ) {
+        Task {
+          await viewModel.share(post: post)
+        }
+      }
     }
-    
-    // MARK: - Body
-    var body: some View {
-        HStack {
-            // Reply Button
-            InteractionButton(
-                iconName: "bubble.left",
-                count: isBig ? nil : replyCount,
-                isActive: false,
-                isFirstAppear: isFirstAppear,
-                color: .secondary,
-                isBig: isBig
-            ) {
-                showingPostComposer = true
-            }
-            Spacer()
-            
-            // Repost Button (includes quote option)
-            InteractionButton(
-                iconName: "arrow.2.squarepath",
-                count: isBig ? nil : repostCount,
-                isActive: isReposted,
-                animateActivation: animateRepost,
-                animateScale: initialLoadComplete,
-                isFirstAppear: isFirstAppear,
-                color: isReposted ? .green : .secondary,
-                isBig: isBig
-            ) {
-                showRepostOptions = true
-            }
-            
-            Spacer()
-            
-            // Like Button - NO optimistic updates in the view
-            InteractionButton(
-                iconName: isLiked ? "heart.fill" : "heart",
-                count: isBig ? nil : likeCount,
-                isActive: isLiked,
-                animateActivation: animateLike,
-                animateScale: initialLoadComplete,
-                isFirstAppear: isFirstAppear,
-                color: isLiked ? .red : .secondary,
-                isBig: isBig
-            ) {
-                // Haptic feedback
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
-                
-                // Set animation flag to true
-                animateLike = true
-                
-                Task {
-                    try? await viewModel.toggleLike()
-                    // UI state will be updated via the shadow manager
-                }
-            }
-            Spacer()
-            
-            // Share Button (system share sheet only)
-            InteractionButton(
-                iconName: "square.and.arrow.up",
-                count: nil, // Share doesn't have a count
-                isActive: false,
-                isFirstAppear: isFirstAppear,
-                color: .secondary,
-                isBig: isBig
-            ) {
-                Task {
-                    await viewModel.share(post: post)
-                }
-            }
-        }
-        .font(isBig ? .title3 : .callout)
-        .frame(height: isBig ? 54 : 45)
-        .padding(.trailing, ActionButtonsView.baseUnit * 4)
-        .onAppear {
-            // Set isFirstAppear to false after a tiny delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isFirstAppear = false
-            }
-        }
-        .task {
-            // Initial state setup
-            await refreshState()
-            
-            // Mark initial load as complete after a brief delay
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                initialLoadComplete = true
-            }
-            
-            // Continuous updates
-            for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
-                await refreshState()
-            }
-        }
-        .sheet(isPresented: $showRepostOptions) {
-            RepostOptionsView(post: post, viewModel: viewModel)
-                .presentationDetents([.fraction(1/4)])
-                .presentationBackground(.regularMaterial)
-                .presentationCornerRadius(12)
-        }
-        .sheet(isPresented: $showingPostComposer) {
-            PostComposerView(parentPost: post, appState: appState)
-        }
+    .font(isBig ? .title3 : .callout)
+    .frame(height: isBig ? 54 : 45)
+    .padding(.trailing, ActionButtonsView.baseUnit * 4)
+    .onAppear {
+      // Set isFirstAppear to false after a tiny delay
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        isFirstAppear = false
+      }
     }
-    
-    // MARK: - State Management
-    private func refreshState() async {
-        let mergedPost = await appState.postShadowManager.mergeShadow(post: post)
-        await MainActor.run {
-            // Add debug log to track count changes
-            let oldLikeCount = likeCount
-            
-            isLiked = mergedPost.viewer?.like != nil
-            isReposted = mergedPost.viewer?.repost != nil
-            likeCount = mergedPost.likeCount ?? 0
-            repostCount = mergedPost.repostCount ?? 0
-            replyCount = mergedPost.replyCount ?? 0
-            
-            if oldLikeCount != likeCount {
-                print("Like count changed: \(oldLikeCount) -> \(likeCount)")
-            }
+    .task {
+      // Initial state setup
+      await refreshState()
+
+      // Wait 0.5 seconds then mark initial load complete
+      try? await Task.sleep(for: .milliseconds(500))
+      await MainActor.run { initialLoadComplete = true }
+
+      // Start cancellable task for continuous updates
+      updateTask = Task {
+        for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString())
+        {
+          try Task.checkCancellation()  // Check if task was cancelled
+          await refreshState()
         }
+      }
     }
+    .onDisappear {
+      // Cancel the update task when the view disappears
+      updateTask?.cancel()
+      updateTask = nil
+    }
+    .sheet(isPresented: $showRepostOptions) {
+      RepostOptionsView(post: post, viewModel: viewModel)
+        .presentationDetents([.fraction(1 / 4)])
+        .presentationBackground(.regularMaterial)
+        .presentationCornerRadius(12)
+    }
+    .sheet(isPresented: $showingPostComposer) {
+      PostComposerView(parentPost: post, appState: appState)
+    }
+  }
+
+  // MARK: - State Management
+  private func refreshState() async {
+    let mergedPost = await appState.postShadowManager.mergeShadow(post: post)
+    await MainActor.run {
+      interactionState.update(from: mergedPost)
+    }
+  }
 }
 
 struct InteractionButton: View {
-    let iconName: String
-    let count: Int?
-    let isActive: Bool
-    var animateActivation: Bool = false
-    var animateScale: Bool = true
-    var isFirstAppear: Bool = false
-    let color: Color
-    let isBig: Bool
-    let action: () -> Void
-    
-    // Calculate extra width needed for counts
-    private var buttonMinWidth: CGFloat {
+  let iconName: String
+  let count: Int?
+  let isActive: Bool
+  var animateActivation: Bool = false
+  var animateScale: Bool = true
+  var isFirstAppear: Bool = false
+  let color: Color
+  let isBig: Bool
+  let action: () -> Void
+
+  // Pre-calculated widths for efficiency
+  private static let smallWidths: [Bool: CGFloat] = [true: 46, false: 36]  // true: has count > 0, false: no count or count == 0
+  private static let bigWidths: [Bool: CGFloat] = [true: 58, false: 48]  // true: has count > 0, false: no count or count == 0
+
+  // Calculate min width based on pre-calculated values
+  private var buttonMinWidth: CGFloat {
+    let widths = isBig ? InteractionButton.bigWidths : InteractionButton.smallWidths
+    let hasVisibleCount = count != nil && count! > 0
+    return widths[hasVisibleCount]!
+  }
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 4) {
+        Image(systemName: iconName)
+          .fontWeight(isBig ? .regular : .semibold)
+          // Use identity transition on first appear to prevent initial animation
+          .contentTransition(isFirstAppear ? .identity : .symbolEffect(.replace))
+          .imageScale(isBig ? .large : .medium)
+          // Trigger bounce only when animateActivation becomes true
+          .symbolEffect(.bounce, options: .speed(1.5), value: animateActivation)
+
         if let count = count, count > 0 {
-            // Add more space for buttons with counts
-            return isBig ? 58 : 46
-        } else {
-            // Original width for buttons without counts
-            return isBig ? 48 : 36
+          Text(count.formatted)
+            .font(Font.system(.caption).monospacedDigit())
+            .fontWeight(.bold)
+            .contentTransition(.numericText(countsDown: false))
+            .lineLimit(1)
+            .fixedSize()
+            .layoutPriority(1)
         }
+      }
+      .foregroundStyle(color)
+      .frame(minWidth: buttonMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
+      .contentShape(Rectangle())
     }
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) { // Slightly increased spacing
-                Image(systemName: iconName)
-                    .fontWeight(isBig ? .regular : .semibold)
-                    .contentTransition(isFirstAppear ? .identity : .symbolEffect(.replace))
-                    .imageScale(isBig ? .large : .medium)
-                    .symbolEffect(.bounce, options: .speed(1.5), value: animateActivation)
-                
-                if let count = count, count > 0 {
-                    Text(count.formatted)
-                        // tabular numbers
-                        .font(Font.system(.caption).monospacedDigit())
-                        .fontWeight(.bold)
-                        .contentTransition(.numericText(countsDown: false))
-                        .lineLimit(1)
-                        .fixedSize() // Prevent truncation
-                        .layoutPriority(1) // Give priority to the text
-                }
-            }
-            .foregroundStyle(color)
-            .frame(minWidth: buttonMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(isActive ? 1.05 : 1.0)
-        .animation(animateScale ? .snappy(duration: 0.2) : nil, value: isActive)
-    }
+    .buttonStyle(.plain)
+    // Apply scale effect animation only when animateScale is true
+    .scaleEffect(isActive ? 1.05 : 1.0)
+    // Conditionally apply animation based on animateScale flag
+    .animation(animateScale ? .snappy(duration: 0.2) : nil, value: isActive)
+  }
 }

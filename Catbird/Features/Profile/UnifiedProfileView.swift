@@ -3,7 +3,8 @@ import OSLog
 import Observation
 import Petrel
 import SwiftUI
-
+import LazyPager
+import Nuke
 /// A unified profile view that handles both current user and other user profiles
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
@@ -15,12 +16,13 @@ struct UnifiedProfileView: View {
   @State private var isEditingProfile = false
   @State private var isShowingAccountSwitcher = false
   @State private var availableAccounts: Int = 0
-
+  @State private var isShowingBlockConfirmation = false
+  @State private var isBlocking = false
+  @State private var isMuting = false
+    
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
 
-  // MARK: - Initialization
-
-  /// Initialize to show the current user's profile (for tab navigation)
+  // MARK: - Initialization (keeping all initializers)
   init(
     appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>,
     path: Binding<NavigationPath>
@@ -30,19 +32,17 @@ struct UnifiedProfileView: View {
       wrappedValue: ProfileViewModel(
         client: appState.atProtoClient,
         userDID: currentUserDID,
-        currentUserDID: currentUserDID  // Pass the current user's DID separately
+        currentUserDID: currentUserDID
       ))
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
     _navigationPath = path
   }
 
-  /// Initialize to show another user's profile (via navigation)
   init(did: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>) {
     self.init(userDID: did, selectedTab: selectedTab, appState: appState, path: path)
   }
 
-  /// Shared initializer for both cases
   private init(
     userDID: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>
   ) {
@@ -50,7 +50,7 @@ struct UnifiedProfileView: View {
       wrappedValue: ProfileViewModel(
         client: appState.atProtoClient,
         userDID: userDID,
-        currentUserDID: appState.currentUserDID  // This is the key change!
+        currentUserDID: appState.currentUserDID
       ))
     self._selectedTab = selectedTab
     self._lastTappedTab = .constant(nil)
@@ -63,12 +63,68 @@ struct UnifiedProfileView: View {
         loadingView
       } else if let profile = viewModel.profile {
         VStack(spacing: 0) {
-          // Show account status bar only for current user
+          // Show account status bar only for current user (outside of List)
           if viewModel.isCurrentUser {
             accountStatusBar
           }
 
-          profileContent(profile)
+          // List contains all content
+          List {
+            // Profile header as first section
+            Section {
+              ProfileHeader(
+                profile: profile,
+                viewModel: viewModel,
+                appState: appState,
+                isEditingProfile: $isEditingProfile
+              )
+              .listRowInsets(EdgeInsets())
+              .padding(.bottom, 8)
+              .frame(maxWidth: .infinity)
+              .contextMenu {
+                profileContextMenu(profile)
+              }
+            }
+            .listRowSeparator(.hidden)
+            
+            // Tab selector section
+            Section {
+              ProfileTabSelector(
+                path: $navigationPath,
+                selectedTab: $viewModel.selectedProfileTab,
+                onTabChange: { tab in
+                  Task {
+                    switch tab {
+                    case .posts:
+                      if viewModel.posts.isEmpty { await viewModel.loadPosts() }
+                    case .replies:
+                      if viewModel.replies.isEmpty { await viewModel.loadReplies() }
+                    case .media:
+                      if viewModel.postsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
+                    case .likes:
+                      if viewModel.likes.isEmpty { await viewModel.loadLikes() }
+                    case .lists:
+                      if viewModel.lists.isEmpty { await viewModel.loadLists() }
+                    case .starterPacks:
+                      if viewModel.starterPacks.isEmpty { await viewModel.loadStarterPacks() }
+                    case .more:
+                      break
+                    }
+                  }
+                }
+              )
+            }
+            .listRowSeparator(.hidden)
+            .padding(.vertical, 8)
+
+            // Content section based on selected tab
+            currentTabContentSection
+          }
+          .listStyle(.plain)
+          .refreshable {
+            // Pull to refresh all content - using a single task
+            await refreshAllContent()
+          }
         }
         .sheet(isPresented: $isShowingReportSheet) {
           if let profile = viewModel.profile,
@@ -81,7 +137,6 @@ struct UnifiedProfileView: View {
               reportingService: reportingService,
               onComplete: { success in
                 isShowingReportSheet = false
-                // Optionally show feedback about success/failure
               }
             )
           }
@@ -98,13 +153,16 @@ struct UnifiedProfileView: View {
     }
     .navigationTitle(viewModel.profile != nil ? "@\(viewModel.profile!.handle)" : "Profile")
     .navigationBarTitleDisplayMode(.inline)
-    .refreshable {
-      await viewModel.loadProfile()
+    .navigationDestination(for: ProfileNavigationDestination.self) { destination in
+      switch destination {
+      case .section(let tab):
+        ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
+      }
     }
     .toolbar {
       if let profile = viewModel.profile {
         ToolbarItem(placement: .principal) {
-            Text(profile.displayName ?? profile.handle.description)
+          Text(profile.displayName ?? profile.handle.description)
             .font(.headline)
         }
 
@@ -131,79 +189,386 @@ struct UnifiedProfileView: View {
           }
         } else {
           ToolbarItem(placement: .primaryAction) {
-            Button {
-              showReportProfileSheet()
+            Menu {
+              Button {
+                showReportProfileSheet()
+              } label: {
+                Label("Report User", systemImage: "flag")
+              }
+
+              Button {
+                toggleMute()
+              } label: {
+                if isMuting {
+                  Label("Unmute User", systemImage: "speaker.wave.2")
+                } else {
+                  Label("Mute User", systemImage: "speaker.slash")
+                }
+              }
+
+              Button(role: .destructive) {
+                isShowingBlockConfirmation = true
+              } label: {
+                if isBlocking {
+                  Label("Unblock User", systemImage: "person.crop.circle.badge.checkmark")
+                } else {
+                  Label("Block User", systemImage: "person.crop.circle.badge.xmark")
+                }
+              }
             } label: {
-              Image(systemName: "flag")
+              Image(systemName: "ellipsis.circle")
             }
           }
         }
       }
     }
+    .alert(isBlocking ? "Unblock User" : "Block User", isPresented: $isShowingBlockConfirmation) {
+      alertButtons
+    } message: {
+      alertMessage
+    }
     .onChange(of: lastTappedTab) { _, newValue in
-      guard selectedTab == 3 else { return }
-
-      if newValue == 3 {
-        // Double-tapped profile tab - refresh profile and scroll to top
-        Task {
-          await viewModel.loadProfile()
-          // Send scroll to top command
-          appState.tabTappedAgain = 3
-        }
-        lastTappedTab = nil
-      }
+      handleTabChange(newValue)
     }
     .task {
-      await viewModel.loadProfile()
-      // Check if user has multiple accounts
-      await updateAccountCount()
+      await initialLoad()
     }
   }
 
-  // MARK: - Account Status Bar
+  // MARK: - New helper function for refreshing content
+  private func refreshAllContent() async {
+    // First refresh profile
+    await viewModel.loadProfile()
+    
+    // Then refresh current tab content
+    switch viewModel.selectedProfileTab {
+    case .posts: await viewModel.loadPosts()
+    case .replies: await viewModel.loadReplies()
+    case .media: await viewModel.loadMediaPosts()
+    case .likes: await viewModel.loadLikes()
+    case .lists: await viewModel.loadLists()
+    case .starterPacks: await viewModel.loadStarterPacks()
+    case .more: break
+    }
+  }
+  
+  // MARK: - Tab Content Sections
+  @ViewBuilder
+  private var currentTabContentSection: some View {
+    switch viewModel.selectedProfileTab {
+    case .posts:
+      postContentSection(
+        posts: viewModel.posts,
+        emptyMessage: "No posts",
+        loadAction: viewModel.loadPosts
+      )
+    case .replies:
+      postContentSection(
+        posts: viewModel.replies,
+        emptyMessage: "No replies",
+        loadAction: viewModel.loadReplies
+      )
+    case .media:
+      postContentSection(
+        posts: viewModel.postsWithMedia,
+        emptyMessage: "No media posts",
+        loadAction: viewModel.loadMediaPosts
+      )
+    case .likes:
+      postContentSection(
+        posts: viewModel.likes,
+        emptyMessage: "No liked posts",
+        loadAction: viewModel.loadLikes
+      )
+    case .lists:
+      listsContentSection
+    case .starterPacks:
+      starterPacksContentSection
+    case .more:
+      EmptyView()
+    }
+  }
 
-  private var accountStatusBar: some View {
-    HStack(spacing: 8) {
-      HStack(spacing: 4) {
-        Image(systemName: "person.circle.fill")
-          .foregroundStyle(.secondary)
-
-          Text(viewModel.profile?.handle.description ?? "")
-          .font(.footnote.bold())
-          .foregroundStyle(.primary)
+  // MARK: - Post Content Section (generalized for reuse)
+  @ViewBuilder
+  private func postContentSection(
+    posts: [AppBskyFeedDefs.FeedViewPost],
+    emptyMessage: String,
+    loadAction: @escaping () async -> Void
+  ) -> some View {
+    if viewModel.isLoading && posts.isEmpty {
+      ProgressView("Loading...")
+        .frame(maxWidth: .infinity, minHeight: 100)
+        .padding()
+        .listRowSeparator(.hidden)
+    } else if posts.isEmpty {
+      emptyContentView("No Content", emptyMessage)
+        .padding(.top, 40)
+        .listRowSeparator(.hidden)
+        .onAppear {
+          Task { await loadAction() }
+        }
+    } else {
+      // Post rows
+      ForEach(posts, id: \.post.uri) { post in
+        Button {
+          navigationPath.append(NavigationDestination.post(post.post.uri))
+        } label: {
+          FeedPost(post: post, path: $navigationPath)
+            .frame(width: UIScreen.main.bounds.width)
+        }
+        .buttonStyle(.plain)
+        .applyListRowModifiers(id: post.id)
+        .onAppear {
+          // Load more when reaching the end, but only if not already loading
+          if post == posts.last && !viewModel.isLoadingMorePosts {
+            Task { await loadAction() }
+          }
+        }
       }
-
-      if availableAccounts > 1 {
-        Text("(\(availableAccounts) accounts)")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
+        
+      // Loading indicator for pagination
+      if viewModel.isLoadingMorePosts {
+        ProgressView()
+          .padding()
+          .frame(maxWidth: .infinity)
+          .listRowSeparator(.hidden)
       }
+    }
+  }
 
-      Spacer()
+  // MARK: - Lists Content Section
+  @ViewBuilder
+  private var listsContentSection: some View {
+    if viewModel.isLoading && viewModel.lists.isEmpty {
+      ProgressView("Loading lists...")
+        .frame(maxWidth: .infinity, minHeight: 100)
+        .padding()
+        .listRowSeparator(.hidden)
+    } else if viewModel.lists.isEmpty {
+      emptyContentView("No Lists", "This user hasn't created any lists yet.")
+        .padding(.top, 40)
+        .listRowSeparator(.hidden)
+        .onAppear {
+          Task { await viewModel.loadLists() }
+        }
+    } else {
+      ForEach(viewModel.lists, id: \.uri) { list in
+        Button {
+          navigationPath.append(NavigationDestination.list(list.uri))
+        } label: {
+          ListRow(list: list)
+        }
+        .buttonStyle(.plain)
+        .applyListRowModifiers(id: list.uri.uriString())
+        .onAppear {
+          // Load more when reaching the end
+          if list == viewModel.lists.last && !viewModel.isLoadingMorePosts {
+            Task { await viewModel.loadLists() }
+          }
+        }
+      }
+        
+      // Loading indicator for pagination
+      if viewModel.isLoadingMorePosts {
+        ProgressView()
+          .padding()
+          .frame(maxWidth: .infinity)
+          .listRowSeparator(.hidden)
+      }
+    }
+  }
+
+  // MARK: - Starter Packs Content Section
+  @ViewBuilder
+  private var starterPacksContentSection: some View {
+    if viewModel.isLoading && viewModel.starterPacks.isEmpty {
+      ProgressView("Loading starter packs...")
+        .frame(maxWidth: .infinity, minHeight: 100)
+        .padding()
+        .listRowSeparator(.hidden)
+    } else if viewModel.starterPacks.isEmpty {
+      emptyContentView("No Starter Packs", "This user hasn't created any starter packs yet.")
+        .padding(.top, 40)
+        .listRowSeparator(.hidden)
+        .onAppear {
+          Task { await viewModel.loadStarterPacks() }
+        }
+    } else {
+      ForEach(viewModel.starterPacks, id: \.uri) { pack in
+        StarterPackRowView(pack: pack)
+              .applyListRowModifiers(id: pack.uri.uriString())
+          .onAppear {
+            // Load more when reaching the end
+            if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts {
+              Task { await viewModel.loadStarterPacks() }
+            }
+          }
+      }
+        
+      // Loading indicator for pagination
+      if viewModel.isLoadingMorePosts {
+        ProgressView()
+          .padding()
+          .frame(maxWidth: .infinity)
+          .listRowSeparator(.hidden)
+      }
+    }
+  }
+
+  // MARK: - Context Menu for Profile
+  @ViewBuilder
+  private func profileContextMenu(_ profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
+    if !viewModel.isCurrentUser {
+      Button {
+        showReportProfileSheet()
+      } label: {
+        Label("Report User", systemImage: "flag")
+      }
 
       Button {
-        isShowingAccountSwitcher = true
+        toggleMute()
       } label: {
-        HStack(spacing: 4) {
-          Text("Switch")
-            .font(.footnote)
-
-          Image(systemName: "chevron.right")
-            .font(.caption2)
+        if isMuting {
+          Label("Unmute User", systemImage: "speaker.wave.2")
+        } else {
+          Label("Mute User", systemImage: "speaker.slash")
         }
-        .foregroundStyle(.blue)
       }
-      .buttonStyle(.plain)
-    }
-    .padding(.horizontal)
-    .padding(.vertical, 8)
-    .background(Color(.systemGroupedBackground))
-    .task {
-      // Update account count every time this view appears
-      await updateAccountCount()
+
+      Button(role: .destructive) {
+        isShowingBlockConfirmation = true
+      } label: {
+        if isBlocking {
+          Label("Unblock User", systemImage: "person.crop.circle.badge.checkmark")
+        } else {
+          Label("Block User", systemImage: "person.crop.circle.badge.xmark")
+        }
+      }
     }
   }
 
+  // MARK: - Alert Content
+  @ViewBuilder
+  private var alertButtons: some View {
+    Button("Cancel", role: .cancel) {}
+
+    Button(isBlocking ? "Unblock" : "Block", role: .destructive) {
+      toggleBlock()
+    }
+  }
+
+  @ViewBuilder
+  private var alertMessage: some View {
+    if let profile = viewModel.profile {
+      if isBlocking {
+        Text("Unblock @\(profile.handle)? You'll be able to see each other's posts again.")
+      } else {
+        Text(
+          "Block @\(profile.handle)? You won't see each other's posts, and they won't be able to follow you."
+        )
+      }
+    }
+  }
+
+  // MARK: - Event Handlers
+  private func handleTabChange(_ newValue: Int?) {
+    guard selectedTab == 3 else { return }
+
+    if newValue == 3 {
+      // Double-tapped profile tab - refresh profile and scroll to top
+      Task {
+        await viewModel.loadProfile()
+        // Send scroll to top command
+        appState.tabTappedAgain = 3
+      }
+      lastTappedTab = nil
+    }
+  }
+
+  private func initialLoad() async {
+    await viewModel.loadProfile()
+    // Check if user has multiple accounts
+    await updateAccountCount()
+
+    // Check muting and blocking status
+    if let did = viewModel.profile?.did.didString(), !viewModel.isCurrentUser {
+      self.isBlocking = await appState.isBlocking(did: did)
+      self.isMuting = await appState.isMuting(did: did)
+    }
+  }
+
+  // MARK: - Keep existing functionality
+  // Keeping all existing functions like showReportProfileSheet, toggleMute, toggleBlock, etc.
+  
+  private func showReportProfileSheet() {
+    isShowingReportSheet = true
+  }
+
+  private func toggleMute() {
+    guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return }
+
+    let did = profile.did.didString()
+    Task {
+      do {
+        let previousState = isMuting
+
+        // Optimistically update UI
+        isMuting.toggle()
+
+        let success: Bool
+        if previousState {
+          // Unmute
+          success = try await appState.unmute(did: did)
+        } else {
+          // Mute
+          success = try await appState.mute(did: did)
+        }
+
+        if !success {
+          // Revert if unsuccessful
+          isMuting = previousState
+        }
+      } catch {
+        // Revert on error
+        isMuting = !isMuting
+        logger.error("Failed to toggle mute: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  private func toggleBlock() {
+    guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return }
+
+    let did = profile.did.didString()
+    Task {
+      do {
+        let previousState = isBlocking
+
+        // Optimistically update UI
+        isBlocking.toggle()
+
+        let success: Bool
+        if previousState {
+          // Unblock
+          success = try await appState.unblock(did: did)
+        } else {
+          // Block
+          success = try await appState.block(did: did)
+        }
+
+        if !success {
+          // Revert if unsuccessful
+          isBlocking = previousState
+        }
+      } catch {
+        // Revert on error
+        isBlocking = !isBlocking
+        logger.error("Failed to toggle block: \(error.localizedDescription)")
+      }
+    }
+  }
+  
   private func updateAccountCount() async {
     // Refresh available accounts
     await appState.authManager.refreshAvailableAccounts()
@@ -211,12 +576,7 @@ struct UnifiedProfileView: View {
     availableAccounts = appState.authManager.availableAccounts.count
   }
 
-  private func showReportProfileSheet() {
-    isShowingReportSheet = true
-  }
-
-  // MARK: - View Components
-
+  // MARK: - View Components (keeping all as they were)
   private var loadingView: some View {
     VStack {
       ProgressView()
@@ -263,211 +623,45 @@ struct UnifiedProfileView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  @ViewBuilder
-  private func profileContent(_ profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-    ScrollView {
-      VStack(spacing: 0) {
-        // Profile header
-        ProfileHeader(
-          profile: profile, viewModel: viewModel, appState: appState,
-          isEditingProfile: $isEditingProfile
-        )
-        .frame(maxWidth: .infinity)
-        .contextMenu {
-          if !viewModel.isCurrentUser {
-            Button(role: .destructive) {
-              showReportProfileSheet()
-            } label: {
-              Label("Report User", systemImage: "flag")
-            }
-          }
-        }
+  private var accountStatusBar: some View {
+    HStack(spacing: 8) {
+      HStack(spacing: 4) {
+        Image(systemName: "person.circle.fill")
+          .foregroundStyle(.secondary)
 
-        // Tab selector
-        ProfileTabSelector(
-          selectedTab: $viewModel.selectedProfileTab,
-          onTabChange: { tab in
-            Task {
-              switch tab {
-              case .posts:
-                if viewModel.posts.isEmpty { await viewModel.loadPosts() }
-              case .replies:
-                if viewModel.replies.isEmpty { await viewModel.loadReplies() }
-              case .media:
-                if viewModel.postsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
-              case .likes:
-                if viewModel.likes.isEmpty { await viewModel.loadLikes() }
-              case .lists:
-                if viewModel.lists.isEmpty { await viewModel.loadLists() }
-              }
-            }
-          }
-        )
-        .padding(.top, 8)
-
-        // Tab content
-        tabContentView
+        Text(viewModel.profile?.handle.description ?? "")
+          .font(.footnote.bold())
+          .foregroundStyle(.primary)
       }
-      .frame(maxWidth: .infinity)  // Constrain to screen width
-    }
-    .refreshable {
-      // Pull to refresh all content
-      await viewModel.loadProfile()
 
-      // Refresh the current tab's content
-      switch viewModel.selectedProfileTab {
-      case .posts: await viewModel.loadPosts()
-      case .replies: await viewModel.loadReplies()
-      case .media: await viewModel.loadMediaPosts()
-      case .likes: await viewModel.loadLikes()
-      case .lists: await viewModel.loadLists()
+      if availableAccounts > 1 {
+        Text("(\(availableAccounts) accounts)")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
       }
-    }
-    .scrollIndicators(.visible)
-  }
 
-  // MARK: - Tab Content View
+      Spacer()
 
-  @ViewBuilder
-  private var tabContentView: some View {
-    VStack(spacing: 0) {
-      switch viewModel.selectedProfileTab {
-      case .posts:
-        postsList
-      case .replies:
-        repliesList
-      case .media:
-        mediaList
-      case .likes:
-        likesList
-      case .lists:
-        listsList
+      Button {
+        isShowingAccountSwitcher = true
+      } label: {
+        HStack(spacing: 4) {
+          Text("Switch")
+            .font(.footnote)
+
+          Image(systemName: "chevron.right")
+            .font(.caption2)
+        }
+        .foregroundStyle(.blue)
       }
+      .buttonStyle(.plain)
     }
-    .padding(.top, 8)
-    .frame(width: UIScreen.main.bounds.width)
-  }
-
-  // Lists for different content types
-  private var postsList: some View {
-    postRows(posts: viewModel.posts, emptyMessage: "No posts") {
-      await viewModel.loadPosts()
-    }
-  }
-
-  private var repliesList: some View {
-    postRows(posts: viewModel.replies, emptyMessage: "No replies") {
-      await viewModel.loadReplies()
-    }
-  }
-
-  private var mediaList: some View {
-    postRows(posts: viewModel.postsWithMedia, emptyMessage: "No media posts") {
-      await viewModel.loadMediaPosts()
-    }
-  }
-
-  private var likesList: some View {
-    postRows(posts: viewModel.likes, emptyMessage: "No liked posts") {
-      await viewModel.loadLikes()
-    }
-  }
-
-  @ViewBuilder
-  private var listsList: some View {
-    if viewModel.isLoading && viewModel.lists.isEmpty {
-      ProgressView("Loading lists...")
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .padding()
-    } else if viewModel.lists.isEmpty {
-      emptyContentView("No Lists", "This user hasn't created any lists yet.")
-        .padding(.top, 40)
-    } else {
-      LazyVStack(spacing: 0) {
-        ForEach(viewModel.lists, id: \.uri) { list in
-          Button {
-            navigationPath.append(NavigationDestination.list(list.uri))
-          } label: {
-            ListRow(list: list)
-          }
-          .buttonStyle(.plain)
-
-          Divider()
-
-          // Load more when reaching the end
-          if list == viewModel.lists.last && !viewModel.isLoadingMorePosts {
-            Color.clear.frame(height: 20)
-              .onAppear {
-                Task { await viewModel.loadLists() }
-              }
-          }
-        }
-
-        // Loading indicator for pagination
-        if viewModel.isLoadingMorePosts {
-          ProgressView()
-            .padding()
-            .frame(maxWidth: .infinity)
-        }
-      }
-      .onAppear {
-        if viewModel.lists.isEmpty && !viewModel.isLoading {
-          Task { await viewModel.loadLists() }
-        }
-      }
-    }
-  }
-
-  // Reusable post rows builder
-  @ViewBuilder
-  private func postRows(
-    posts: [AppBskyFeedDefs.FeedViewPost], emptyMessage: String, load: @escaping () async -> Void
-  ) -> some View {
-    if viewModel.isLoading && posts.isEmpty {
-      ProgressView("Loading...")
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .padding()
-    } else if posts.isEmpty {
-      emptyContentView("No Content", emptyMessage)
-        .padding(.top, 40)
-        .onAppear {
-          Task { await load() }
-        }
-    } else {
-      LazyVStack(spacing: 0) {
-        // Post rows
-        ForEach(posts, id: \.post.uri) { post in
-          Button {
-            navigationPath.append(NavigationDestination.post(post.post.uri))
-          } label: {
-            FeedPost(post: post, path: $navigationPath)
-              .frame(width: UIScreen.main.bounds.width)
-          }
-          .buttonStyle(.plain)
-
-          Divider()
-
-          // Load more when reaching the end
-          if post == posts.last && !viewModel.isLoadingMorePosts {
-            Color.clear.frame(height: 20)
-              .onAppear {
-                Task { await load() }
-              }
-          }
-        }
-
-        // Loading indicator for pagination
-        if viewModel.isLoadingMorePosts {
-          ProgressView()
-            .padding()
-            .frame(maxWidth: .infinity)
-        }
-      }
-      .onAppear {
-        if posts.isEmpty && !viewModel.isLoading {
-          Task { await load() }
-        }
-      }
+    .padding(.horizontal)
+    .padding(.vertical, 8)
+    .background(Color(.systemGroupedBackground))
+    .task {
+      // Update account count every time this view appears
+      await updateAccountCount()
     }
   }
 
@@ -501,12 +695,14 @@ struct ProfileHeader: View {
   let viewModel: ProfileViewModel
   let appState: AppState  // Added AppState to use GraphManager
   @Binding var isEditingProfile: Bool
-
+    
   @State private var showingFollowersSheet = false
   @State private var showingFollowingSheet = false
   @State private var isFollowButtonLoading = false
   // Track local follow state to handle UI update before server sync
   @State private var localIsFollowing: Bool = false
+    @State private var isShowingProfileImageViewer = false
+    @Namespace private var imageTransition
 
   private let avatarSize: CGFloat = 80
   private let bannerHeight: CGFloat = 150
@@ -519,7 +715,7 @@ struct ProfileHeader: View {
       // Profile info content
       profileInfoContent
 
-      Divider()
+      // Divider()
     }
     .frame(width: UIScreen.main.bounds.width)  // Use exact screen width for consistency
     .sheet(isPresented: $showingFollowersSheet) {
@@ -527,6 +723,12 @@ struct ProfileHeader: View {
     }
     .sheet(isPresented: $showingFollowingSheet) {
       followingSheet
+    }
+    .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
+        if let profile = viewModel.profile, let avatarURI = profile.avatar?.uriString() {
+            ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
+                .navigationTransition(.zoom(sourceID: avatarURI, in: imageTransition))
+        }
     }
     .onAppear {
       // Initialize local follow state based on profile
@@ -539,7 +741,7 @@ struct ProfileHeader: View {
   }
 
   private var bannerView: some View {
-    ZStack(alignment: .bottomLeading) {
+    ZStack(alignment: .bottom) {
       // Banner
       Group {
         if let bannerURL = profile.banner?.uriString() {
@@ -557,41 +759,72 @@ struct ProfileHeader: View {
       .frame(width: UIScreen.main.bounds.width, height: bannerHeight)
       .clipped()
 
-      // Avatar
-      LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-        if let image = state.image {
-          image.resizable().aspectRatio(contentMode: .fill)
-        } else {
-          Circle().fill(Color.secondary.opacity(0.3))
-        }
+      HStack(alignment: .bottom) {
+        // Avatar
+          LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+              if let image = state.image {
+                  image.resizable().aspectRatio(contentMode: .fill)
+              } else {
+                  Circle().fill(Color.secondary.opacity(0.3))
+              }
+          }
+          .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+          .onTapGesture {
+              isShowingProfileImageViewer = true
+          }
+          .frame(width: avatarSize, height: avatarSize)
+        .clipShape(Circle())
+        .background(
+            Circle()
+                .stroke(Color(.systemBackground), lineWidth: 4)
+                .scaleEffect((avatarSize + 4) / avatarSize)
+        )
+        .offset(y: avatarSize / 2)
+        .padding(.leading, 12)
+
+        Spacer()
       }
-      .frame(width: avatarSize, height: avatarSize)
-      .clipShape(Circle())
-      .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 4))
-      .padding(.leading)
-      .offset(y: avatarSize / 2)
+      .frame(width: UIScreen.main.bounds.width)
     }
   }
 
   private var profileInfoContent: some View {
     VStack(alignment: .leading, spacing: 12) {
-      // Add space for the avatar overflow
-      Spacer().frame(height: avatarSize / 2 + 4)
+      // Add space for the avatar overflow and position follow button
+      ZStack(alignment: .trailing) {
+        // Space for avatar overflow
+        Rectangle()
+          .fill(Color.clear)
+          .frame(height: avatarSize / 2 + 4)
+
+        // Follow/Edit button at the trailing edge
+        if viewModel.isCurrentUser {
+          editProfileButton
+        } else {
+          followButton
+        }
+      }
 
       // Display name and handle
       VStack(alignment: .leading, spacing: 4) {
-          Text(profile.displayName ?? profile.handle.description)
-          .font(.title3)
-          .fontWeight(.bold)
-          .lineLimit(1)
-          // Set explicit width
+          HStack(spacing: 0) {
+              
+              Text(profile.displayName ?? profile.handle.description)
+                  .font(.title3)
+                  .fontWeight(.bold)
+                  .lineLimit(1)
+              
+              if profile.viewer?.followedBy != nil {
+                  FollowsBadgeView()
+                      .padding(.leading, 4)
+              }
+          }
           .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
 
         Text("@\(profile.handle)")
           .font(.subheadline)
           .foregroundColor(.secondary)
           .lineLimit(1)
-          // Set explicit width
           .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
       }
 
@@ -600,20 +833,21 @@ struct ProfileHeader: View {
         Text(description)
           .font(.subheadline)
           .lineLimit(5)
-          // Set explicit width
           .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
       }
 
-      // Stats and follow button
+      // Stats
       HStack(spacing: 16) {
         // Following
         Button(action: { showingFollowingSheet = true }) {
           HStack(spacing: 4) {
             Text("\(profile.followsCount ?? 0)")
+              .fixedSize(horizontal: true, vertical: false)
               .font(.subheadline)
               .fontWeight(.semibold)
 
             Text("Following")
+              .fixedSize(horizontal: true, vertical: false)
               .font(.subheadline)
               .foregroundColor(.secondary)
           }
@@ -624,10 +858,12 @@ struct ProfileHeader: View {
         Button(action: { showingFollowersSheet = true }) {
           HStack(spacing: 4) {
             Text("\(profile.followersCount ?? 0)")
+              .fixedSize(horizontal: true, vertical: false)
               .font(.subheadline)
               .fontWeight(.semibold)
 
             Text("Followers")
+              .fixedSize(horizontal: true, vertical: false)
               .font(.subheadline)
               .foregroundColor(.secondary)
           }
@@ -635,15 +871,7 @@ struct ProfileHeader: View {
         .buttonStyle(.plain)
 
         Spacer()
-
-        // Follow/Edit button based on whether this is the current user or not
-        if viewModel.isCurrentUser {
-          editProfileButton
-        } else {
-          followButton
-        }
       }
-      // Set explicit width for the HStack
       .frame(width: UIScreen.main.bounds.width - 32)
     }
     .padding(.horizontal)
@@ -659,21 +887,67 @@ struct ProfileHeader: View {
         .fontWeight(.medium)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.1))
+        //        .background(Color.accentColor.opacity(0.7))
         .foregroundColor(.accentColor)
         .cornerRadius(16)
     }
+    .overlay {
+      Capsule().stroke(Color.accentColor, lineWidth: 1.5)
+    }
+
   }
 
   @ViewBuilder
   private var followButton: some View {
     if isFollowButtonLoading {
       ProgressView()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    } else if profile.viewer?.blocking != nil {
+      // Show blocked state instead of follow button
+      Button(action: {
+        // Do nothing - blocking handled in parent view
+      }) {
+        HStack {
+          Image(systemName: "person.crop.circle.badge.xmark")
+            .font(.footnote)
+          Text("Blocked")
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(.subheadline)
+        .fontWeight(.medium)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .foregroundColor(.red)
+        .cornerRadius(16)
+      }
+      .overlay {
+        Capsule().stroke(Color.red, lineWidth: 1.5)
+      }
+    } else if profile.viewer?.muted == true {
+      // Show muted state
+      Button(action: {
+        // Do nothing - muting handled in parent view
+      }) {
+        HStack {
+          Image(systemName: "speaker.slash")
+            .font(.footnote)
+          Text("Muted")
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(.subheadline)
+        .fontWeight(.medium)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+        .foregroundColor(.orange)
+        .cornerRadius(16)
+      }
+      .overlay {
+        Capsule().stroke(Color.orange, lineWidth: 1.5)
+      }
     } else if localIsFollowing {
       Button(action: {
-        Task(priority: .userInitiated) { // Explicit priority
+        Task(priority: .userInitiated) {  // Explicit priority
           isFollowButtonLoading = true
 
           // Optimistically update UI
@@ -681,7 +955,7 @@ struct ProfileHeader: View {
 
           do {
             // Perform unfollow operation on server
-              let success = try await appState.unfollow(did: profile.did.didString()) // Use performUnfollow
+            let success = try await appState.unfollow(did: profile.did.didString())  // Use performUnfollow
 
             if success {
               // Add a small delay before reloading to allow server to update
@@ -704,18 +978,22 @@ struct ProfileHeader: View {
           Image(systemName: "checkmark")
             .font(.footnote)
           Text("Following")
+            .fixedSize(horizontal: true, vertical: false)
         }
         .font(.subheadline)
         .fontWeight(.medium)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.1))
         .foregroundColor(.accentColor)
         .cornerRadius(16)
       }
+      .overlay {
+        Capsule().stroke(Color.accentColor, lineWidth: 1.5)
+      }
+
     } else {
       Button(action: {
-        Task(priority: .userInitiated) { // Explicit priority
+        Task(priority: .userInitiated) {  // Explicit priority
           isFollowButtonLoading = true
 
           // Optimistically update UI
@@ -723,7 +1001,7 @@ struct ProfileHeader: View {
 
           do {
             // Perform follow operation
-              let success = try await appState.follow(did: profile.did.didString()) // Use performFollow
+            let success = try await appState.follow(did: profile.did.didString())  // Use performFollow
 
             if success {
               // Add a small delay before reloading
@@ -801,4 +1079,82 @@ struct ProfileHeader: View {
     )
   }
   .environment(appState)
+}
+
+struct ProfileImageViewerView: View {
+    let avatar: URI?
+    @Environment(AppState.self) private var appState
+    @Binding var isPresented: Bool
+    var namespace: Namespace.ID
+    @State private var opacity: CGFloat = 0.0
+    
+    var body: some View {
+        ZStack {
+          Color.black
+            .opacity(opacity)
+            .ignoresSafeArea()
+
+        if let avatarURI = avatar {
+            let imageUrl = avatarURI.uriString()
+            
+            LazyPager(data: [imageUrl]) { image in
+                GeometryReader { geometry in
+                    LazyImage(url: URL(string: image)) { state in
+                        if let fullImage = state.image {
+                            fullImage
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                                .id(image) // Use the image string for proper identification
+                                .matchedTransitionSource(id: image, in: namespace)
+
+                        } else if state.error != nil {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.largeTitle)
+                                .foregroundColor(.white)
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        } else {
+                            ProgressView()
+                                .tint(.white)
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        }
+                    }
+                    .pipeline(ImageLoadingManager.shared.pipeline)
+                    .priority(.high)
+                    .processors([
+                        ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
+                    ])
+                }
+            }
+            .zoomable(min: 1.0, max: 3.0, doubleTapGesture: .scale(2.0))
+            .onDismiss(backgroundOpacity: $opacity) {
+                isPresented = false
+            }
+            .settings { config in
+                config.dismissVelocity = 1.5
+                config.dismissTriggerOffset = 0.2
+                config.dismissAnimationLength = 0.3
+                config.fullFadeOnDragAt = 0.3
+                config.pinchGestureEnableOffset = 15
+                config.shouldCancelSwiftUIAnimationsOnDismiss = false
+            }
+            .id("pager-\(imageUrl)")
+        } else {
+            // Fallback for when no image is available
+            VStack {
+                Text("No image available")
+                    .foregroundColor(.white)
+                Button("Close") {
+                    isPresented = false
+                }
+                .padding()
+                .background(Color.gray.opacity(0.5))
+                .cornerRadius(8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.8))
+        }
+    }
+    }
 }

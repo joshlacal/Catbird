@@ -1,5 +1,5 @@
 {
-  "originHash" : "54789ab52448fc22c45987fba04171f3e6f29277137604c38c5a878c2c7a9775",
+  "originHash" : "b68f3ee56ee173b5448d0d5d28996c397e532f0a43f16c2e66b6c28826278b59",
   "pins" : [
     {
       "identity" : "cryptoswift",
@@ -89,6 +89,15 @@
       "state" : {
         "branch" : "master",
         "revision" : "ef21abed98033ada7e511b8c5c3c0627b63e8d38"
+      }
+    },
+    {
+      "identity" : "swiftui-introspect",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/siteline/swiftui-introspect",
+      "state" : {
+        "revision" : "807f73ce09a9b9723f12385e592b4e0aaebd3336",
+        "version" : "1.3.0"
       }
     },
     {

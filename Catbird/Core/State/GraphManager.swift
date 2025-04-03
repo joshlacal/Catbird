@@ -339,6 +339,9 @@ final class GraphManager {
 
       // Update the block cache
       await addToBlockCache(did: did)
+      
+      // Notify that graph has changed
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
 
       logger.debug("Successfully blocked user: \(did)")
       return true
@@ -429,6 +432,9 @@ final class GraphManager {
       if success {
         // Remove from block cache
         await removeFromBlockCache(did: did)
+        
+        // Notify that graph has changed
+        NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
       }
 
       return success
@@ -559,6 +565,9 @@ final class GraphManager {
 
       // Update mute cache
       await addToMuteCache(did: did)
+      
+      // Notify that graph has changed
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
 
       logger.debug("Successfully muted user: \(did)")
       return true
@@ -602,6 +611,9 @@ final class GraphManager {
 
       // Update mute cache
       await removeFromMuteCache(did: did)
+      
+      // Notify that graph has changed
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
 
       logger.debug("Successfully unmuted user: \(did)")
       return true

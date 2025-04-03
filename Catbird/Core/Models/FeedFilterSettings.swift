@@ -23,7 +23,7 @@ struct FeedFilter: Identifiable, Hashable {
 }
 
 /// Manages filter settings and persists user preferences
-@Observable class FeedFilterSettings {
+@Observable final class FeedFilterSettings {
   var filters: [FeedFilter] = []
 
   // Tracking of active filters
@@ -101,6 +101,19 @@ struct FeedFilter: Identifiable, Hashable {
         description: "Hide posts that quote other posts",
         isEnabled: false,
         filterBlock: { post in
+          if case let .appBskyFeedDefsPostView(parent) = post.reply?.parent {
+            // Check if the post is a quote
+            if let embed = parent.embed {
+              switch embed {
+              case .appBskyEmbedRecordView, .appBskyEmbedRecordWithMediaView:
+                return false
+              default:
+                return true
+              }
+            }
+            return true
+          }
+
           if let embed = post.post.embed {
             switch embed {
             case .appBskyEmbedRecordView, .appBskyEmbedRecordWithMediaView:
@@ -111,6 +124,13 @@ struct FeedFilter: Identifiable, Hashable {
           }
           return true
         }
+      ),
+      FeedFilter(
+        name: "Hide Duplicate Posts",
+        description: "Hide standalone posts that also appear as parent posts in replies",
+        isEnabled: true,
+        // The actual logic is handled in FeedModel, this block is a placeholder
+        filterBlock: { _ in true }
       ),
     ]
   }
@@ -223,8 +243,7 @@ protocol PostContentProcessor {
   func metadataForPost(uri: String) -> [String: Any]?
 }
 
-/// Example implementation for mute words
-class MuteWordProcessor: PostContentProcessor {
+final class MuteWordProcessor: PostContentProcessor {
   private let muteWords: [String]
 
   init(muteWords: [String]) {
@@ -237,6 +256,25 @@ class MuteWordProcessor: PostContentProcessor {
       let feedPost = postObj as? AppBskyFeedPost
     else {
       return true
+    }
+
+    // if post has a parent reply, also check the parent post's text for mute words
+
+    switch post.reply?.parent {
+    case .appBskyFeedDefsPostView(let postView):
+      if case let .knownType(parentPostObj) = postView.record,
+        let parentFeedPost = parentPostObj as? AppBskyFeedPost
+      {
+        // Check the parent post's text for mute words
+        let parentText = parentFeedPost.text.lowercased()
+        for word in muteWords {
+          if parentText.contains(word) {
+            return false
+          }
+        }
+      }
+    default:
+      break
     }
 
     let text = feedPost.text.lowercased()

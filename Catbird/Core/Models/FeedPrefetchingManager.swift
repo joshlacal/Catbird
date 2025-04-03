@@ -7,9 +7,13 @@
 
 import Foundation
 import Petrel
+import OSLog
 
 /// Manages prefetching of feed data for smoother user experience
 actor FeedPrefetchingManager {
+    
+    private let logger = Logger(subsystem: "blue.catbird", category: "FeedPrefetchingManager")
+    
   // MARK: - Properties
 
   /// Shared singleton instance
@@ -48,7 +52,7 @@ actor FeedPrefetchingManager {
       // Prefetch avatar images and other assets
       await prefetchAssets(for: posts)
     } catch {
-      print("Error prefetching feed: \(error)")
+        logger.error("Error prefetching feed: \(error)")
     }
   }
 

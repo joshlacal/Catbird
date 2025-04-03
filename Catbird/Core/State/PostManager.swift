@@ -47,7 +47,8 @@ final class PostManager {
     facets: [AppBskyRichtextFacet] = [],
     parentPost: AppBskyFeedDefs.PostView? = nil,
     selfLabels: ComAtprotoLabelDefs.SelfLabels,
-    embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil
+    embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil,
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
   ) async throws {
     logger.info(
       "Creating \(parentPost == nil ? "post" : "reply") with text length: \(postText.count)")
@@ -67,6 +68,14 @@ final class PostManager {
       let currentATProtocolDate = ATProtocolDate(date: currentDate)
 
       // Get user DID
+      let did = try await client.getDid()
+
+      // Generate TID for the post
+      let tid = await TIDGenerator.nextTID()
+
+      // Create the post URI
+      let postURI = try ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/\(tid)")
+      logger.debug("Generated post URI: \(postURI)")
 
       // Prepare reply reference if this is a reply
       var reply: AppBskyFeedPost.ReplyRef?
@@ -90,18 +99,53 @@ final class PostManager {
         tags: hashtags,
         createdAt: currentATProtocolDate
       )
-      let did = try await client.getDid()
 
-      // Prepare the API request
-      let createRecordInput = ComAtprotoRepoCreateRecord.Input(
-        repo: try ATIdentifier(string: did),
+      // Prepare writes array for batched operation
+      var writes: [ComAtprotoRepoApplyWrites.InputWritesUnion] = []
+
+      // Encode post to CBOR to generate CID
+      let postData = try newPost.encodedDAGCBOR()
+      let cid = CID.fromDAGCBOR(postData)
+      logger.debug("Post CID: \(cid)")
+
+      // Add post creation to writes
+      let createPost = ComAtprotoRepoApplyWrites.Create(
         collection: try NSID(nsidString: "app.bsky.feed.post"),
-        record: ATProtocolValueContainer.knownType((newPost))
+        rkey: try RecordKey(keyString: tid.description),
+        value: ATProtocolValueContainer.knownType(newPost)
+      )
+      writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createPost))
+
+      // Add threadgate creation if applicable
+      if let allowRules = threadgateAllowRules {
+        // Create threadgate
+        let threadgate = AppBskyFeedThreadgate(
+          post: postURI,
+          allow: allowRules,
+          createdAt: currentATProtocolDate,
+          hiddenReplies: nil
+        )
+
+        // Create threadgate with standard "gate" record key
+        let createThreadgate = ComAtprotoRepoApplyWrites.Create(
+          collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
+          rkey: try RecordKey(keyString: tid.description),
+          value: ATProtocolValueContainer.knownType(threadgate)
+        )
+        writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createThreadgate))
+        logger.debug("Added threadgate creation to batch")
+      }
+
+      // Execute batch write operation
+      let input = ComAtprotoRepoApplyWrites.Input(
+        repo: try ATIdentifier(string: did),
+        validate: true,
+        writes: writes
       )
 
-      // Make the API call
-      let (responseCode, _) = try await client.com.atproto.repo.createRecord(
-        input: createRecordInput)
+      // Execute the batch operation
+      logger.info("Executing batch write operation with \(writes.count) operations")
+      let (responseCode, _) = try await client.com.atproto.repo.applyWrites(input: input)
 
       // Handle the response
       if responseCode != 200 {
@@ -127,7 +171,6 @@ final class PostManager {
       throw error
     }
   }
-
   /// Creates a reply reference for a parent post
   private func createReplyRef(for parentPost: AppBskyFeedDefs.PostView) throws
     -> AppBskyFeedPost.ReplyRef
@@ -173,13 +216,15 @@ final class PostManager {
   ///   - hashtags: Optional hashtags to include
   ///   - facets: Optional array of facets arrays for each post
   ///   - embeds: Optional array of embeds for each post
+  ///   - threadgateAllowRules: Optional array of threadgate rules for the first post
   func createThread(
     posts: [String],
     languages: [LanguageCodeContainer],
     selfLabels: ComAtprotoLabelDefs.SelfLabels,
     hashtags: [String] = [],
     facets: [[AppBskyRichtextFacet]?]? = nil,
-    embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil
+    embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil,
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
   ) async throws {
     logger.info("Starting thread creation with \(posts.count) posts")
 
@@ -204,8 +249,6 @@ final class PostManager {
       logger.info("Using DID: \(did)")
 
       let currentDate = Date()
-//      let currentATProtocolDate = ATProtocolDate(date: currentDate)
-//      logger.debug("Using timestamp: \(currentDate)")
 
       // Generate TIDs for all posts
       logger.debug("Generating record keys (TIDs) for \(posts.count) posts")
@@ -221,12 +264,16 @@ final class PostManager {
       var parentRef: ComAtprotoRepoStrongRef?
 
       // Process each post
-        for (index, postText) in posts.enumerated() {
-            // Create a slightly incremented timestamp for each post
-            let postDate = currentDate.addingTimeInterval(Double(index) / 1000.0) // Add index milliseconds
-            let postATProtocolDate = ATProtocolDate(date: postDate)
+      for (index, postText) in posts.enumerated() {
+        // Create a slightly incremented timestamp for each post
+        let postDate = currentDate.addingTimeInterval(Double(index) / 1000.0)  // Add index milliseconds
+        let postATProtocolDate = ATProtocolDate(date: postDate)
 
-            logger.debug("Processing post #\(index+1) with \(postText.count) characters")
+        logger.debug("Processing post #\(index+1) with \(postText.count) characters")
+
+        // Create post URI
+        let postURI = try ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/\(rkeys[index])")
+        logger.debug("Post #\(index+1) URI: \(postURI)")
 
         // Create post object
         var reply: AppBskyFeedPost.ReplyRef?
@@ -266,70 +313,21 @@ final class PostManager {
           createdAt: postATProtocolDate
         )
         logger.debug("Post #\(index+1) object created")
-        // convert to JSON for pretty printing
-          let encoder = JSONEncoder()
-          encoder.outputFormatting = .prettyPrinted
-          
-          let jsonData = try encoder.encode(post)
 
-        if let jsonString = String(data: jsonData, encoding: .utf8) {
-            logger.debug("Post #\(index+1) JSON: \(jsonString)")
-        } else {
-            logger.debug("Failed to convert post #\(index+1) to JSON string")
-        }
-
-
-          // --- DEBUGGING: Inspect Intermediate Value ---
-          do {
-              let intermediateValue = try post.toCBORValue()
-              // Use Swift's reflection or just print to see the structure.
-              // You might need a helper function to pretty-print nested dictionaries/arrays.
-              logger.debug("Intermediate value for post #\(index+1):\n\(String(reflecting: intermediateValue))")
-              // Or, if it's expected to be a dictionary:
-              // if let dict = intermediateValue as? [AnyHashable: Any] {
-              //     logger.debug("Intermediate keys for post #\(index+1): \(dict.keys)")
-              // }
-
-          } catch {
-              logger.error("Error calling toCBORValue for post #\(index+1): \(error)")
-          }
-          // --- END DEBUGGING ---
-
-          logger.debug("Encoding post #\(index+1) to DAGCBOR")
-          // This is the line that currently fails:
-          
-          
-          
-          
-          
-          
-          
-          
-          
-          
-          
         // Encode post to CBOR to generate CID
         logger.debug("Encoding post #\(index+1) to DAGCBOR")
         let postData = try post.encodedDAGCBOR()
-
-        // Add detailed hex dump logging for debugging
-        logger.info("DAGCBOR hex dump for post #\(index+1):\n\(postData.hexDump())")
-
         let cid = CID.fromDAGCBOR(postData)
         logger.debug("Post #\(index+1) CID: \(cid)")
 
-        // Record URI for this post
-        let postURI = try ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/\(rkeys[index])")
-        logger.debug("Post #\(index+1) URI: \(postURI)")
-
         // If this is the first post, set it as the root for the thread
         if index == 0 {
-            rootRef = ComAtprotoRepoStrongRef(uri: postURI, cid: cid)
+          rootRef = ComAtprotoRepoStrongRef(uri: postURI, cid: cid)
           logger.debug("First post set as thread root: \(postURI)")
         }
 
         // Set this post as the parent for the next post
-          parentRef = ComAtprotoRepoStrongRef(uri: postURI, cid: cid)
+        parentRef = ComAtprotoRepoStrongRef(uri: postURI, cid: cid)
         logger.debug("Set parent reference for next post: \(postURI)")
 
         // Create write operation for this post
@@ -342,10 +340,29 @@ final class PostManager {
 
         writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(create))
         logger.debug("Added post #\(index+1) to batch write queue")
+
+        // Add threadgate for the first post if applicable
+        if index == 0 && threadgateAllowRules != nil {
+          let threadgate = AppBskyFeedThreadgate(
+            post: postURI,
+            allow: threadgateAllowRules!,
+            createdAt: postATProtocolDate,
+            hiddenReplies: nil
+          )
+
+          // Create threadgate with standard "gate" record key
+          let createThreadgate = ComAtprotoRepoApplyWrites.Create(
+            collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
+            rkey: try RecordKey(keyString: rkeys[index].description),
+            value: ATProtocolValueContainer.knownType(threadgate)
+          )
+          writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createThreadgate))
+          logger.debug("Added threadgate creation for first post")
+        }
       }
 
       // Create the input for applyWrites
-      logger.info("Preparing batch applyWrites operation with \(writes.count) posts")
+      logger.info("Preparing batch applyWrites operation with \(writes.count) operations")
       let input = ComAtprotoRepoApplyWrites.Input(
         repo: try ATIdentifier(string: did),
         validate: true,
@@ -389,8 +406,8 @@ final class PostManager {
   private func generateRKeys(count: Int) async throws -> [TID] {
     var rkeys: [TID] = []
     for _ in 0..<count {
-        let tid = await TIDGenerator.nextTID()
-        rkeys.append(tid)
+      let tid = await TIDGenerator.nextTID()
+      rkeys.append(tid)
     }
     return rkeys
   }

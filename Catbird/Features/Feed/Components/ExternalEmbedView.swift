@@ -22,13 +22,6 @@ struct ExternalEmbedView: View {
             content
                 .frame(maxWidth: .infinity)
         }
-        .padding(6)
-        .background(Color.gray.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-        )
         .onTapGesture {
             if let url = URL(string: external.uri.uriString()) {
                 _ = appState.urlHandler.handle(url)
@@ -83,6 +76,14 @@ struct ExternalEmbedView: View {
                     
                     linkDetails
                 }
+                .padding(6)
+                .background(Color.gray.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+
             }
         }
     }

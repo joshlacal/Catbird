@@ -1,3 +1,4 @@
+import Foundation
 import Petrel
 import SwiftUI
 
@@ -14,17 +15,18 @@ struct HomeView: View {
   @Binding var isRootView: Bool
 
   // Local state
-
   @State private var showingSettings = false
   @State private var isReturningFromView = false
   @State private var feedViewError: String? = nil
-  // Key to force view recreation when feed changes
   @State private var feedViewKey = UUID()
-  // Track last navigation time to detect returning from a view
   @State private var lastNavigationTime = Date()
 
+  // For logging
+  let id = UUID().uuidString.prefix(6)
+  
   var body: some View {
     let navigationPath = appState.navigationManager.pathBinding(for: 0)
+
     return NavigationStack(path: navigationPath) {
       VStack {
         // Initialize FeedView with current settings
@@ -40,11 +42,13 @@ struct HomeView: View {
       }
       .onAppear {
         // Update current tab index when this tab appears
-          appState.navigationManager.updateCurrentTab(0)
+        appState.navigationManager.updateCurrentTab(0)
       }
       .navigationDestination(for: NavigationDestination.self) { destination in
-        NavigationHandler.viewForDestination(destination, path: navigationPath, appState: appState, selectedTab: $selectedTab)
-          .navigationTitle(NavigationHandler.titleForDestination(destination))
+        NavigationHandler.viewForDestination(
+          destination, path: navigationPath, appState: appState, selectedTab: $selectedTab
+        )
+        .navigationTitle(NavigationHandler.titleForDestination(destination))
       }
       .onChange(of: navigationPath.wrappedValue) { oldPath, newPath in
         handleNavigationChange(oldCount: oldPath.count, newCount: newPath.count)
@@ -55,13 +59,9 @@ struct HomeView: View {
       .onChange(of: lastTappedTab) { oldValue, newValue in
         handleLastTappedTabChange(oldValue: oldValue, newValue: newValue)
       }
-      .onAppear {
-        print(
-          "📱 HomeView appeared, selectedTab: \(selectedTab), lastTappedTab: \(String(describing: lastTappedTab))"
-        )
-      }
       .navigationTitle(currentFeedName)
       .toolbar {
+        // Leading toolbar item
         ToolbarItem(placement: .navigationBarLeading) {
           Button {
             isDrawerOpen = true
@@ -69,11 +69,26 @@ struct HomeView: View {
             Image(systemName: "circle.grid.3x3.circle")
           }
         }
+
+        // Avatar toolbar item - now using UIKitAvatarView
         ToolbarItem(placement: .navigationBarTrailing) {
           Button {
             showingSettings = true
           } label: {
-            Image(systemName: "gear")
+            UIKitAvatarView(
+              did: appState.currentUserDID,
+              client: appState.atProtoClient,
+              size: 24
+            )
+            .frame(width: 24, height: 24)
+            // Force recreation when DID changes
+            .id("avatar-\(appState.currentUserDID ?? "none")")
+            .overlay {
+                Circle()
+                    .stroke(Color.primary.opacity(0.5), lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.2), radius: 1, x: 0, y: 1)
+            .accessibilityLabel("User Avatar")
           }
         }
       }
@@ -82,9 +97,6 @@ struct HomeView: View {
       SettingsView()
     }
     .toolbarBackground(.visible, for: .tabBar)
-    .tabItem {
-      Label("Home", systemImage: "house")
-    }
   }
 
   private func handleNavigationChange(oldCount: Int, newCount: Int) {
@@ -118,19 +130,14 @@ struct HomeView: View {
   }
 
   private func handleLastTappedTabChange(oldValue: Int?, newValue: Int?) {
-    print(
-      "📱 HomeView: lastTappedTab changed from \(String(describing: oldValue)) to \(String(describing: newValue))"
-    )
     // Handle the case when home tab is tapped again
     if newValue == 0, selectedTab == 0 {
-      print("📱 HomeView: Home tab tapped again! Setting tabTappedAgain to 0")
       // Trigger scroll to top using appState
       appState.tabTappedAgain = 0
 
       // Reset after handling
       DispatchQueue.main.async {
         lastTappedTab = nil
-        print("📱 HomeView: Reset lastTappedTab to nil")
       }
     }
   }
@@ -148,7 +155,7 @@ struct HomeView: View {
         selectedTab: $selectedTab,
         isReturningFromView: isReturningFromView
       )
-      .id(feedViewKey)  // Key forces view recreation
+      .id(feedViewKey.uuidString)
     }
   }
 }

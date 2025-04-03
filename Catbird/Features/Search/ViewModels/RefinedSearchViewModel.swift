@@ -191,28 +191,117 @@ enum SearchState {
     }
     
     /// Refresh current search with latest data
+    /// Refresh current search with latest data
+    /// Refresh current search with latest data
     func refreshSearch(client: ATProtoClient) async {
         if isCommittedSearch {
-            // Reset cursors
-            profileCursor = nil
-            postCursor = nil
-            feedCursor = nil
-            starterPackCursor = nil
+            // Important: Don't clear results until we have new ones
             
-            // Clear results
-            profileResults = []
-            postResults = []
-            feedResults = []
-            starterPackResults = []
+            // Reset cursors for pagination
+            let newProfileCursor: String? = nil
+            let newPostCursor: String? = nil
+            let newFeedCursor: String? = nil
+            let newStarterPackCursor: String? = nil
             
-            // Execute search again
-            await executeSearch(client: client)
+            // Create temporary arrays to store new results
+            var newProfileResults: [AppBskyActorDefs.ProfileView] = []
+            var newPostResults: [AppBskyFeedDefs.PostView] = []
+            var newFeedResults: [AppBskyFeedDefs.GeneratorView] = []
+            
+            // Execute search to get new results
+            do {
+                // Create a task group with a manual task cancelation check
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    // Search profiles
+                    group.addTask {
+                        do {
+                            let input = AppBskyActorSearchActors.Parameters(
+                                term: self.searchQuery, limit: 25
+                            )
+                            
+                            let (_, response) = try await client.app.bsky.actor.searchActors(input: input)
+                            
+                            if let actorsResponse = response {
+                                newProfileResults = actorsResponse.actors
+                                // Don't update cursor yet
+                            }
+                        } catch {
+                            // Log but don't rethrow so other tasks can continue
+                            print("Profile search error: \(error.localizedDescription)")
+                        }
+                    }
+                    
+                    // Search posts (similar pattern for other searches)
+                    group.addTask {
+                        do {
+                            let input = AppBskyFeedSearchPosts.Parameters(
+                                q: self.searchQuery, limit: 25
+                            )
+                            
+                            let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
+                            
+                            if let postsResponse = response {
+                                newPostResults = postsResponse.posts
+                                // Don't update cursor yet
+                            }
+                        } catch {
+                            print("Post search error: \(error.localizedDescription)")
+                        }
+                    }
+                    
+                    // Search feeds
+                    group.addTask {
+                        do {
+                            let input = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(
+                                limit: 25,
+                                query: self.searchQuery
+                            )
+                            
+                            let (_, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(input: input)
+                            
+                            if let feedsResponse = response {
+                                newFeedResults = feedsResponse.feeds
+                            }
+                        } catch {
+                            print("Feed search error: \(error.localizedDescription)")
+                        }
+                    }
+                    
+                    // Wait for all tasks
+                    for try await _ in group { }
+                }
+                
+                // Only update UI with new results if any were successfully fetched
+                let hasNewResults = !newProfileResults.isEmpty || !newPostResults.isEmpty || !newFeedResults.isEmpty
+                
+                if hasNewResults {
+                    // Update the results and cursors
+                    let profileResults = newProfileResults.isEmpty ? self.profileResults : newProfileResults
+                    let postResults = newPostResults.isEmpty ? self.postResults : newPostResults
+                    let feedResults = newFeedResults.isEmpty ? self.feedResults : newFeedResults
+                    
+                    await MainActor.run {
+                        self.profileResults = profileResults
+                        self.postResults = postResults
+                        self.feedResults = feedResults
+                        
+                        self.profileCursor = newProfileCursor
+                        self.postCursor = newPostCursor
+                        self.feedCursor = newFeedCursor
+                        self.starterPackCursor = newStarterPackCursor
+                        
+                        self.searchState = .results
+                    }
+                }
+            } catch {
+                // Keep existing results on error
+                logger.error("Error refreshing search: \(error.localizedDescription)")
+            }
         } else if searchState == .idle {
             // Refresh discovery content
             await refreshDiscoveryContent(client: client)
         }
     }
-    
     /// Refresh discovery content
     func refreshDiscoveryContent(client: ATProtoClient) async {
         // Fetch trending topics

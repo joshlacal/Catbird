@@ -62,13 +62,14 @@ struct RefinedSearchView: View {
                             .transition(.opacity)
                             
                         case .searching:
-                            TypeaheadView(
-                                viewModel: viewModel,
-                                path: navigationPath,
-                                searchText: $searchText, 
-                                committed: viewModel.isCommittedSearch
-                            )
-                            .transition(.opacity)
+                            EmptyView()
+//                            TypeaheadView(
+//                                viewModel: viewModel,
+//                                path: navigationPath,
+//                                searchText: $searchText, 
+//                                committed: viewModel.isCommittedSearch
+//                            )
+//                            .transition(.opacity)
                             
                         case .results:
                             ResultsView(
@@ -91,7 +92,7 @@ struct RefinedSearchView: View {
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Handles, feeds, hashtags, or keywords"
+                prompt: "Users, keywords, hashtags, or feeds"
             )
             .searchSuggestions {
                 searchSuggestionsContent
@@ -176,16 +177,72 @@ struct RefinedSearchView: View {
     private var searchSuggestionsContent: some View {
         // Show dynamic suggestions when typing
         if !searchText.isEmpty {
-            // Generate some hashtag/term suggestions
-            ForEach(SearchSuggestion.generateSuggestions(for: searchText), id: \.self) { suggestion in
-                Button {
-                    if let client = appState.atProtoClient {
-                        viewModel.searchQuery = suggestion
-                        viewModel.commitSearch(client: client)
+            // Profile suggestions
+            if !viewModel.typeaheadProfiles.isEmpty {
+                Section("Profiles") {
+                    ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
+                        Button {
+                            viewModel.addRecentProfileSearchBasic(profile: profile)
+                            let navigationPath = appState.navigationManager.pathBinding(for: 1)
+                            navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
+                        } label: {
+                            HStack {
+                                AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
+                                VStack(alignment: .leading) {
+                                    Text(profile.displayName ?? "@\(profile.handle)")
+                                        .font(.headline)
+                                    Text("@\(profile.handle)")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
                     }
-                } label: {
-                    Label(suggestion, systemImage: "magnifyingglass")
                 }
+            }
+            
+            // Feed suggestions
+            if !viewModel.typeaheadFeeds.isEmpty {
+                Section("Feeds") {
+                    ForEach(viewModel.typeaheadFeeds, id: \.uri) { feed in
+                        Button {
+                            let navigationPath = appState.navigationManager.pathBinding(for: 1)
+                            navigationPath.wrappedValue.append(NavigationDestination.feed(feed.uri))
+                        } label: {
+                            HStack {
+                                AsyncProfileImage(url: URL(string: feed.avatar?.uriString() ?? ""), size: 36)
+                                Text(feed.displayName)
+                                    .font(.headline)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Term suggestions
+            if !viewModel.typeaheadSuggestions.isEmpty {
+                Section("Suggestions") {
+                    ForEach(viewModel.typeaheadSuggestions, id: \.self) { suggestion in
+                        Button {
+                            if let client = appState.atProtoClient {
+                                viewModel.searchQuery = suggestion
+                                viewModel.commitSearch(client: client)
+                            }
+                        } label: {
+                            Label(suggestion, systemImage: "magnifyingglass")
+                        }
+                    }
+                }
+            }
+            
+            // Direct search button
+            Button {
+                if let client = appState.atProtoClient {
+                    viewModel.commitSearch(client: client)
+                }
+            } label: {
+                Label("Search for \"\(searchText)\"", systemImage: "magnifyingglass")
+                    .foregroundColor(.accentColor)
             }
         } else {
             // Show recent searches when empty
@@ -202,7 +259,6 @@ struct RefinedSearchView: View {
             }
         }
     }
-    
     // MARK: - Navigation Handling
     
     @ViewBuilder
@@ -223,3 +279,13 @@ struct RefinedSearchView: View {
     }
 }
 
+
+// MARK: - Preview
+#Preview {
+    @Previewable @State var appState = AppState()
+        let selectedTab = Binding.constant(1)
+        let lastTappedTab = Binding.constant(1)
+
+        RefinedSearchView(appState: appState, selectedTab: selectedTab, lastTappedTab: .constant(1))
+            .environment(appState)
+}

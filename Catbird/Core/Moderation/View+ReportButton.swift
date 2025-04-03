@@ -1,5 +1,6 @@
 import SwiftUI
 import Petrel
+import os
 
 /// Extension to add report functionality to views showing content from the AT Protocol network
 extension View {
@@ -31,7 +32,7 @@ extension View {
                     )
                 } catch {
                     // Handle the error, perhaps show an alert
-                    print("Error creating report subject: \(error)")
+                    logger.error("Error creating report subject: \(error)")
                 }
             } label: {
                 Label("Report Post", systemImage: "flag")

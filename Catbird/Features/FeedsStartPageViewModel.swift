@@ -165,11 +165,11 @@ final class FeedsStartPageViewModel {
       
       // Start with all unique feeds
       let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
-      logger.debug("All feeds: \(allUniqueFeeds)")
+//      logger.debug("All feeds: \(allUniqueFeeds)")
       
       // Filter out system feeds before trying to convert to URIs
       let customFeeds = allUniqueFeeds.filter { !SystemFeedTypes.isTimelineFeed($0) }
-      logger.debug("Custom feeds to fetch: \(customFeeds)")
+//      logger.debug("Custom feeds to fetch: \(customFeeds)")
       
       // If we already have generators and nothing to fetch, just keep them
       if customFeeds.isEmpty && !feedGenerators.isEmpty {
@@ -212,8 +212,17 @@ final class FeedsStartPageViewModel {
         logger.error("Feed generator fetch failed with code: \(responseCode)")
       }
     } catch {
-      errorMessage = "Error fetching feed generators: \(error.localizedDescription)"
-      logger.error("Exception in fetchFeedGenerators: \(error.localizedDescription)")
+        // Check if it's a cancellation error
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == -999 {
+            // This is a cancellation error, don't update UI
+            logger.debug("Feed generator fetch cancelled")
+            return
+        }
+        
+        // Only set error message for non-cancellation errors
+        errorMessage = "Error fetching feed generators: \(error.localizedDescription)"
+        logger.error("Exception in fetchFeedGenerators: \(error.localizedDescription)")
     }
   }
 

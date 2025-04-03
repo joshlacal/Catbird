@@ -23,20 +23,42 @@ func getAvailableLanguages() -> [LanguageCodeContainer] {
     "zh-CN", "zh-TW", "fr-FR", "fr-CA", "de-DE", "de-AT", "de-CH",
   ]
 
-  return commonLanguageTags.compactMap { tag in
-    let locale = Locale(identifier: tag)
-    return LanguageCodeContainer(lang: locale.language)
-  }.sorted { lhs, rhs in
-    // Sort by language name in the user's current locale
-    let lhsName =
-      Locale.current.localizedString(forLanguageCode: lhs.lang.languageCode?.identifier ?? "")
-      ?? lhs.lang.minimalIdentifier
-    let rhsName =
-      Locale.current.localizedString(forLanguageCode: rhs.lang.languageCode?.identifier ?? "")
-      ?? rhs.lang.minimalIdentifier
-    return lhsName < rhsName
+  // Create a dictionary to track unique languages with their full tags
+  var uniqueLanguages: [String: LanguageCodeContainer] = [:]
+  
+  // Process each tag and keep only one entry per base language
+  for tag in commonLanguageTags {
+    let container = LanguageCodeContainer(languageCode: tag)
+    let baseLanguageCode = container.lang.languageCode?.identifier ?? container.lang.minimalIdentifier
+    
+    // Either add this as a new language or replace if it's a regional variant
+    // Prefer tags with regions (longer tags)
+    if uniqueLanguages[baseLanguageCode] == nil || tag.count > uniqueLanguages[baseLanguageCode]!.lang.minimalIdentifier.count {
+      uniqueLanguages[baseLanguageCode] = container
+    }
   }
+  
+  // Sort the unique languages by their localized names
+  return uniqueLanguages.values.sorted(by: { (a: LanguageCodeContainer, b: LanguageCodeContainer) -> Bool in
+    let aName = Locale.current.localizedString(forLanguageCode: a.lang.languageCode?.identifier ?? "") ?? a.lang.minimalIdentifier
+    let bName = Locale.current.localizedString(forLanguageCode: b.lang.languageCode?.identifier ?? "") ?? b.lang.minimalIdentifier
+    return aName < bName
+  })
 }
+
+// Helper function to get a properly formatted display name including region
+func getDisplayName(for locale: Locale) -> String {
+  let languageName = Locale.current.localizedString(forLanguageCode: locale.language.languageCode?.identifier ?? "") ?? locale.identifier
+  
+  // If there's a region code, add it to the display name
+  if let regionCode = locale.region?.identifier {
+    let regionName = Locale.current.localizedString(forRegionCode: regionCode) ?? regionCode
+    return "\(languageName) (\(regionName))"
+  }
+  
+  return languageName
+}
+
 
 extension Sequence where Element: Hashable {
   func uniqued() -> [Element] {
@@ -164,6 +186,10 @@ struct PostComposerView: View {
             )
           }
         }
+      }
+      // Add the threadgate options sheet
+      .sheet(isPresented: $viewModel.showThreadgateOptions) {
+        ThreadgateOptionsView(settings: $viewModel.threadgateSettings)
       }
       // Alerts
       .alert(item: $viewModel.alertItem) { alertItem in
@@ -457,7 +483,7 @@ struct PostComposerView: View {
     }
   }
 
-  // Modified bottom toolbar to include thread toggle
+  // Modified bottom toolbar to include reply controls
   private var bottomToolbar: some View {
     HStack {
       // Thread toggle button (only show if not replying)
@@ -471,33 +497,47 @@ struct PostComposerView: View {
         }) {
           Image(
             systemName: viewModel.isThreadMode
-              ? "arrow.triangle.branch.filled" : "arrow.triangle.branch"
+            ? "x.circle.fill" : "plus.circle"
           )
           .font(.system(size: 20))
           .foregroundStyle(.primary)
         }
       }
 
-      // Language button
-      Menu {
-        ForEach(getAvailableLanguages(), id: \.self) { lang in
-          Button(action: {
-            viewModel.toggleLanguage(lang)
-          }) {
-            Label(
-              Locale.current.localizedString(
-                forLanguageCode: lang.lang.languageCode?.identifier ?? "")
-                ?? lang.lang.minimalIdentifier,
-              systemImage: viewModel.selectedLanguages.contains(lang) ? "checkmark" : ""
-            )
-          }
+      // Add reply controls button (threadgate)
+      if viewModel.parentPost == nil {
+        Button(action: {
+          viewModel.showThreadgateOptions = true
+        }) {
+          Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
+            .font(.system(size: 20))
+            .foregroundStyle(.primary)
         }
-      } label: {
-        Image(systemName: "globe")
-          .font(.system(size: 20))
-          .foregroundStyle(.primary)
       }
 
+        // Language button
+        Menu {
+            ForEach(getAvailableLanguages(), id: \.self) { langContainer in
+                Button(action: {
+                    viewModel.toggleLanguage(langContainer)
+                }) {
+                    let displayName = Locale.current.localizedString(
+                        forLanguageCode: langContainer.lang.languageCode?.identifier ?? ""
+                    ) ?? langContainer.lang.minimalIdentifier
+                    
+                    if viewModel.selectedLanguages.contains(langContainer) {
+                        Label(displayName, systemImage: "checkmark")
+                    } else {
+                        Text(displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "globe")
+                .font(.system(size: 20))
+                .foregroundStyle(.primary)
+        }
+        
       // Labels button
       Button(action: {
         viewModel.showLabelSelector = true
@@ -556,7 +596,7 @@ struct PostComposerView: View {
   // Get the appropriate text for the post button
   private func getPostButtonText() -> String {
     if viewModel.isThreadMode {
-      return "Post Thread"
+      return "Post" // Post thread is too wide on small devices. It's pretty clear that it's a thread post when you see the thread indicator above
     } else if viewModel.parentPost != nil {
       return "Reply"
     } else {
@@ -595,12 +635,13 @@ struct ReplyingToView: View {
         .foregroundColor(.secondary)
       Text("@\(parentPost.author.handle)")
         .fontWeight(.semibold)
+        Spacer()
     }
     .font(.subheadline)
     .padding(.vertical, 8)
     .padding(.horizontal, 12)
-    .background(Color(.systemGray5))
-    .cornerRadius(8)
+//    .background(Color(.systemGray5))
+//    .cornerRadius(8)
   }
 }
 
@@ -616,13 +657,25 @@ struct LabelSelectorView: View {
     .nudity,
     ComAtprotoLabelDefs.LabelValue(rawValue: "graphic-media"),  // This one isn't in predefined values
   ]
+  
+  // Display name mapping function
+  private func displayName(for label: ComAtprotoLabelDefs.LabelValue) -> String {
+    switch label.rawValue {
+      case "!no-unauthenticated": return "Hide from Logged-out Users"
+      case "porn": return "Adult Content"
+      case "sexual": return "Sexual Content"
+      case "nudity": return "Contains Nudity"
+      case "graphic-media": return "Graphic Media"
+      default: return label.rawValue.capitalized
+    }
+  }
 
   var body: some View {
     NavigationStack {
       List(allowedSelfLabels, id: \.self) { label in
         Button(action: { toggleLabel(label) }) {
           HStack {
-            Text(label.rawValue)
+            Text(displayName(for: label))
             Spacer()
             if selectedLabels.contains(label) {
               Image(systemName: "checkmark")
@@ -647,7 +700,6 @@ struct LabelSelectorView: View {
     }
   }
 }
-
 struct AlertItem: Identifiable {
   let id = UUID()
   let title: String

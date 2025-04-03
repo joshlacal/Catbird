@@ -1,5 +1,6 @@
 import SwiftUI
 import Petrel
+import UIKit
 
 /// Utility for handling navigation destination resolution throughout the app
 struct NavigationHandler {

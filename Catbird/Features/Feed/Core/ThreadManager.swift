@@ -76,7 +76,7 @@ final class ThreadManager {
     do {
       let params = AppBskyFeedGetPostThread.Parameters(
         uri: uri,
-        depth: nil,  // Let API decide depth for replies
+        depth: 10,  // Let API decide depth for replies
         parentHeight: 10
       )
       let (responseCode, output) = try await client.app.bsky.feed.getPostThread(input: params)

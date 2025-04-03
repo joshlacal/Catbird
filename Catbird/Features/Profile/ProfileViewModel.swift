@@ -14,12 +14,15 @@ import SwiftUI
   private(set) var postsWithMedia: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var likes: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var lists: [AppBskyGraphDefs.ListView] = []
-
+  private(set) var starterPacks: [AppBskyGraphDefs.StarterPackViewBasic] = []
   // UI state
   private(set) var isLoading = false
   private(set) var isLoadingMorePosts = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
+
+  // Pagination tracking
+  private(set) var hasMoreStarterPacks = false
 
   // Pagination cursors
   private var postsCursor: String?
@@ -27,17 +30,18 @@ import SwiftUI
   private var mediaPostsCursor: String?
   private var likesCursor: String?
   private var listsCursor: String?
+  private var starterPacksCursor: String?
 
   // Dependencies
   private let client: ATProtoClient?
   private let userDID: String  // This is the DID of the profile we're viewing
-  private let currentUserDID: String? // This is the logged-in user's DID
+  private let currentUserDID: String?  // This is the logged-in user's DID
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
 
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
     guard let profile = profile else { return false }
-      return profile.did.didString() == currentUserDID
+    return profile.did.didString() == currentUserDID
   }
 
   // MARK: - Initialization
@@ -107,6 +111,49 @@ import SwiftUI
     await loadFeed(type: .likes, resetCursor: likesCursor == nil)
   }
 
+  /// Loads user's starter packs
+  func loadStarterPacks() async {
+    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
+
+    isLoadingMorePosts = true
+
+    do {
+      let params = AppBskyGraphGetActorStarterPacks.Parameters(
+        actor: try ATIdentifier(string: profile.did.didString()),
+        limit: 20,
+        cursor: starterPacksCursor
+      )
+
+      let (responseCode, output) = try await client.app.bsky.graph.getActorStarterPacks(
+        input: params)
+
+      if responseCode == 200, let packs = output?.starterPacks {
+        await MainActor.run {
+          if self.starterPacksCursor == nil {
+            self.starterPacks = packs
+          } else {
+            self.starterPacks.append(contentsOf: packs)
+          }
+          self.starterPacksCursor = output?.cursor
+          self.hasMoreStarterPacks = output?.cursor != nil
+          self.isLoadingMorePosts = false
+        }
+      } else {
+        logger.warning("Failed to load starter packs: HTTP \(responseCode)")
+        await MainActor.run {
+          self.isLoadingMorePosts = false
+          self.hasMoreStarterPacks = false
+        }
+      }
+    } catch {
+      logger.error("Error loading starter packs: \(error.localizedDescription)")
+      await MainActor.run {
+        self.isLoadingMorePosts = false
+        self.hasMoreStarterPacks = false
+      }
+    }
+  }
+
   /// Loads user's lists
   func loadLists() async {
     guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
@@ -154,7 +201,7 @@ import SwiftUI
       switch type {
       case .posts:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-            actor: try ATIdentifier(string: profile.did.didString()),
+          actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : postsCursor,
           filter: "posts_no_replies"
@@ -175,7 +222,7 @@ import SwiftUI
 
       case .replies:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-            actor: try ATIdentifier(string: profile.did.didString()),
+          actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : repliesCursor,
           filter: "posts_with_replies"
@@ -213,7 +260,7 @@ import SwiftUI
 
       case .media:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
-            actor: try ATIdentifier(string: profile.did.didString()),
+          actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : mediaPostsCursor
         )
@@ -248,7 +295,7 @@ import SwiftUI
 
       case .likes:
         let params = AppBskyFeedGetActorLikes.Parameters(
-            actor: try ATIdentifier(string: profile.did.didString()),
+          actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
           cursor: resetCursor ? nil : likesCursor
         )
@@ -285,98 +332,125 @@ import SwiftUI
   private enum FeedType {
     case posts, replies, media, likes
   }
-    
-    // MARK: Update Profile
-    func updateProfile(displayName: String, description: String) async throws {
-        guard let client = client else {
-            throw NSError(domain: "ProfileCreation", code: 0, userInfo: [NSLocalizedDescriptionKey: "Client not available"])
-        }
-                
-        guard let currentUserDID = currentUserDID else {
-            throw NSError(domain: "ProfileCreation", code: 0, userInfo: [NSLocalizedDescriptionKey: "Current user DID not available"])
-        }
 
-        // Get the profile record
-        let getRecordParams = ComAtprotoRepoGetRecord.Parameters(
-            repo: try ATIdentifier(string: currentUserDID),
-            collection: try NSID(nsidString:"app.bsky.actor.profile"),
-            rkey: try RecordKey(keyString: "self")
-        )
-        let (getRecordCode, getRecordOutput) = try await client.com.atproto.repo.getRecord(input: getRecordParams)
-        
-        var updatedProfile: AppBskyActorProfile
-        
-        if getRecordCode == 200, let existingRecord = getRecordOutput {
-            // Prepare the updated profile
-            guard case let .knownType(value) = existingRecord.value,
-                  let existingProfile = value as? AppBskyActorProfile else {
-                throw NSError(domain: "ProfileDecoding", code: 0, userInfo: [NSLocalizedDescriptionKey: "Expected AppBskyActorProfile but found different type"])
-            }
-    
-            updatedProfile = AppBskyActorProfile(
-                displayName: displayName,
-                description: description,
-                avatar: existingProfile.avatar,
-                banner: existingProfile.banner,
-                labels: existingProfile.labels,
-                joinedViaStarterPack: existingProfile.joinedViaStarterPack,
-                pinnedPost: existingProfile.pinnedPost,
-                createdAt: existingProfile.createdAt
-            )
-            
-            // Put the updated record
-            let putRecordInput = ComAtprotoRepoPutRecord.Input(
-                repo: try ATIdentifier(string: currentUserDID),
-                collection: try NSID(nsidString: "app.bsky.actor.profile"),
-                rkey: try RecordKey(keyString: "self"),
-                record: ATProtocolValueContainer.knownType(updatedProfile),
-                swapRecord: existingRecord.cid  // Use the CID of the existing record for optimistic concurrency
-            )
-    
-            let (putRecordCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)
-            if putRecordCode == 200 {
-                await loadProfile() // Refresh the profile
-            } else {
-                throw NSError(domain: "ProfileUpdate", code: putRecordCode, userInfo: [NSLocalizedDescriptionKey: "Error updating profile: Unexpected response code \(putRecordCode)"])
-            }
-        } else if getRecordCode == 400 {
-            // Create a new profile record
-            updatedProfile = AppBskyActorProfile(
-                displayName: displayName,
-                description: description,
-                avatar: nil,
-                banner: nil,
-                labels: nil,
-                joinedViaStarterPack: nil, pinnedPost: nil,
-                createdAt: ATProtocolDate(date: Date())
-            )
-            
-
-            
-            let createRecordInput = ComAtprotoRepoCreateRecord.Input(
-                repo: try ATIdentifier(string: currentUserDID),
-                collection: try NSID(nsidString:"app.bsky.actor.profile"),
-                rkey: try RecordKey(keyString:"self"),
-                record: ATProtocolValueContainer.knownType(updatedProfile)
-            )
-            
-            let (createRecordCode, _) = try await client.com.atproto.repo.createRecord(input: createRecordInput)
-            if createRecordCode == 200 {
-                await loadProfile() // Refresh the profile
-            } else {
-                throw NSError(domain: "ProfileCreation", code: createRecordCode, userInfo: [NSLocalizedDescriptionKey: "Error creating profile: Unexpected response code \(createRecordCode)"])
-            }
-        } else {
-            throw NSError(domain: "ProfileUpdate", code: getRecordCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get existing profile record"])
-        }
+  // MARK: Update Profile
+  func updateProfile(displayName: String, description: String) async throws {
+    guard let client = client else {
+      throw NSError(
+        domain: "ProfileCreation", code: 0,
+        userInfo: [NSLocalizedDescriptionKey: "Client not available"])
     }
+
+    guard let currentUserDID = currentUserDID else {
+      throw NSError(
+        domain: "ProfileCreation", code: 0,
+        userInfo: [NSLocalizedDescriptionKey: "Current user DID not available"])
+    }
+
+    // Get the profile record
+    let getRecordParams = ComAtprotoRepoGetRecord.Parameters(
+      repo: try ATIdentifier(string: currentUserDID),
+      collection: try NSID(nsidString: "app.bsky.actor.profile"),
+      rkey: try RecordKey(keyString: "self")
+    )
+    let (getRecordCode, getRecordOutput) = try await client.com.atproto.repo.getRecord(
+      input: getRecordParams)
+
+    var updatedProfile: AppBskyActorProfile
+
+    if getRecordCode == 200, let existingRecord = getRecordOutput {
+      // Prepare the updated profile
+      guard case let .knownType(value) = existingRecord.value,
+        let existingProfile = value as? AppBskyActorProfile
+      else {
+        throw NSError(
+          domain: "ProfileDecoding", code: 0,
+          userInfo: [
+            NSLocalizedDescriptionKey: "Expected AppBskyActorProfile but found different type"
+          ])
+      }
+
+      updatedProfile = AppBskyActorProfile(
+        displayName: displayName,
+        description: description,
+        avatar: existingProfile.avatar,
+        banner: existingProfile.banner,
+        labels: existingProfile.labels,
+        joinedViaStarterPack: existingProfile.joinedViaStarterPack,
+        pinnedPost: existingProfile.pinnedPost,
+        createdAt: existingProfile.createdAt
+      )
+
+      // Put the updated record
+      let putRecordInput = ComAtprotoRepoPutRecord.Input(
+        repo: try ATIdentifier(string: currentUserDID),
+        collection: try NSID(nsidString: "app.bsky.actor.profile"),
+        rkey: try RecordKey(keyString: "self"),
+        record: ATProtocolValueContainer.knownType(updatedProfile),
+        swapRecord: existingRecord.cid
+      )
+
+      let (putRecordCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)
+      if putRecordCode == 200 {
+        await loadProfile()  // Refresh the profile
+      } else {
+        throw NSError(
+          domain: "ProfileUpdate", code: putRecordCode,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Error updating profile: Unexpected response code \(putRecordCode)"
+          ])
+      }
+    } else if getRecordCode == 400 {
+      // Create a new profile record
+      updatedProfile = AppBskyActorProfile(
+        displayName: displayName,
+        description: description,
+        avatar: nil,
+        banner: nil,
+        labels: nil,
+        joinedViaStarterPack: nil, pinnedPost: nil,
+        createdAt: ATProtocolDate(date: Date())
+      )
+
+      let createRecordInput = ComAtprotoRepoCreateRecord.Input(
+        repo: try ATIdentifier(string: currentUserDID),
+        collection: try NSID(nsidString: "app.bsky.actor.profile"),
+        rkey: try RecordKey(keyString: "self"),
+        record: ATProtocolValueContainer.knownType(updatedProfile)
+      )
+
+      let (createRecordCode, _) = try await client.com.atproto.repo.createRecord(
+        input: createRecordInput)
+      if createRecordCode == 200 {
+        await loadProfile()  // Refresh the profile
+      } else {
+        throw NSError(
+          domain: "ProfileCreation", code: createRecordCode,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Error creating profile: Unexpected response code \(createRecordCode)"
+          ])
+      }
+    } else {
+      throw NSError(
+        domain: "ProfileUpdate", code: getRecordCode,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to get existing profile record"])
+    }
+  }
 
 }
 
 // MARK: - Supporting Types
 enum ProfileTab: String, CaseIterable {
-  case posts, replies, media, likes, lists
-  
+  case posts
+  case replies
+  case media
+  case likes
+  case lists
+  case starterPacks
+  case more
+
   var title: String {
     switch self {
     case .posts: return "Posts"
@@ -384,6 +458,8 @@ enum ProfileTab: String, CaseIterable {
     case .media: return "Media"
     case .likes: return "Likes"
     case .lists: return "Lists"
+    case .starterPacks: return "Starter Packs"
+    case .more: return "More"
     }
   }
 }
