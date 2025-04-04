@@ -35,10 +35,10 @@ final class PostContextMenuViewModel {
 
             let responseCode = try await appState.atProtoClient?.com.atproto.repo.deleteRecord(input: input).responseCode
             if responseCode == 200 {
-                print("Post deleted successfully")
+                logger.debug("Post deleted successfully")
             }
         } catch {
-            print("Error deleting post: \(error)")
+            logger.debug("Error deleting post: \(error)")
         }
     }
 
@@ -56,11 +56,11 @@ final class PostContextMenuViewModel {
             if let (responseCode, data) = result {
                 if responseCode == 200 {
                     
-                    print("User blocked successfully")
+                    logger.debug("User blocked successfully")
                 }
             }
         } catch {
-            print("Error blocking user: \(error)")
+            logger.debug("Error blocking user: \(error)")
         }
     }
 
@@ -70,10 +70,10 @@ final class PostContextMenuViewModel {
 
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteActor(input: input)
             if responseCode == 200 {
-                print("User muted successfully")
+                logger.debug("User muted successfully")
             }
         } catch {
-            print("Error muting user: \(error)")
+            logger.debug("Error muting user: \(error)")
         }
     }
 
@@ -82,10 +82,10 @@ final class PostContextMenuViewModel {
         do {
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)
             if responseCode == 200 {
-                print("Thread muted successfully")
+                logger.debug("Thread muted successfully")
             }
         } catch {
-            print("Error muting thread: \(error)")
+            logger.debug("Error muting thread: \(error)")
         }
     }
 

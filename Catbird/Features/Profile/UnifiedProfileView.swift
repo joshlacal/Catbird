@@ -15,7 +15,6 @@ struct UnifiedProfileView: View {
   @State private var isShowingReportSheet = false
   @State private var isEditingProfile = false
   @State private var isShowingAccountSwitcher = false
-  @State private var availableAccounts: Int = 0
   @State private var isShowingBlockConfirmation = false
   @State private var isBlocking = false
   @State private var isMuting = false
@@ -62,31 +61,41 @@ struct UnifiedProfileView: View {
       if viewModel.isLoading && viewModel.profile == nil {
         loadingView
       } else if let profile = viewModel.profile {
-        VStack(spacing: 0) {
           // Show account status bar only for current user (outside of List)
-          if viewModel.isCurrentUser {
-            accountStatusBar
-          }
+//          if viewModel.isCurrentUser {
+//            accountStatusBar
+//          }
+//                .padding(0)
 
           // List contains all content
           List {
             // Profile header as first section
-            Section {
-              ProfileHeader(
-                profile: profile,
-                viewModel: viewModel,
-                appState: appState,
-                isEditingProfile: $isEditingProfile
-              )
-              .listRowInsets(EdgeInsets())
-              .padding(.bottom, 8)
-              .frame(maxWidth: .infinity)
-              .contextMenu {
-                profileContextMenu(profile)
+              
+              Section {
+                  ProfileHeader(
+                      profile: profile,
+                      viewModel: viewModel,
+                      appState: appState,
+                      isEditingProfile: $isEditingProfile,
+                      path: $navigationPath
+                  )
+                  // 1. Define specific insets for the header row
+                  .listRowInsets(EdgeInsets())
+                  // 2. Apply padding below the header if needed
+                  .padding(.bottom, 8)
+                  // 3. Define the background shape for tap consumption
+//                  .contentShape(Rectangle())
+                  // 4. Consume taps on the background shape
+//                  .onTapGesture {}
+                  // 5. Explicitly allow hit testing for header content (buttons)
+                  //    (May not be strictly necessary if buttons work, but reinforces)
+//                  .allowsHitTesting(true)
               }
-            }
-            .listRowSeparator(.hidden)
-            
+              // --- Modifiers applied ONLY to the Section ---
+              .listRowSeparator(.hidden)
+              .buttonStyle(.plain) // <--- Prevent List from treating row as button
+
+              
             // Tab selector section
             Section {
               ProfileTabSelector(
@@ -115,17 +124,22 @@ struct UnifiedProfileView: View {
               )
             }
             .listRowSeparator(.hidden)
-            .padding(.vertical, 8)
-
+            .padding(.vertical, 0)
+            .listSectionSpacing(0)
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+              
             // Content section based on selected tab
             currentTabContentSection
           }
+          .environment(\.defaultMinListHeaderHeight, 0) // <--- Try enforcing min header height
+          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            .listSectionSpacing(0)
           .listStyle(.plain)
           .refreshable {
             // Pull to refresh all content - using a single task
             await refreshAllContent()
           }
-        }
+        
         .sheet(isPresented: $isShowingReportSheet) {
           if let profile = viewModel.profile,
             let atProtoClient = appState.atProtoClient
@@ -157,6 +171,10 @@ struct UnifiedProfileView: View {
       switch destination {
       case .section(let tab):
         ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
+      case .followers(let did):
+          FollowersView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
+      case .following(let did):
+          FollowingView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
       }
     }
     .toolbar {
@@ -253,42 +271,42 @@ struct UnifiedProfileView: View {
   }
   
   // MARK: - Tab Content Sections
-  @ViewBuilder
-  private var currentTabContentSection: some View {
-    switch viewModel.selectedProfileTab {
-    case .posts:
-      postContentSection(
-        posts: viewModel.posts,
-        emptyMessage: "No posts",
-        loadAction: viewModel.loadPosts
-      )
-    case .replies:
-      postContentSection(
-        posts: viewModel.replies,
-        emptyMessage: "No replies",
-        loadAction: viewModel.loadReplies
-      )
-    case .media:
-      postContentSection(
-        posts: viewModel.postsWithMedia,
-        emptyMessage: "No media posts",
-        loadAction: viewModel.loadMediaPosts
-      )
-    case .likes:
-      postContentSection(
-        posts: viewModel.likes,
-        emptyMessage: "No liked posts",
-        loadAction: viewModel.loadLikes
-      )
-    case .lists:
-      listsContentSection
-    case .starterPacks:
-      starterPacksContentSection
-    case .more:
-      EmptyView()
+    @ViewBuilder
+    private var currentTabContentSection: some View {
+        switch viewModel.selectedProfileTab {
+        case .posts:
+            postContentSection(
+                posts: viewModel.posts,
+                emptyMessage: "No posts",
+                loadAction: viewModel.loadPosts
+            )
+        case .replies:
+            postContentSection(
+                posts: viewModel.replies,
+                emptyMessage: "No replies",
+                loadAction: viewModel.loadReplies
+            )
+        case .media:
+            postContentSection(
+                posts: viewModel.postsWithMedia,
+                emptyMessage: "No media posts",
+                loadAction: viewModel.loadMediaPosts
+            )
+        case .likes:
+            postContentSection(
+                posts: viewModel.likes,
+                emptyMessage: "No liked posts",
+                loadAction: viewModel.loadLikes
+            )
+        case .lists:
+            listsContentSection
+        case .starterPacks:
+            starterPacksContentSection
+        case .more:
+            MoreView(path: $navigationPath)
+        }
     }
-  }
-
+    
   // MARK: - Post Content Section (generalized for reuse)
   @ViewBuilder
   private func postContentSection(
@@ -489,7 +507,6 @@ struct UnifiedProfileView: View {
   private func initialLoad() async {
     await viewModel.loadProfile()
     // Check if user has multiple accounts
-    await updateAccountCount()
 
     // Check muting and blocking status
     if let did = viewModel.profile?.did.didString(), !viewModel.isCurrentUser {
@@ -569,14 +586,8 @@ struct UnifiedProfileView: View {
     }
   }
   
-  private func updateAccountCount() async {
-    // Refresh available accounts
-    await appState.authManager.refreshAvailableAccounts()
-    // Count accounts
-    availableAccounts = appState.authManager.availableAccounts.count
-  }
 
-  // MARK: - View Components (keeping all as they were)
+  // MARK: - View Components
   private var loadingView: some View {
     VStack {
       ProgressView()
@@ -623,48 +634,9 @@ struct UnifiedProfileView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private var accountStatusBar: some View {
-    HStack(spacing: 8) {
-      HStack(spacing: 4) {
-        Image(systemName: "person.circle.fill")
-          .foregroundStyle(.secondary)
 
-        Text(viewModel.profile?.handle.description ?? "")
-          .font(.footnote.bold())
-          .foregroundStyle(.primary)
-      }
 
-      if availableAccounts > 1 {
-        Text("(\(availableAccounts) accounts)")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-      }
-
-      Spacer()
-
-      Button {
-        isShowingAccountSwitcher = true
-      } label: {
-        HStack(spacing: 4) {
-          Text("Switch")
-            .font(.footnote)
-
-          Image(systemName: "chevron.right")
-            .font(.caption2)
-        }
-        .foregroundStyle(.blue)
-      }
-      .buttonStyle(.plain)
-    }
-    .padding(.horizontal)
-    .padding(.vertical, 8)
-    .background(Color(.systemGroupedBackground))
-    .task {
-      // Update account count every time this view appears
-      await updateAccountCount()
-    }
-  }
-
+    
   @ViewBuilder
   private func emptyContentView(_ title: String, _ message: String) -> some View {
     VStack(spacing: 16) {
@@ -691,380 +663,364 @@ struct UnifiedProfileView: View {
 
 // MARK: - Profile Header
 struct ProfileHeader: View {
-  let profile: AppBskyActorDefs.ProfileViewDetailed
-  let viewModel: ProfileViewModel
-  let appState: AppState  // Added AppState to use GraphManager
-  @Binding var isEditingProfile: Bool
+    let profile: AppBskyActorDefs.ProfileViewDetailed
+    let viewModel: ProfileViewModel
+    let appState: AppState  // Added AppState to use GraphManager
+    @Binding var isEditingProfile: Bool
+    @Binding var path: NavigationPath
     
-  @State private var showingFollowersSheet = false
-  @State private var showingFollowingSheet = false
-  @State private var isFollowButtonLoading = false
-  // Track local follow state to handle UI update before server sync
-  @State private var localIsFollowing: Bool = false
+    @State private var showingFollowersSheet = false
+    @State private var showingFollowingSheet = false
+    @State private var isFollowButtonLoading = false
+    // Track local follow state to handle UI update before server sync
+    @State private var localIsFollowing: Bool = false
     @State private var isShowingProfileImageViewer = false
     @Namespace private var imageTransition
-
-  private let avatarSize: CGFloat = 80
-  private let bannerHeight: CGFloat = 150
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // Banner and Avatar
-      bannerView
-
-      // Profile info content
-      profileInfoContent
-
-      // Divider()
-    }
-    .frame(width: UIScreen.main.bounds.width)  // Use exact screen width for consistency
-    .sheet(isPresented: $showingFollowersSheet) {
-      followersSheet
-    }
-    .sheet(isPresented: $showingFollowingSheet) {
-      followingSheet
-    }
-    .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
-        if let profile = viewModel.profile, let avatarURI = profile.avatar?.uriString() {
-            ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
-                .navigationTransition(.zoom(sourceID: avatarURI, in: imageTransition))
+    
+    private let avatarSize: CGFloat = 80
+    private let bannerHeight: CGFloat = 150
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Banner and Avatar
+            bannerView
+            
+            // Profile info content
+            profileInfoContent
+            
+            // Divider()
+        }
+        .frame(width: UIScreen.main.bounds.width)  // Use exact screen width for consistency
+//        .sheet(isPresented: $showingFollowersSheet) {
+//            followersSheet
+//        }
+//        .sheet(isPresented: $showingFollowingSheet) {
+//            followingSheet
+//        }
+        .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
+            if let profile = viewModel.profile, let avatarURI = profile.avatar?.uriString() {
+                ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
+                    .navigationTransition(.zoom(sourceID: avatarURI, in: imageTransition))
+            }
+        }
+        .onAppear {
+            // Initialize local follow state based on profile
+            localIsFollowing = profile.viewer?.following != nil
+        }
+        .onChange(of: profile) { _, newProfile in
+            // Update local follow state when profile changes
+            localIsFollowing = newProfile.viewer?.following != nil
         }
     }
-    .onAppear {
-      // Initialize local follow state based on profile
-      localIsFollowing = profile.viewer?.following != nil
-    }
-    .onChange(of: profile) { _, newProfile in
-      // Update local follow state when profile changes
-      localIsFollowing = newProfile.viewer?.following != nil
-    }
-  }
-
-  private var bannerView: some View {
-    ZStack(alignment: .bottom) {
-      // Banner
-      Group {
-        if let bannerURL = profile.banner?.uriString() {
-          LazyImage(url: URL(string: bannerURL)) { state in
-            if let image = state.image {
-              image.resizable().aspectRatio(contentMode: .fill)
-            } else {
-              Rectangle().fill(Color.accentColor.opacity(0.3))
+    
+    private var bannerView: some View {
+        ZStack(alignment: .bottom) {
+            // Banner
+            Group {
+                if let bannerURL = profile.banner?.uriString() {
+                    LazyImage(url: URL(string: bannerURL)) { state in
+                        if let image = state.image {
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            Rectangle().fill(Color.accentColor.opacity(0.3))
+                        }
+                    }
+                } else {
+                    Rectangle().fill(Color.accentColor.opacity(0.3))
+                }
             }
-          }
+            .frame(width: UIScreen.main.bounds.width, height: bannerHeight)
+            .clipped()
+            
+            HStack(alignment: .bottom) {
+                // Avatar
+                LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                    if let image = state.image {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Circle().fill(Color.secondary.opacity(0.3))
+                    }
+                }
+                .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+                .allowsHitTesting(true)
+                .onTapGesture {
+                    isShowingProfileImageViewer = true
+                }
+                .frame(width: avatarSize, height: avatarSize)
+                .clipShape(Circle())
+                .background(
+                    Circle()
+                        .stroke(Color(.systemBackground), lineWidth: 4)
+                        .scaleEffect((avatarSize + 4) / avatarSize)
+                )
+                .offset(y: avatarSize / 2)
+                .padding(.leading, 12)
+                
+                Spacer()
+            }
+            .frame(width: UIScreen.main.bounds.width)
+        }
+    }
+    
+    private var profileInfoContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Add space for the avatar overflow and position follow button
+            ZStack(alignment: .trailing) {
+                // Space for avatar overflow
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(height: avatarSize / 2 + 4)
+                
+                // Follow/Edit button at the trailing edge
+                if viewModel.isCurrentUser {
+                    editProfileButton
+                        .allowsHitTesting(true)
+                } else {
+                    followButton
+                        .allowsHitTesting(true)
+                }
+            }
+            
+            // Display name and handle
+            VStack(alignment: .leading, spacing: 4) {
+                    
+                    Text(profile.displayName ?? profile.handle.description)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .lineLimit(nil)
+                        .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
+
+                    
+            HStack(spacing: 0) {
+
+                Text("@\(profile.handle)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                
+                if profile.viewer?.followedBy != nil {
+                    FollowsBadgeView()
+                        .padding(.leading, 4)
+                }
+            }
+            .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
+
+
+            }
+            
+            // Bio
+            if let description = profile.description, !description.isEmpty {
+                Text(description)
+                    .font(.subheadline)
+                    .lineLimit(5)
+                    .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
+            }
+            
+            // Stats
+            HStack(spacing: 16) {
+                // Following
+                Button(action: {
+                    
+                    path.append(ProfileNavigationDestination.following(profile.did.didString()))
+                    
+                }) {
+                    HStack(spacing: 4) {
+                        Text("\(profile.followsCount ?? 0)")
+                            .fixedSize(horizontal: true, vertical: false)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        
+                        Text("Following")
+                            .fixedSize(horizontal: true, vertical: false)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                
+                // Followers
+                Button(action: {
+                    path.append(ProfileNavigationDestination.followers(profile.did.didString()))
+                }) {
+                    HStack(spacing: 4) {
+                        Text("\(profile.followersCount ?? 0)")
+                            .fixedSize(horizontal: true, vertical: false)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        
+                        Text("Followers")
+                            .fixedSize(horizontal: true, vertical: false)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                
+                Spacer()
+            }
+            .frame(width: UIScreen.main.bounds.width - 32)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 12)
+    }
+    
+    private var editProfileButton: some View {
+        Button(action: {
+            isEditingProfile = true
+        }) {
+            Text("Edit Profile")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            //        .background(Color.accentColor.opacity(0.7))
+                .foregroundColor(.accentColor)
+                .cornerRadius(16)
+        }
+        .overlay {
+            Capsule().stroke(Color.accentColor, lineWidth: 1.5)
+        }
+        
+    }
+    
+    @ViewBuilder
+    private var followButton: some View {
+        if isFollowButtonLoading {
+            ProgressView()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        } else if profile.viewer?.blocking != nil {
+            // Show blocked state instead of follow button
+            Button(action: {
+                // Do nothing - blocking handled in parent view
+            }) {
+                HStack {
+                    Image(systemName: "person.crop.circle.badge.xmark")
+                        .font(.footnote)
+                    Text("Blocked")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundColor(.red)
+                .cornerRadius(16)
+            }
+            .overlay {
+                Capsule().stroke(Color.red, lineWidth: 1.5)
+            }
+        } else if profile.viewer?.muted == true {
+            // Show muted state
+            Button(action: {
+                // Do nothing - muting handled in parent view
+            }) {
+                HStack {
+                    Image(systemName: "speaker.slash")
+                        .font(.footnote)
+                    Text("Muted")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .foregroundColor(.orange)
+                .cornerRadius(16)
+            }
+            .overlay {
+                Capsule().stroke(Color.orange, lineWidth: 1.5)
+            }
+        } else if localIsFollowing {
+            Button(action: {
+                Task(priority: .userInitiated) {  // Explicit priority
+                    isFollowButtonLoading = true
+                    
+                    // Optimistically update UI
+                    localIsFollowing = false
+                    
+                    do {
+                        // Perform unfollow operation on server
+                        let success = try await appState.unfollow(did: profile.did.didString())  // Use performUnfollow
+                        
+                        if success {
+                            // Add a small delay before reloading to allow server to update
+                            try? await Task.sleep(for: .seconds(0.5))
+                            await viewModel.loadProfile()
+                        } else {
+                            // Revert local state if operation failed
+                            localIsFollowing = true
+                        }
+                    } catch {
+                        // Log error and revert local state
+                        logger.debug("Error unfollowing: \(error.localizedDescription)")
+                        localIsFollowing = true
+                    }
+                    
+                    isFollowButtonLoading = false
+                }
+            }) {
+                HStack {
+                    Image(systemName: "checkmark")
+                        .font(.footnote)
+                    Text("Following")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .foregroundColor(.accentColor)
+                .cornerRadius(16)
+            }
+            .overlay {
+                Capsule().stroke(Color.accentColor, lineWidth: 1.5)
+            }
+            
         } else {
-          Rectangle().fill(Color.accentColor.opacity(0.3))
-        }
-      }
-      .frame(width: UIScreen.main.bounds.width, height: bannerHeight)
-      .clipped()
-
-      HStack(alignment: .bottom) {
-        // Avatar
-          LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-              if let image = state.image {
-                  image.resizable().aspectRatio(contentMode: .fill)
-              } else {
-                  Circle().fill(Color.secondary.opacity(0.3))
-              }
-          }
-          .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
-          .onTapGesture {
-              isShowingProfileImageViewer = true
-          }
-          .frame(width: avatarSize, height: avatarSize)
-        .clipShape(Circle())
-        .background(
-            Circle()
-                .stroke(Color(.systemBackground), lineWidth: 4)
-                .scaleEffect((avatarSize + 4) / avatarSize)
-        )
-        .offset(y: avatarSize / 2)
-        .padding(.leading, 12)
-
-        Spacer()
-      }
-      .frame(width: UIScreen.main.bounds.width)
-    }
-  }
-
-  private var profileInfoContent: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      // Add space for the avatar overflow and position follow button
-      ZStack(alignment: .trailing) {
-        // Space for avatar overflow
-        Rectangle()
-          .fill(Color.clear)
-          .frame(height: avatarSize / 2 + 4)
-
-        // Follow/Edit button at the trailing edge
-        if viewModel.isCurrentUser {
-          editProfileButton
-        } else {
-          followButton
-        }
-      }
-
-      // Display name and handle
-      VStack(alignment: .leading, spacing: 4) {
-          HStack(spacing: 0) {
-              
-              Text(profile.displayName ?? profile.handle.description)
-                  .font(.title3)
-                  .fontWeight(.bold)
-                  .lineLimit(1)
-              
-              if profile.viewer?.followedBy != nil {
-                  FollowsBadgeView()
-                      .padding(.leading, 4)
-              }
-          }
-          .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
-
-        Text("@\(profile.handle)")
-          .font(.subheadline)
-          .foregroundColor(.secondary)
-          .lineLimit(1)
-          .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
-      }
-
-      // Bio
-      if let description = profile.description, !description.isEmpty {
-        Text(description)
-          .font(.subheadline)
-          .lineLimit(5)
-          .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
-      }
-
-      // Stats
-      HStack(spacing: 16) {
-        // Following
-        Button(action: { showingFollowingSheet = true }) {
-          HStack(spacing: 4) {
-            Text("\(profile.followsCount ?? 0)")
-              .fixedSize(horizontal: true, vertical: false)
-              .font(.subheadline)
-              .fontWeight(.semibold)
-
-            Text("Following")
-              .fixedSize(horizontal: true, vertical: false)
-              .font(.subheadline)
-              .foregroundColor(.secondary)
-          }
-        }
-        .buttonStyle(.plain)
-
-        // Followers
-        Button(action: { showingFollowersSheet = true }) {
-          HStack(spacing: 4) {
-            Text("\(profile.followersCount ?? 0)")
-              .fixedSize(horizontal: true, vertical: false)
-              .font(.subheadline)
-              .fontWeight(.semibold)
-
-            Text("Followers")
-              .fixedSize(horizontal: true, vertical: false)
-              .font(.subheadline)
-              .foregroundColor(.secondary)
-          }
-        }
-        .buttonStyle(.plain)
-
-        Spacer()
-      }
-      .frame(width: UIScreen.main.bounds.width - 32)
-    }
-    .padding(.horizontal)
-    .padding(.bottom, 12)
-  }
-
-  private var editProfileButton: some View {
-    Button(action: {
-      isEditingProfile = true
-    }) {
-      Text("Edit Profile")
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        //        .background(Color.accentColor.opacity(0.7))
-        .foregroundColor(.accentColor)
-        .cornerRadius(16)
-    }
-    .overlay {
-      Capsule().stroke(Color.accentColor, lineWidth: 1.5)
-    }
-
-  }
-
-  @ViewBuilder
-  private var followButton: some View {
-    if isFollowButtonLoading {
-      ProgressView()
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    } else if profile.viewer?.blocking != nil {
-      // Show blocked state instead of follow button
-      Button(action: {
-        // Do nothing - blocking handled in parent view
-      }) {
-        HStack {
-          Image(systemName: "person.crop.circle.badge.xmark")
-            .font(.footnote)
-          Text("Blocked")
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .foregroundColor(.red)
-        .cornerRadius(16)
-      }
-      .overlay {
-        Capsule().stroke(Color.red, lineWidth: 1.5)
-      }
-    } else if profile.viewer?.muted == true {
-      // Show muted state
-      Button(action: {
-        // Do nothing - muting handled in parent view
-      }) {
-        HStack {
-          Image(systemName: "speaker.slash")
-            .font(.footnote)
-          Text("Muted")
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .foregroundColor(.orange)
-        .cornerRadius(16)
-      }
-      .overlay {
-        Capsule().stroke(Color.orange, lineWidth: 1.5)
-      }
-    } else if localIsFollowing {
-      Button(action: {
-        Task(priority: .userInitiated) {  // Explicit priority
-          isFollowButtonLoading = true
-
-          // Optimistically update UI
-          localIsFollowing = false
-
-          do {
-            // Perform unfollow operation on server
-            let success = try await appState.unfollow(did: profile.did.didString())  // Use performUnfollow
-
-            if success {
-              // Add a small delay before reloading to allow server to update
-              try? await Task.sleep(for: .seconds(0.5))
-              await viewModel.loadProfile()
-            } else {
-              // Revert local state if operation failed
-              localIsFollowing = true
+            Button(action: {
+                Task(priority: .userInitiated) {  // Explicit priority
+                    isFollowButtonLoading = true
+                    
+                    // Optimistically update UI
+                    localIsFollowing = true
+                    
+                    do {
+                        // Perform follow operation
+                        let success = try await appState.follow(did: profile.did.didString())  // Use performFollow
+                        
+                        if success {
+                            // Add a small delay before reloading
+                            try? await Task.sleep(for: .seconds(0.5))
+                            await viewModel.loadProfile()
+                        } else {
+                            // Revert local state if operation failed
+                            localIsFollowing = false
+                        }
+                    } catch {
+                        // Log error and revert local state
+                        logger.debug("Error following: \(error.localizedDescription)")
+                        localIsFollowing = false
+                    }
+                    
+                    isFollowButtonLoading = false
+                }
+            }) {
+                HStack {
+                    Image(systemName: "plus")
+                        .font(.footnote)
+                    Text("Follow")
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(16)
             }
-          } catch {
-            // Log error and revert local state
-            print("Error unfollowing: \(error.localizedDescription)")
-            localIsFollowing = true
-          }
-
-          isFollowButtonLoading = false
-        }
-      }) {
-        HStack {
-          Image(systemName: "checkmark")
-            .font(.footnote)
-          Text("Following")
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .foregroundColor(.accentColor)
-        .cornerRadius(16)
-      }
-      .overlay {
-        Capsule().stroke(Color.accentColor, lineWidth: 1.5)
-      }
-
-    } else {
-      Button(action: {
-        Task(priority: .userInitiated) {  // Explicit priority
-          isFollowButtonLoading = true
-
-          // Optimistically update UI
-          localIsFollowing = true
-
-          do {
-            // Perform follow operation
-            let success = try await appState.follow(did: profile.did.didString())  // Use performFollow
-
-            if success {
-              // Add a small delay before reloading
-              try? await Task.sleep(for: .seconds(0.5))
-              await viewModel.loadProfile()
-            } else {
-              // Revert local state if operation failed
-              localIsFollowing = false
-            }
-          } catch {
-            // Log error and revert local state
-            print("Error following: \(error.localizedDescription)")
-            localIsFollowing = false
-          }
-
-          isFollowButtonLoading = false
-        }
-      }) {
-        HStack {
-          Image(systemName: "plus")
-            .font(.footnote)
-          Text("Follow")
-        }
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.accentColor)
-        .foregroundColor(.white)
-        .cornerRadius(16)
-      }
-    }
-  }
-
-  private var followersSheet: some View {
-    NavigationStack {
-      Text("Followers")
-        .navigationTitle("Followers")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button("Done") {
-              showingFollowersSheet = false
-            }
-          }
         }
     }
-  }
-
-  private var followingSheet: some View {
-    NavigationStack {
-      Text("Following")
-        .navigationTitle("Following")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button("Done") {
-              showingFollowingSheet = false
-            }
-          }
-        }
-    }
-  }
 }
 
 // MARK: - Preview

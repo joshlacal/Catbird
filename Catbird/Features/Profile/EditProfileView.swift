@@ -38,7 +38,7 @@ struct EditProfileView: View {
                             try await viewModel.updateProfile(displayName: displayName, description: description)
                             isPresented = false
                         } catch {
-                            print("Error updating profile: \(error)")
+                            logger.debug("Error updating profile: \(error)")
                         }
                     }
                 }

@@ -182,10 +182,11 @@ struct NotificationsView: View {
       }
     }
     .refreshable {
+        // Mark notifications as read
+        try? await viewModel.markNotificationsAsSeen()
+
       await viewModel.refreshNotifications()
 
-      // Mark notifications as read
-      try? await viewModel.markNotificationsAsSeen()
     }
 
   }
@@ -585,7 +586,7 @@ struct AvatarStack: View {
 
     HStack(spacing: 3) {
       ForEach(0..<min(3, notifications.count), id: \.self) { index in
-        LazyImage(url: URL(string: notifications[index].author.avatar?.uriString() ?? "")) {
+          LazyImage(url: notifications[index].author.finalAvatarURL()) {
           state in
           if let image = state.image {
             image

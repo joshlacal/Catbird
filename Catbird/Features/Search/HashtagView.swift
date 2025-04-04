@@ -198,7 +198,7 @@ struct HashtagView: View {
                     isLoading = false
                 }
             } catch {
-                print("Error loading hashtag posts: \(error)")
+                logger.debug("Error loading hashtag posts: \(error)")
                 await MainActor.run {
                     isLoading = false
                 }
@@ -234,7 +234,7 @@ struct HashtagView: View {
                     isLoading = false
                 }
             } catch {
-                print("Error loading more hashtag posts: \(error)")
+                logger.debug("Error loading more hashtag posts: \(error)")
                 await MainActor.run {
                     isLoading = false
                 }
@@ -317,7 +317,7 @@ struct HashtagView: View {
                     // This would require parsing post content and extracting hashtags
                 }
             } catch {
-                print("Error fetching related hashtags: \(error)")
+                logger.debug("Error fetching related hashtags: \(error)")
             }
         }
     }

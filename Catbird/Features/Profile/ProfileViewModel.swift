@@ -15,6 +15,7 @@ import SwiftUI
   private(set) var likes: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var lists: [AppBskyGraphDefs.ListView] = []
   private(set) var starterPacks: [AppBskyGraphDefs.StarterPackViewBasic] = []
+    
   // UI state
   private(set) var isLoading = false
   private(set) var isLoadingMorePosts = false
@@ -188,6 +189,7 @@ import SwiftUI
       await MainActor.run { self.isLoadingMorePosts = false }
     }
   }
+    
 
   // MARK: - Private Methods
 

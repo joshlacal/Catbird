@@ -379,7 +379,7 @@ final class FeedsStartPageViewModel {
         preferences.savedFeeds.insert(item, at: newIndex)
 
         // Log the reordering
-        print("✅ Reordered saved feed from index \(sourceIndex) to \(newIndex)")
+        logger.debug("✅ Reordered saved feed from index \(sourceIndex) to \(newIndex)")
 
         // Save changes to both SwiftData and API
         try await appState.preferencesManager.saveAndSyncPreferences(preferences)

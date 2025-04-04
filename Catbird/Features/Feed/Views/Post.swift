@@ -269,7 +269,7 @@ struct Post: View {
                 }
             }
         } catch {
-            print("Translation error: \(error)")
+            logger.debug("Translation error: \(error)")
             await MainActor.run {
                 withAnimation {
                     translationError = NSLocalizedString("Failed to translate. Please try again later.", comment: "")

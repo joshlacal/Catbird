@@ -178,7 +178,7 @@ struct ModernVideoPlayerView: View {
                 VideoCoordinator.shared.register(model, player: player)
             }
         } catch {
-            print("Failed to setup player: \(error)")
+            logger.debug("Failed to setup player: \(error)")
         }
     }
     

@@ -103,7 +103,7 @@ struct MainContentView: View {
           get: { selectedTab },
           set: { newValue in
             if selectedTab == newValue {
-              print("📱 TabView: Same tab tapped again: \(newValue)")
+              logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
               lastTappedTab = newValue
             }
             selectedTab = newValue
@@ -156,6 +156,7 @@ struct MainContentView: View {
               lastTappedTab: $lastTappedTab,
               path: appState.navigationManager.pathBinding(for: 3)
             )
+            .id(appState.currentUserDID)
             .navigationDestination(for: NavigationDestination.self) { destination in
               NavigationHandler.viewForDestination(
                 destination,
@@ -163,7 +164,6 @@ struct MainContentView: View {
                 appState: appState,
                 selectedTab: $selectedTab
               )
-              .id(appState.currentUserDID)
             }
           }
         }

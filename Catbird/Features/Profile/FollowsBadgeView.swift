@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct FollowsBadgeView: View {
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         Text("Follows you")
             .font(.caption)
@@ -16,7 +17,7 @@ struct FollowsBadgeView: View {
             .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.accentColor.opacity(0.1))
+                    .fill(colorScheme == .dark ? Color.accentColor.opacity(0.9) : Color.accentColor.opacity(0.1))
             )
     }
 }

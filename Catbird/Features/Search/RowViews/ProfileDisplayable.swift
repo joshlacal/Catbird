@@ -14,6 +14,8 @@ protocol ProfileDisplayable {
     var handle: Handle { get }
     var displayName: String? { get }
     var avatar: URI? { get }
+    
+    func finalAvatarURL() -> URL?
 }
 
 /// Conformance for ProfileViewDetailed

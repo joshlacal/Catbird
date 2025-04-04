@@ -37,7 +37,7 @@ struct LoadMoreTrigger: View {
                 // Execute the load more action with proper task isolation
                 Task { @MainActor in
                     #if DEBUG
-                    print("LoadMoreTrigger: Loading more posts...")
+                    logger.debug("LoadMoreTrigger: Loading more posts...")
                     #endif
                     
                     // Use a task detached with proper priority
@@ -53,7 +53,7 @@ struct LoadMoreTrigger: View {
     // Preview with a simple loading action
     LoadMoreTrigger {
         try? await Task.sleep(for: .seconds(2))
-        print("More content loaded")
+        logger.debug("More content loaded")
     }
     .frame(width: 300, height: 50)
     .border(.gray)

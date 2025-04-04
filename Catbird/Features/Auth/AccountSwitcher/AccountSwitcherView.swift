@@ -2,6 +2,7 @@ import AuthenticationServices
 import OSLog
 import Petrel
 import SwiftUI
+import NukeUI
 
 struct AccountSwitcherView: View {
   // MARK: - Environment
@@ -10,12 +11,12 @@ struct AccountSwitcherView: View {
   @Environment(\.dismiss) private var dismiss
 
   // MARK: - State
-  @State private var accounts: [AuthenticationManager.AccountInfo] = []
+  @State private var accounts: [AccountViewModel] = []
   @State private var isAddingAccount = false
   @State private var newAccountHandle = ""
   @State private var error: String? = nil
   @State private var isLoading = false
-  @State private var showConfirmRemove: AuthenticationManager.AccountInfo? = nil
+  @State private var showConfirmRemove: AccountViewModel? = nil
 
   @State private var validationError: String? = nil
   @State private var showInvalidAnimation = false
@@ -23,6 +24,25 @@ struct AccountSwitcherView: View {
 
   // Logger
   private let logger = Logger(subsystem: "blue.catbird", category: "AccountSwitcher")
+  
+  // Model for account display
+  struct AccountViewModel: Identifiable {
+    let id: String // Using DID as identifier
+    let did: String
+    let handle: String
+    let displayName: String?
+    let avatar: URL?
+    let isActive: Bool
+    
+    init(from accountInfo: AuthenticationManager.AccountInfo, profile: AppBskyActorDefs.ProfileViewDetailed?) {
+      self.id = accountInfo.did
+      self.did = accountInfo.did
+      self.handle = profile?.handle.description ?? accountInfo.handle ?? "Unknown"
+      self.displayName = profile?.displayName
+      self.avatar = profile?.avatar?.url
+      self.isActive = accountInfo.isActive
+    }
+  }
 
   var body: some View {
     NavigationStack {
@@ -72,7 +92,7 @@ struct AccountSwitcherView: View {
         }
       } message: { account in
         Text(
-          "Are you sure you want to remove the account '\(account.handle ?? "Unknown")'? You can add it again later."
+          "Are you sure you want to remove the account '\(account.handle)'? You can add it again later."
         )
       }
       .onChange(of: appState.authManager.state) { _, newValue in
@@ -137,17 +157,22 @@ struct AccountSwitcherView: View {
     }
   }
 
-  private func accountRow(for account: AuthenticationManager.AccountInfo) -> some View {
-    HStack {
-      VStack(alignment: .leading) {
-        Text(account.handle ?? "Unknown")
+  private func accountRow(for account: AccountViewModel) -> some View {
+    HStack(spacing: 12) {
+      // Avatar
+      ProfileAvatarView(url: account.avatar, fallbackText: account.handle.prefix(1).uppercased())
+        .frame(width: 36, height: 36)
+      
+      // Account info
+      VStack(alignment: .leading, spacing: 2) {
+        Text(account.displayName ?? "@" + account.handle)
           .font(.headline)
-
-        Text(account.did)
-          .font(.caption)
           .lineLimit(1)
-          .truncationMode(.middle)
+
+        Text("@\(account.handle)")
+          .font(.caption)
           .foregroundStyle(.secondary)
+          .lineLimit(1)
       }
 
       Spacer()
@@ -156,8 +181,8 @@ struct AccountSwitcherView: View {
         Text("Active")
           .font(.caption)
           .padding(6)
-          .background(.tint.opacity(0.1)) // Use .tint directly as ShapeStyle
-          .foregroundStyle(.tint) // This is correct
+          .background(.tint.opacity(0.1))
+          .foregroundStyle(.tint)
           .clipShape(RoundedRectangle(cornerRadius: 8))
       } else {
         Button("Switch") {
@@ -182,6 +207,7 @@ struct AccountSwitcherView: View {
     }
     .padding(.vertical, 4)
   }
+
 
   // MARK: - Add Account Sheet
 
@@ -289,43 +315,95 @@ struct AccountSwitcherView: View {
   }
 
   // MARK: - Data Methods
+    
+    private func loadAccounts() async {
+      isLoading = true
+      defer { isLoading = false }
 
-  private func loadAccounts() async {
-    isLoading = true
-    defer { isLoading = false }
+      // First refresh available accounts
+      await appState.authManager.refreshAvailableAccounts()
 
-    // First refresh available accounts
-    await appState.authManager.refreshAvailableAccounts()
-
-    // Then get the updated list
-    accounts = appState.authManager.availableAccounts
-  }
-
-  private func switchToAccount(_ account: AuthenticationManager.AccountInfo) async {
-    guard !account.isActive else { return }
-
-    isLoading = true
-
-    do {
-      try await appState.authManager.switchToAccount(did: account.did)
-
-      // Wait a moment for state to update
-      try? await Task.sleep(nanoseconds: 300_000_000)
-
-      // Refresh account list
-      await loadAccounts()
-
-      // Close the account switcher
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-        dismiss()
+      // Get the basic account info
+      let accountInfos = appState.authManager.availableAccounts
+      
+      // If we have an ATP client, fetch detailed profiles for all accounts
+      if let client = appState.atProtoClient, !accountInfos.isEmpty {
+        do {
+          // Create identifiers for all accounts
+          let actors = try accountInfos.map { try ATIdentifier(string: $0.did) }
+          
+          // Fetch profiles for all accounts in a single API call
+          let (responseCode, profilesData) = try await client.app.bsky.actor.getProfiles(
+            input: .init(actors: actors)
+          )
+          
+          if responseCode == 200, let profilesData = profilesData {
+            // Map the accounts with their profiles
+            accounts = accountInfos.map { accountInfo in
+              // Find the profile that matches this account's DID
+              let matchingProfile = profilesData.profiles.first {
+                $0.did.description == accountInfo.did
+              }
+              
+              return AccountViewModel(from: accountInfo, profile: matchingProfile)
+            }
+          } else {
+            // If profiles fetch fails, just use basic account info
+            accounts = accountInfos.map { AccountViewModel(from: $0, profile: nil) }
+            logger.warning("Failed to fetch profiles with code \(responseCode)")
+          }
+        } catch {
+          // If profiles fetch fails, just use basic account info
+          accounts = accountInfos.map { AccountViewModel(from: $0, profile: nil) }
+          logger.warning("Error fetching profiles: \(error.localizedDescription)")
+        }
+      } else {
+        // If no client available, just use basic account info
+        accounts = accountInfos.map { AccountViewModel(from: $0, profile: nil) }
       }
-    } catch {
-      logger.error("Failed to switch account: \(error.localizedDescription)")
-      self.error = "Failed to switch account: \(error.localizedDescription)"
     }
 
-    isLoading = false
-  }
+    private func switchToAccount(_ account: AccountViewModel) async {
+      guard !account.isActive else { return }
+
+      isLoading = true
+
+      do {
+        try await appState.authManager.switchToAccount(did: account.did)
+
+        // Wait a moment for state to update
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        // Refresh account list
+        await loadAccounts()
+
+        // Close the account switcher
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+          dismiss()
+        }
+      } catch {
+        logger.error("Failed to switch account: \(error.localizedDescription)")
+        self.error = "Failed to switch account: \(error.localizedDescription)"
+      }
+
+      isLoading = false
+    }
+
+    private func removeAccount(_ account: AccountViewModel) async {
+      isLoading = true
+
+      do {
+        try await appState.authManager.removeAccount(did: account.did)
+
+        // Refresh account list
+        await loadAccounts()
+      } catch {
+        logger.error("Failed to remove account: \(error.localizedDescription)")
+        self.error = "Failed to remove account: \(error.localizedDescription)"
+      }
+
+      isLoading = false
+    }
 
   private func removeAccount(_ account: AuthenticationManager.AccountInfo) async {
     isLoading = true
@@ -426,6 +504,40 @@ struct AccountSwitcherView: View {
       logger.error("Error starting add account: \(error.localizedDescription)")
       self.error = error.localizedDescription
       isLoading = false
+    }
+  }
+}
+
+struct ProfileAvatarView: View {
+  let url: URL?
+  let fallbackText: String
+  var size: CGFloat = 40
+  
+  var body: some View {
+    ZStack {
+      Circle()
+        .fill(Color.blue.opacity(0.2))
+        .frame(width: size, height: size)
+      
+      if let url = url {
+        LazyImage(url: url) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: size, height: size)
+              .clipShape(Circle())
+          } else {
+            Text(fallbackText)
+              .font(.system(size: size * 0.5, weight: .bold))
+              .foregroundColor(.white)
+          }
+        }
+      } else {
+        Text(fallbackText)
+          .font(.system(size: size * 0.5, weight: .bold))
+          .foregroundColor(.white)
+      }
     }
   }
 }

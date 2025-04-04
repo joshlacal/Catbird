@@ -39,7 +39,7 @@ struct ThreadViewMainPostView: View {
 
   private var authorAvatarColumn: some View {
     VStack(alignment: .leading, spacing: 0) {
-      LazyImage(url: URL(string: post.author.avatar?.uriString() ?? "")) { state in
+        LazyImage(url: post.author.finalAvatarURL()) { state in
         if let image = state.image {
           image
             .resizable()

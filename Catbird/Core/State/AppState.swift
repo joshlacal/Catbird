@@ -29,7 +29,6 @@ final class AppState {
   // Used to track which tab was tapped twice to trigger scroll to top
   var tabTappedAgain: Int? = nil
 
-  var currentUserProfile: AppBskyActorDefs.ProfileViewDetailed? = nil
 
   // MARK: - Component Managers
 
@@ -102,7 +101,6 @@ final class AppState {
 
               // When we authenticate, also try to refresh preferences
               Task { @MainActor in
-
                 do {
                   try await self.preferencesManager.fetchPreferences(forceRefresh: true)
                 } catch {
@@ -115,20 +113,10 @@ final class AppState {
                   self.logger.error("No current user DID after authentication")
                   return
                 }
-
-                // Fetch the current user profile after authentication
-                do {
-                  let profile = try await self.atProtoClient?.app.bsky.actor.getProfile(
-                    input: .init(actor: ATIdentifier(string: currentUserDID))
-                  ).data
-
-                  self.currentUserProfile = profile
-                  self.logger.info("Successfully fetched current user profile after authentication")
-                } catch {
-                  self.logger.error(
-                    "Failed to fetch current user profile: \(error.localizedDescription)")
+                
+                // Wait briefly for auth to fully establish
+                try? await Task.sleep(nanoseconds: 200_000_000)
                 }
-              }
             }
           } else if case .unauthenticated = state {
             // Clear client on logout
@@ -136,13 +124,11 @@ final class AppState {
             self.preferencesManager.updateClient(nil)
             self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
+            
+            // Add profile reset
           } else if case .initializing = state {
-            // Force profile clear during account switch transition
-            await MainActor.run {
-              self.currentUserProfile = nil
-              self.logger.info(
-                "AUTH CHANGE: Force cleared currentUserProfile during initializing state")
-            }
+            // Handle initializing state if needed
+          
           }
         }
       }
@@ -151,145 +137,66 @@ final class AppState {
     logger.debug("AppState initialization complete")
   }
 
-  deinit {
-    // Cancel ongoing tasks
-    authStateObservationTask?.cancel()
-  }
-
   // MARK: - App Initialization
 
   @MainActor
   func initialize() async {
     logger.info("🚀 Starting AppState.initialize()")
     configureURLHandler()
-
-    // Initialize auth manager first
+    
     await authManager.initialize()
-
+    
     // Update client references in all managers
     postManager.updateClient(authManager.client)
     preferencesManager.updateClient(authManager.client)
     notificationManager.updateClient(authManager.client)
     if let client = authManager.client {
-      graphManager = GraphManager(atProtoClient: client)
+        graphManager = GraphManager(atProtoClient: client)
     }
-
+    
     // Setup other components as needed
     setupModelPruningTimer()
     setupPreferencesRefreshTimer()
     setupNotifications()
 
+    
     // Get accounts list if authenticated
     if isAuthenticated {
-      Task {
-        await authManager.refreshAvailableAccounts()
-      }
+        Task {
+            await authManager.refreshAvailableAccounts()
+            
+        }
     }
-
+    
     logger.info("🏁 AppState.initialize() completed")
   }
-
+    
   @MainActor
   func switchToAccount(did: String) async throws {
     logger.info("Switching to account: \(did)")
 
-    // 1. Capture the old avatar URL *before* clearing the profile
-    let _ = currentUserProfile?.avatar?.url
-
-    // 2. COMPLETELY CLEAR the current user profile including avatar URL
-    // Set to nil FORCEFULLY on the main thread to ensure immediate UI update
-    await MainActor.run {
-      self.currentUserProfile = nil
-      logger.debug("SWITCH: currentUserProfile thoroughly cleared to nil")
-    }
-
-    // 3. Give SwiftUI a chance to process the nil state update
-    await Task.yield()
-    logger.debug("SWITCH: Yielded after setting profile to nil")
-
-    // 4. Use a more aggressive cache clearing approach
-    ImageLoadingManager.shared.pipeline.cache.removeAll()
+//    ImageLoadingManager.shared.pipeline.cache.removeAll()
     logger.info("SWITCH: Cleared ALL image caches for clean switch")
+    
+    // 3. Yield before account switch to ensure UI updates
+    await Task.yield()
+    logger.debug("SWITCH: Yielded after resetting profile state")
 
-    // 5. Switch account in AuthManager
+    // 4. Switch account in AuthManager
     try await authManager.switchToAccount(did: did)
     logger.debug("SWITCH: AuthManager switched account")
 
-    // 6. Refresh app state
+    // 5. Update client references in all managers
     await refreshAfterAccountSwitch()
 
-    // NEW: Add a deliberate delay to ensure client is fully ready
-    try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+    // 6. Wait to ensure client is ready
+    try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
-    // 7. Now fetch profile when we're sure client is ready
-    await reloadCurrentUserProfile()
-
-    // 8. Final verification of profile state
-    if let newURL = currentUserProfile?.avatar?.url {
-      logger.info("SWITCH: New profile has avatar URL: \(newURL.absoluteString)")
-    } else {
-      logger.warning("SWITCH: New profile has nil avatar URL after reload")
-    }
-
-    // 9. Verify profile switch completion
-    try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
-    logger.info("SWITCH: Additional verification check after reload")
-    if let actualProfileDID = currentUserProfile?.did.didString(),
-      actualProfileDID != did
-    {
-      logger.error("SWITCH: Profile DID mismatch! Expected \(did) but got \(actualProfileDID)")
-      // Force another reload
-      await reloadCurrentUserProfile()
-    }
-
-    NotificationCenter.default.post(name: .init("ForceToolbarRecreation"), object: nil)
-
-  }
-
-  @MainActor
-  func reloadCurrentUserProfile() async {
-    guard let client = authManager.client, let did = currentUserDID else {
-      logger.warning("Cannot reload profile: Missing client or DID.")
-      await MainActor.run { currentUserProfile = nil }
-      return
-    }
-
-    // Retry mechanism - try up to 5 times with increasing delays
-    for attempt in 1...5 {
-      do {
-        logger.debug("RELOAD: Profile fetch attempt \(attempt) for DID: \(did)")
-        let profile = try await client.app.bsky.actor.getProfile(
-          input: .init(actor: ATIdentifier(string: did))
-        ).data
-
-        await MainActor.run {
-          self.currentUserProfile = profile
-          logger.info("RELOAD: Successfully loaded profile on attempt \(attempt)")
-          NotificationCenter.default.post(name: .init("UserProfileUpdated"), object: nil)
-          NotificationCenter.default.post(name: .init("AccountSwitchComplete"), object: nil)
-          NotificationCenter.default.post(name: .init("ForceToolbarRecreation"), object: nil)
-        }
-
-        return  // Success - exit the function
-      } catch {
-        logger.error("RELOAD: Attempt \(attempt) failed: \(error.localizedDescription)")
-
-        if attempt < 5 {
-          // Exponential backoff - 200ms, 400ms, 800ms, 1600ms
-          try? await Task.sleep(nanoseconds: UInt64(200_000_000 * pow(2.0, Double(attempt - 1))))
-        } else {
-          // Last attempt failed
-          await MainActor.run { currentUserProfile = nil }
-        }
-      }
-    }
   }
 
   @MainActor
   func refreshAfterAccountSwitch() async {
-    // **Important:** DO NOT set currentUserProfile = nil here.
-    // It should be handled by the calling function (switchToAccount)
-    // or reloadCurrentUserProfile if needed.
+    // Update client references in all managers
     logger.info("Refreshing data after account switch")
 
     // Clear old prefetched data
@@ -313,7 +220,6 @@ final class AppState {
     } catch {
       logger.error("Failed to refresh preferences after account switch: \(error)")
     }
-    // Any other state that needs resetting after managers have new clients
   }
 
   /// Set up a timer to periodically prune old feed models

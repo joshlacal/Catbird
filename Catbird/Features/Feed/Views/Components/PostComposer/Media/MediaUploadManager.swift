@@ -83,9 +83,9 @@ import SwiftUI
   // MARK: - Video Upload Methods
     /// Get authentication token for video operations
     private func getVideoAuthTokenForUploadLimits() async throws -> String {
-      print("DEBUG: Requesting service auth token")
+      logger.debug("DEBUG: Requesting service auth token")
       let didValue = try await client.getDid()
-      print("DEBUG: Using DID: \(didValue)")
+      logger.debug("DEBUG: Using DID: \(didValue)")
       
       let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
         aud: try DID(didString:"did:web:video.bsky.app"),
@@ -95,27 +95,27 @@ import SwiftUI
       
       let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
         input: serviceParams)
-      print("DEBUG: Service auth response code: \(authCode)")
+      logger.debug("DEBUG: Service auth response code: \(authCode)")
       
       if authCode != 200 {
-        print("ERROR: Service auth request failed with code \(authCode)")
+        logger.error("ERROR: Service auth request failed with code \(authCode)")
         throw VideoUploadError.authenticationFailed
       }
       
       guard let serviceAuth = authData else {
-        print("ERROR: Missing service auth data")
+        logger.error("ERROR: Missing service auth data")
         throw VideoUploadError.authenticationFailed
       }
       
-      print("DEBUG: Authentication successful, token obtained")
+      logger.debug("DEBUG: Authentication successful, token obtained")
       return serviceAuth.token
     }
 
   /// Get authentication token for video operations
   private func getVideoAuthToken() async throws -> String {
-    print("DEBUG: Requesting service auth token")
+    logger.debug("DEBUG: Requesting service auth token")
     let didValue = try await client.getDid()
-    print("DEBUG: Using DID: \(didValue)")
+    logger.debug("DEBUG: Using DID: \(didValue)")
     
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
         aud: try DID(didString:"did:web:\(await client.baseURL.host ?? "bsky.social")"),
@@ -125,44 +125,44 @@ import SwiftUI
     
     let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
       input: serviceParams)
-    print("DEBUG: Service auth response code: \(authCode)")
+    logger.debug("DEBUG: Service auth response code: \(authCode)")
     
     if authCode != 200 {
-      print("ERROR: Service auth request failed with code \(authCode)")
+      logger.error("ERROR: Service auth request failed with code \(authCode)")
       throw VideoUploadError.authenticationFailed
     }
     
     guard let serviceAuth = authData else {
-      print("ERROR: Missing service auth data")
+      logger.error("ERROR: Missing service auth data")
       throw VideoUploadError.authenticationFailed
     }
     
-    print("DEBUG: Authentication successful, token obtained")
+    logger.debug("DEBUG: Authentication successful, token obtained")
     return serviceAuth.token
   }
   
   /// Check upload limits from video server directly
   private func checkVideoUploadLimits(token: String) async throws -> (canUpload: Bool, error: String?) {
-    print("DEBUG: Checking upload limits from server")
+    logger.debug("DEBUG: Checking upload limits from server")
     
     let limitsURL = URL(string: "\(videoBaseURL)/app.bsky.video.getUploadLimits")!
     
     var request = URLRequest(url: limitsURL)
     request.httpMethod = "GET"
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-      print(request)
+      logger.debug("Request: \(request.debugDescription)")
     
     let (data, response) = try await URLSession.shared.data(for: request)
-      print(data, response)
+      logger.debug("Received data: \(data), response: \(response)")
     guard let httpResponse = response as? HTTPURLResponse else {
-      print("ERROR: Invalid HTTP response type")
+      logger.error("ERROR: Invalid HTTP response type")
       throw VideoUploadError.processingFailed("Invalid response from server")
     }
     
-    print("DEBUG: Upload limits response code: \(httpResponse.statusCode)")
+    logger.debug("DEBUG: Upload limits response code: \(httpResponse.statusCode)")
     
     if httpResponse.statusCode != 200 {
-      print("ERROR: Failed to get upload limits, server responded with code \(httpResponse.statusCode)")
+      logger.error("ERROR: Failed to get upload limits, server responded with code \(httpResponse.statusCode)")
       throw VideoUploadError.processingFailed("Server error when checking upload limits (HTTP \(httpResponse.statusCode))")
     }
     
@@ -171,7 +171,7 @@ import SwiftUI
       let limits = try decoder.decode(UploadLimitsResponse.self, from: data)
       return (limits.canUpload, limits.error)
     } catch {
-      print("ERROR: Failed to decode upload limits response: \(error)")
+      logger.error("ERROR: Failed to decode upload limits response: \(error)")
       throw VideoUploadError.processingFailed("Could not parse upload limits response")
     }
   }
@@ -190,59 +190,59 @@ import SwiftUI
   /// Start video upload process with additional validation
   @MainActor
   func uploadVideo(url: URL, alt: String? = nil) async throws -> Blob {
-    print("DEBUG: Starting video upload for URL: \(url)")
+    logger.debug("DEBUG: Starting video upload for URL: \(url)")
     
     // Validate file exists
     let fileManager = FileManager.default
     guard fileManager.fileExists(atPath: url.path) else {
-      print("ERROR: Video file does not exist at path: \(url.path)")
+      logger.error("ERROR: Video file does not exist at path: \(url.path)")
       throw VideoUploadError.processingFailed("Video file not found at specified location.")
     }
     
     // Check file size
     guard let fileAttributes = try? fileManager.attributesOfItem(atPath: url.path),
           let fileSize = fileAttributes[.size] as? NSNumber else {
-      print("ERROR: Could not determine video file size for path: \(url.path)")
+      logger.error("ERROR: Could not determine video file size for path: \(url.path)")
       throw VideoUploadError.processingFailed("Could not determine video file size")
     }
 
-    print("DEBUG: Video file size: \(fileSize.intValue) bytes")
+    logger.debug("DEBUG: Video file size: \(fileSize.intValue) bytes")
     let maxVideoSize = 100 * 1024 * 1024  // 100MB
     if fileSize.intValue > maxVideoSize {
-      print("ERROR: Video exceeds maximum size of 100MB (actual: \(fileSize.intValue / 1024 / 1024)MB)")
+      logger.error("ERROR: Video exceeds maximum size of 100MB (actual: \(fileSize.intValue / 1024 / 1024)MB)")
       throw VideoUploadError.processingFailed("Video exceeds maximum size of 100MB")
     }
     
     // Validate video format
     do {
       let asset = AVURLAsset(url: url)
-      print("DEBUG: Checking if asset is playable")
+      logger.debug("DEBUG: Checking if asset is playable")
       let isPlayable = try await asset.load(.isPlayable)
       if !isPlayable {
-        print("ERROR: Video asset is not playable")
+        logger.error("ERROR: Video asset is not playable")
         throw VideoUploadError.processingFailed("Video format is not supported or file is corrupted")
       }
       
       // Verify it has a video track
-      print("DEBUG: Checking for video tracks")
+      logger.debug("DEBUG: Checking for video tracks")
       let videoTracks = try await asset.loadTracks(withMediaType: .video)
       if videoTracks.isEmpty {
-        print("ERROR: No video tracks found in asset")
+        logger.error("ERROR: No video tracks found in asset")
         throw VideoUploadError.processingFailed("No video content found in file")
       }
       
       // Get duration
       let duration = try await asset.load(.duration)
       let durationInSeconds = CMTimeGetSeconds(duration)
-      print("DEBUG: Video duration: \(durationInSeconds) seconds")
+      logger.debug("DEBUG: Video duration: \(durationInSeconds) seconds")
       
       // Check duration limits if needed
       if durationInSeconds > 300 { // 5 minutes max
-        print("ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 300 seconds)")
+        logger.error("ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 300 seconds)")
         throw VideoUploadError.processingFailed("Video exceeds maximum duration of 5 minutes")
       }
     } catch let assetError where !(assetError is VideoUploadError) {
-      print("ERROR: Failed to validate video asset: \(assetError)")
+      logger.error("ERROR: Failed to validate video asset: \(assetError)")
       throw VideoUploadError.processingFailed("Could not validate video: \(assetError.localizedDescription)")
     }
 
@@ -254,18 +254,18 @@ import SwiftUI
     
     guard canUpload else {
       let errorMessage = limitError ?? "Cannot upload videos at this time"
-      print("ERROR: Server does not allow video uploads: \(errorMessage)")
+      logger.error("ERROR: Server does not allow video uploads: \(errorMessage)")
       throw VideoUploadError.processingFailed(errorMessage)
     }
     
-    print("DEBUG: Video uploads are allowed, proceeding with upload")
+    logger.debug("DEBUG: Video uploads are allowed, proceeding with upload")
 
     // Get DID for the upload URL
     let didValue = try await client.getDid()
-    print("DEBUG: Using DID: \(didValue)")
+    logger.debug("DEBUG: Using DID: \(didValue)")
 
     // Prepare upload
-    print("DEBUG: Beginning video upload process")
+    logger.debug("DEBUG: Beginning video upload process")
     isVideoUploading = true
     videoUploadProgress = 0
     uploadStatus = .uploading(progress: 0)
@@ -277,16 +277,16 @@ import SwiftUI
       URLQueryItem(name: "name", value: generateUniqueVideoName()),
     ]
     uploadURL = urlComponents.url!
-    print("DEBUG: Upload URL: \(uploadURL)")
+    logger.debug("DEBUG: Upload URL: \(uploadURL)")
 
     // Load video data
-    print("DEBUG: Loading video data from URL: \(url)")
+    logger.debug("DEBUG: Loading video data from URL: \(url)")
     let videoData: Data
     do {
       videoData = try Data(contentsOf: url)
-      print("DEBUG: Successfully loaded video data, size: \(videoData.count) bytes")
+      logger.debug("DEBUG: Successfully loaded video data, size: \(videoData.count) bytes")
     } catch {
-      print("ERROR: Failed to load video data: \(error)")
+      logger.error("ERROR: Failed to load video data: \(error)")
       isVideoUploading = false
       uploadStatus = .failed(error: "Could not load video data: \(error.localizedDescription)")
       throw VideoUploadError.processingFailed("Could not load video data: \(error.localizedDescription)")
@@ -295,7 +295,7 @@ import SwiftUI
       let token = try await getVideoAuthToken()
       
     // Set up HTTP request
-    print("DEBUG: Setting up HTTP request for video upload")
+    logger.debug("DEBUG: Setting up HTTP request for video upload")
     var request = URLRequest(url: uploadURL)
     request.httpMethod = "POST"
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -310,12 +310,12 @@ import SwiftUI
       Task { @MainActor in
         self?.videoUploadProgress = progress
         self?.uploadStatus = .uploading(progress: progress)
-        print("DEBUG: Upload progress: \(Int(progress * 100))%")
+        logger.debug("DEBUG: Upload progress: \(Int(progress * 100))%")
       }
     }
 
     // Perform upload
-    print("DEBUG: Starting video data upload")
+    logger.debug("DEBUG: Starting video data upload")
     let (responseData, response): (Data, URLResponse)
     do {
       (responseData, response) = try await URLSession.shared.upload(
@@ -323,9 +323,9 @@ import SwiftUI
         fromFile: url,
         delegate: progressDelegate
       )
-      print("DEBUG: Upload request completed with response status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+      logger.debug("DEBUG: Upload request completed with response status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
     } catch {
-      print("ERROR: Video upload network request failed: \(error)")
+      logger.error("ERROR: Video upload network request failed: \(error)")
       isVideoUploading = false
       uploadStatus = .failed(error: "Network error during upload: \(error.localizedDescription)")
       throw VideoUploadError.uploadFailed
@@ -333,25 +333,25 @@ import SwiftUI
 
     // Process response
     guard let httpResponse = response as? HTTPURLResponse else {
-      print("ERROR: Invalid HTTP response type")
+      logger.error("ERROR: Invalid HTTP response type")
       isVideoUploading = false
       uploadStatus = .failed(error: "Invalid response from server")
       throw VideoUploadError.uploadFailed
     }
     
     // Decode and log response body for debugging
-    print("DEBUG: Server response body: \(String(data: responseData, encoding: .utf8) ?? "<binary data>")")
+    logger.debug("DEBUG: Server response body: \(String(data: responseData, encoding: .utf8) ?? "<binary data>")")
     
       if httpResponse.statusCode == 200 {
-          print("DEBUG: Video upload successful, processing response")
+          logger.debug("DEBUG: Video upload successful, processing response")
           let decoder = JSONDecoder()
           do {
               let jobStatus = try decoder.decode(AppBskyVideoDefs.JobStatus.self, from: responseData)
-              print("DEBUG: Job ID: \(jobStatus.jobId)")
+              logger.debug("DEBUG: Job ID: \(jobStatus.jobId)")
               videoJobId = jobStatus.jobId
               return try await pollVideoJobStatus(jobId: jobStatus.jobId, token: authToken)
           } catch {
-              print("ERROR: Failed to decode job status from response: \(error)")
+              logger.error("ERROR: Failed to decode job status from response: \(error)")
               isVideoUploading = false
               uploadStatus = .failed(error: "Invalid response format from server")
               throw VideoUploadError.processingFailed("Could not decode server response: \(error.localizedDescription)")
@@ -359,7 +359,7 @@ import SwiftUI
       } else if httpResponse.statusCode == 409,
             let errorJson = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
             let jobId = errorJson["jobId"] as? String {
-             print("DEBUG: Video was already processed, reusing job ID: \(jobId)")
+             logger.debug("DEBUG: Video was already processed, reusing job ID: \(jobId)")
              videoJobId = jobId
              return try await pollVideoJobStatus(jobId: jobId, token: token)
     } else {
@@ -372,7 +372,7 @@ import SwiftUI
         errorMessage = "HTTP \(httpResponse.statusCode)"
       }
       
-      print("ERROR: Video upload failed with HTTP status code \(httpResponse.statusCode): \(errorMessage)")
+      logger.error("ERROR: Video upload failed with HTTP status code \(httpResponse.statusCode): \(errorMessage)")
       isVideoUploading = false
       uploadStatus = .failed(error: "Upload failed: \(errorMessage)")
       throw VideoUploadError.uploadFailed
@@ -381,19 +381,17 @@ import SwiftUI
 
   /// Poll for video job status until complete using direct URLSession
   private func pollVideoJobStatus(jobId: String, token: String) async throws -> Blob {
-    print("DEBUG: Polling video job status for jobId: \(jobId)")
+    logger.debug("DEBUG: Polling video job status for jobId: \(jobId)")
     var blob: Blob?
     var attempts = 0
     let maxAttempts = 30  // Timeout after 5 minutes (30 * 10 seconds)
     var consecutiveErrorCount = 0
     let maxConsecutiveErrors = 3
 
-    // Create URL for status endpoint
-    let statusURL = URL(string: "\(videoBaseURL)/app.bsky.video.getJobStatus")!
     
     while blob == nil && attempts < maxAttempts {
       attempts += 1
-      print("DEBUG: Polling attempt \(attempts) of \(maxAttempts)")
+      logger.debug("DEBUG: Polling attempt \(attempts) of \(maxAttempts)")
 
       do {
         // Prepare request
@@ -410,18 +408,18 @@ import SwiftUI
         let (responseData, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
-          print("ERROR: Invalid HTTP response type")
+          logger.error("ERROR: Invalid HTTP response type")
           throw VideoUploadError.processingFailed("Invalid response from server")
         }
         
-        print("DEBUG: Job status response code: \(httpResponse.statusCode)")
+        logger.debug("DEBUG: Job status response code: \(httpResponse.statusCode)")
         
         if httpResponse.statusCode != 200 {
-          print("ERROR: Job status request returned HTTP \(httpResponse.statusCode)")
+          logger.error("ERROR: Job status request returned HTTP \(httpResponse.statusCode)")
           consecutiveErrorCount += 1
           
           if consecutiveErrorCount >= maxConsecutiveErrors {
-            print("ERROR: Too many consecutive errors (\(consecutiveErrorCount))")
+            logger.error("ERROR: Too many consecutive errors (\(consecutiveErrorCount))")
             throw VideoUploadError.processingFailed("Failed to get job status after multiple attempts")
           }
           
@@ -438,28 +436,28 @@ import SwiftUI
         let status = try decoder.decode(JobStatusResponse.self, from: responseData)
         
         // Log the complete job status for debugging
-          print("DEBUG: Job status: state=\(status.jobStatus.state), progress=\(status.jobStatus.progress ?? -1), error=\(status.jobStatus.error ?? "nil")")
+          logger.debug("DEBUG: Job status: state=\(status.jobStatus.state), progress=\(status.jobStatus.progress ?? -1), error=\(status.jobStatus.error ?? "nil")")
         
         // Handle different job states
         switch status.jobStatus.state {
         case "queued":
-          print("DEBUG: Job is queued for processing")
+          logger.debug("DEBUG: Job is queued for processing")
           
         case "processing":
           if let progress = status.jobStatus.progress {
             await MainActor.run {
               self.processingProgress = Double(progress) / 100.0
               self.uploadStatus = .processing(progress: Double(progress) / 100.0)
-              print("DEBUG: Processing progress: \(progress)%")
+              logger.debug("DEBUG: Processing progress: \(progress)%")
             }
           } else {
-            print("DEBUG: Processing (no progress percentage reported)")
+            logger.debug("DEBUG: Processing (no progress percentage reported)")
           }
           
         case "JOB_STATE_COMPLETED":
-          print("DEBUG: Job completed successfully")
+          logger.debug("DEBUG: Job completed successfully")
           if let processedBlob = status.jobStatus.blob {
-            print("DEBUG: Blob received: type=\(processedBlob.mimeType), size=\(processedBlob.size) bytes")
+            logger.debug("DEBUG: Blob received: type=\(processedBlob.mimeType), size=\(processedBlob.size) bytes")
             await MainActor.run {
               self.uploadStatus = .complete
               self.uploadedBlob = processedBlob
@@ -467,12 +465,12 @@ import SwiftUI
             }
             return processedBlob
           } else {
-            print("ERROR: Job succeeded but no blob was returned")
+            logger.error("ERROR: Job succeeded but no blob was returned")
             throw VideoUploadError.processingFailed("Server reported success but provided no video data")
           }
         case "JOB_STATE_FAILED":
           let errorMessage = status.jobStatus.error ?? "Unknown error"
-          print("ERROR: Video processing failed with message: \(errorMessage)")
+          logger.error("ERROR: Video processing failed with message: \(errorMessage)")
           await MainActor.run {
             self.uploadStatus = .failed(error: errorMessage)
             self.videoError = errorMessage
@@ -480,17 +478,17 @@ import SwiftUI
           throw VideoUploadError.processingFailed(errorMessage)
           
         default:
-          print("DEBUG: Unknown job state: \(status.jobStatus.state)")
+          logger.debug("DEBUG: Unknown job state: \(status.jobStatus.state)")
         }
       } catch let error as VideoUploadError {
         // Propagate VideoUploadError
         throw error
       } catch {
-        print("ERROR: Failed to poll job status: \(error)")
+        logger.error("ERROR: Failed to poll job status: \(error)")
         consecutiveErrorCount += 1
         
         if consecutiveErrorCount >= maxConsecutiveErrors {
-          print("ERROR: Too many consecutive errors (\(consecutiveErrorCount))")
+          logger.error("ERROR: Too many consecutive errors (\(consecutiveErrorCount))")
           throw VideoUploadError.processingFailed("Failed to poll job status: \(error.localizedDescription)")
         }
       }
@@ -505,7 +503,7 @@ import SwiftUI
       self.isVideoUploading = false
       self.uploadStatus = .failed(error: "Video processing timed out after \(videoAttempts) attempts")
     }
-    print("ERROR: Video processing timed out after \(attempts) attempts")
+    logger.error("ERROR: Video processing timed out after \(attempts) attempts")
     throw VideoUploadError.processingTimeout
   }
   
@@ -618,7 +616,7 @@ import SwiftUI
         height: Int(naturalSize.height)
       )
     } catch {
-      print("Error getting video dimensions: \(error)")
+      logger.debug("Error getting video dimensions: \(error)")
       return nil
     }
   }

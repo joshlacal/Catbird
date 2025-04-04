@@ -29,9 +29,9 @@ class AudioSessionManager {
             // IMPORTANT: Set to ambient by default - this prevents our app from taking over audio
             let audioSession = AVAudioSession.sharedInstance()
             try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-            print("Initial audio session configured as ambient")
+            logger.debug("Initial audio session configured as ambient")
         } catch {
-            print("Failed to configure initial audio session: \(error)")
+            logger.debug("Failed to configure initial audio session: \(error)")
         }
     }
     
@@ -83,9 +83,9 @@ class AudioSessionManager {
                                        options: [.mixWithOthers, .duckOthers])
             try audioSession.setActive(true)
             isActive = true
-            print("Audio session activated for video with sound")
+            logger.debug("Audio session activated for video with sound")
         } catch {
-            print("Failed to configure audio session for unmute: \(error)")
+            logger.debug("Failed to configure audio session for unmute: \(error)")
         }
     }
     
@@ -100,9 +100,9 @@ class AudioSessionManager {
             // Reset to ambient which doesn't affect other audio
             try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
             isActive = false
-            print("Audio session deactivated and set to ambient")
+            logger.debug("Audio session deactivated and set to ambient")
         } catch {
-            print("Failed to deactivate audio session: \(error)")
+            logger.debug("Failed to deactivate audio session: \(error)")
         }
     }
     
@@ -116,10 +116,10 @@ class AudioSessionManager {
                 try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
                 try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
                 isActive = false
-                print("Reset to ambient mode for silent playback")
+                logger.debug("Reset to ambient mode for silent playback")
             }
         } catch {
-            print("Error configuring for silent playback: \(error)")
+            logger.debug("Error configuring for silent playback: \(error)")
         }
     }
     
@@ -136,7 +136,7 @@ class AudioSessionManager {
         case .began:
             // Audio session interrupted - store state
             wasAudioPlayingBeforeInterruption = AVAudioSession.sharedInstance().isOtherAudioPlaying
-            print("Audio session interrupted")
+            logger.debug("Audio session interrupted")
             
         case .ended:
             guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else {
@@ -149,7 +149,7 @@ class AudioSessionManager {
                 // We can't directly control other apps' playback, but we can make sure
                 // our session isn't interfering
                 configureForSilentPlayback()
-                print("Audio interruption ended, reset to silent playback")
+                logger.debug("Audio interruption ended, reset to silent playback")
             }
             
         @unknown default:
@@ -170,7 +170,7 @@ class AudioSessionManager {
             // If our category changes, ensure we're properly configured
             if AVAudioSession.sharedInstance().isOtherAudioPlaying && isActive {
                 configureForSilentPlayback()
-                print("Audio route changed - reset to silent playback")
+                logger.debug("Audio route changed - reset to silent playback")
             }
         default:
             break
@@ -180,13 +180,13 @@ class AudioSessionManager {
     @objc private func handleAppDidBecomeActive(_ notification: Notification) {
         // When app becomes active, start in silent mode by default
         configureForSilentPlayback()
-        print("App became active - configured for silent playback")
+        logger.debug("App became active - configured for silent playback")
     }
     
     @objc private func handleAppWillResignActive(_ notification: Notification) {
         // When app resigns active, ensure we're not disrupting audio
         handleVideoMute()
-        print("App resigned active - deactivated audio session")
+        logger.debug("App resigned active - deactivated audio session")
     }
     
     deinit {

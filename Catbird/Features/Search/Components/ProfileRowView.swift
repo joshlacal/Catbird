@@ -10,14 +10,27 @@ struct ProfileRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             // Profile avatar
-            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 44)
+            AsyncProfileImage(url: profile.finalAvatarURL(), size: 44)
             
             // Profile info
             VStack(alignment: .leading, spacing: 4) {
+                    if profile.displayName?.isEmpty ?? true {
+                        // Display handle if no display name
+                        Text("@\(profile.handle)")
+                            .font(.headline)
+                            .lineLimit(1)
+                    } else {
+                        // Display display name if available
+                        Text(profile.displayName ?? profile.handle.description)
+                            .font(.headline)
+                            .lineLimit(1)
+                    }
+                                        
                 HStack {
-                    Text(profile.displayName ?? "@\(profile.handle)")
-                        .font(.headline)
-                        .lineLimit(1)
+
+                Text("@\(profile.handle)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
                     
                     // Handle "Follows you" badge if available
                     if let profileView = profile as? AppBskyActorDefs.ProfileView,
@@ -27,20 +40,19 @@ struct ProfileRowView: View {
                               let viewer = profileViewBasic.viewer, viewer.followedBy != nil {
                         FollowsBadgeView()
                     }
+
                 }
-                
-                Text("@\(profile.handle)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
+
                 // Description (only available in ProfileView)
                 if let profileView = profile as? AppBskyActorDefs.ProfileView,
                    let description = profileView.description, !description.isEmpty {
                     Text(description)
+                        .multilineTextAlignment(.leading)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .padding(.top, 2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             
@@ -51,8 +63,8 @@ struct ProfileRowView: View {
                 followButton()
             }
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal)
+//        .padding(.vertical, 12)
+//        .padding(.horizontal)
         .task {
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()

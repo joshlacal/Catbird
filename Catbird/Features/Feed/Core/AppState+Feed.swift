@@ -28,7 +28,7 @@ extension AppState {
                 let (posts, cursor) = try await feedManager.fetchFeed(fetchType: fetchType, cursor: nil)
                 storePrefetchedFeed(posts, cursor: cursor, for: fetchType)
             } catch {
-                print("Error prefetching feed: \(error)")
+                logger.debug("Error prefetching feed: \(error)")
             }
         }
     }

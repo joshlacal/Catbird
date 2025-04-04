@@ -59,7 +59,7 @@ class AvatarImageLoader {
         let task = Task<UIImage?, Error> {
             do {
                 guard let client = client else {
-                    print("Client is nil, cannot load avatar for DID: \(did)")
+                    logger.debug("Client is nil, cannot load avatar for DID: \(did)")
                     return nil
                 }
                 
@@ -69,8 +69,7 @@ class AvatarImageLoader {
                 ).data
                 
                 // Download avatar if available
-                if let avatarURLString = profile?.avatar?.url?.absoluteString,
-                   let avatarURL = URL(string: avatarURLString) {
+                if let avatarURL = profile?.finalAvatarURL() {
                     
                     let (data, _) = try await URLSession.shared.data(from: avatarURL)
                     if let image = UIImage(data: data) {
@@ -85,7 +84,7 @@ class AvatarImageLoader {
                 }
                 return nil
             } catch {
-                print("Avatar loading error: \(error)")
+                logger.debug("Avatar loading error: \(error)")
                 return nil
             }
         }

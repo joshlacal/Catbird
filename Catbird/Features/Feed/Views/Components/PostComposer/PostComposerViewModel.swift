@@ -82,6 +82,13 @@ final class PostComposerViewModel {
     var threadgateSettings = ThreadgateSettings()
     var showThreadgateOptions = false
 
+    
+    private var profile: AppBskyActorDefs.ProfileViewDetailed?
+    private var isLoadingProfile = false
+    private var profileError: Error?
+
+    
+    
   // Media properties
   struct MediaItem: Identifiable, Equatable {
     let id = UUID()
@@ -148,32 +155,32 @@ final class PostComposerViewModel {
   // For processing a single video
   @MainActor
   func processVideoSelection(_ item: PhotosPickerItem) async {
-    print("DEBUG: Processing video selection")
+    logger.debug("DEBUG: Processing video selection")
 
     // Validate content type
     let isVideo = item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) })
-    print("DEBUG: Is selection a video? \(isVideo)")
-    print("DEBUG: Supported content types: \(item.supportedContentTypes)")
+    logger.debug("DEBUG: Is selection a video? \(isVideo)")
+    logger.debug("DEBUG: Supported content types: \(item.supportedContentTypes)")
 
     guard isVideo else {
-      print("DEBUG: Selected item is not a video")
+      logger.debug("DEBUG: Selected item is not a video")
       alertItem = AlertItem(title: "Selection Error", message: "The selected file is not a video.")
       return
     }
 
     // Clear existing media
-    print("DEBUG: Clearing existing media")
+    logger.debug("DEBUG: Clearing existing media")
     mediaItems.removeAll()
     selectedImageItem = nil
     selectedImage = nil
 
     // Create video media item
-    print("DEBUG: Creating new video media item")
+    logger.debug("DEBUG: Creating new video media item")
     let newVideoItem = MediaItem(pickerItem: item)
     self.videoItem = newVideoItem
 
     // Load video thumbnail and metadata
-    print("DEBUG: Loading video thumbnail and metadata")
+    logger.debug("DEBUG: Loading video thumbnail and metadata")
     await loadVideoThumbnail(for: newVideoItem)
   }
 
@@ -256,17 +263,17 @@ final class PostComposerViewModel {
   @MainActor
   private func loadVideoThumbnail(for item: MediaItem) async {
     guard let videoItem = self.videoItem else {
-      print("DEBUG: videoItem is nil in loadVideoThumbnail")
+      logger.debug("DEBUG: videoItem is nil in loadVideoThumbnail")
       return
     }
 
     do {
-      print("DEBUG: Starting video thumbnail generation process")
+      logger.debug("DEBUG: Starting video thumbnail generation process")
 
       // Validate the selection is a video
-      print("DEBUG: Checking content types")
+      logger.debug("DEBUG: Checking content types")
       if !videoItem.pickerItem.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
-        print("DEBUG: Selected item is not a video (incorrect content type)")
+        logger.debug("DEBUG: Selected item is not a video (incorrect content type)")
         throw NSError(
           domain: "VideoLoadError",
           code: 1,
@@ -275,7 +282,7 @@ final class PostComposerViewModel {
       }
 
       // Try multiple approaches to load the video
-      print("DEBUG: Attempting to load video using multiple approaches")
+      logger.debug("DEBUG: Attempting to load video using multiple approaches")
 
       // Approach 1: Try loading as AVAsset (preferred for videos)
       var asset: AVAsset? = nil
@@ -283,9 +290,9 @@ final class PostComposerViewModel {
       var videoDuration: Double = 0.0
 
       // Check if we can load as AVAsset directly
-      print("DEBUG: Attempting to load as AVAsset")
+      logger.debug("DEBUG: Attempting to load as AVAsset")
       if let videoURL = try? await videoItem.pickerItem.loadTransferable(type: URL.self) {
-        print("DEBUG: Loading via URL: \(videoURL)")
+        logger.debug("DEBUG: Loading via URL: \(videoURL)")
 
         // Create an AVURLAsset from the URL
         let videoAsset = AVURLAsset(url: videoURL)
@@ -295,7 +302,7 @@ final class PostComposerViewModel {
         // Continue with validations and loading properties
         let isPlayable = try await videoAsset.load(.isPlayable)
         guard isPlayable else {
-          print("DEBUG: Video asset from URL is not playable")
+          logger.debug("DEBUG: Video asset from URL is not playable")
           throw NSError(
             domain: "VideoLoadError",
             code: 5,
@@ -306,11 +313,11 @@ final class PostComposerViewModel {
         }
 
         // Get video track
-        print("DEBUG: Loading video tracks from AVAsset")
+        logger.debug("DEBUG: Loading video tracks from AVAsset")
         let tracks = try await videoAsset.loadTracks(withMediaType: AVMediaType.video)
 
         guard let videoTrack = tracks.first else {
-          print("DEBUG: No video tracks found in asset")
+          logger.debug("DEBUG: No video tracks found in asset")
           throw NSError(
             domain: "VideoTrackError",
             code: 6,
@@ -327,7 +334,7 @@ final class PostComposerViewModel {
       }
       // Approach 2: Try loading as Data
       else if let videoData = try? await videoItem.pickerItem.loadTransferable(type: Data.self) {
-        print("DEBUG: Successfully loaded video as Data, size: \(videoData.count) bytes")
+        logger.debug("DEBUG: Successfully loaded video as Data, size: \(videoData.count) bytes")
 
         // Store the data for later use
         self.videoItem?.videoData = videoData
@@ -337,20 +344,20 @@ final class PostComposerViewModel {
         let tempFileName = "temp_video_\(UUID().uuidString).mp4"
         let tempFileURL = tempDir.appendingPathComponent(tempFileName)
 
-        print("DEBUG: Writing video data to temporary file: \(tempFileURL.path)")
+        logger.debug("DEBUG: Writing video data to temporary file: \(tempFileURL.path)")
         try videoData.write(to: tempFileURL)
 
         // Create an asset from the temporary file
-        print("DEBUG: Creating AVAsset from temporary file")
+        logger.debug("DEBUG: Creating AVAsset from temporary file")
         let videoAsset = AVURLAsset(url: tempFileURL)
         asset = videoAsset
         self.videoItem?.rawVideoURL = tempFileURL
 
         // Validate the asset
-        print("DEBUG: Validating created AVAsset")
+        logger.debug("DEBUG: Validating created AVAsset")
         let isPlayable = try await videoAsset.load(.isPlayable)
         if !isPlayable {
-          print("DEBUG: Video asset is not playable")
+          logger.debug("DEBUG: Video asset is not playable")
           throw NSError(
             domain: "VideoLoadError",
             code: 5,
@@ -361,11 +368,11 @@ final class PostComposerViewModel {
         }
 
         // Get video track
-        print("DEBUG: Loading video tracks from created AVAsset")
+        logger.debug("DEBUG: Loading video tracks from created AVAsset")
         let tracks = try await videoAsset.loadTracks(withMediaType: AVMediaType.video)
 
         guard let videoTrack = tracks.first else {
-          print("DEBUG: No video tracks found in created asset")
+          logger.debug("DEBUG: No video tracks found in created asset")
           throw NSError(
             domain: "VideoTrackError",
             code: 6,
@@ -382,12 +389,12 @@ final class PostComposerViewModel {
       }
       // Approach 3: Fallback to URL (may not work with PhotosUI security)
       else if let videoURL = try? await videoItem.pickerItem.loadTransferable(type: URL.self) {
-        print("DEBUG: Loading via URL: \(videoURL)")
+        logger.debug("DEBUG: Loading via URL: \(videoURL)")
 
         // Validate file exists
         let fileManager = FileManager.default
         if !fileManager.fileExists(atPath: videoURL.path) {
-          print("DEBUG: File does not exist at path: \(videoURL.path)")
+          logger.debug("DEBUG: File does not exist at path: \(videoURL.path)")
           throw NSError(
             domain: "VideoLoadError",
             code: 3,
@@ -396,16 +403,16 @@ final class PostComposerViewModel {
         }
 
         // Create asset from URL
-        print("DEBUG: Creating AVAsset from URL")
+        logger.debug("DEBUG: Creating AVAsset from URL")
         let videoAsset = AVURLAsset(url: videoURL)
         asset = videoAsset
         self.videoItem?.rawVideoURL = videoURL
 
         // Validate the asset
-        print("DEBUG: Validating URL-based AVAsset")
+        logger.debug("DEBUG: Validating URL-based AVAsset")
         let isPlayable = try await videoAsset.load(.isPlayable)
         if !isPlayable {
-          print("DEBUG: Video asset from URL is not playable")
+          logger.debug("DEBUG: Video asset from URL is not playable")
           throw NSError(
             domain: "VideoLoadError",
             code: 5,
@@ -416,11 +423,11 @@ final class PostComposerViewModel {
         }
 
         // Get video track
-        print("DEBUG: Loading video tracks from URL-based AVAsset")
+        logger.debug("DEBUG: Loading video tracks from URL-based AVAsset")
         let tracks = try await videoAsset.loadTracks(withMediaType: AVMediaType.video)
 
         guard let videoTrack = tracks.first else {
-          print("DEBUG: No video tracks found in URL-based asset")
+          logger.debug("DEBUG: No video tracks found in URL-based asset")
           throw NSError(
             domain: "VideoTrackError",
             code: 6,
@@ -437,7 +444,7 @@ final class PostComposerViewModel {
       }
       // No method worked
       else {
-        print("DEBUG: Failed to load video using any available method")
+        logger.debug("DEBUG: Failed to load video using any available method")
         throw NSError(
           domain: "VideoLoadError",
           code: 2,
@@ -449,7 +456,7 @@ final class PostComposerViewModel {
 
       // Make sure we have an asset to work with
       guard let asset = asset, let videoSize = videoSize else {
-        print("DEBUG: No valid asset or size information available")
+        logger.debug("DEBUG: No valid asset or size information available")
         throw NSError(
           domain: "VideoLoadError",
           code: 7,
@@ -457,14 +464,14 @@ final class PostComposerViewModel {
         )
       }
 
-      print("DEBUG: Video dimensions: \(videoSize.width) x \(videoSize.height)")
-      print("DEBUG: Video duration: \(videoDuration) seconds")
+      logger.debug("DEBUG: Video dimensions: \(videoSize.width) x \(videoSize.height)")
+      logger.debug("DEBUG: Video duration: \(videoDuration) seconds")
 
       // Check video size (max 100MB - approximate check)
       // This may not be accurate for all video formats
       let estimatedSizeBytes = Int(videoDuration) * 5_000_000  // Very rough estimate
       if estimatedSizeBytes > 100 * 1024 * 1024 {
-        print(
+        logger.debug(
           "DEBUG: Video likely exceeds maximum size (estimated: \(estimatedSizeBytes/1024/1024)MB)")
         throw NSError(
           domain: "VideoLoadError",
@@ -474,31 +481,31 @@ final class PostComposerViewModel {
       }
 
       // Generate the thumbnail
-      print("DEBUG: Generating thumbnail at time 0.5 seconds")
+      logger.debug("DEBUG: Generating thumbnail at time 0.5 seconds")
       let time = CMTime(seconds: min(0.5, videoDuration / 2), preferredTimescale: 600)
 
       // Use modern async thumbnail generation method
-      print("DEBUG: Calling generateThumbnail method")
+      logger.debug("DEBUG: Calling generateThumbnail method")
       let cgImage = try await generateThumbnail(from: asset, at: time)
-      print("DEBUG: Successfully generated thumbnail")
+      logger.debug("DEBUG: Successfully generated thumbnail")
 
       let thumbnail = UIImage(cgImage: cgImage)
-      print("DEBUG: Created UIImage from CGImage")
+      logger.debug("DEBUG: Created UIImage from CGImage")
 
       // Update the video item
-      print("DEBUG: Updating video item properties")
+      logger.debug("DEBUG: Updating video item properties")
       self.videoItem?.image = Image(uiImage: thumbnail)
       self.videoItem?.aspectRatio = CGSize(width: videoSize.width, height: videoSize.height)
       self.videoItem?.isLoading = false
-      print("DEBUG: Video thumbnail generation complete")
+      logger.debug("DEBUG: Video thumbnail generation complete")
     } catch {
-      print("ERROR: Video thumbnail generation failed: \(error)")
+      logger.error("ERROR: Video thumbnail generation failed: \(error)")
       if let nsError = error as NSError? {
-        print(
+        logger.debug(
           "ERROR: Domain: \(nsError.domain), Code: \(nsError.code), Description: \(nsError.localizedDescription)"
         )
         if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-          print(
+          logger.debug(
             "ERROR: Underlying error - Domain: \(underlyingError.domain), Code: \(underlyingError.code), Description: \(underlyingError.localizedDescription)"
           )
         }
@@ -528,7 +535,7 @@ final class PostComposerViewModel {
 
   // Helper function to convert the completion handler-based API to async/await
   private func generateThumbnail(from asset: AVAsset, at time: CMTime) async throws -> CGImage {
-    print("DEBUG: Configuring AVAssetImageGenerator")
+    logger.debug("DEBUG: Configuring AVAssetImageGenerator")
     let imageGenerator = AVAssetImageGenerator(asset: asset)
     imageGenerator.appliesPreferredTrackTransform = true
     imageGenerator.maximumSize = CGSize(width: 1920, height: 1080)  // Set max size to avoid memory issues
@@ -536,19 +543,19 @@ final class PostComposerViewModel {
     imageGenerator.requestedTimeToleranceAfter = .zero
 
     return try await withCheckedThrowingContinuation { continuation in
-      print("DEBUG: Starting async thumbnail generation at time: \(CMTimeGetSeconds(time))")
+      logger.debug("DEBUG: Starting async thumbnail generation at time: \(CMTimeGetSeconds(time))")
       let timeValue = NSValue(time: time)
 
       imageGenerator.generateCGImagesAsynchronously(forTimes: [timeValue]) {
         requestedTime, cgImage, actualTime, result, error in
-        print("DEBUG: Thumbnail generation callback received")
-        print(
+        logger.debug("DEBUG: Thumbnail generation callback received")
+        logger.debug(
           "DEBUG: Requested time: \(CMTimeGetSeconds(requestedTime)), Actual time: \(CMTimeGetSeconds(actualTime))"
         )
-        print("DEBUG: Result: \(result.rawValue)")
+        logger.debug("DEBUG: Result: \(result.rawValue)")
 
         if let error = error {
-          print("ERROR: Thumbnail generation failed with error: \(error)")
+          logger.error("ERROR: Thumbnail generation failed with error: \(error)")
           let nsError = error as NSError
           let enhancedError = NSError(
             domain: "VideoThumbnailError",
@@ -561,7 +568,7 @@ final class PostComposerViewModel {
           )
           continuation.resume(throwing: enhancedError)
         } else if let cgImage = cgImage, result == .succeeded {
-          print(
+          logger.debug(
             "DEBUG: Successfully generated thumbnail with dimensions: \(cgImage.width) x \(cgImage.height)"
           )
           continuation.resume(returning: cgImage)
@@ -578,7 +585,7 @@ final class PostComposerViewModel {
             resultDescription = "unknown result \(result.rawValue)"
           }
 
-          print("ERROR: Thumbnail generation \(resultDescription) without an image")
+          logger.error("ERROR: Thumbnail generation \(resultDescription) without an image")
           continuation.resume(
             throwing: NSError(
               domain: "VideoThumbnailError",
@@ -631,7 +638,7 @@ final class PostComposerViewModel {
         mediaItems[index].rawData = data
       }
     } catch {
-      print("Error loading image: \(error)")
+      logger.debug("Error loading image: \(error)")
       // Remove failed item
       mediaItems.remove(at: index)
     }
@@ -695,7 +702,7 @@ final class PostComposerViewModel {
         // Add it to selected languages if not already there
         if !selectedLanguages.contains(languageContainer) {
           selectedLanguages.append(languageContainer)
-          print("Added user's preferred language from UserDefaults: \(langString)")
+          logger.debug("Added user's preferred language from UserDefaults: \(langString)")
         }
       }
     } else {
@@ -708,7 +715,7 @@ final class PostComposerViewModel {
         // Add system language if not already in selected languages
         if !selectedLanguages.contains(languageContainer) {
           selectedLanguages.append(languageContainer)
-          print("Added system language as fallback: \(systemLang)")
+          logger.debug("Added system language as fallback: \(systemLang)")
         }
       }
     }
@@ -782,66 +789,54 @@ final class PostComposerViewModel {
   // Create video embed
   func createVideoEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
     guard let videoItem = videoItem, let mediaUploadManager = mediaUploadManager else {
-      print("DEBUG: Missing videoItem or mediaUploadManager")
+      logger.debug("DEBUG: Missing videoItem or mediaUploadManager")
       return nil
     }
 
     // Set uploading state
     isVideoUploading = true
-    print("DEBUG: Creating video embed, starting upload process")
+    logger.debug("DEBUG: Creating video embed, starting upload process")
 
     do {
       // Depending on what's available, try different upload approaches
       let blob: Blob
 
       if let videoURL = videoItem.rawVideoURL {
-        print("DEBUG: Using URL for video upload: \(videoURL)")
+        logger.debug("DEBUG: Using URL for video upload: \(videoURL)")
         blob = try await mediaUploadManager.uploadVideo(url: videoURL, alt: videoItem.altText)
       } else if let videoAsset = videoItem.rawVideoAsset {
-        print("DEBUG: Using AVAsset for video upload")
+        logger.debug("DEBUG: Using AVAsset for video upload")
 
         // Export the asset to a temporary file
         let tempDir = FileManager.default.temporaryDirectory
         let tempFileName = "export_video_\(UUID().uuidString).mp4"
         let tempFileURL = tempDir.appendingPathComponent(tempFileName)
 
-        print("DEBUG: Exporting asset to temporary file: \(tempFileURL.path)")
+        logger.debug("DEBUG: Exporting asset to temporary file: \(tempFileURL.path)")
         let exported = try await exportAsset(videoAsset, to: tempFileURL)
 
         // Check export status
-        if exported.status != .completed {
-          print("ERROR: Asset export failed with status: \(exported.status.rawValue)")
-          if let error = exported.error {
-            print("ERROR: Export error: \(error)")
-            throw error
-          } else {
-            throw NSError(
-              domain: "VideoExportError",
-              code: 1,
-              userInfo: [NSLocalizedDescriptionKey: "Failed to prepare video for upload"]
-            )
-          }
-        }
+          logger.debug("DEBUG: Asset export successful, uploading from: \(tempFileURL.path)")
 
         // Upload the exported file
-        print("DEBUG: Asset export successful, uploading from: \(tempFileURL.path)")
+        logger.debug("DEBUG: Asset export successful, uploading from: \(tempFileURL.path)")
         blob = try await mediaUploadManager.uploadVideo(url: tempFileURL, alt: videoItem.altText)
       } else if let videoData = videoItem.videoData {
-        print("DEBUG: Using Data for video upload, size: \(videoData.count) bytes")
+        logger.debug("DEBUG: Using Data for video upload, size: \(videoData.count) bytes")
 
         // Create a temporary file from the data
         let tempDir = FileManager.default.temporaryDirectory
         let tempFileName = "data_video_\(UUID().uuidString).mp4"
         let tempFileURL = tempDir.appendingPathComponent(tempFileName)
 
-        print("DEBUG: Writing video data to temporary file: \(tempFileURL.path)")
+        logger.debug("DEBUG: Writing video data to temporary file: \(tempFileURL.path)")
         try videoData.write(to: tempFileURL)
 
         // Upload the file
-        print("DEBUG: Uploading from temporary file: \(tempFileURL.path)")
+        logger.debug("DEBUG: Uploading from temporary file: \(tempFileURL.path)")
         blob = try await mediaUploadManager.uploadVideo(url: tempFileURL, alt: videoItem.altText)
       } else {
-        print("ERROR: No video source available for upload")
+        logger.error("ERROR: No video source available for upload")
         isVideoUploading = false
         throw NSError(
           domain: "VideoUploadError",
@@ -853,7 +848,7 @@ final class PostComposerViewModel {
       }
 
       // Create video embed
-      print("DEBUG: Video upload successful, creating embed")
+      logger.debug("DEBUG: Video upload successful, creating embed")
       let embed = mediaUploadManager.createVideoEmbed(
         aspectRatio: videoItem.aspectRatio,
         alt: videoItem.altText.isEmpty ? "Video" : videoItem.altText
@@ -863,7 +858,7 @@ final class PostComposerViewModel {
       return embed
     } catch {
       isVideoUploading = false
-      print("ERROR: Video upload failed: \(error)")
+      logger.error("ERROR: Video upload failed: \(error)")
 
       // Convert error to user-friendly message
       let errorMessage: String
@@ -889,35 +884,33 @@ final class PostComposerViewModel {
   }
 
   // Helper method to export AVAsset to file
-  private func exportAsset(_ asset: AVAsset, to outputURL: URL) async throws -> AVAssetExportSession
-  {
-    print("DEBUG: Creating export session")
-    guard
-      let exportSession = AVAssetExportSession(
-        asset: asset,
-        presetName: AVAssetExportPresetHighestQuality
-      )
-    else {
-      print("ERROR: Could not create export session")
-      throw NSError(
-        domain: "VideoExportError",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not create export session for video"]
-      )
+    private func exportAsset(_ asset: AVAsset, to outputURL: URL) async throws -> AVAssetExportSession {
+        logger.debug("DEBUG: Creating export session")
+        guard let exportSession = AVAssetExportSession(
+            asset: asset,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            logger.error("ERROR: Could not create export session")
+            throw NSError(
+                domain: "VideoExportError",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not create export session for video"]
+            )
+        }
+
+        logger.debug("DEBUG: Starting export operation")
+        do {
+            // Use the new async/throws export method
+            try await exportSession.export(to: outputURL, as: .mp4)
+            logger.debug("DEBUG: Export completed successfully")
+        } catch {
+            logger.debug("DEBUG: Export failed with error: \(error)")
+            throw error
+        }
+
+        return exportSession
     }
-
-    print("DEBUG: Configuring export session")
-    exportSession.outputURL = outputURL
-    exportSession.outputFileType = .mp4
-    exportSession.shouldOptimizeForNetworkUse = true
-
-    print("DEBUG: Starting export operation")
-    await exportSession.export()
-
-    print("DEBUG: Export completed with status: \(exportSession.status.rawValue)")
-    return exportSession
-  }
-
+    
   // Process image for upload - compress and optimize
   private func processImageForUpload(_ data: Data) async throws -> Data {
     // Start with original data
@@ -1026,10 +1019,10 @@ final class PostComposerViewModel {
       if responseCode == 200, let searchResults = output?.actors {
         mentionSuggestions = searchResults
       } else {
-        print("Failed to load profiles. Please try again.")
+        logger.debug("Failed to load profiles. Please try again.")
       }
     } catch {
-      print("Error searching profiles: \(error.localizedDescription)")
+      logger.debug("Error searching profiles: \(error.localizedDescription)")
     }
   }
 
@@ -1061,25 +1054,60 @@ final class PostComposerViewModel {
     // Convert LanguageCodeContainer objects to strings for storage
     let languageStrings = selectedLanguages.map { $0.lang.languageCode?.identifier }
     UserDefaults.standard.set(languageStrings, forKey: "userPreferredLanguages")
-    print("Saved language preferences: \(languageStrings)")
+    logger.debug("Saved language preferences: \(languageStrings)")
   }
 
-  func applyProfileLabels() {
-    // Check for profile-level labels that should be inherited
-    if let userProfile = appState.currentUserProfile,
-      let profileLabels = userProfile.labels,
-      profileLabels.contains(where: { $0.val == "!no-unauthenticated" }),
-      !selectedLabels.contains(.exclamationnodashunauthenticated)
-    {
-
-      // Add the !no-unauthenticated label automatically
-      selectedLabels.insert(.exclamationnodashunauthenticated)
+    func applyProfileLabels() async {
+        await loadUserProfile()
+        
+        // Check for profile-level labels that should be inherited
+        if let userProfile = profile,
+           let profileLabels = userProfile.labels,
+           profileLabels.contains(where: { $0.val == "!no-unauthenticated" }),
+           !selectedLabels.contains(.exclamationnodashunauthenticated) {
+            
+            // Add the !no-unauthenticated label automatically
+            selectedLabels.insert(.exclamationnodashunauthenticated)
+        }
     }
-  }
+    
+    private func loadUserProfile() async {
+        guard let client = appState.atProtoClient else { return }
+        
+        isLoadingProfile = true
+        profileError = nil
+        
+        do {
+            // Get the DID first, before using it
+            let did: String
+            if let currentUserDID = appState.currentUserDID {
+                did = currentUserDID
+            } else {
+                did = try await client.getDid()
+            }
+            
+            // Now use the did variable to fetch the profile
+            let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
+                input: .init(actor: ATIdentifier(string: did))
+            )
+            
+            if responseCode == 200, let profileData = profileData {
+                profile = profileData
+            } else {
+                profileError = NSError(domain: "ProfileError", code: responseCode, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to load profile with code \(responseCode)"
+                ])
+            }
+        } catch {
+            profileError = error
+        }
+        
+        isLoadingProfile = false
+    }
 
     @MainActor
     func createPost() async throws {
-        applyProfileLabels()
+        await applyProfileLabels()
 
         let parsedContent = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(
@@ -1123,10 +1151,10 @@ final class PostComposerViewModel {
   func uploadBlob(_ imageData: Data, mimeType: String) async throws
     -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion
   {
-    print("Uploading blob with size: \(imageData.count) bytes")
+    logger.debug("Uploading blob with size: \(imageData.count) bytes")
 
     // Log a sample of the image data to verify it's compressed
-    print("First 100 bytes of image data: \(Array(imageData.prefix(100)))")
+    logger.debug("First 100 bytes of image data: \(Array(imageData.prefix(100)))")
 
     guard let client = appState.atProtoClient else {
       throw NSError(
@@ -1139,8 +1167,8 @@ final class PostComposerViewModel {
       mimeType: mimeType,
       stripMetadata: true
     )
-    print("Upload response code: \(responseCode)")
-    print("Server response: \(String(describing: blobOutput))")
+    logger.debug("Upload response code: \(responseCode)")
+    logger.debug("Server response: \(String(describing: blobOutput))")
 
     guard responseCode == 200, let blob = blobOutput?.blob else {
       throw NSError(
@@ -1148,7 +1176,7 @@ final class PostComposerViewModel {
         userInfo: [NSLocalizedDescriptionKey: "Failed to upload image"])
     }
 
-    print("Server reported blob size: \(blob.size) bytes")
+    logger.debug("Server reported blob size: \(blob.size) bytes")
 
     // Create the image embed
     #if os(iOS)
@@ -1170,19 +1198,19 @@ final class PostComposerViewModel {
   func createImageEmbed(_ item: PhotosPickerItem) async throws
     -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion
   {
-    print("Starting image embed creation")
+    logger.debug("Starting image embed creation")
 
     // Load image data
-    print("Loading image data")
+    logger.debug("Loading image data")
     guard let imageData = try await item.loadTransferable(type: Data.self) else {
       throw NSError(
         domain: "ImageLoadError", code: 0,
         userInfo: [NSLocalizedDescriptionKey: "Failed to load image data"])
     }
-    print("Image data loaded, size: \(imageData.count) bytes")
+    logger.debug("Image data loaded, size: \(imageData.count) bytes")
 
     // Convert to JPEG if necessary
-    print("Converting to JPEG if needed")
+    logger.debug("Converting to JPEG if needed")
     let jpegData: Data
     if checkImageFormat(imageData) == "HEIC" {
       guard let converted = convertHEICToJPEG(imageData) else {
@@ -1203,25 +1231,25 @@ final class PostComposerViewModel {
         domain: "ImageConversionError", code: 0,
         userInfo: [NSLocalizedDescriptionKey: "Failed to create UIImage from data"])
     }
-    print("JPEG conversion complete, new size: \(jpegData.count) bytes")
+    logger.debug("JPEG conversion complete, new size: \(jpegData.count) bytes")
 
     // Compress image
-    print("Compressing image")
+    logger.debug("Compressing image")
     let finalImageData: Data
     if let image = PlatformImage(data: jpegData),
       let compressedImageData = compressImage(image)
     {
       finalImageData = compressedImageData
-      print("Compression successful, final size: \(finalImageData.count) bytes")
+      logger.debug("Compression successful, final size: \(finalImageData.count) bytes")
     } else {
-      print("Compression failed, using original JPEG data")
+      logger.debug("Compression failed, using original JPEG data")
       finalImageData = jpegData
     }
 
     // Upload blob
-    print("Uploading blob")
+    logger.debug("Uploading blob")
     let embed = try await uploadBlob(finalImageData, mimeType: "image/jpeg")
-    print("Blob upload complete")
+    logger.debug("Blob upload complete")
 
     return embed
   }
@@ -1304,7 +1332,7 @@ final class PostComposerViewModel {
               self.isLoadingURLCard = false
             }
           } catch {
-            print("Error fetching URL card: \(error)")
+            logger.debug("Error fetching URL card: \(error)")
             await MainActor.run {
               self.isLoadingURLCard = false
             }
@@ -1362,7 +1390,7 @@ final class PostComposerViewModel {
           thumb = blob
         }
       } catch {
-        print("Failed to get thumb image, continuing without it: \(error)")
+        logger.debug("Failed to get thumb image, continuing without it: \(error)")
         // Continue without the thumbnail
       }
     }
@@ -1381,7 +1409,7 @@ final class PostComposerViewModel {
   @MainActor
   func determineBestEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
     // Check for video first (highest priority)
-    if let videoItem = videoItem {
+      if videoItem != nil {
       return try await createVideoEmbed()
     }
 
@@ -1584,7 +1612,7 @@ extension PostComposerViewModel {
       }
     }
 
-    applyProfileLabels()
+    await applyProfileLabels()
 
     let selfLabels = ComAtprotoLabelDefs.SelfLabels(
       values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) }

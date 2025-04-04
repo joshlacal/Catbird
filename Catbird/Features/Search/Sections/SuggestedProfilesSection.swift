@@ -67,51 +67,56 @@ struct SuggestedProfilesSection: View {
                 Button {
                     onSelect(profile)
                 } label: {
-                    HStack(spacing: 12) {
-                        AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 44)
-                            .shadow(color: Color.black.opacity(0.1), radius: 1, y: 1)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.displayName ?? "@\(profile.handle)")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                            
-                            Text("@\(profile.handle)")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                            
-                            if let description = profile.description, !description.isEmpty {
-                                Text(description)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                    .padding(.top, 2)
-                            }
-                        }
-                        
-                        Spacer()
-                        
-                        // Only show follow button if not already following
-                        if profile.viewer?.following == nil {
-                            EnhancedFollowButton(profile: profile)
-                        } else {
-                            Text("Following")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 5)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.gray.opacity(0.2))
-                                )
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal)
-                    .contentShape(Rectangle())
+                    
+                    ProfileRowView(profile: profile)
+                        .padding(12)
+                        .applyListRowModifiers(id: profile.did.didString())
+                    
+//                    HStack(spacing: 12) {
+//                        AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 44)
+//                            .shadow(color: Color.black.opacity(0.1), radius: 1, y: 1)
+//                        
+//                        VStack(alignment: .leading, spacing: 2) {
+//                            Text(profile.displayName ?? "@\(profile.handle)")
+//                                .font(.headline)
+//                                .foregroundColor(.primary)
+//                                .lineLimit(1)
+//                            
+//                            Text("@\(profile.handle)")
+//                                .font(.subheadline)
+//                                .foregroundColor(.secondary)
+//                                .lineLimit(1)
+//                            
+//                            if let description = profile.description, !description.isEmpty {
+//                                Text(description)
+//                                    .font(.caption)
+//                                    .foregroundColor(.secondary)
+//                                    .lineLimit(1)
+//                                    .padding(.top, 2)
+//                            }
+//                        }
+//                        
+//                        Spacer()
+//                        
+//                        // Only show follow button if not already following
+//                        if profile.viewer?.following == nil {
+//                            EnhancedFollowButton(profile: profile)
+//                        } else {
+//                            Text("Following")
+//                                .font(.caption)
+//                                .fontWeight(.medium)
+//                                .foregroundColor(.secondary)
+//                                .padding(.vertical, 5)
+//                                .padding(.horizontal, 12)
+//                                .background(
+//                                    Capsule()
+//                                        .fill(Color.gray.opacity(0.2))
+//                                )
+//                        }
+//                    }
+//                    .padding(.vertical, 8)
+//                    .padding(.horizontal)
+//                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 

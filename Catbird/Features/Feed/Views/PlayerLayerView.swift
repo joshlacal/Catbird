@@ -106,7 +106,7 @@ struct PlayerLayerView: UIViewRepresentable {
                 // Set reasonable buffer duration
                 player.currentItem?.preferredForwardBufferDuration = 5.0
             } catch {
-                print("Error pre-loading asset properties: \(error)")
+                logger.debug("Error pre-loading asset properties: \(error)")
             }
         }
     }

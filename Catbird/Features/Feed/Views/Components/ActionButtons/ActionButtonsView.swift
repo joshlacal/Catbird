@@ -39,7 +39,7 @@ import SwiftUI
 
     #if DEBUG
       if oldLikeCount != self.likeCount {
-        print("Like count changed: \(oldLikeCount) -> \(self.likeCount)")
+        logger.debug("Like count changed: \(oldLikeCount) -> \(self.likeCount)")
       }
     #endif
   }

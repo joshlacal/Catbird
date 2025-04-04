@@ -54,10 +54,10 @@ struct RepostOptionsView: View {
                                 do {
                                     let success = try await viewModel.createQuotePost(text: quoteText)
                                     if !success {
-                                        print("Failed to create quote post")
+                                        logger.debug("Failed to create quote post")
                                     }
                                 } catch {
-                                    print("Error posting quote: \(error)")
+                                    logger.debug("Error posting quote: \(error)")
                                 }
                                 isSubmitting = false
                             }
@@ -84,7 +84,7 @@ struct RepostOptionsView: View {
                     do {
                         try await viewModel.toggleRepost()
                     } catch {
-                        print("Error toggling repost: \(error)")
+                        logger.debug("Error toggling repost: \(error)")
                     }
                 }
             } label: {

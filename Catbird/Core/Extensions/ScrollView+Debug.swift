@@ -101,7 +101,7 @@
 //                            isInitialMeasurement = false
 //                            
 //                            if ScrollDebugSettings.logEvents {
-//                                print("📜 DEBUG ScrollView '\(viewName)' - Initial content size: \(contentWidth) x \(contentHeight)")
+//                                logger.debug("📜 DEBUG ScrollView '\(viewName)' - Initial content size: \(contentWidth) x \(contentHeight)")
 //                            }
 //                        }
 //                        .onChange(of: proxy.size) { oldSize, newSize in
@@ -112,9 +112,9 @@
 //                            // Monitor for significant height changes
 //                            if !isInitialMeasurement && abs(heightDelta) > significantHeightChangeDelta {
 //                                if ScrollDebugSettings.logEvents {
-//                                    print("⚠️ DEBUG ScrollView '\(viewName)' - Significant content height change:")
-//                                    print("   Old: \(oldSize.height)px, New: \(newSize.height)px (Δ\(heightDelta)px)")
-//                                    print("   Time since last update: \(timeSinceLastUpdate)s")
+//                                    logger.debug("⚠️ DEBUG ScrollView '\(viewName)' - Significant content height change:")
+//                                    logger.debug("   Old: \(oldSize.height)px, New: \(newSize.height)px (Δ\(heightDelta)px)")
+//                                    logger.debug("   Time since last update: \(timeSinceLastUpdate)s")
 //                                }
 //                                
 //                                // Record the content shift event
@@ -134,7 +134,7 @@
 //                                        fixedContentSize = oldSize
 //                                        
 //                                        if ScrollDebugSettings.logEvents {
-//                                            print("🔒 DEBUG ScrollView '\(viewName)' - Stabilizing content size temporarily")
+//                                            logger.debug("🔒 DEBUG ScrollView '\(viewName)' - Stabilizing content size temporarily")
 //                                        }
 //                                        
 //                                        // Schedule release of lock after cooldown
@@ -144,7 +144,7 @@
 //                                            lastUpdateTime = Date()
 //                                            
 //                                            if ScrollDebugSettings.logEvents {
-//                                                print("🔓 DEBUG ScrollView '\(viewName)' - Releasing size stabilization")
+//                                                logger.debug("🔓 DEBUG ScrollView '\(viewName)' - Releasing size stabilization")
 //                                            }
 //                                        }
 //                                    }

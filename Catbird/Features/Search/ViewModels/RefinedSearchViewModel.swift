@@ -227,7 +227,7 @@ enum SearchState {
                             }
                         } catch {
                             // Log but don't rethrow so other tasks can continue
-                            print("Profile search error: \(error.localizedDescription)")
+                            self.logger.error("Profile search error: \(error.localizedDescription)")
                         }
                     }
                     
@@ -245,7 +245,7 @@ enum SearchState {
                                 // Don't update cursor yet
                             }
                         } catch {
-                            print("Post search error: \(error.localizedDescription)")
+                            self.logger.error("Post search error: \(error.localizedDescription)")
                         }
                     }
                     
@@ -263,7 +263,7 @@ enum SearchState {
                                 newFeedResults = feedsResponse.feeds
                             }
                         } catch {
-                            print("Feed search error: \(error.localizedDescription)")
+                            self.logger.error("Feed search error: \(error.localizedDescription)")
                         }
                     }
                     
