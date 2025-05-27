@@ -1,0 +1,7 @@
+included:
+  - Catbird
+  - CatbirdNotificationWidget
+  - CatbirdUITests
+excluded:
+  - Pods
+  - .git

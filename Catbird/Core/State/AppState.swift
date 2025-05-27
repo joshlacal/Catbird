@@ -27,10 +27,12 @@ final class AppState {
   var isAdultContentEnabled: Bool = false
 
   // Used to track which tab was tapped twice to trigger scroll to top
-  var tabTappedAgain: Int? = nil
-
+  var tabTappedAgain: Int?
 
   // MARK: - Component Managers
+
+  /// Central event bus for coordinating state invalidation
+  let stateInvalidationBus = StateInvalidationBus()
 
   /// Post shadow manager for handling interaction state (likes, reposts)
   let postShadowManager = PostShadowManager.shared
@@ -41,6 +43,9 @@ final class AppState {
   /// Preferences manager for handling user preferences
   let preferencesManager = PreferencesManager()
 
+  /// App-specific settings that aren't synced with the server
+  let appSettings = AppSettings()
+
   /// Navigation manager for handling navigation
   let navigationManager = AppNavigationManager()
 
@@ -50,11 +55,23 @@ final class AppState {
   /// Notification manager for handling push notifications
   let notificationManager = NotificationManager()
 
+  /// Chat manager for handling Bluesky chat operations
+    let chatManager: ChatManager
+  
+  /// Scroll position manager for persisting feed scroll positions
+  let scrollPositionManager = ScrollPositionManager()
+  
+  /// Network monitor for tracking connectivity status
+  let networkMonitor = NetworkMonitor()
+
   // MARK: - Feed State
 
   /// Cache of prefetched feeds by type
   @ObservationIgnored private var prefetchedFeeds:
     [FetchType: (posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?)] = [:]
+
+  // Flag to track if AuthManager initialization is complete
+  private var isAuthManagerInitialized = false
 
   // For task cancellation when needed
   @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?
@@ -66,15 +83,17 @@ final class AppState {
     self.urlHandler = URLHandler()
 
     // Initialize post manager with nil client (will be updated later)
-    self.postManager = PostManager(client: nil)
+    self.postManager = PostManager(client: nil, appState: nil)
 
     // Initialize graph manager with nil client (will be updated when auth is complete)
     self.graphManager = GraphManager(atProtoClient: nil)
 
+    // Initialize chat manager with nil client (will be updated with self reference after initialization)
+        self.chatManager = ChatManager(client: nil, appState: nil)
+
     // Load user settings
-    if let storedContentSetting = UserDefaults.standard.object(forKey: "isAdultContentEnabled")
-      as? Bool
-    {
+      if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(forKey: "isAdultContentEnabled")
+      as? Bool {
       self.isAdultContentEnabled = storedContentSetting
     }
 
@@ -94,7 +113,12 @@ final class AppState {
             self.notificationManager.updateClient(self.authManager.client)
             if let client = self.authManager.client {
               self.graphManager = GraphManager(atProtoClient: client)
+                await self.chatManager.updateClient(client) // Update ChatManager client
               self.urlHandler.configure(with: self)
+              
+              // Update scroll position manager with new user
+              self.scrollPositionManager.setCurrentUser(self.currentUserDID)
+              
               Task { @MainActor in
                 await self.notificationManager.requestNotificationsAfterLogin()
               }
@@ -109,31 +133,40 @@ final class AppState {
                   )
                 }
 
-                guard let currentUserDID = self.currentUserDID else {
+                  guard self.currentUserDID != nil else {
                   self.logger.error("No current user DID after authentication")
                   return
                 }
-                
+
                 // Wait briefly for auth to fully establish
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                }
+              }
             }
           } else if case .unauthenticated = state {
-            // Clear client on logout
+            // Always clear clients when state becomes unauthenticated, regardless of initialization status.
+            self.logger.info("Auth state changed to unauthenticated. Clearing clients.")
+            // Clear client on logout or session expiry
             self.postManager.updateClient(nil)
             self.preferencesManager.updateClient(nil)
             self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
+             await self.chatManager.updateClient(nil)
             
-            // Add profile reset
+            // Clear scroll position manager
+            self.scrollPositionManager.setCurrentUser(nil)
+            // Add profile reset if needed
           } else if case .initializing = state {
             // Handle initializing state if needed
-          
+            self.logger.info("Auth state changed to initializing.")
           }
         }
       }
     }
 
+    // Set up circular references after initialization
+    postManager.updateAppState(self)
+    chatManager.updateAppState(self)
+    
     logger.debug("AppState initialization complete")
   }
 
@@ -143,41 +176,56 @@ final class AppState {
   func initialize() async {
     logger.info("🚀 Starting AppState.initialize()")
     configureURLHandler()
-    
+
+    // Initialize AuthManager FIRST
     await authManager.initialize()
-    
-    // Update client references in all managers
+    // Mark AuthManager initialization as complete AFTER it finishes
+    self.isAuthManagerInitialized = true
+    logger.info(
+      "🏁 AuthManager.initialize() completed. isAuthManagerInitialized = \(self.isAuthManagerInitialized)"
+    )
+
+    // Update client references in all managers (potentially redundant if handled by stateChanges observer, but safe)
+    // This ensures managers have the correct client *after* initialization completes.
+    logger.info("Updating manager clients after AuthManager initialization.")
+      
     postManager.updateClient(authManager.client)
     preferencesManager.updateClient(authManager.client)
     notificationManager.updateClient(authManager.client)
     if let client = authManager.client {
-        graphManager = GraphManager(atProtoClient: client)
+      graphManager = GraphManager(atProtoClient: client)
+           await chatManager.updateClient(client) // Update ChatManager client if uncommented
+    } else {
+      graphManager = GraphManager(atProtoClient: nil)  // Ensure graphManager is also updated if client is nil post-init
     }
-    
+
     // Setup other components as needed
     setupModelPruningTimer()
     setupPreferencesRefreshTimer()
     setupNotifications()
 
-    
     // Get accounts list if authenticated
     if isAuthenticated {
-        Task {
-            await authManager.refreshAvailableAccounts()
-            
+      Task {
+        await authManager.refreshAvailableAccounts()
+
+        // Synchronize server preferences with app settings
+        do {
+          try await preferencesManager.syncPreferencesWithAppSettings(self)
+          logger.info("Successfully synchronized server preferences with app settings")
+        } catch {
+          logger.error("Failed to synchronize preferences: \(error.localizedDescription)")
         }
+      }
     }
-    
+
     logger.info("🏁 AppState.initialize() completed")
   }
-    
+
   @MainActor
   func switchToAccount(did: String) async throws {
     logger.info("Switching to account: \(did)")
 
-//    ImageLoadingManager.shared.pipeline.cache.removeAll()
-    logger.info("SWITCH: Cleared ALL image caches for clean switch")
-    
     // 3. Yield before account switch to ensure UI updates
     await Task.yield()
     logger.debug("SWITCH: Yielded after resetting profile state")
@@ -189,7 +237,10 @@ final class AppState {
     // 5. Update client references in all managers
     await refreshAfterAccountSwitch()
 
-    // 6. Wait to ensure client is ready
+    // 6. Notify that account was switched to trigger view refreshes
+    notifyAccountSwitched()
+
+    // 7. Wait to ensure client is ready
     try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
   }
@@ -206,6 +257,7 @@ final class AppState {
     postManager.updateClient(authManager.client)
     preferencesManager.updateClient(authManager.client)
     notificationManager.updateClient(authManager.client)
+        await chatManager.updateClient(authManager.client) // Update ChatManager client
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
     } else {
@@ -214,9 +266,13 @@ final class AppState {
 
     // Reload preferences
     do {
-      // Fetch preferences, but maybe don't force refresh if profile load failed? Or handle error better.
+      // Fetch preferences with force refresh to ensure we have the latest data
       try await preferencesManager.fetchPreferences(forceRefresh: true)
       logger.info("Successfully refreshed preferences after account switch")
+
+      // Synchronize server preferences with app settings after account switch
+      try await preferencesManager.syncPreferencesWithAppSettings(self)
+      logger.info("Successfully synchronized preferences with app settings after account switch")
     } catch {
       logger.error("Failed to refresh preferences after account switch: \(error)")
     }
@@ -297,7 +353,7 @@ final class AppState {
   /// Toggles adult content setting
   func toggleAdultContent() {
     isAdultContentEnabled.toggle()
-    UserDefaults.standard.set(isAdultContentEnabled, forKey: "isAdultContentEnabled")
+      UserDefaults(suiteName: "group.blue.catbird.shared")?.set(isAdultContentEnabled, forKey: "isAdultContentEnabled")
   }
 
   // MARK: - Feed Methods
@@ -357,7 +413,8 @@ final class AppState {
   @MainActor
   func initializePreferencesManager(with modelContext: ModelContext) {
     preferencesManager.setModelContext(modelContext)
-    logger.debug("Initialized PreferencesManager with ModelContext")
+    appSettings.initialize(with: modelContext)
+    logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
   }
 
   // MARK: - Post Creation Method (for backward compatibility)
@@ -394,6 +451,14 @@ final class AppState {
   private func setupNotifications() {
     // Set the notification manager as the delegate for UNUserNotificationCenter
     UNUserNotificationCenter.current().delegate = notificationManager
+
+    // Ensure widget has initial data - force update after a delay to allow app to fully initialize
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+      self.notificationManager.updateWidgetUnreadCount(self.notificationManager.unreadCount)
+      self.logger.info(
+        "Initializing widget data at app startup with count: \(self.notificationManager.unreadCount)"
+      )
+    }
 
     // Configure notification manager with app state reference for navigation
     notificationManager.configure(with: self)
@@ -509,6 +574,33 @@ final class AppState {
     )
   }
   
+  // MARK: - Post Composer Presentation
+  
+  /// Present the post composer for creating a new post, reply, or quote post
+  @MainActor
+  func presentPostComposer(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil) {
+    // Create the post composer view with either a parent post (for reply) or quoted post
+    let composerView = PostComposerView(
+      parentPost: parentPost,
+      quotedPost: quotedPost,
+      appState: self
+    )
+    .environment(self) // Explicitly provide the AppState to the environment
+    
+    // Create a UIHostingController for the SwiftUI view
+    let hostingController = UIHostingController(rootView: composerView)
+    
+    // Configure presentation style
+    hostingController.modalPresentationStyle = .formSheet
+    hostingController.isModalInPresentation = true
+    
+    // Present the composer using the shared window scene
+    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+       let rootViewController = windowScene.windows.first?.rootViewController {
+       rootViewController.present(hostingController, animated: true)
+    }
+  }
+
   // MARK: - Performance Optimization Methods
 
   /// Waits for the next refresh cycle of the app state
@@ -543,5 +635,49 @@ final class AppState {
     //    logger.debug(
     //      "Completed waitForNextRefreshCycle (delay: \(Double(finalDelay) / 1_000_000_000.0))s"
     //    )
+  }
+  
+  // MARK: - State Invalidation Methods
+  
+  /// Notify that a post was created (triggers feed refresh)
+  @MainActor
+  func notifyPostCreated(_ post: AppBskyFeedDefs.PostView) {
+    logger.info("Post created notification: \(post.uri)")
+    stateInvalidationBus.notifyPostCreated(post)
+  }
+  
+  /// Notify that a reply was created (triggers thread and feed refresh)
+  @MainActor
+  func notifyReplyCreated(_ reply: AppBskyFeedDefs.PostView, parentUri: String) {
+    logger.info("Reply created notification: \(reply.uri) -> \(parentUri)")
+    stateInvalidationBus.notifyReplyCreated(reply, parentUri: parentUri)
+  }
+  
+  /// Notify that account was switched (triggers full state refresh)
+  @MainActor
+  func notifyAccountSwitched() {
+    logger.info("Account switched notification")
+    stateInvalidationBus.notifyAccountSwitched()
+  }
+  
+  /// Notify that a feed was updated
+  @MainActor
+  func notifyFeedUpdated(_ fetchType: FetchType) {
+    logger.debug("Feed updated notification: \(fetchType.identifier)")
+    stateInvalidationBus.notifyFeedUpdated(fetchType)
+  }
+  
+  /// Notify that a profile was updated
+  @MainActor
+  func notifyProfileUpdated(_ did: String) {
+    logger.debug("Profile updated notification: \(did)")
+    stateInvalidationBus.notifyProfileUpdated(did)
+  }
+  
+  /// Notify that a thread was updated
+  @MainActor
+  func notifyThreadUpdated(_ rootUri: String) {
+    logger.debug("Thread updated notification: \(rootUri)")
+    stateInvalidationBus.notifyThreadUpdated(rootUri)
   }
 }
