@@ -8,7 +8,6 @@
 import SwiftUI
 import Petrel
 
-
 struct PostStatsView: View {
     let post: AppBskyFeedDefs.PostView
     @Binding var path: NavigationPath
@@ -28,7 +27,7 @@ struct PostStatsView: View {
     
     var body: some View {
         if hasAnyStats {
-            VStack(alignment:.leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 Divider()
                     .padding(.horizontal, Self.baseUnit * 2)
                 

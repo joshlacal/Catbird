@@ -29,7 +29,14 @@ extension RelativeDateTimeFormatter {
     }
 }
 
-func formatTimeAgo(from date: Date) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    return formatter.shortLocalizedString(for: date)
+func formatTimeAgo(from date: Date, forAccessibility: Bool = false) -> String {
+    if forAccessibility {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        formatter.dateTimeStyle = .named
+        return formatter.localizedString(for: date, relativeTo: Date())
+    } else {
+        let formatter = RelativeDateTimeFormatter()
+        return formatter.shortLocalizedString(for: date)
+    }
 }

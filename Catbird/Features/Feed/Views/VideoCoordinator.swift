@@ -290,12 +290,12 @@ final class VideoCoordinator {
         for (id, (_, player, _)) in activeVideos {
             positions[id] = CMTimeGetSeconds(player.currentTime())
         }
-        UserDefaults.standard.set(positions, forKey: "VideoPlaybackPositions")
+        UserDefaults(suiteName: "group.blue.catbird.shared")?.set(positions, forKey: "VideoPlaybackPositions")
     }
     
     /// Load playback positions from UserDefaults
     private func loadPlaybackPositions() -> [String: CMTime] {
-        guard let positions = UserDefaults.standard.dictionary(forKey: "VideoPlaybackPositions") as? [String: Double] else {
+        guard let positions = UserDefaults(suiteName: "group.blue.catbird.shared")?.dictionary(forKey: "VideoPlaybackPositions") as? [String: Double] else {
             return [:]
         }
         var cmTimePositions: [String: CMTime] = [:]

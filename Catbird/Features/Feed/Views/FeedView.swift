@@ -17,11 +17,14 @@ struct FeedView: View {
   @State private var isInitialLoad = true
   @State private var showScrollToTop = false
   @State private var previousFeedType: FetchType?
-  @State private var feedModel: FeedModel? = nil
+  @State private var feedModel: FeedModel?
 
   // Navigation state tracking
   @State private var lastNavigationTime = Date.distantPast
   @State private var navigationDirection = 0  // -1: back, 0: none, 1: forward
+  
+  // Environment
+  @Environment(\.colorScheme) private var colorScheme
 
   // MARK: - Initialization
   init(
@@ -51,6 +54,17 @@ struct FeedView: View {
             }
           }
           ProgressView("Loading feed...")
+        } else if let error = feedModel!.error {
+          ErrorStateView(
+            error: error,
+            context: "Failed to load feed",
+            retryAction: {
+              Task {
+                await retryLoadFeed()
+              }
+            }
+          )
+          .transition(.opacity)
         } else if isInitialLoad && feedModel!.posts.isEmpty {
           loadingView
             .transition(.opacity)
@@ -65,7 +79,7 @@ struct FeedView: View {
       }
       .animation(.easeInOut(duration: 0.3), value: isInitialLoad)
       .animation(.easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty)
-      .background(Color.primaryBackground.ignoresSafeArea())
+      .themedPrimaryBackground(appState.themeManager)
 
       if showScrollToTop {
         VStack {
@@ -138,6 +152,15 @@ struct FeedView: View {
     .environment(\.defaultMinListHeaderHeight, 0)
     .id("\(fetch.identifier)-feed-view")
   }
+  
+  // MARK: - Helper Methods
+  
+  /// Retry loading the feed after an error
+  @MainActor
+  private func retryLoadFeed() async {
+    guard let model = feedModel else { return }
+    await model.loadFeed(fetch: fetch, forceRefresh: true, strategy: .fullRefresh)
+  }
 
   // MARK: - Content Views
 
@@ -173,7 +196,7 @@ struct FeedView: View {
         .padding()
 
       Text("Loading feed...")
-        .foregroundColor(.secondary)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -183,14 +206,14 @@ struct FeedView: View {
     VStack(spacing: 20) {
       Image(systemName: "text.bubble")
         .font(.system(size: 60))
-        .foregroundColor(.secondary)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
 
       Text("No posts to show")
         .font(.headline)
 
       Text("Pull down to refresh or check back later.")
         .font(.subheadline)
-        .foregroundColor(.secondary)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
         .multilineTextAlignment(.center)
         .padding(.horizontal)
 
@@ -216,7 +239,7 @@ struct FeedView: View {
     }) {
       Image(systemName: "arrow.up")
         .font(.headline)
-        .foregroundColor(.white)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: .light))
         .padding()
         .background(Circle().fill(Color.accentColor))
         .shadow(radius: 4)

@@ -5,7 +5,7 @@ struct MuteWordsSettingsView: View {
   @State private var newMuteWord: String = ""
   @State private var muteWords: [MutedWord] = []
   @State private var isLoading: Bool = true
-  @State private var errorMessage: String? = nil
+  @State private var errorMessage: String?
 
   var body: some View {
     List {

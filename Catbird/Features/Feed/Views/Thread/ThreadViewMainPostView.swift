@@ -87,7 +87,7 @@ struct ThreadViewMainPostView: View {
                   .fixedSize(horizontal: true, vertical: false)
                   .padding(.bottom, 1)
 
-                Text("@\(post.author.handle)")
+                Text("@\(post.author.handle)".truncated(to: 30))
                   .font(.subheadline)
                   .foregroundColor(.secondary)
                   .lineLimit(1)
@@ -108,18 +108,25 @@ struct ThreadViewMainPostView: View {
 
             .frame(height: 60, alignment: .center)
             .padding(.bottom, 3)
-
-              if feedPost.text != "" {
-                  
-                  TappableTextView(
-                    attributedString: feedPost.facetsAsAttributedString, textSize: nil, textStyle: .title3
-                  )
+              
+              Post(post: feedPost, isSelectable: true, path: $path, textSize: 20, textStyle: .title3, textDesign: .default, textWeight: .regular, fontWidth: 100)
                   .lineLimit(nil)
                   .fixedSize(horizontal: false, vertical: true)
                   .padding(.vertical, 6)
                   .padding(.leading, 6)
                   .padding(.trailing, 6)
-              }
+
+//              if feedPost.text != "" {
+//                  
+//                  TappableTextView(
+//                    attributedString: feedPost.facetsAsAttributedString, textSize: nil, textStyle: .title3
+//                  )
+//                  .lineLimit(nil)
+//                  .fixedSize(horizontal: false, vertical: true)
+//                  .padding(.vertical, 6)
+//                  .padding(.leading, 6)
+//                  .padding(.trailing, 6)
+//              }
             if let embed = post.embed {
               PostEmbed(embed: embed, labels: post.labels, path: $path)
                 .padding(.vertical, 6)

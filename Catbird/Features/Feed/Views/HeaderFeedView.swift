@@ -20,7 +20,7 @@ struct HeaderFeedView<Header: View>: View {
     @State private var isInitialLoad = true
     @State private var showScrollToTop = false
     @State private var previousFeedType: FetchType?
-    @State private var feedModel: FeedModel? = nil
+    @State private var feedModel: FeedModel?
     
     // Flag to track if we're returning from another view
     let isReturningFromView: Bool

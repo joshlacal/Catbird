@@ -1,8 +1,10 @@
 import AVFoundation
 import NaturalLanguage
+import os
 import Petrel
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if os(iOS)
   import UIKit
@@ -15,10 +17,10 @@ struct ThreadEntry: Identifiable {
   let id = UUID()
   var text: String = ""
   var mediaItems: [PostComposerViewModel.MediaItem] = []
-  var videoItem: PostComposerViewModel.MediaItem? = nil
+  var videoItem: PostComposerViewModel.MediaItem?
   var detectedURLs: [String] = []
   var urlCards: [String: URLCardResponse] = [:]
-  var facets: [AppBskyRichtextFacet]? = nil
+  var facets: [AppBskyRichtextFacet]?
   var hashtags: [String] = []
 }
 
@@ -45,6 +47,8 @@ func localeLanguage(from nlLanguage: NLLanguage) -> Locale.Language {
 
 @MainActor @Observable
 final class PostComposerViewModel {
+  private let logger = Logger(subsystem: "blue.catbird", category: "PostComposerViewModel")
+  
   var postText: String = ""
   var selectedLanguages: [LanguageCodeContainer] = []
   var suggestedLanguage: LanguageCodeContainer?
@@ -54,6 +58,7 @@ final class PostComposerViewModel {
   var alertItem: AlertItem?
 
   let parentPost: AppBskyFeedDefs.PostView?
+  var quotedPost: AppBskyFeedDefs.PostView?
   let maxCharacterCount = 300
 
   // Thread-related properties
@@ -81,18 +86,15 @@ final class PostComposerViewModel {
     // Threadgate properties
     var threadgateSettings = ThreadgateSettings()
     var showThreadgateOptions = false
-
     
     private var profile: AppBskyActorDefs.ProfileViewDetailed?
     private var isLoadingProfile = false
     private var profileError: Error?
-
-    
     
   // Media properties
   struct MediaItem: Identifiable, Equatable {
     let id = UUID()
-    let pickerItem: PhotosPickerItem
+    let pickerItem: PhotosPickerItem?  // Optional for pasted content
     var image: Image?
     var altText: String = ""
     var isLoading: Bool = true
@@ -101,6 +103,16 @@ final class PostComposerViewModel {
     var rawVideoURL: URL?
     var rawVideoAsset: AVAsset?
     var videoData: Data?
+
+    // Initializer for PhotosPicker items
+    init(pickerItem: PhotosPickerItem) {
+      self.pickerItem = pickerItem
+    }
+    
+    // Initializer for pasted content
+    init() {
+      self.pickerItem = nil
+    }
 
     static func == (lhs: MediaItem, rhs: MediaItem) -> Bool {
       return lhs.id == rhs.id
@@ -140,8 +152,9 @@ final class PostComposerViewModel {
   private let appState: AppState
   private var resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:]
 
-  init(parentPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
+  init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
     self.parentPost = parentPost
+    self.quotedPost = quotedPost
     self.appState = appState
 
     // Initialize MediaUploadManager if client is available
@@ -270,9 +283,10 @@ final class PostComposerViewModel {
     do {
       logger.debug("DEBUG: Starting video thumbnail generation process")
 
-      // Validate the selection is a video
+      // Validate the selection is a video (only for PhotosPicker items)
       logger.debug("DEBUG: Checking content types")
-      if !videoItem.pickerItem.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+      if let pickerItem = videoItem.pickerItem,
+         !pickerItem.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
         logger.debug("DEBUG: Selected item is not a video (incorrect content type)")
         throw NSError(
           domain: "VideoLoadError",
@@ -285,13 +299,14 @@ final class PostComposerViewModel {
       logger.debug("DEBUG: Attempting to load video using multiple approaches")
 
       // Approach 1: Try loading as AVAsset (preferred for videos)
-      var asset: AVAsset? = nil
-      var videoSize: CGSize? = nil
+      var asset: AVAsset?
+      var videoSize: CGSize?
       var videoDuration: Double = 0.0
 
-      // Check if we can load as AVAsset directly
+      // Check if we can load as AVAsset directly (only for PhotosPicker items)
       logger.debug("DEBUG: Attempting to load as AVAsset")
-      if let videoURL = try? await videoItem.pickerItem.loadTransferable(type: URL.self) {
+      if let pickerItem = videoItem.pickerItem,
+         let videoURL = try? await pickerItem.loadTransferable(type: URL.self) {
         logger.debug("DEBUG: Loading via URL: \(videoURL)")
 
         // Create an AVURLAsset from the URL
@@ -332,8 +347,9 @@ final class PostComposerViewModel {
         let duration = try await videoAsset.load(.duration)
         videoDuration = CMTimeGetSeconds(duration)
       }
-      // Approach 2: Try loading as Data
-      else if let videoData = try? await videoItem.pickerItem.loadTransferable(type: Data.self) {
+      // Approach 2: Try loading as Data (only for PhotosPicker items)
+      else if let pickerItem = videoItem.pickerItem,
+              let videoData = try? await pickerItem.loadTransferable(type: Data.self) {
         logger.debug("DEBUG: Successfully loaded video as Data, size: \(videoData.count) bytes")
 
         // Store the data for later use
@@ -387,8 +403,50 @@ final class PostComposerViewModel {
         let duration = try await videoAsset.load(.duration)
         videoDuration = CMTimeGetSeconds(duration)
       }
-      // Approach 3: Fallback to URL (may not work with PhotosUI security)
-      else if let videoURL = try? await videoItem.pickerItem.loadTransferable(type: URL.self) {
+      // Approach 3: Use existing video URL if available (for pasted content)
+      else if let existingVideoURL = videoItem.rawVideoURL {
+        logger.debug("DEBUG: Using existing video URL: \(existingVideoURL)")
+
+        // Use the existing URL
+        let videoAsset = AVURLAsset(url: existingVideoURL)
+        asset = videoAsset
+
+        // Continue with validations and loading properties
+        let isPlayable = try await videoAsset.load(.isPlayable)
+        guard isPlayable else {
+          logger.debug("DEBUG: Video asset from existing URL is not playable")
+          throw NSError(
+            domain: "VideoLoadError",
+            code: 5,
+            userInfo: [
+              NSLocalizedDescriptionKey: "The video format is not supported or is corrupted."
+            ]
+          )
+        }
+
+        // Get video track
+        logger.debug("DEBUG: Loading video tracks from existing URL AVAsset")
+        let tracks = try await videoAsset.loadTracks(withMediaType: AVMediaType.video)
+
+        guard let videoTrack = tracks.first else {
+          logger.debug("DEBUG: No video tracks found in existing URL asset")
+          throw NSError(
+            domain: "VideoTrackError",
+            code: 6,
+            userInfo: [NSLocalizedDescriptionKey: "No video track found in the file."]
+          )
+        }
+
+        // Get dimensions
+        videoSize = try await videoTrack.load(.naturalSize)
+
+        // Get duration
+        let duration = try await videoAsset.load(.duration)
+        videoDuration = CMTimeGetSeconds(duration)
+      }
+      // Approach 4: Fallback to URL (may not work with PhotosUI security, only for PhotosPicker items)
+      else if let pickerItem = videoItem.pickerItem,
+              let videoURL = try? await pickerItem.loadTransferable(type: URL.self) {
         logger.debug("DEBUG: Loading via URL: \(videoURL)")
 
         // Validate file exists
@@ -546,7 +604,7 @@ final class PostComposerViewModel {
       logger.debug("DEBUG: Starting async thumbnail generation at time: \(CMTimeGetSeconds(time))")
       let timeValue = NSValue(time: time)
 
-      imageGenerator.generateCGImagesAsynchronously(forTimes: [timeValue]) {
+        imageGenerator.generateCGImagesAsynchronously(forTimes: [timeValue]) { [self]
         requestedTime, cgImage, actualTime, result, error in
         logger.debug("DEBUG: Thumbnail generation callback received")
         logger.debug(
@@ -563,7 +621,7 @@ final class PostComposerViewModel {
             userInfo: [
               NSLocalizedDescriptionKey:
                 "Failed to generate thumbnail: \(nsError.localizedDescription)",
-              NSUnderlyingErrorKey: error,
+              NSUnderlyingErrorKey: error
             ]
           )
           continuation.resume(throwing: enhancedError)
@@ -625,10 +683,14 @@ final class PostComposerViewModel {
   private func loadImageForItem(at index: Int) async {
     guard index < mediaItems.count else { return }
 
-    let item = mediaItems[index].pickerItem
+    // Skip loading if this is pasted content (already has image data)
+    guard let pickerItem = mediaItems[index].pickerItem else {
+      logger.debug("DEBUG: Skipping load for pasted content item")
+      return
+    }
 
     do {
-      let (data, uiImage) = try await loadImageData(from: item)
+      let (data, uiImage) = try await loadImageData(from: pickerItem)
 
       if let uiImage = uiImage {
         mediaItems[index].image = Image(uiImage: uiImage)
@@ -691,9 +753,8 @@ final class PostComposerViewModel {
   @MainActor
   func loadUserLanguagePreference() async {
     // Check if we have stored language preferences in UserDefaults
-    if let storedLanguages = UserDefaults.standard.stringArray(forKey: "userPreferredLanguages"),
-      !storedLanguages.isEmpty
-    {
+      if let storedLanguages = UserDefaults(suiteName: "group.blue.catbird.shared")?.stringArray(forKey: "userPreferredLanguages"),
+      !storedLanguages.isEmpty {
       // Convert stored language strings to LanguageCodeContainer objects
       for langString in storedLanguages {
         let languageCode = Locale.Language(identifier: langString)
@@ -721,18 +782,101 @@ final class PostComposerViewModel {
     }
   }
 
+  // MARK: - Real-time Text Parsing and Highlighting
+  
+  var attributedPostText: AttributedString = AttributedString()
+  
   func updatePostContent() {
     suggestedLanguage = detectLanguage()
 
     // Parse the text content to get URLs and update mentions
-    let (_, _, _, urls) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+    let (_, _, facets, urls) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
 
+    // Update attributed text with highlighting using existing RichText implementation
+    updateAttributedText(facets: facets)
+    
     // Handle URLs
     handleDetectedURLs(urls)
 
     Task {
       await updateMentionSuggestions()
     }
+  }
+  
+  /// Update the attributed text with real-time highlighting using the existing RichText system
+  private func updateAttributedText(facets: [AppBskyRichtextFacet]) {
+    // Start with plain attributed text
+    var styledAttributedText = AttributedString(postText)
+    
+    for facet in facets {
+      guard let start = postText.index(atUTF8Offset: facet.index.byteStart),
+            let end = postText.index(atUTF8Offset: facet.index.byteEnd),
+            start < end else {
+        continue
+      }
+      
+      let attrStart = AttributedString.Index(start, within: styledAttributedText)
+      let attrEnd = AttributedString.Index(end, within: styledAttributedText)
+      
+      if let attrStart = attrStart, let attrEnd = attrEnd {
+        let range = attrStart..<attrEnd
+        
+        for feature in facet.features {
+          switch feature {
+          case .appBskyRichtextFacetMention:
+            styledAttributedText[range].foregroundColor = .accentColor
+            styledAttributedText[range].font = .body.weight(.medium)
+            
+          case .appBskyRichtextFacetTag:
+            styledAttributedText[range].foregroundColor = .accentColor
+            styledAttributedText[range].font = .body.weight(.medium)
+            
+          case .appBskyRichtextFacetLink(let link):
+            styledAttributedText[range].foregroundColor = .blue
+            styledAttributedText[range].underlineStyle = .single
+            
+            // Optionally shorten long URLs for display
+            if let url = URL(string: link.uri.uriString()) {
+              let originalText = String(styledAttributedText[range].characters)
+              let displayText = shortenURLForDisplay(url)
+              
+              // Only replace if shortened version is meaningfully shorter
+              if displayText.count < originalText.count - 10 {
+                var shortenedAttrString = AttributedString(displayText)
+                shortenedAttrString.foregroundColor = .blue
+                shortenedAttrString.underlineStyle = .single
+                styledAttributedText.replaceSubrange(range, with: shortenedAttrString)
+              }
+            }
+            
+          default:
+            break
+          }
+        }
+      }
+    }
+    
+    attributedPostText = styledAttributedText
+  }
+  
+  /// Shorten URLs for better display while preserving full URL in facets
+  private func shortenURLForDisplay(_ url: URL) -> String {
+    let host = url.host ?? ""
+    let path = url.path
+    
+    // For common domains, show just the domain
+    if path.isEmpty || path == "/" {
+      return host
+    }
+    
+    // For paths, show domain + truncated path
+    let maxPathLength = 15
+    if path.count > maxPathLength {
+      let truncatedPath = String(path.prefix(maxPathLength)) + "..."
+      return "\(host)\(truncatedPath)"
+    }
+    
+    return "\(host)\(path)"
   }
 
   // Add a cache for processed images
@@ -772,7 +916,7 @@ final class PostComposerViewModel {
       )
 
       // Create the image embed with alt text
-      let altText = item.altText.isEmpty ? "Image" : item.altText
+      let altText = item.altText
       let imageEmbed = AppBskyEmbedImages.Image(
         image: blob,
         alt: altText,
@@ -925,8 +1069,7 @@ final class PostComposerViewModel {
 
     // Compress if needed
     if let image = UIImage(data: processedData),
-      let compressed = compressImage(image, maxSizeInBytes: 900_000)
-    {
+      let compressed = compressImage(image, maxSizeInBytes: 900_000) {
       processedData = compressed
     }
 
@@ -939,8 +1082,7 @@ final class PostComposerViewModel {
 
     // Check if we've already processed this image
     if let identifier = item.itemIdentifier,
-      let cachedData = processedImageCache[identifier]
-    {
+      let cachedData = processedImageCache[identifier] {
       #if os(iOS)
         if let uiImage = UIImage(data: cachedData) {
           selectedImage = Image(uiImage: uiImage)
@@ -978,6 +1120,308 @@ final class PostComposerViewModel {
   func cleanup() {
     processedImageCache.removeAll()
   }
+
+  // MARK: - Clipboard/Paste Functionality
+
+  /// Check if clipboard contains supported media or text content
+  func hasClipboardMedia() -> Bool {
+    #if os(iOS)
+      let pasteboard = UIPasteboard.general
+      return pasteboard.hasImages || pasteboard.hasURLs || pasteboard.hasStrings
+    #elseif os(macOS)
+      let pasteboard = NSPasteboard.general
+      return pasteboard.canReadItem(withDataConformingToTypes: [UTType.image.identifier, UTType.movie.identifier]) || 
+             pasteboard.string(forType: .string) != nil
+    #endif
+  }
+
+  /// Handle paste operation from clipboard
+  @MainActor
+  func handlePasteFromClipboard() async {
+    logger.debug("DEBUG: handlePasteFromClipboard called")
+    
+    #if os(iOS)
+      let pasteboard = UIPasteboard.general
+      
+      logger.debug("DEBUG: Pasteboard has images: \(pasteboard.hasImages)")
+      logger.debug("DEBUG: Pasteboard has URLs: \(pasteboard.hasURLs)")
+      logger.debug("DEBUG: Pasteboard has strings: \(pasteboard.hasStrings)")
+      logger.debug("DEBUG: Pasteboard item count: \(pasteboard.items.count)")
+      
+      // Log available types for debugging
+      for (index, item) in pasteboard.items.enumerated() {
+        logger.debug("DEBUG: Item \(index) types: \(Array(item.keys))")
+      }
+      
+      // First check for images
+      if pasteboard.hasImages {
+        logger.debug("DEBUG: Handling pasted images")
+        await handlePastedImages()
+      }
+      // Then check for URLs that might be videos
+      else if pasteboard.hasURLs {
+        logger.debug("DEBUG: Handling pasted URLs")
+        await handlePastedURLs()
+      }
+      // Finally check for text content
+      else if pasteboard.hasStrings {
+        logger.debug("DEBUG: Handling pasted text")
+        await handlePastedText()
+      } else {
+        logger.debug("DEBUG: No supported content found in clipboard")
+      }
+    #elseif os(macOS)
+      let pasteboard = NSPasteboard.general
+      
+      // Check for images first
+      if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) ?? pasteboard.data(forType: .jpeg) {
+        logger.debug("DEBUG: Handling pasted image data on macOS")
+        await handlePastedImageData(imageData)
+      }
+      // Check for video URLs
+      else if let urlString = pasteboard.string(forType: .string),
+              let url = URL(string: urlString),
+              isVideoURL(url) {
+        logger.debug("DEBUG: Handling pasted video URL on macOS")
+        await handlePastedVideoURL(url)
+      }
+      // Check for text content
+      else if let textString = pasteboard.string(forType: .string) {
+        logger.debug("DEBUG: Handling pasted text on macOS")
+        await handlePastedTextString(textString)
+      } else {
+        logger.debug("DEBUG: No supported content found in clipboard on macOS")
+      }
+    #endif
+  }
+
+  #if os(iOS)
+  /// Handle pasted text from iOS clipboard
+  @MainActor
+  private func handlePastedText() async {
+    let pasteboard = UIPasteboard.general
+    
+    if let pastedString = pasteboard.string {
+      await handlePastedTextString(pastedString)
+    }
+  }
+  
+  /// Handle pasted images from iOS clipboard
+  @MainActor
+  private func handlePastedImages() async {
+    logger.debug("DEBUG: handlePastedImages called")
+    let pasteboard = UIPasteboard.general
+    
+    // Get all images from clipboard
+    var pastedImages: [Data] = []
+    
+    logger.debug("DEBUG: Processing \(pasteboard.items.count) pasteboard items")
+    for (index, item) in pasteboard.items.enumerated() {
+      logger.debug("DEBUG: Processing item \(index)")
+      // Try different image types
+      for imageType in ["public.image", "public.jpeg", "public.png", "public.heic"] {
+        if let imageData = item[imageType] as? Data {
+          logger.debug("DEBUG: Found image data of type \(imageType), size: \(imageData.count) bytes")
+          pastedImages.append(imageData)
+          break
+        }
+      }
+    }
+    
+    logger.debug("DEBUG: Found \(pastedImages.count) pasted images")
+    
+    if !pastedImages.isEmpty {
+      // Clear existing video if pasting images
+      videoItem = nil
+      
+      // Limit to available slots
+      let availableSlots = maxImagesAllowed - mediaItems.count
+      let imagesToProcess = Array(pastedImages.prefix(availableSlots))
+      
+      logger.debug("DEBUG: Processing \(imagesToProcess.count) images (available slots: \(availableSlots))")
+      
+      for (index, imageData) in imagesToProcess.enumerated() {
+        logger.debug("DEBUG: Adding pasted image \(index + 1)/\(imagesToProcess.count)")
+        await addPastedImageData(imageData)
+      }
+      
+      // Show feedback if we hit the limit
+      if pastedImages.count > imagesToProcess.count {
+        logger.debug("DEBUG: Hit image limit, showing alert")
+        alertItem = AlertItem(
+          title: "Image Limit",
+          message: "Only \(imagesToProcess.count) images were pasted due to the \(maxImagesAllowed) image limit."
+        )
+      }
+    } else {
+      logger.debug("DEBUG: No images found in pasteboard")
+    }
+  }
+
+  /// Handle pasted URLs that might be videos
+  @MainActor
+  private func handlePastedURLs() async {
+    let pasteboard = UIPasteboard.general
+    
+    for item in pasteboard.items {
+      if let urlString = item["public.url"] as? String ?? item["public.text"] as? String,
+         let url = URL(string: urlString),
+         isVideoURL(url) {
+        await handlePastedVideoURL(url)
+        return // Only handle one video
+      }
+    }
+  }
+  #endif
+
+  /// Handle pasted image data from external sources
+  @MainActor
+  func handlePastedImageData(_ imageData: Data) async {
+    await addPastedImageData(imageData)
+  }
+
+  /// Add pasted image data as a media item
+  @MainActor
+  private func addPastedImageData(_ imageData: Data) async {
+    logger.debug("DEBUG: addPastedImageData called with \(imageData.count) bytes")
+    
+    guard let uiImage = UIImage(data: imageData) else {
+      logger.debug("DEBUG: Failed to create UIImage from data")
+      return
+    }
+    
+      logger.debug("DEBUG: Created UIImage with size: \(String(describing:uiImage.size))")
+    
+    // Create MediaItem for pasted content (no PhotosPickerItem needed)
+    var mediaItem: MediaItem = MediaItem()
+    mediaItem.image = Image(uiImage: uiImage)
+    mediaItem.isLoading = false
+    mediaItem.aspectRatio = CGSize(width: uiImage.size.width, height: uiImage.size.height)
+    mediaItem.rawData = imageData
+    
+    self.mediaItems.append(mediaItem)
+    logger.debug("DEBUG: Added media item, total count now: \(self.mediaItems.count)")
+  }
+
+  /// Handle pasted text string and append to current post text
+  @MainActor
+  private func handlePastedTextString(_ textString: String) async {
+    // Insert the pasted text at the current cursor position
+    // Since we don't have cursor position tracking, append to the end
+    if postText.isEmpty {
+      postText = textString
+    } else {
+      // Add a space if the current text doesn't end with whitespace
+      let separator = postText.hasSuffix(" ") || postText.hasSuffix("\n") ? "" : " "
+      postText += separator + textString
+    }
+    
+    // Trigger content parsing to generate facets for mentions, hashtags, and links
+    updatePostContent()
+  }
+
+  /// Check if URL points to a video file
+  func isVideoURL(_ url: URL) -> Bool {
+    let videoExtensions = ["mp4", "mov", "avi", "mkv", "webm", "m4v"]
+    let pathExtension = url.pathExtension.lowercased()
+    return videoExtensions.contains(pathExtension)
+  }
+
+  /// Handle pasted video URL
+  @MainActor
+  func handlePastedVideoURL(_ url: URL) async {
+    // Clear existing media
+    mediaItems.removeAll()
+    selectedImageItem = nil
+    selectedImage = nil
+    
+    // Create a MediaItem for the pasted video URL
+    var videoMediaItem: MediaItem = MediaItem()
+    videoMediaItem.rawVideoURL = url
+    videoItem = videoMediaItem
+    
+    // Load video thumbnail
+    await loadVideoThumbnailFromURL(url, for: videoMediaItem)
+  }
+
+  /// Load video thumbnail from URL
+  @MainActor
+  private func loadVideoThumbnailFromURL(_ url: URL, for item: MediaItem) async {
+    do {
+      let asset = AVURLAsset(url: url)
+      
+      // Validate the asset
+      let isPlayable = try await asset.load(.isPlayable)
+      guard isPlayable else {
+        alertItem = AlertItem(
+          title: "Video Error",
+          message: "The pasted video URL is not accessible or invalid."
+        )
+        videoItem = nil
+        return
+      }
+      
+      // Get video track for dimensions
+      let tracks = try await asset.loadTracks(withMediaType: .video)
+      guard let videoTrack = tracks.first else {
+        alertItem = AlertItem(
+          title: "Video Error", 
+          message: "No video track found in the pasted video."
+        )
+        videoItem = nil
+        return
+      }
+      
+      let videoSize = try await videoTrack.load(.naturalSize)
+      let duration = try await asset.load(.duration)
+      let videoDuration = CMTimeGetSeconds(duration)
+      
+      // Generate thumbnail
+      let time = CMTime(seconds: min(0.5, videoDuration / 2), preferredTimescale: 600)
+      let cgImage = try await generateThumbnail(from: asset, at: time)
+      let thumbnail = UIImage(cgImage: cgImage)
+      
+      // Update video item
+      videoItem?.image = Image(uiImage: thumbnail)
+      videoItem?.aspectRatio = CGSize(width: videoSize.width, height: videoSize.height)
+      videoItem?.isLoading = false
+    } catch {
+      alertItem = AlertItem(
+        title: "Video Error",
+        message: "Failed to load video from pasted URL: \(error.localizedDescription)"
+      )
+      videoItem = nil
+    }
+  }
+
+  #if os(macOS)
+  /// Handle pasted image data on macOS
+  @MainActor
+  private func handlePastedImageData(_ imageData: Data) async {
+    guard let nsImage = NSImage(data: imageData) else { return }
+    
+    // Clear existing video if pasting images
+    videoItem = nil
+    
+    // Check if we can add more images
+    guard mediaItems.count < maxImagesAllowed else {
+      alertItem = AlertItem(
+        title: "Image Limit",
+        message: "Cannot paste image. Maximum of \(maxImagesAllowed) images allowed."
+      )
+      return
+    }
+    
+    // Create MediaItem for pasted content
+    var mediaItem: MediaItem = MediaItem()
+    mediaItem.image = Image(nsImage: nsImage)
+    mediaItem.isLoading = false
+    mediaItem.aspectRatio = CGSize(width: nsImage.size.width, height: nsImage.size.height)
+    mediaItem.rawData = imageData
+    
+    mediaItems.append(mediaItem)
+  }
+  #endif
 
   private func detectLanguage() -> LanguageCodeContainer? {
     let recognizer = NLLanguageRecognizer()
@@ -1053,7 +1497,7 @@ final class PostComposerViewModel {
   private func saveLanguagePreferences() {
     // Convert LanguageCodeContainer objects to strings for storage
     let languageStrings = selectedLanguages.map { $0.lang.languageCode?.identifier }
-    UserDefaults.standard.set(languageStrings, forKey: "userPreferredLanguages")
+    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(languageStrings, forKey: "userPreferredLanguages")
     logger.debug("Saved language preferences: \(languageStrings)")
   }
 
@@ -1149,8 +1593,7 @@ final class PostComposerViewModel {
   }
 
   func uploadBlob(_ imageData: Data, mimeType: String) async throws
-    -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion
-  {
+    -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion {
     logger.debug("Uploading blob with size: \(imageData.count) bytes")
 
     // Log a sample of the image data to verify it's compressed
@@ -1196,8 +1639,7 @@ final class PostComposerViewModel {
   }
 
   func createImageEmbed(_ item: PhotosPickerItem) async throws
-    -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion
-  {
+    -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion {
     logger.debug("Starting image embed creation")
 
     // Load image data
@@ -1237,8 +1679,7 @@ final class PostComposerViewModel {
     logger.debug("Compressing image")
     let finalImageData: Data
     if let image = PlatformImage(data: jpegData),
-      let compressedImageData = compressImage(image)
-    {
+      let compressedImageData = compressImage(image) {
       finalImageData = compressedImageData
       logger.debug("Compression successful, final size: \(finalImageData.count) bytes")
     } else {
@@ -1356,8 +1797,7 @@ final class PostComposerViewModel {
     }
   }
   func createExternalEmbed(from card: URLCardResponse, originalURL: String) async throws
-    -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion
-  {
+    -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion {
     // Always use the original URL if the card URL is empty or invalid
     let urlToUse = card.url.isEmpty ? originalURL : card.url
 
@@ -1366,7 +1806,7 @@ final class PostComposerViewModel {
         domain: "EmbedError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
     }
 
-    var thumb: Blob? = nil
+    var thumb: Blob?
 
     // If we have an image URL, try to fetch and upload it as a blob
     if let imageURL = URL(string: card.image), !card.image.isEmpty {
@@ -1408,8 +1848,15 @@ final class PostComposerViewModel {
 
   @MainActor
   func determineBestEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+    // If we have a quoted post, create a quote embed
+    if let quotedPost = quotedPost {
+      // Create a quote embed
+      return .appBskyEmbedRecord(AppBskyEmbedRecord(record: ComAtprotoRepoStrongRef(uri: quotedPost.uri, cid: quotedPost.cid)))
+
+    }
+
     // Check for video first (highest priority)
-      if videoItem != nil {
+    if videoItem != nil {
       return try await createVideoEmbed()
     }
 

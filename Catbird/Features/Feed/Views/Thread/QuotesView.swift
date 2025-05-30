@@ -8,7 +8,6 @@
 import Petrel
 import SwiftUI
 
-
 struct QuotesView: View {
     let postUri: String
     @Environment(AppState.self) private var appState

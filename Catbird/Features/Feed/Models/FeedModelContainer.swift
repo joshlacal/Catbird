@@ -24,8 +24,7 @@ final class FeedModelContainer {
         
         // If model exists and matches feed type, return it
         if let model = modelCache[key],
-           model.feedManager.fetchType.identifier == feedType.identifier
-        {
+           model.feedManager.fetchType.identifier == feedType.identifier {
             return model
         }
         
@@ -60,7 +59,7 @@ final class FeedModelContainer {
     /// Prunes old models that haven't been accessed in a while to prevent memory bloat
     func pruneOldModels(olderThan interval: TimeInterval = 1800) { // 30 minutes by default
         let now = Date()
-        let keysToRemove = lastAccessed.filter { key, date in
+        let keysToRemove = lastAccessed.filter { _, date in
             now.timeIntervalSince(date) > interval
         }.keys
         

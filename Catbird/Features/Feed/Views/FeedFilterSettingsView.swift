@@ -1,7 +1,5 @@
 import SwiftUI
 
-import SwiftUI
-
 struct FeedFilterSettingsView: View {
   @Environment(AppState.self) private var appState
   

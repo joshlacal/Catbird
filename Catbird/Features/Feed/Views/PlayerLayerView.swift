@@ -144,7 +144,6 @@ final class PlayerContainer: UIView {
             setupLoopObserver()
         }
     }
-
     
     /// Access the player layer (AVPlayerLayer is the layer class for this view)
     var playerLayer: AVPlayerLayer {

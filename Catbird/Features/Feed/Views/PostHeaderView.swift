@@ -7,12 +7,10 @@ import SwiftUI
 //  Created by Josh LaCalamito on 2/8/24.
 //
 
-import SwiftUI
-
 struct PostHeaderView: View {
     let displayName: String
     let handle: String
-    let timeAgo: String
+    let timeAgo: Date
     
     // Constants for layout
     private let profileImageSize: CGFloat = 40
@@ -44,9 +42,13 @@ struct PostHeaderView: View {
             HStack(spacing: spacing) {
                 Text("·")
                     .foregroundStyle(.gray)
-                Text(timeAgo)
+                    .accessibilityHidden(true)
+                
+                Text(formatTimeAgo(from: timeAgo))
                     .font(.body)
                     .foregroundStyle(.gray)
+                    .accessibilityLabel(formatTimeAgo(from: timeAgo, forAccessibility: true))
+
             }
             .layoutPriority(1)
             
@@ -55,6 +57,6 @@ struct PostHeaderView: View {
 }
 
 #Preview {
-    PostHeaderView(displayName: "Josh", handle: "josh.uno", timeAgo: "1m")
+    PostHeaderView(displayName: "Josh", handle: "josh.uno", timeAgo: Date())
         
 }

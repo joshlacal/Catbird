@@ -10,7 +10,12 @@ import Petrel
 import SwiftUI
 
 /// A SwiftUI view that displays a post in the feed.
-struct FeedPost: View {
+struct FeedPost: View, Equatable {
+
+    static func == (lhs: FeedPost, rhs: FeedPost) -> Bool {
+        lhs.id == rhs.id
+    }
+    
   // MARK: - Properties
   let post: AppBskyFeedDefs.FeedViewPost
   @Binding var path: NavigationPath
@@ -21,22 +26,39 @@ struct FeedPost: View {
   private static let avatarSize: CGFloat = 48
 
   // MARK: - Computed Properties
-  private var uniqueID: String {
+  private var id: String {
     "\(post.id)-\(post.post.uri.uriString())"
   }
 
   // MARK: - Body
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Repost header if needed
+      // Repost header if needed (above glass card)
       if case .appBskyFeedDefsReasonRepost(let reasonRepost) = post.reason {
         RepostHeaderView(reposter: reasonRepost.by, path: $path)
           .frame(height: FeedPost.baseUnit * 8)
-          .padding(.horizontal, FeedPost.baseUnit * 2)
-          .padding(.bottom, FeedPost.baseUnit * 2)
+          .padding(.horizontal, FeedPost.baseUnit * 4)
+          .padding(.bottom, FeedPost.baseUnit * 1)
+      }
+      
+      // Pinned badge if needed (above glass card)
+      let shouldShowBadge: Bool = {
+          if case .appBskyFeedDefsReasonPin = post.reason {
+              return true
+          }
+          if let pinned = post.post.viewer?.pinned, pinned {
+              return true
+          }
+          return false
+      }()
+
+      if shouldShowBadge {
+          pinnedPostBadge
+              .padding(.horizontal, FeedPost.baseUnit * 4)
+              .padding(.bottom, FeedPost.baseUnit * 1)
       }
 
-      // Main content area (parent post + main post)
+      // Main glass card container
       VStack(alignment: .leading, spacing: 0) {
         // Parent post if needed (for replies)
         if let parentPost = post.reply?.parent, post.reason == nil {
@@ -47,19 +69,39 @@ struct FeedPost: View {
         // Main post content
         mainPostContent
       }
+      .padding(.vertical, FeedPost.baseUnit * 4)
+      .padding(.horizontal, FeedPost.baseUnit * 4)
+      .contentShape(Rectangle())
+      .allowsHitTesting(true)
     }
-      // Add minimal vertical padding only
-      .padding(.top, FeedPost.baseUnit * 3)
-    .padding(.horizontal, FeedPost.baseUnit * 1.5)
+    .padding(.horizontal, FeedPost.baseUnit * 2)
+    .padding(.vertical, FeedPost.baseUnit * 1)
     .fixedSize(horizontal: false, vertical: true)
-    // Make sure interactions pass through correctly
-    .contentShape(Rectangle())
-    // Ensure this container doesn't block hit testing to child views
-    .allowsHitTesting(true)
+    .frame(maxWidth: 600, alignment: .center)
+    .frame(maxWidth: .infinity, alignment: .center)
   }
 
   // MARK: - Content Views
 
+    @ViewBuilder
+    private var pinnedPostBadge: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: "pin")
+                .foregroundColor(.secondary)
+                .font(.subheadline)
+
+            Text("Pinned")
+                .font(.body)
+                .textScale(.secondary)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .allowsTightening(true)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+    }
+    
   /// Renders the parent post if this is a reply
   @ViewBuilder
   private func parentPostContent(_ parentPost: AppBskyFeedDefs.ReplyRefParentUnion) -> some View {
@@ -97,9 +139,8 @@ struct FeedPost: View {
   /// Renders the main post content
   @ViewBuilder
   private var mainPostContent: some View {
-    if case .appBskyFeedDefsReasonRepost(_) = post.reason,
-      case let .appBskyFeedDefsPostView(parentReply) = post.reply?.parent
-    {
+    if case .appBskyFeedDefsReasonRepost = post.reason,
+      case let .appBskyFeedDefsPostView(parentReply) = post.reply?.parent {
       // This is a repost with a parent reply
       PostView(
         post: post.post,

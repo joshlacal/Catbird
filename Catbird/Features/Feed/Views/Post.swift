@@ -10,7 +10,11 @@ import Petrel
 import Translation
 import NaturalLanguage
 
-struct Post: View {
+struct Post: View, Equatable {
+    static func == (lhs: Post, rhs: Post) -> Bool {
+        lhs.post == rhs.post
+    }
+    
     let post: AppBskyFeedPost
     let isSelectable: Bool
     @Binding var path: NavigationPath
@@ -22,12 +26,44 @@ struct Post: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showLanguageSelection = false
+    @State private var textSize: CGFloat?
+    @State private var textStyle: Font.TextStyle
+    @State private var textDesign: Font.Design
+    @State private var textWeight: Font.Weight
+    @State private var fontWidth: CGFloat?
+    @State private var lineSpacing: CGFloat
+    @State private var letterSpacing: CGFloat
 
     // public initalizer
-    public init(post: AppBskyFeedPost, isSelectable: Bool, path: Binding<NavigationPath>) {
+    public init(post: AppBskyFeedPost, isSelectable: Bool, path: Binding<NavigationPath>,
+//                textSize: CGFloat = 17,
+//                textStyle: Font.TextStyle = .body,
+//                textDesign: Font.Design = .default,
+//                textWeight: Font.Weight = .regular,
+//                fontWidth: CGFloat = 100,
+//                lineSpacing: CGFloat = 1.5,
+//                letterSpacing: CGFloat = 0
+                
+                textSize: CGFloat? = nil,
+                textStyle: Font.TextStyle = .body,
+                textDesign: Font.Design = .default,
+                textWeight: Font.Weight = .regular,
+                fontWidth: CGFloat? = nil,
+                lineSpacing: CGFloat = 1.2,
+                letterSpacing: CGFloat = 0.2
+
+    ) {
         self.post = post
         self.isSelectable = isSelectable
         self._path = path
+        self.textSize = textSize
+        self.textStyle = textStyle
+        self.textDesign = textDesign
+        self.textWeight = textWeight
+        self.fontWidth = fontWidth
+        self.lineSpacing = lineSpacing
+        self.letterSpacing = letterSpacing
+
     }
     
     // Typography configuration
@@ -58,13 +94,14 @@ struct Post: View {
             
             // Main post content with enhanced typography
             if !post.text.isEmpty {
-                TappableTextView(attributedString: post.facetsAsAttributedString)
+                TappableTextView(attributedString: post.facetsAsAttributedString, textSize: textSize, textStyle: textStyle, textDesign: textDesign, textWeight: textWeight, fontWidth: fontWidth, lineSpacing: lineSpacing, letterSpacing: letterSpacing)
                 //                    .typography(
                 //                        design: postTextDesign,
                 //                        weight: postTextWeight,
                 //                        lineSpacing: Typography.LineHeight.normal,
                 //                        letterSpacing: Typography.LetterSpacing.tight
                 //                    )
+
                     .modifier(SelectableModifier(isSelectable: isSelectable))
                     .padding(3)
                     .transition(.opacity)
@@ -184,7 +221,6 @@ struct Post: View {
             await performTranslation(session: session)
         }
     }
-    
 
     private func toggleTranslation() {
         let hapticFeedback = UIImpactFeedbackGenerator(style: .light)
@@ -301,7 +337,7 @@ struct SelectableModifier: ViewModifier {
         if isSelectable {
             content.textSelection(.enabled)
         } else {
-            content
+            content.textSelection(.disabled)
         }
     }
 }
@@ -315,7 +351,7 @@ extension Locale.Language {
 }
 
 //// MARK: - Preview
-//#Preview {
+// #Preview {
 //    let mockPost = AppBskyFeedPost(
 //        text: "This is a sample post with some #hashtags and @mentions that might need to be displayed properly in the UI.",
 //        entities: [],
@@ -345,4 +381,4 @@ extension Locale.Language {
 //            .padding()
 //    }
 //    .background(Color(.systemGroupedBackground))
-//}
+// }

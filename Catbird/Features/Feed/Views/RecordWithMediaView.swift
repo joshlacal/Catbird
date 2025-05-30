@@ -47,7 +47,7 @@ struct RecordWithMediaView: View {
 //                    url: url,
 //                    aspectRatio: video.aspectRatio.map { CGFloat($0.width) / CGFloat($0.height) } ?? 16/9
 //                )
-                ModernVideoPlayerView(bskyVideo: video, postID: postID)
+                ModernVideoPlayerView18(bskyVideo: video, postID: postID)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }

@@ -38,18 +38,11 @@ struct FeedContentView: View {
           refreshAction: { await refreshAction() },
           feedType: feedType
         )
-        .id(feedType.identifier)  // Use stable ID based on feed type
+        .id("\(feedType.identifier)--\(appState.currentUserDID ?? "default")")  // Use stable ID based on feed type
         // Simple clean transition - just fade in and out
         .transition(.opacity)
       }
 
-      // Show filter loading indicator when applying filters
-//      if isApplyingFilters {
-//        VStack {
-//          FilterLoadingIndicator()
-//          Spacer()
-//        }
-//      }
     }
     .task {
       await applyFilters()
@@ -128,12 +121,15 @@ struct FeedListView: View {
 
   // Specific ID for the top anchor that's consistently used
   private let topAnchorID = "feed-top-anchor"
+  
+  // State for scroll position tracking
 
   // Helper struct to ensure unique IDs for ForEach
   private struct IndexedPost: Identifiable {
     let index: Int
     let post: CachedFeedViewPost
-    var id: String { "\(index)-\(post.id)" }  // Combine index and post ID for uniqueness
+      var id: String { "\(post.id)" }  // Combine index and post ID for uniqueness
+//      var id: String { "\(index)-\(post.id)" }  // Combine index and post ID for uniqueness
   }
 
   // Create indexed posts with guaranteed unique IDs
@@ -143,13 +139,15 @@ struct FeedListView: View {
 
   // MARK: - Body
   var body: some View {
-    List {
+      List {
       // Invisible anchor for scroll-to-top with a consistent ID
       Color.clear
         .frame(height: 1)
         .id(topAnchorID)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets())
+        .accessibilityHidden(true)
+        .themedListRowBackground(appState.themeManager)
 
       // Post content - using indexedPosts with guaranteed unique IDs
       ForEach(indexedPosts) { indexedPost in
@@ -159,13 +157,17 @@ struct FeedListView: View {
           index: indexedPost.index,
           path: $path
         )
-        .compositingGroup()
+        .id(indexedPost.post.id) // Ensure ID for scrollTo
+        .onAppear {
+          // Track the first visible post for scroll position saving
+        }
 
         // Trigger load more if near the bottom
-        if indexedPost.index >= posts.count - 5 && posts.count >= 10 {
+        if indexedPost.index >= posts.count - 5 {
           LoadMoreTrigger(loadMoreAction: { @Sendable in
             await loadMoreAction()
           })
+          .accessibilityHidden(true)
         }
       }
 
@@ -183,6 +185,7 @@ struct FeedListView: View {
     .listStyle(PlainListStyle())
     .environment(\.defaultMinListRowHeight, 0)
     .scrollContentBackground(.hidden)
+    .themedPrimaryBackground(appState.themeManager)
     .scrollDisabled(false)
     .scrollDismissesKeyboard(.immediately)
     .refreshable {
@@ -190,7 +193,7 @@ struct FeedListView: View {
       await refreshAction()
       isRefreshing = false
     }
-    .onChange(of: appState.tabTappedAgain) { old, tapped in
+    .onChange(of: appState.tabTappedAgain) { _, tapped in
       if tapped == 0 {
         // Use a slight delay to ensure the scrolling happens after any layout changes
         DispatchQueue.main.async {

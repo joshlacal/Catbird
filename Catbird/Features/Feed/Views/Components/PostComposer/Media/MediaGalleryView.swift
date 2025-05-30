@@ -15,6 +15,8 @@ struct MediaGalleryView: View {
     @Binding var isAltTextEditorPresented: Bool
     let maxImagesAllowed: Int
     let onAddMore: () -> Void
+    var onPaste: (() -> Void)?
+    var hasClipboardMedia: Bool = false
     
     private let itemSize: CGFloat = 100
     private let spacing: CGFloat = 12
@@ -46,6 +48,11 @@ struct MediaGalleryView: View {
                         )
                     }
                     
+                    // Paste button (if clipboard has media and we can add more)
+                    if canAddMoreMedia && hasClipboardMedia, let onPaste = onPaste {
+                        pasteButton(action: onPaste)
+                    }
+                    
                     // Add more button
                     if canAddMoreMedia {
                         addMoreButton
@@ -57,6 +64,24 @@ struct MediaGalleryView: View {
         }
     }
     
+    /// Button to paste media from clipboard
+    private func pasteButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 24))
+                
+                Text("Paste")
+                    .font(.caption)
+            }
+            .frame(width: itemSize, height: itemSize)
+            .foregroundStyle(Color.accentColor)
+            .background(Color.accentColor.opacity(0.1))
+            .cornerRadius(12)
+        }
+        .accessibilityLabel("Paste media from clipboard")
+    }
+
     /// Button to add more media
     private var addMoreButton: some View {
         Button(action: onAddMore) {
@@ -95,12 +120,13 @@ struct MediaGalleryView: View {
 #Preview {
     MediaGalleryView(
         mediaItems: .constant([
-            PostComposerViewModel.MediaItem(
-                pickerItem: PhotosPickerItem(itemIdentifier: "preview"),
-                image: Image(systemName: "photo"),
-                altText: "",
-                isLoading: false
-            )
+            {
+                var item = PostComposerViewModel.MediaItem()
+                item.image = Image(systemName: "photo")
+                item.altText = ""
+                item.isLoading = false
+                return item
+            }()
         ]),
         currentEditingMediaId: .constant(nil),
         isAltTextEditorPresented: .constant(false),

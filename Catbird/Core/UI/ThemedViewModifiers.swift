@@ -1,0 +1,402 @@
+import SwiftUI
+
+// MARK: - Glass Intensity
+
+enum GlassIntensity: Int {
+    case subtle = 0
+    case medium = 1
+    case strong = 2
+    
+    var elevationLevel: ColorElevation {
+        switch self {
+        case .subtle: return .low
+        case .medium: return .medium
+        case .strong: return .high
+        }
+    }
+}
+
+// MARK: - Themed Background Modifiers
+
+extension View {
+    
+    // MARK: - Primary Background
+    
+    /// Apply primary background color based on theme
+    func themedPrimaryBackground(_ themeManager: ThemeManager) -> some View {
+        ZStack {
+            Color.clear
+            self
+        }
+        .background { 
+            ThemedBackground(themeManager: themeManager) { colorScheme in
+                Color.dynamicBackground(themeManager, currentScheme: colorScheme)
+            }
+        }
+        .themeTransition(themeManager)
+    }
+    
+    // MARK: - Secondary Background
+    
+    /// Apply secondary background color based on theme
+    func themedSecondaryBackground(_ themeManager: ThemeManager) -> some View {
+        ZStack {
+            Color.clear
+            self
+        }
+        .background { 
+            ThemedBackground(themeManager: themeManager) { colorScheme in
+                Color.dynamicSecondaryBackground(themeManager, currentScheme: colorScheme)
+            }
+        }
+        .themeTransition(themeManager)
+    }
+    
+    // MARK: - Tertiary Background
+    
+    /// Apply tertiary background color based on theme
+    func themedTertiaryBackground(_ themeManager: ThemeManager) -> some View {
+        ZStack {
+            Color.clear
+            self
+        }
+        .background { 
+            ThemedBackground(themeManager: themeManager) { colorScheme in
+                Color.dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
+            }
+        }
+        .themeTransition(themeManager)
+    }
+    
+    // MARK: - Elevated Background
+    
+    /// Apply elevated background color based on theme (for cards and modals)
+    func themedElevatedBackground(_ themeManager: ThemeManager, elevation: ColorElevation = .low) -> some View {
+        ZStack {
+            Color.clear
+            self
+        }
+        .background { 
+            ThemedElevatedBackground(themeManager: themeManager, elevation: elevation)
+        }
+        .themeTransition(themeManager)
+    }
+    
+    // MARK: - Grouped Background
+    
+    /// Apply grouped background color based on theme (for list backgrounds)
+    func themedGroupedBackground(_ themeManager: ThemeManager) -> some View {
+        ZStack {
+            Color.clear
+            self
+        }
+        .background { 
+            ThemedBackground(themeManager: themeManager) { colorScheme in
+                Color.dynamicGroupedBackground(themeManager, currentScheme: colorScheme)
+            }
+        }
+        .themeTransition(themeManager)
+    }
+    
+    // MARK: - Glass Effects
+    
+    /// Apply a glass-like card effect based on theme
+    func themedSolariumCard(
+        intensity: GlassIntensity = .medium,
+        themeManager: ThemeManager
+    ) -> some View {
+        self
+            .background(glassBackground(intensity: intensity, themeManager: themeManager))
+            .overlay(glassBorder(intensity: intensity, themeManager: themeManager))
+            .cornerRadius(12)
+            .background(glassShadow(intensity: intensity, themeManager: themeManager))
+            .themeTransition(themeManager)
+    }
+    
+    /// Apply a glass-like button effect based on theme
+    func themedSolariumButton(
+        intensity: GlassIntensity = .medium,
+        themeManager: ThemeManager
+    ) -> some View {
+        self
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(glassBackground(intensity: intensity, themeManager: themeManager))
+            .overlay(glassBorder(intensity: intensity, themeManager: themeManager).cornerRadius(8))
+            .cornerRadius(8)
+            .themeTransition(themeManager)
+    }
+    
+    // MARK: - Private Helper Methods
+    
+    @ViewBuilder
+    private func glassBackground(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
+        ThemedGlassBackground(themeManager: themeManager, intensity: intensity)
+    }
+    
+    private func glassBorder(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
+        ThemedBorderView(themeManager: themeManager, isProminent: intensity == .strong)
+    }
+    
+    private func glassShadow(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
+        ThemedShadowView(themeManager: themeManager)
+    }
+    
+    private func glassBlurRadius(intensity: GlassIntensity) -> CGFloat {
+        switch intensity {
+        case .subtle:
+            return 4
+        case .medium:
+            return 6
+        case .strong:
+            return 8
+        }
+    }
+}
+
+// MARK: - Text Modifiers
+
+extension View {
+    /// Apply themed text color
+    func themedText(_ themeManager: ThemeManager, style: TextStyle = .primary) -> some View {
+        ThemedTextView(content: self, themeManager: themeManager, style: style)
+            .themeTransition(themeManager)
+    }
+}
+
+// MARK: - Separator Modifiers
+
+extension View {
+    /// Add a themed separator
+    func themedDivider(_ themeManager: ThemeManager) -> some View {
+        Divider()
+            .background {
+                ThemedBackground(themeManager: themeManager) { colorScheme in
+                    Color.dynamicSeparator(themeManager, currentScheme: colorScheme)
+                }
+            }
+            .themeTransition(themeManager)
+    }
+}
+
+// MARK: - List Row Modifiers
+
+extension View {
+    /// Apply themed list row background
+    func themedListRowBackground(_ themeManager: ThemeManager) -> some View {
+        self.listRowBackground(
+            ThemedBackground(themeManager: themeManager) { colorScheme in
+                Color.dynamicBackground(themeManager, currentScheme: colorScheme)
+            }
+            .themeTransition(themeManager)
+        )
+    }
+}
+
+// MARK: - Sheet Modifiers
+
+extension View {
+    /// Apply themed sheet background
+    func themedSheetBackground(_ themeManager: ThemeManager) -> some View {
+        self
+            .background {
+                ThemedBackground(themeManager: themeManager) { colorScheme in
+                    Color.elevatedBackground(themeManager, elevation: .modal, currentScheme: colorScheme)
+                }
+            }
+            .themeTransition(themeManager)
+    }
+}
+
+// MARK: - Accessibility Support
+
+extension View {
+    /// Apply adaptive contrast for accessibility
+    func adaptiveContrast(_ themeManager: ThemeManager) -> some View {
+        self.modifier(AdaptiveContrastModifier(themeManager: themeManager))
+    }
+}
+
+struct AdaptiveContrastModifier: ViewModifier {
+    let themeManager: ThemeManager
+    @Environment(\.accessibilityDifferentiateWithoutColor) var differentiateWithoutColor
+    @Environment(\.accessibilityReduceTransparency) var reduceTransparency
+    
+    func body(content: Content) -> some View {
+        content
+            .if(themeManager.isUsingTrueBlack && differentiateWithoutColor) { view in
+                view.overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                )
+            }
+            .if(reduceTransparency) { view in
+                view.background {
+                    ThemedBackground(themeManager: themeManager) { colorScheme in
+                        Color.dynamicBackground(themeManager, currentScheme: colorScheme)
+                    }
+                }
+            }
+    }
+}
+
+// MARK: - Helper Extensions
+
+extension View {
+    /// Conditionally apply a modifier
+    @ViewBuilder func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
+// MARK: - Helper Views for Theme Access
+
+struct ThemedBackground: View {
+    let themeManager: ThemeManager
+    let colorProvider: (ColorScheme) -> Color
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        colorProvider(colorScheme)
+    }
+}
+
+struct ThemedElevatedBackground: View {
+    let themeManager: ThemeManager
+    let elevation: ColorElevation
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        Color.elevatedBackground(themeManager, elevation: elevation, currentScheme: colorScheme)
+            .overlay(
+                // Add subtle elevation effect in dark modes
+                Group {
+                    if themeManager.isDarkMode(for: colorScheme) && !themeManager.isUsingTrueBlack {
+                        RoundedRectangle(cornerRadius: 0)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.05),
+                                        Color.clear
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
+                    }
+                }
+            )
+    }
+}
+
+struct ThemedGlassBackground: View {
+    let themeManager: ThemeManager
+    let intensity: GlassIntensity
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        if themeManager.isUsingTrueBlack && themeManager.isDarkMode(for: colorScheme) {
+            // True black mode: Use solid backgrounds with hierarchy
+            ZStack {
+                Color.elevatedBackground(themeManager, elevation: intensity.elevationLevel, currentScheme: colorScheme)
+                
+                // Add subtle inner glow for depth
+                if intensity != .subtle {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color(white: 0.2, opacity: 0.1),
+                                    Color(white: 0.1, opacity: 0.05)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
+                        .blendMode(.plusLighter)
+                }
+            }
+        } else {
+            // Dim mode: Use translucent backgrounds with blur
+            ZStack {
+                // Base blur material with proper background
+                switch intensity {
+                case .subtle:
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                case .medium:
+                    Rectangle()
+                        .fill(.thinMaterial)
+                case .strong:
+                    Rectangle()
+                        .fill(.regularMaterial)
+                }
+                
+                // Overlay tint
+                Color.glassOverlay(themeManager, intensity: intensity, currentScheme: colorScheme)
+            }
+        }
+    }
+}
+
+struct ThemedTextView<Content: View>: View {
+    let content: Content
+    let themeManager: ThemeManager
+    let style: TextStyle
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        content
+            .foregroundColor(Color.dynamicText(themeManager, style: style, currentScheme: colorScheme))
+    }
+}
+
+struct ThemedBorderView: View {
+    let themeManager: ThemeManager
+    let isProminent: Bool
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .stroke(Color.dynamicBorder(themeManager, isProminent: isProminent, currentScheme: colorScheme), lineWidth: 1)
+    }
+}
+
+struct ThemedShadowView: View {
+    let themeManager: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        Color.clear
+            .shadow(
+                color: Color.dynamicShadow(themeManager, currentScheme: colorScheme),
+                radius: 6,
+                x: 0,
+                y: 2
+            )
+    }
+}
+
+// MARK: - Material Extensions for Dim Mode
+
+extension Material {
+    /// Get appropriate material for dim mode backgrounds
+    static func dimModeBackground(elevation: Int = 0) -> Material {
+        switch elevation {
+        case 0:
+            return .ultraThinMaterial
+        case 1:
+            return .thinMaterial
+        case 2:
+            return .regularMaterial
+        default:
+            return .thickMaterial
+        }
+    }
+}

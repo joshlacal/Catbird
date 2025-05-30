@@ -19,7 +19,7 @@ enum SearchState {
 }
 
 /// ViewModel for the refined search experience
-@Observable class RefinedSearchViewModel {
+@Observable class RefinedSearchViewModel: StateInvalidationSubscriber {
     // MARK: - Search State
     var searchState: SearchState = .idle
     var searchQuery: String = ""
@@ -39,12 +39,15 @@ enum SearchState {
     var feedResults: [AppBskyFeedDefs.GeneratorView] = []
     var starterPackResults: [AppBskyGraphDefs.StarterPackViewBasic] = []
     
+    // MARK: - Error State
+    var searchError: Error?
+    
     // MARK: - Discovery Content
     var recentSearches: [String] = []
     var recentProfileSearches: [RecentProfileSearch] = []
-    var trendingTopics: [AppBskyUnspeccedDefs.TrendingTopic] = []
+    var trendingTopics: [AppBskyUnspeccedDefs.TrendView] = []
     var suggestedProfiles: [AppBskyActorDefs.ProfileView] = []
-//    var taggedSuggestions: [TaggedSuggestion] = []
+    var taggedSuggestions: [TaggedSuggestion] = []
     
     // MARK: - Typeahead Results
     var typeaheadProfiles: [AppBskyActorDefs.ProfileViewBasic] = []
@@ -96,6 +99,14 @@ enum SearchState {
         // Load recent searches from UserDefaults
         loadRecentSearches()
         loadRecentProfileSearches()
+        
+        // Register for state invalidation events
+        appState.stateInvalidationBus.subscribe(self)
+    }
+    
+    deinit {
+        // Unregister from state invalidation events
+        appState.stateInvalidationBus.unsubscribe(self)
     }
     
     // MARK: - Public Methods
@@ -311,7 +322,7 @@ enum SearchState {
         await fetchSuggestedProfiles(client: client)
         
         // Fetch tagged suggestions
-//        await fetchTaggedSuggestions(client: client)
+        await fetchTaggedSuggestions(client: client)
     }
     
     /// Apply basic filters
@@ -402,14 +413,16 @@ enum SearchState {
             recentSearches = Array(recentSearches.prefix(10))
         }
         
-        // Save to UserDefaults
-        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+        // Save to UserDefaults with account-specific key
+        let key = recentSearchesKey()
+        UserDefaults(suiteName: "group.blue.catbird.shared")?.set(recentSearches, forKey: key)
     }
     
-    /// Clear all recent searches
+    /// Clear all recent searches for current account
     func clearRecentSearches() {
         recentSearches = []
-        UserDefaults.standard.removeObject(forKey: "recentSearches")
+        let key = recentSearchesKey()
+        UserDefaults(suiteName: "group.blue.catbird.shared")?.removeObject(forKey: key)
     }
     
     /// Add a profile to recent profile searches
@@ -429,9 +442,10 @@ enum SearchState {
             recentProfileSearches = Array(recentProfileSearches.prefix(10))
         }
         
-        // Save to UserDefaults
+        // Save to UserDefaults with account-specific key
+        let key = recentProfileSearchesKey()
         if let encoded = try? JSONEncoder().encode(recentProfileSearches) {
-            UserDefaults.standard.set(encoded, forKey: "recentProfileSearches")
+            UserDefaults(suiteName: "group.blue.catbird.shared")?.set(encoded, forKey: key)
         }
     }
     
@@ -458,33 +472,57 @@ enum SearchState {
             recentProfileSearches = Array(recentProfileSearches.prefix(10))
         }
         
-        // Save to UserDefaults
+        // Save to UserDefaults with account-specific key
+        let key = recentProfileSearchesKey()
         if let encoded = try? JSONEncoder().encode(recentProfileSearches) {
-            UserDefaults.standard.set(encoded, forKey: "recentProfileSearches")
+            UserDefaults(suiteName: "group.blue.catbird.shared")?.set(encoded, forKey: key)
         }
     }
     
-    /// Clear all recent profile searches
+    /// Clear all recent profile searches for current account
     func clearRecentProfileSearches() {
         recentProfileSearches = []
-        UserDefaults.standard.removeObject(forKey: "recentProfileSearches")
+        let key = recentProfileSearchesKey()
+        UserDefaults(suiteName: "group.blue.catbird.shared")?.removeObject(forKey: key)
     }
     
     // MARK: - Private Methods
     
-    /// Load recent searches from UserDefaults
+    /// Load recent searches from UserDefaults for current account
     private func loadRecentSearches() {
-        if let searches = UserDefaults.standard.array(forKey: "recentSearches") as? [String] {
+        let key = recentSearchesKey()
+        if let searches = UserDefaults(suiteName: "group.blue.catbird.shared")?.array(forKey: key) as? [String] {
             recentSearches = searches
+        } else {
+            recentSearches = []
         }
     }
     
-    /// Load recent profile searches from UserDefaults
+    /// Load recent profile searches from UserDefaults for current account
     private func loadRecentProfileSearches() {
-        if let data = UserDefaults.standard.data(forKey: "recentProfileSearches"),
+        let key = recentProfileSearchesKey()
+        if let data = UserDefaults(suiteName: "group.blue.catbird.shared")?.data(forKey: key),
            let decoded = try? JSONDecoder().decode([RecentProfileSearch].self, from: data) {
             recentProfileSearches = decoded
+        } else {
+            recentProfileSearches = []
         }
+    }
+    
+    /// Generate account-specific key for recent searches
+    private func recentSearchesKey() -> String {
+        if let userDID = appState.authManager.state.userDID {
+            return "recentSearches_\(userDID)"
+        }
+        return "recentSearches_default"
+    }
+    
+    /// Generate account-specific key for recent profile searches
+    private func recentProfileSearchesKey() -> String {
+        if let userDID = appState.authManager.state.userDID {
+            return "recentProfileSearches_\(userDID)"
+        }
+        return "recentProfileSearches_default"
     }
     
     /// Fetch typeahead search results
@@ -516,6 +554,9 @@ enum SearchState {
             searchState = .idle
             return
         }
+        
+        // Clear previous error
+        searchError = nil
         
         do {
             // Create task group to run searches in parallel
@@ -549,7 +590,8 @@ enum SearchState {
             
         } catch {
             logger.error("Error executing search: \(error.localizedDescription)")
-            searchState = .results // Still move to results state to show empty results
+            searchError = error
+            searchState = .results // Still move to results state to show error
         }
     }
     
@@ -709,13 +751,14 @@ enum SearchState {
     /// Fetch trending topics for discovery view
     private func fetchTrendingTopics(client: ATProtoClient) async {
         do {
-            let input = AppBskyUnspeccedGetTrendingTopics.Parameters()
+            let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
             
-            let (_, response) = try await client.app.bsky.unspecced.getTrendingTopics(input: input)
+            let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
             
             if let topicsResponse = response {
-                trendingTopics = topicsResponse.topics
+                trendingTopics = topicsResponse.trends
             }
+            
         } catch {
             logger.error("Error fetching trending topics: \(error.localizedDescription)")
         }
@@ -737,13 +780,13 @@ enum SearchState {
     }
     
     /// Fetch tagged suggestions for discovery view
-//    func fetchTaggedSuggestions(client: ATProtoClient) async {
-//        do {
-//            taggedSuggestions = try await TaggedSuggestionsSection.fetchTaggedSuggestions(client: client)
-//        } catch {
-//            logger.error("Error fetching tagged suggestions: \(error.localizedDescription)")
-//        }
-//    }
+    func fetchTaggedSuggestions(client: ATProtoClient) async {
+        do {
+            taggedSuggestions = try await TaggedSuggestionsSection.fetchTaggedSuggestions(client: client)
+        } catch {
+            logger.error("Error fetching tagged suggestions: \(error.localizedDescription)")
+        }
+    }
     
     // MARK: - Helper Methods
     
@@ -756,5 +799,21 @@ enum SearchState {
         formatter.formatOptions = [.withInternetDateTime]
         
         return formatter.string(from: date)
+    }
+    
+    // MARK: - StateInvalidationSubscriber
+    
+    /// Handle state invalidation events
+    func handleStateInvalidation(_ event: StateInvalidationEvent) async {
+        switch event {
+        case .accountSwitched:
+            // Reload search history for the new account
+            await MainActor.run {
+                loadRecentSearches()
+                loadRecentProfileSearches()
+            }
+        default:
+            break
+        }
     }
 }

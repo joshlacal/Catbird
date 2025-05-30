@@ -297,7 +297,6 @@ extension View {
     }
 }
 
-
 extension Font {
     /// Creates a custom system font that supports width variants and dynamic type scaling.
     /// - Parameters:
@@ -310,42 +309,58 @@ extension Font {
     static func customSystemFont(
         size: CGFloat,
         weight: Font.Weight,
-        width: CGFloat? = nil,
+        width: CGFloat = 120, 
+        opticalSize: Bool = true, // Whether to apply optical size adjustments
         design: Font.Design = .default,
         relativeTo textStyle: Font.TextStyle? = nil
     ) -> Font {
-        // Convert SwiftUI weight to UIFont.Weight.
-        let uiWeight: UIFont.Weight = {
+        // Define the OpenType variation axes as hex integers (4-char codes)
+        let wdthAxisID: Int = 0x77647468 // 'wdth' in hex
+        let wghtAxisID: Int = 0x77676874 // 'wght' in hex
+        let opszAxisID: Int = 0x6F70737A // 'opsz' in hex
+        
+        // Convert SwiftUI weight to numeric weight
+        let numericWeight: CGFloat = {
             switch weight {
-            case .ultraLight: return .ultraLight
-            case .thin:       return .thin
-            case .light:      return .light
-            case .regular:    return .regular
-            case .medium:     return .medium
-            case .semibold:   return .semibold
-            case .bold:       return .bold
-            case .heavy:      return .heavy
-            case .black:      return .black
-            default:          return .regular
+            case .ultraLight: return 100.0
+            case .thin:       return 200.0
+            case .light:      return 300.0
+            case .regular:    return 400.0
+            case .medium:     return 500.0
+            case .semibold:   return 600.0
+            case .bold:       return 700.0
+            case .heavy:      return 800.0
+            case .black:      return 900.0
+            default:          return 400.0
             }
         }()
         
-        // Create the base UIFont.
-        let baseUIFont = UIFont.systemFont(ofSize: size, weight: uiWeight)
+        // Create variations dictionary
+        var variations: [Int: Any] = [
+            wdthAxisID: width,
+            wghtAxisID: numericWeight
+        ]
         
-        // Optionally apply a width trait.
-        let finalUIFont: UIFont
-        if let width = width {
-            let traits: [UIFontDescriptor.TraitKey: Any] = [.width: width]
-            let descriptor = baseUIFont.fontDescriptor.addingAttributes([UIFontDescriptor.AttributeName.traits: traits])
-            finalUIFont = UIFont(descriptor: descriptor, size: size)
-        } else {
-            finalUIFont = baseUIFont
+        // Add optical size if enabled
+        if opticalSize {
+            variations[opszAxisID] = Double(size)
         }
         
-        // If a text style is provided, scale using UIFontMetrics.
+        // Start with the system font
+        let baseFont = UIFont.systemFont(ofSize: size)
+        let fontDesc = baseFont.fontDescriptor
+        
+        // Apply the variations to the font descriptor
+        let variableDescriptor = fontDesc.addingAttributes([
+            kCTFontVariationAttribute as UIFontDescriptor.AttributeName: variations
+        ])
+        
+        // Create the font with the modified descriptor
+        let customUIFont = UIFont(descriptor: variableDescriptor, size: 0)
+        
+        // If a text style is provided, scale using UIFontMetrics
         if let textStyle = textStyle {
-            // Map SwiftUI Font.TextStyle to UIFont.TextStyle.
+            // Map SwiftUI Font.TextStyle to UIFont.TextStyle
             let uiTextStyle: UIFont.TextStyle
             switch textStyle {
             case .largeTitle: uiTextStyle = .largeTitle
@@ -363,15 +378,14 @@ extension Font {
             }
             
             let metrics = UIFontMetrics(forTextStyle: uiTextStyle)
-            let scaledFont = metrics.scaledFont(for: finalUIFont)
+            let scaledFont = metrics.scaledFont(for: customUIFont)
             return Font(scaledFont)
         } else {
-            // Fallback to no scaling.
-            return Font(finalUIFont)
+            // Fallback to no scaling
+            return Font(customUIFont)
         }
     }
 }
-
 
 // MARK: - Preview Examples
 

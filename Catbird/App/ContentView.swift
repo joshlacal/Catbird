@@ -56,6 +56,8 @@ struct ContentView: View {
         }
       }
     }
+    .applyTheme(appState.themeManager)
+    .fontScaleManager(appState.fontScaleManager)
   }
 }
 
@@ -192,6 +194,12 @@ struct MainContentView18: View {
       }
       .onAppear {
           UITabBarItem.appearance().badgeColor = UIColor(Color.accentColor)
+        // Apply theme immediately when view appears
+        appState.themeManager.applyTheme(
+          theme: appState.appSettings.theme,
+          darkThemeMode: appState.appSettings.darkThemeMode
+        )
+        
         // Initialize from notification manager
         notificationBadgeCount = appState.notificationManager.unreadCount
 
@@ -203,6 +211,50 @@ struct MainContentView18: View {
         ) { notification in
           if let count = notification.userInfo?["count"] as? Int {
             notificationBadgeCount = count
+          }
+        }
+        
+        // Set up theme change observer to update UIKit appearances
+        NotificationCenter.default.addObserver(
+          forName: NSNotification.Name("ThemeChanged"),
+          object: nil,
+          queue: .main
+        ) { _ in
+          // Force update all UIKit components immediately
+          if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            for window in windowScene.windows {
+              // Force tab bars to update
+              if let tabBarController = window.rootViewController?.children.first(where: { $0 is UITabBarController }) as? UITabBarController {
+                tabBarController.tabBar.setNeedsDisplay()
+                tabBarController.tabBar.layoutIfNeeded()
+              }
+              
+              // Force all navigation bars in the window to update
+              window.rootViewController?.view.subviews.forEach { subview in
+                if let navBar = subview as? UINavigationBar {
+                  navBar.setNeedsDisplay()
+                  navBar.layoutIfNeeded()
+                }
+              }
+              
+              // Also recursively find navigation controllers and force their nav bars to update
+              func updateNavigationBars(in viewController: UIViewController?) {
+                guard let vc = viewController else { return }
+                
+                if let navController = vc as? UINavigationController {
+                  navController.navigationBar.setNeedsDisplay()
+                  navController.navigationBar.layoutIfNeeded()
+                }
+                
+                vc.children.forEach { updateNavigationBars(in: $0) }
+                
+                if let presentedVC = vc.presentedViewController {
+                  updateNavigationBars(in: presentedVC)
+                }
+              }
+              
+              updateNavigationBars(in: window.rootViewController)
+            }
           }
         }
           
@@ -423,6 +475,11 @@ struct MainContentView17: View {
       }
       .onAppear {
           UITabBarItem.appearance().badgeColor = UIColor(Color.accentColor)
+        // Apply theme immediately when view appears
+        appState.themeManager.applyTheme(
+          theme: appState.appSettings.theme,
+          darkThemeMode: appState.appSettings.darkThemeMode
+        )
 
         // Initialize from notification manager
         notificationBadgeCount = appState.notificationManager.unreadCount
@@ -435,6 +492,50 @@ struct MainContentView17: View {
         ) { notification in
           if let count = notification.userInfo?["count"] as? Int {
             notificationBadgeCount = count
+          }
+        }
+        
+        // Set up theme change observer to update UIKit appearances
+        NotificationCenter.default.addObserver(
+          forName: NSNotification.Name("ThemeChanged"),
+          object: nil,
+          queue: .main
+        ) { _ in
+          // Force update all UIKit components immediately
+          if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            for window in windowScene.windows {
+              // Force tab bars to update
+              if let tabBarController = window.rootViewController?.children.first(where: { $0 is UITabBarController }) as? UITabBarController {
+                tabBarController.tabBar.setNeedsDisplay()
+                tabBarController.tabBar.layoutIfNeeded()
+              }
+              
+              // Force all navigation bars in the window to update
+              window.rootViewController?.view.subviews.forEach { subview in
+                if let navBar = subview as? UINavigationBar {
+                  navBar.setNeedsDisplay()
+                  navBar.layoutIfNeeded()
+                }
+              }
+              
+              // Also recursively find navigation controllers and force their nav bars to update
+              func updateNavigationBars(in viewController: UIViewController?) {
+                guard let vc = viewController else { return }
+                
+                if let navController = vc as? UINavigationController {
+                  navController.navigationBar.setNeedsDisplay()
+                  navController.navigationBar.layoutIfNeeded()
+                }
+                
+                vc.children.forEach { updateNavigationBars(in: $0) }
+                
+                if let presentedVC = vc.presentedViewController {
+                  updateNavigationBars(in: presentedVC)
+                }
+              }
+              
+              updateNavigationBars(in: window.rootViewController)
+            }
           }
         }
           

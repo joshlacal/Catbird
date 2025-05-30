@@ -858,6 +858,33 @@ final class ThreadManager: StateInvalidationSubscriber {
   
   // MARK: - State Invalidation Handling
   
+  /// Check if this manager is interested in a specific event
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    switch event {
+    case .threadUpdated(let rootUri):
+      // Only interested if it's our current thread
+      if let currentURI = currentThreadURI {
+        return currentURI.uriString() == rootUri || isRelatedToCurrentThread(rootUri)
+      }
+      return false
+      
+    case .replyCreated(_, let parentUri):
+      // Only interested if the reply is in our current thread
+      if let currentURI = currentThreadURI {
+        return currentURI.uriString() == parentUri || isRelatedToCurrentThread(parentUri)
+      }
+      return false
+      
+    case .accountSwitched:
+      // Always interested in account switches
+      return true
+      
+    default:
+      // Not interested in other events
+      return false
+    }
+  }
+  
   /// Handle state invalidation events from the central event bus
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
     logger.debug("Handling state invalidation event: \(String(describing: event))")
@@ -958,6 +985,7 @@ public struct ParentPost: Identifiable, Equatable, Hashable, Sendable {
   struct ReplyWrapper: Identifiable, Equatable, Hashable {
     let id: String
     let reply: AppBskyFeedDefs.ThreadViewPostRepliesUnion
+    let depth: Int
     let isFromOP: Bool
     let hasReplies: Bool
       

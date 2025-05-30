@@ -167,21 +167,38 @@ final class PostManager {
       status = .success
       logger.info("\(parentPost == nil ? "New post" : "Reply") created successfully")
       
-      // Trigger state invalidation to refresh feeds and views
+      // Create a temporary post for optimistic updates
       if let appState = appState {
-        // Note: In a real implementation, we'd need the full post data from the server response
-        // For now, we'll trigger invalidation events to refresh all relevant views
         Task { @MainActor in
+          // Create a temporary PostView for optimistic updates
+          let tempPost = try createTemporaryPost(
+            text: postText,
+            did: did,
+            uri: postURI,
+            cid: cid,
+            parentPost: parentPost,
+            embed: embed,
+            languages: languages,
+            labels: selfLabels,
+            createdAt: currentATProtocolDate
+          )
+          
           if let parentPost = parentPost {
-            // This is a reply - trigger thread and feed updates
+            // This is a reply - send proper reply created event
             let parentUriString = parentPost.uri.uriString()
-            appState.stateInvalidationBus.notify(.replyCreated(parentPost, parentUri: parentUriString))
-            appState.stateInvalidationBus.notify(.threadUpdated(rootUri: parentUriString))
+            appState.stateInvalidationBus.notify(.replyCreated(tempPost, parentUri: parentUriString))
+            
+            // Also notify thread update for the root post
+            let rootUri = getRootUri(from: parentPost)
+            appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootUri))
           } else {
-            // This is a new post - trigger feed refresh
-            // Since we don't have the full response post data, just trigger a general feed refresh
-            appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
+            // This is a new post - send post created event
+            appState.stateInvalidationBus.notify(.postCreated(tempPost))
           }
+          
+          // Always notify profile update when a user creates a post
+          // This ensures the user's profile refreshes when viewing their own profile
+          appState.stateInvalidationBus.notify(.profileUpdated(did: did))
         }
       }
 
@@ -230,6 +247,114 @@ final class PostManager {
   func resetError() {
     if case .error = status {
       status = .idle
+    }
+  }
+  
+  // MARK: - Helper Methods
+  
+  /// Creates a temporary PostView for optimistic updates
+  private func createTemporaryPost(
+    text: String,
+    did: String,
+    uri: ATProtocolURI,
+    cid: CID,
+    parentPost: AppBskyFeedDefs.PostView?,
+    embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?,
+    languages: [LanguageCodeContainer],
+    labels: ComAtprotoLabelDefs.SelfLabels,
+    createdAt: ATProtocolDate
+  ) throws -> AppBskyFeedDefs.PostView {
+    // Create author using current user's profile if available
+    let author: AppBskyActorDefs.ProfileViewBasic
+    
+    if let currentProfile = appState?.currentUserProfile {
+      // Use the actual user's profile data
+      author = AppBskyActorDefs.ProfileViewBasic(
+        did: try DID(didString: did),
+        handle: currentProfile.handle,
+        displayName: currentProfile.displayName,
+        avatar: currentProfile.avatar,
+        associated: currentProfile.associated,
+        viewer: currentProfile.viewer,
+        labels: currentProfile.labels,
+        createdAt: currentProfile.createdAt,
+        verification: currentProfile.verification,
+        status: currentProfile.status
+      )
+    } else {
+      // Fallback to minimal profile
+      author = AppBskyActorDefs.ProfileViewBasic(
+        did: try DID(didString: did),
+        handle: try Handle(handleString: "temp.handle"), // This will be updated when the real post loads
+        displayName: nil,
+        avatar: nil,
+        associated: nil,
+        viewer: AppBskyActorDefs.ViewerState(
+          muted: false,
+          mutedByList: nil,
+          blockedBy: false,
+          blocking: nil,
+          blockingByList: nil,
+          following: nil,
+          followedBy: nil,
+          knownFollowers: nil
+        ),
+        labels: [],
+        createdAt: nil,
+        verification: nil,
+        status: nil
+      )
+    }
+    
+    // Create the post record
+    let postRecord = AppBskyFeedPost(
+      text: text,
+      entities: nil,
+      facets: [],
+      reply: parentPost != nil ? try createReplyRef(for: parentPost!) : nil,
+      embed: embed,
+      langs: languages,
+      labels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(labels),
+      tags: [],
+      createdAt: createdAt
+    )
+    
+    // Create the PostView
+    return AppBskyFeedDefs.PostView(
+      uri: uri,
+      cid: cid,
+      author: author,
+      record: ATProtocolValueContainer.knownType(postRecord),
+      embed: nil, // Will be populated when real post loads
+      replyCount: 0,
+      repostCount: 0,
+      likeCount: 0,
+      quoteCount: 0,
+      indexedAt: createdAt,
+      viewer: AppBskyFeedDefs.ViewerState(
+        repost: nil,
+        like: nil,
+        threadMuted: false,
+        replyDisabled: false,
+        embeddingDisabled: false,
+        pinned: false
+      ),
+      labels: [],
+      threadgate: nil
+    )
+  }
+  
+  /// Get the root URI from a post (handles nested replies)
+  private func getRootUri(from post: AppBskyFeedDefs.PostView) -> String {
+    // Check if this post is itself a reply
+    if case let .knownType(bskyPost) = post.record,
+       let postObj = bskyPost as? AppBskyFeedPost,
+       let reply = postObj.reply {
+      // Return the root URI from the reply
+      return reply.root.uri.uriString()
+    } else {
+      // This post is the root
+      return post.uri.uriString()
     }
   }
 
@@ -412,10 +537,26 @@ final class PostManager {
       logger.info("Thread with \(posts.count) posts created successfully")
       
       // Trigger state invalidation for thread creation
-      if let appState = appState {
+      if let appState = appState, let rootRef = rootRef {
         Task { @MainActor in
-          // Thread creation should trigger feed updates
-          appState.stateInvalidationBus.notify(.accountSwitched)
+          // Create a temporary post for the root of the thread
+          let tempPost = try createTemporaryPost(
+            text: posts[0],
+            did: did,
+            uri: rootRef.uri,
+            cid: rootRef.cid,
+            parentPost: nil,
+            embed: nil, // TODO: Support embeds in threads
+            languages: languages,
+            labels: selfLabels,
+            createdAt: ATProtocolDate(date: currentDate)
+          )
+          
+          // Notify that a new post (thread root) was created
+          appState.stateInvalidationBus.notify(.postCreated(tempPost))
+          
+          // Also notify thread update for the new thread
+          appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
         }
       }
 

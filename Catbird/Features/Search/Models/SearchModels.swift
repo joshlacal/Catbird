@@ -12,7 +12,6 @@ import Petrel
 
 // MARK: - Extension methods for common search operations
 
-
 extension AppBskyActorDefs.ProfileView {
     /// Check if this profile is following the current user
     func isFollowingUser(did: String) -> Bool {
@@ -131,4 +130,3 @@ struct TaggedSuggestionItem: Identifiable {
         self.subject = suggestion.subject.uriString()
     }
 }
-

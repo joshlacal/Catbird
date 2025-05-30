@@ -116,6 +116,8 @@ struct ActionButtonsView: View {
       ) {
         showingPostComposer = true
       }
+      .accessibilityIdentifier("replyButton")
+        .accessibilityLabel("Reply. Replies count: \(post.replyCount ?? 0)")
       .disabled(post.viewer?.replyDisabled ?? false)
       Spacer()
 
@@ -134,6 +136,8 @@ struct ActionButtonsView: View {
         // Trigger repost animation if needed (logic might go in RepostOptionsView or viewModel)
         // interactionState.animateRepost = true // Example trigger point
       }
+      .accessibilityIdentifier("repostButton")
+      .accessibilityLabel(interactionState.isReposted ? "Remove Repost. Repost count: \(interactionState.repostCount)" : "Repost or Quote Post. Repost count: \(interactionState.repostCount)")
 
       Spacer()
 
@@ -162,6 +166,9 @@ struct ActionButtonsView: View {
           await MainActor.run { interactionState.animateLike = false }
         }
       }
+        .accessibilityIdentifier("likeButton")
+        .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
+        
       Spacer()
 
       // Share Button (system share sheet only)
@@ -177,6 +184,8 @@ struct ActionButtonsView: View {
           await viewModel.share(post: post)
         }
       }
+      .accessibilityIdentifier("shareButton")
+        .accessibilityLabel("Share")
     }
     .font(isBig ? .title3 : .callout)
     .frame(height: isBig ? 54 : 45)
@@ -197,8 +206,7 @@ struct ActionButtonsView: View {
 
       // Start cancellable task for continuous updates
       updateTask = Task {
-        for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString())
-        {
+        for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
           try Task.checkCancellation()  // Check if task was cancelled
           await refreshState()
         }

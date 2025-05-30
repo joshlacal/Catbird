@@ -8,7 +8,6 @@
 import SwiftUI
 import Petrel
 
-
 struct LikesView: View {
     let postUri: String
     @Environment(AppState.self) private var appState

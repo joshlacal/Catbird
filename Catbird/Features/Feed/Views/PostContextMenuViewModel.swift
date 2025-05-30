@@ -5,11 +5,9 @@
 //  Created by Josh LaCalamito on 8/29/24.
 //
 
-
 import SwiftUI
 import Petrel
 import Observation
-
 
 @Observable
 final class PostContextMenuViewModel {
@@ -17,7 +15,7 @@ final class PostContextMenuViewModel {
     let post: AppBskyFeedDefs.PostView
     
     // Reporting callback - will be set by PostView
-    var onReportPost: (() -> Void)? = nil
+    var onReportPost: (() -> Void)?
 
     init(appState: AppState, post: AppBskyFeedDefs.PostView) {
         self.appState = appState
@@ -28,9 +26,9 @@ final class PostContextMenuViewModel {
         guard let did = appState.currentUserDID else { return }
         do {
             let input = ComAtprotoRepoDeleteRecord.Input(
-                repo: try ATIdentifier(string:did),
-                collection: try NSID(nsidString:"app.bsky.feed.post"),
-                rkey: try RecordKey(keyString:post.uri.recordKey ?? "")
+                repo: try ATIdentifier(string: did),
+                collection: try NSID(nsidString: "app.bsky.feed.post"),
+                rkey: try RecordKey(keyString: post.uri.recordKey ?? "")
             )
 
             let responseCode = try await appState.atProtoClient?.com.atproto.repo.deleteRecord(input: input).responseCode
@@ -42,7 +40,7 @@ final class PostContextMenuViewModel {
         }
     }
 
-    func blockUser() async  {
+    func blockUser() async {
         guard let did = appState.currentUserDID else { return }
         let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
         do {

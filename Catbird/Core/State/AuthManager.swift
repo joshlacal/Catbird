@@ -112,12 +112,12 @@ final class AuthenticationManager {
 
       // Assuming initializer doesn't throw based on compiler error
       client = await ATProtoClient(
-        authMethod: .oauth,
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        environment: .production,
         userAgent: "Catbird/1.0"
       )
+        
+      await client?.applicationDidBecomeActive()
 
       // Check if client creation succeeded (if it returns optional or has an error state)
       // This part might need adjustment based on ATProtoClient's actual non-throwing failure mechanism
@@ -178,7 +178,7 @@ final class AuthenticationManager {
             logger.info("Auth state updated to authenticated via proper channels")
 
             // Double check the state was updated properly
-            logger.info("Current state after update: \(String(describing:self.state))")
+            logger.info("Current state after update: \(String(describing: self.state))")
           }
         } catch {
           logger.error("Error fetching user identity: \(error.localizedDescription)")
@@ -251,7 +251,6 @@ final class AuthenticationManager {
     let refreshResult = try? await client.refreshToken()
     logger.info(
       "Token refresh result: \(refreshResult == true ? "success" : "failed or not needed")")
-
 
     // Verify session is valid after the refresh attempt
     let hasValidSession = await client.hasValidSession()
@@ -327,9 +326,8 @@ final class AuthenticationManager {
       return
     }
 
-    do {
       // Get current DID for marking active account
-      var currentDID: String? = nil
+      var currentDID: String?
       if case .authenticated(let did) = state {
         currentDID = did
       }
@@ -341,11 +339,11 @@ final class AuthenticationManager {
       // Build account info objects
       var accountInfos: [AccountInfo] = []
 
-      for did in accounts {
+      for account in accounts {
         // Try to get handle for this account (may require switching to it temporarily)
-        var handle: String? = nil
+        var handle: String?
 
-        if did == currentDID {
+          if account.did == currentDID {
           // For current account, we can get handle directly
           handle = try? await client.getHandle()
         } else {
@@ -353,16 +351,12 @@ final class AuthenticationManager {
           // Handle will be nil, but that's ok for now
         }
 
-        let isActive = did == currentDID
-        accountInfos.append(AccountInfo(did: did, handle: handle, isActive: isActive))
+          let isActive = account.did == currentDID
+          accountInfos.append(AccountInfo(did: account.did, handle: handle, isActive: isActive))
       }
 
       // Update state
       availableAccounts = accountInfos
-    } catch {
-      logger.error("Error listing accounts: \(error.localizedDescription)")
-      availableAccounts = []
-    }
   }
 
   /// Switch to a different account
@@ -385,9 +379,8 @@ final class AuthenticationManager {
       updateState(.initializing)
 
       // Switch account in client
-      let success = try await client.switchToAccount(did: did)
+      try await client.switchToAccount(did: did)
 
-      if success {
         // Get new account info
         let newDid = try await client.getDid()
         self.handle = try await client.getHandle()
@@ -396,9 +389,6 @@ final class AuthenticationManager {
         updateState(.authenticated(userDID: newDid))
         logger.info(
           "Successfully switched to account: \(self.handle ?? "unknown") with DID: \(newDid)")
-      } else {
-        throw AuthError.invalidSession
-      }
     } catch {
       logger.error("Error switching accounts: \(error.localizedDescription)")
       updateState(.error(message: "Failed to switch accounts: \(error.localizedDescription)"))
@@ -424,7 +414,7 @@ final class AuthenticationManager {
 
     do {
       // Use client's addAccount method which handles preserving the current account
-      let authURL = try await client.addAccount(identifier: handle)
+      let authURL = try await client.startOAuthFlow(identifier: handle)
       logger.debug("OAuth URL generated for new account: \(authURL)")
 
       // Update state

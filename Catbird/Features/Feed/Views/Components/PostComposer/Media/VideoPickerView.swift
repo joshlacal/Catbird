@@ -123,12 +123,13 @@ struct VideoPickerView: View {
 
 #Preview {
     VideoPickerView(
-        videoItem: .constant(PostComposerViewModel.MediaItem(
-            pickerItem: PhotosPickerItem(itemIdentifier: "preview"),
-            image: Image(systemName: "video"),
-            altText: "Preview video",
-            isLoading: false
-        )),
+        videoItem: .constant({
+            var item = PostComposerViewModel.MediaItem()
+            item.image = Image(systemName: "video")
+            item.altText = "Preview video"
+            item.isLoading = false
+            return item
+        }()),
         isUploading: .constant(false),
         mediaUploadManager: nil,
         onEditAlt: { _ in }

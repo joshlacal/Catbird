@@ -8,6 +8,7 @@ import Nuke
 /// A unified profile view that handles both current user and other user profiles
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var currentColorScheme
   @State private var viewModel: ProfileViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
@@ -31,7 +32,8 @@ struct UnifiedProfileView: View {
       wrappedValue: ProfileViewModel(
         client: appState.atProtoClient,
         userDID: currentUserDID,
-        currentUserDID: currentUserDID
+        currentUserDID: currentUserDID,
+        stateInvalidationBus: appState.stateInvalidationBus
       ))
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
@@ -49,7 +51,8 @@ struct UnifiedProfileView: View {
       wrappedValue: ProfileViewModel(
         client: appState.atProtoClient,
         userDID: userDID,
-        currentUserDID: appState.currentUserDID
+        currentUserDID: appState.currentUserDID,
+        stateInvalidationBus: appState.stateInvalidationBus
       ))
     self._selectedTab = selectedTab
     self._lastTappedTab = .constant(nil)
@@ -79,6 +82,7 @@ struct UnifiedProfileView: View {
                       isEditingProfile: $isEditingProfile,
                       path: $navigationPath
                   )
+                  .themedListRowBackground(appState.themeManager)
                   // 1. Define specific insets for the header row
                   .listRowInsets(EdgeInsets())
                   // 2. Apply padding below the header if needed
@@ -118,6 +122,7 @@ struct UnifiedProfileView: View {
                 }
               )
             }
+            .themedListRowBackground(appState.themeManager)
             .listRowSeparator(.hidden)
             .padding(.vertical, 0)
             .listSectionSpacing(0)
@@ -130,6 +135,7 @@ struct UnifiedProfileView: View {
           .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
             .listSectionSpacing(0)
           .listStyle(.plain)
+          .themedPrimaryBackground(appState.themeManager)
           .refreshable {
             // Pull to refresh all content - using a single task
             await refreshAllContent()
@@ -625,7 +631,7 @@ struct UnifiedProfileView: View {
       ProgressView()
         .scaleEffect(1.5)
       Text("Loading profile...")
-        .foregroundColor(.secondary)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
         .padding(.top)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -652,7 +658,7 @@ struct UnifiedProfileView: View {
                   
                   Text("This profile may not exist or is not accessible")
                       .font(.subheadline)
-                      .foregroundColor(.secondary)
+                      .foregroundStyle(.secondary)
                       .multilineTextAlignment(.center)
                       .padding(.horizontal)
               }
@@ -668,14 +674,14 @@ struct UnifiedProfileView: View {
 
       Image(systemName: "square.stack.3d.up.slash")
         .font(.system(size: 48))
-        .foregroundColor(.secondary)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
 
       Text(title)
         .font(.title3)
         .fontWeight(.semibold)
 
       Text(message)
-        .foregroundColor(.secondary)
+        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
         .multilineTextAlignment(.center)
         .padding(.horizontal)
 
@@ -818,7 +824,7 @@ struct ProfileHeader: View {
 
                 Text("@\(profile.handle)")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
                 if profile.viewer?.followedBy != nil {
@@ -855,7 +861,7 @@ struct ProfileHeader: View {
                         Text("Following")
                             .fixedSize(horizontal: true, vertical: false)
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .buttonStyle(.plain)
@@ -873,7 +879,7 @@ struct ProfileHeader: View {
                         Text("Followers")
                             .fixedSize(horizontal: true, vertical: false)
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .buttonStyle(.plain)
@@ -1168,13 +1174,13 @@ struct FeedRowView: View {
                 
                 Text("by @\(feed.creator.handle)")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
                 if let description = feed.description, !description.isEmpty {
                     Text(description)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .padding(.top, 2)
                 }
@@ -1183,7 +1189,7 @@ struct FeedRowView: View {
                 if feed.likeCount ?? 0 > 0 {
                     Text("\(feed.likeCount ?? 0) likes")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
             }
             
@@ -1191,7 +1197,7 @@ struct FeedRowView: View {
             
             // Chevron indicator
             Image(systemName: "chevron.right")
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
                 .font(.caption)
         }
         .padding(.vertical, 8)

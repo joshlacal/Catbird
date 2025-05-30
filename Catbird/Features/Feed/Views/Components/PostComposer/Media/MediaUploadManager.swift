@@ -11,7 +11,8 @@ import Petrel
 import SwiftUI
 
 /// Manages media upload operations including image and video processing
-@Observable class MediaUploadManager {
+@Observable
+final class MediaUploadManager {
   // MARK: - Properties
 
   private let client: ATProtoClient
@@ -55,8 +56,7 @@ import SwiftUI
 
     // Compress if needed (AT Protocol limit is 1MB)
     if let image = UIImage(data: processedData),
-      let compressed = compressImage(image, maxSizeInBytes: 900_000)
-    {
+      let compressed = compressImage(image, maxSizeInBytes: 900_000) {
       processedData = compressed
     }
 
@@ -88,9 +88,9 @@ import SwiftUI
       logger.debug("DEBUG: Using DID: \(didValue)")
       
       let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-        aud: try DID(didString:"did:web:video.bsky.app"),
+        aud: try DID(didString: "did:web:video.bsky.app"),
         exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
-        lxm: try NSID(nsidString:"app.bsky.video.getUploadLimits")
+        lxm: try NSID(nsidString: "app.bsky.video.getUploadLimits")
       )
       
       let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
@@ -118,9 +118,9 @@ import SwiftUI
     logger.debug("DEBUG: Using DID: \(didValue)")
     
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-        aud: try DID(didString:"did:web:\(await client.baseURL.host ?? "bsky.social")"),
+        aud: try DID(didString: "did:web:\(await client.baseURL.host ?? "bsky.social")"),
       exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
-        lxm: try NSID(nsidString:"com.atproto.repo.uploadBlob")
+        lxm: try NSID(nsidString: "com.atproto.repo.uploadBlob")
     )
     
     let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
@@ -274,7 +274,7 @@ import SwiftUI
     var urlComponents = URLComponents(url: uploadURL, resolvingAgainstBaseURL: true)!
     urlComponents.queryItems = [
       URLQueryItem(name: "did", value: didValue),
-      URLQueryItem(name: "name", value: generateUniqueVideoName()),
+      URLQueryItem(name: "name", value: generateUniqueVideoName())
     ]
     uploadURL = urlComponents.url!
     logger.debug("DEBUG: Upload URL: \(uploadURL)")
@@ -387,7 +387,6 @@ import SwiftUI
     let maxAttempts = 30  // Timeout after 5 minutes (30 * 10 seconds)
     var consecutiveErrorCount = 0
     let maxConsecutiveErrors = 3
-
     
     while blob == nil && attempts < maxAttempts {
       attempts += 1
@@ -525,8 +524,7 @@ import SwiftUI
 
   /// Creates a video embed from the uploaded blob
   func createVideoEmbed(aspectRatio: CGSize?, alt: String) -> AppBskyFeedPost
-    .AppBskyFeedPostEmbedUnion?
-  {
+    .AppBskyFeedPostEmbedUnion? {
     guard let blob = uploadedBlob else {
       return nil
     }

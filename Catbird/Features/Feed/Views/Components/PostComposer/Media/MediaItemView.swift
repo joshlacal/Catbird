@@ -98,23 +98,25 @@ struct MediaItemView: View {
 #Preview {
     HStack {
         MediaItemView(
-            item: PostComposerViewModel.MediaItem(
-                pickerItem: PhotosPickerItem(itemIdentifier: "preview-image"),
-                image: Image(systemName: "photo"),
-                altText: "",
-                isLoading: false
-            ),
+            item: {
+                var item = PostComposerViewModel.MediaItem()
+                item.image = Image(systemName: "photo")
+                item.altText = ""
+                item.isLoading = false
+                return item
+            }(),
             onRemove: {},
             onEditAlt: {}
         )
         
         MediaItemView(
-            item: PostComposerViewModel.MediaItem(
-                pickerItem: PhotosPickerItem(itemIdentifier: "preview-video"),
-                image: Image(systemName: "photo"),
-                altText: "A sample video",
-                isLoading: false
-            ),
+            item: {
+                var item = PostComposerViewModel.MediaItem()
+                item.image = Image(systemName: "photo")
+                item.altText = "A sample video"
+                item.isLoading = false
+                return item
+            }(),
             onRemove: {},
             onEditAlt: {},
             isVideo: true

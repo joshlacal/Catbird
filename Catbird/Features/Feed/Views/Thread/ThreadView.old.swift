@@ -17,7 +17,7 @@
 //  @State private var hasScrolledToMainPost = false
 //
 //  @State private var parentPosts: [ParentPost] = []
-//  @State private var mainPost: AppBskyFeedDefs.PostView? = nil
+//  @State private var mainPost: AppBskyFeedDefs.PostView?
 //  @State private var replyWrappers: [ReplyWrapper] = []
 //
 //  private static let mainPostID = "main-post-id"
@@ -214,7 +214,7 @@
 //        .font(.subheadline)
 //        .foregroundColor(.orange)
 //        .padding(.horizontal, 3)
-//    case .pending(_):
+//    case .pending:
 //      EmptyView()
 //    }
 //  }
@@ -241,7 +241,7 @@
 //    isLoadingMoreParents = true
 //
 //    Task { @MainActor in
-//      var postURI: ATProtocolURI? = nil
+//      var postURI: ATProtocolURI?
 //
 //      // Handle the post based on its type
 //      var oldestParentPost = oldestParent.post
@@ -292,8 +292,7 @@
 //            
 //            // Log manager result but don't rely on it for UI updates
 //            logger.debug("loadMoreParents: Manager reported \(success ? "success" : "no change or failure")")
-//        }
-//        else {
+//        } else {
 //        logger.debug("loadMoreParents: No valid parent post found for reference")
 //      }
 //
@@ -343,11 +342,10 @@
 //  }
 //
 //    private func collectParentPosts(from initialPost: AppBskyFeedDefs.ThreadViewPostParentUnion?)
-//      -> [ParentPost]
-//    {
+//      -> [ParentPost] {
 //      var parents: [ParentPost] = []
 //      var currentPost = initialPost
-//      var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil
+//      var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
 //      var depth = 0
 //            
 //      while let post = currentPost {
@@ -384,7 +382,7 @@
 //            logger.debug("collectParentPosts: Could not access parent through pending post")
 //          }
 //
-//        case .unexpected(_):
+//        case .unexpected:
 //          let unexpectedID = "unexpected-\(depth)-\(UUID().uuidString.prefix(8))"
 //          logger.debug("collectParentPosts: Found unexpected post type at depth \(depth): \(unexpectedID)")
 //          parents.append(ParentPost(id: unexpectedID, post: post, grandparentAuthor: grandparentAuthor))
@@ -455,7 +453,7 @@
 //    case .unexpected(let unexpected):
 //      Text("Unexpected reply type: \(unexpected.textRepresentation)")
 //        .foregroundColor(.orange)
-//    case .pending(_):
+//    case .pending:
 //      EmptyView()
 //    }
 //  }
@@ -535,7 +533,7 @@
 //      return blockedPost.uri.uriString()
 //    case .unexpected:
 //      return UUID().uuidString
-//    case .pending(_):
+//    case .pending:
 //      return UUID().uuidString
 //    }
 //  }

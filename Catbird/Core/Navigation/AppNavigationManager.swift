@@ -14,15 +14,22 @@ import SwiftUI
         0: NavigationPath(),
         1: NavigationPath(),
         2: NavigationPath(),
-        3: NavigationPath()
+        3: NavigationPath(),
+        4: NavigationPath() // Add path for Chat tab
     ]
     
     // Track the current tab index
     private(set) var currentTabIndex: Int = 0
-    
+    var tabSelection: ((Int) -> Void)?
+
     // Set the current tab index - called when the user switches tabs
     func updateCurrentTab(_ index: Int) {
         currentTabIndex = index
+    }
+
+    // Add a method to register the tab selection callback
+    func registerTabSelectionCallback(_ callback: @escaping (Int) -> Void) {
+        self.tabSelection = callback
     }
     
     // Navigate to a destination in the current tab or a specified tab
@@ -49,5 +56,5 @@ import SwiftUI
             set: { self.tabPaths[tabIndex] = $0 }
         )
     }
+    
 }
-

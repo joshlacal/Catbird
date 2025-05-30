@@ -125,7 +125,7 @@ final class PreferencesManager {
     }
 
     // Ensure model context is available
-      guard modelContext != nil else {
+    guard modelContext != nil else {
       logger.error("ModelContext not available for preferences")
       state = .error("ModelContext not initialized")
       throw PreferencesManagerError.modelContextNotInitialized
@@ -136,10 +136,18 @@ final class PreferencesManager {
       let localPreferences = try await loadPreferences()
 
       // Use cached server preferences if available and not forcing refresh
-      if !forceRefresh && cachedServerPreferences != nil {
+      if !forceRefresh, let cachedPrefs = cachedServerPreferences {
         logger.info(
-          "Using cached server preferences (pinned: \(self.cachedServerPreferences?.pinnedFeeds.count ?? 0), saved: \(self.cachedServerPreferences?.savedFeeds.count ?? 0))"
+          "Using cached server preferences (pinned: \(cachedPrefs.pinnedFeeds.count), saved: \(cachedPrefs.savedFeeds.count))"
         )
+        // Ensure the cache is also applied to SwiftData if it differs significantly
+        // This handles cases where the app might have quit before a save completed.
+        if let localPrefs = localPreferences,
+          !arePreferencesSemanticallyEqual(localPrefs, cachedPrefs) {
+          logger.warning(
+            "Cached preferences differ from local SwiftData. Updating SwiftData from cache.")
+          try await savePreferences(cachedPrefs)  // Update local store
+        }
         state = .ready
         return
       }
@@ -155,10 +163,8 @@ final class PreferencesManager {
         logger.info(
           "Using complete local preferences - Pinned: \(localPreferences?.pinnedFeeds.count ?? 0), Saved: \(localPreferences?.savedFeeds.count ?? 0)"
         )
-
         // Cache these complete local preferences
         cachedServerPreferences = localPreferences
-
         state = .ready
         return
       }
@@ -175,64 +181,79 @@ final class PreferencesManager {
       // Fetch from server
       logger.info("Fetching preferences from server")
       let params = AppBskyActorGetPreferences.Parameters()
-      let prefs = try await client.app.bsky.actor.getPreferences(input: params)
+      let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
 
-      guard let result = prefs.data?.preferences else {
+      guard let resultItems = serverResponse.data?.preferences.items else {
         logger.error("No preferences data found in server response")
         state = .error("No preferences data found")
         throw PreferencesManagerError.invalidData
       }
 
-      // Process all preference types
-      var savedFeeds: [String] = []
-      var pinnedFeeds: [String] = []
-      var contentLabelPrefs: [ContentLabelPreference] = []
-      var threadViewPref: ThreadViewPreference? = nil
-      var feedViewPref: FeedViewPreference? = nil
-      var adultContentEnabled: Bool = false
-      var birthDate: Date? = nil
-      var mutedWords: [MutedWord] = []
-      var hiddenPosts: [String] = []
-      var labelers: [LabelerPreference] = []
-      var activeProgressGuide: String? = nil
-      var queuedNudges: [String] = []
-      var nuxStates: [NuxState] = []
-      var interests: [String] = []
+      // Process all preference types from server
+      var serverSavedFeeds: [String] = []
+      var serverPinnedFeeds: [String] = []
+      var serverContentLabelPrefs: [ContentLabelPreference] = []
+      var serverThreadViewPref: ThreadViewPreference?
+      var serverFeedViewPref: FeedViewPreference?
+      var serverAdultContentEnabled: Bool = false
+      var serverBirthDate: Date?
+      var serverMutedWords: [MutedWord] = []
+      var serverHiddenPosts: [String] = []
+      var serverLabelers: [LabelerPreference] = []
+      var serverActiveProgressGuide: String?
+      var serverQueuedNudges: [String] = []
+      var serverNuxStates: [NuxState] = []
+      var serverInterests: [String] = []
 
-      for pref in result.items {
+      // --- Process Server Response ---
+      var didProcessV2Feeds = false  // Flag to prioritize V2
+      for pref in resultItems {
         switch pref {
-        case .savedFeedsPref(let value):
-          savedFeeds = value.saved.map { $0.uriString() }
-          pinnedFeeds = value.pinned.map { $0.uriString() }
+        case .savedFeedsPref(let value):  // V1
+          if !didProcessV2Feeds {  // Only process V1 if V2 wasn't found
+            serverSavedFeeds = value.saved.map { $0.uriString() }
+            serverPinnedFeeds = value.pinned.map { $0.uriString() }
+            logger.debug(
+              "[fetchPreferences] Processed V1 Feeds (V2 not found): Pinned=\(serverPinnedFeeds.count), Saved=\(serverSavedFeeds.count)"
+            )
+          } else {
+            logger.debug(
+              "[fetchPreferences] Skipping V1 Feeds processing because V2 was already processed.")
+          }
 
-        case .savedFeedsPrefV2(let value):
-          savedFeeds = value.items.filter { !$0.pinned }.map { $0.value }
-          pinnedFeeds = value.items.filter { $0.pinned }.map { $0.value }
+        case .savedFeedsPrefV2(let value):  // V2 (overwrites V1, preserves order)
+          serverPinnedFeeds = value.items.filter { $0.pinned }.map { $0.value }
+          serverSavedFeeds = value.items.filter { !$0.pinned }.map { $0.value }
+          didProcessV2Feeds = true  // Mark V2 as processed
+          logger.debug(
+            "[fetchPreferences] Processed V2 Feeds: Pinned=\(serverPinnedFeeds.count), Saved=\(serverSavedFeeds.count)"
+          )
+          logger.debug("[fetchPreferences] V2 Pinned Order: \(serverPinnedFeeds)")
 
         case .contentLabelPref(let value):
-          contentLabelPrefs.append(
+          serverContentLabelPrefs.append(
             ContentLabelPreference(
-                labelerDid: value.labelerDid,
+              labelerDid: value.labelerDid,
               label: value.label,
               visibility: value.visibility
             ))
 
         case .adultContentPref(let value):
-          adultContentEnabled = value.enabled
+          serverAdultContentEnabled = value.enabled
 
         case .personalDetailsPref(let value):
           if let dateStr = value.birthDate?.date {
-            birthDate = dateStr
+            serverBirthDate = dateStr
           }
 
         case .threadViewPref(let value):
-          threadViewPref = ThreadViewPreference(
+          serverThreadViewPref = ThreadViewPreference(
             sort: value.sort,
             prioritizeFollowedUsers: value.prioritizeFollowedUsers
           )
 
         case .feedViewPref(let value):
-          feedViewPref = FeedViewPreference(
+          serverFeedViewPref = FeedViewPreference(
             hideReplies: value.hideReplies,
             hideRepliesByUnfollowed: value.hideRepliesByUnfollowed,
             hideRepliesByLikeCount: value.hideRepliesByLikeCount,
@@ -241,9 +262,9 @@ final class PreferencesManager {
           )
 
         case .mutedWordsPref(let value):
-          mutedWords = value.items.map { item in
+          serverMutedWords = value.items.map { item in
             MutedWord(
-              id: item.id ?? "",  // We'll generate a TID when saving if empty
+              id: item.id ?? "",
               value: item.value,
               targets: item.targets.map { $0.rawValue },
               actorTarget: item.actorTarget,
@@ -252,15 +273,15 @@ final class PreferencesManager {
           }
 
         case .hiddenPostsPref(let value):
-          hiddenPosts = value.items.map { $0.uriString() }
+          serverHiddenPosts = value.items.map { $0.uriString() }
 
         case .labelersPref(let value):
-            labelers = value.labelers.map { LabelerPreference(did: $0.did) }
+          serverLabelers = value.labelers.map { LabelerPreference(did: $0.did) }
 
         case .bskyAppStatePref(let value):
-          activeProgressGuide = value.activeProgressGuide?.guide
-          queuedNudges = value.queuedNudges ?? []
-          nuxStates = (value.nuxs ?? []).map { nux in
+          serverActiveProgressGuide = value.activeProgressGuide?.guide
+          serverQueuedNudges = value.queuedNudges ?? []
+          serverNuxStates = (value.nuxs ?? []).map { nux in
             NuxState(
               id: nux.id,
               completed: nux.completed,
@@ -270,47 +291,50 @@ final class PreferencesManager {
           }
 
         case .interestsPref(let value):
-          interests = value.tags
-
-        default:
-          // Handle other preference types or unknown types
-          logger.debug("Unhandled preference type encountered")
-          break
+          serverInterests = value.tags
+          default:
+            logger.debug("Unhandled preference type encountered: \(String(describing: pref))")
         }
       }
+      // --- End Processing Server Response ---
 
-      // Log what we found from server
-      logger.info("Server preferences - Pinned: \(pinnedFeeds.count), Saved: \(savedFeeds.count)")
-
-      // Create and save complete preferences
-      let preferences = Preferences(
-        savedFeeds: savedFeeds,
-        pinnedFeeds: pinnedFeeds,
-        contentLabelPrefs: contentLabelPrefs,
-        threadViewPref: threadViewPref,
-        feedViewPref: feedViewPref,
-        adultContentEnabled: adultContentEnabled,
-        birthDate: birthDate,
-        mutedWords: mutedWords,
-        hiddenPosts: hiddenPosts,
-        labelers: labelers,
-        activeProgressGuide: activeProgressGuide,
-        queuedNudges: queuedNudges,
-        nuxStates: nuxStates,
-        interests: interests
+      logger.info(
+        "Server preferences parsed - Pinned: \(serverPinnedFeeds.count), Saved: \(serverSavedFeeds.count)"
       )
 
-      // IMPORTANT: Cache server preferences
-      cachedServerPreferences = preferences
+      // --- Update Local Preferences using updateFeeds logic ---
+      let currentPrefs = try await getPreferences()  // Get or create local instance
 
-      try await savePreferences(preferences)
-      logger.info("All preferences fetched and saved successfully")
+      // Update feeds using the robust updateFeeds method
+      currentPrefs.updateFeeds(pinned: serverPinnedFeeds, saved: serverSavedFeeds)
+
+      // Update other preferences directly
+      currentPrefs.contentLabelPrefs = serverContentLabelPrefs
+      currentPrefs.threadViewPref = serverThreadViewPref
+      currentPrefs.feedViewPref = serverFeedViewPref
+      currentPrefs.adultContentEnabled = serverAdultContentEnabled
+      currentPrefs.birthDate = serverBirthDate
+      currentPrefs.mutedWords = serverMutedWords
+      currentPrefs.hiddenPosts = serverHiddenPosts
+      currentPrefs.labelers = serverLabelers
+      currentPrefs.activeProgressGuide = serverActiveProgressGuide
+      currentPrefs.queuedNudges = serverQueuedNudges
+      currentPrefs.nuxStates = serverNuxStates
+      currentPrefs.interests = serverInterests
+
+      // Save the updated local preferences object
+      try await savePreferences(currentPrefs)  // Saves the modified currentPrefs to SwiftData
+      logger.info("Local preferences updated and saved from server data.")
+
+      // IMPORTANT: Update the cache with the processed preferences
+      cachedServerPreferences = currentPrefs
+      logger.debug("Updated cachedServerPreferences after processing server data.")
 
       // Update state
       state = .ready
 
     } catch {
-      logger.error("Failed to fetch preferences: \(error.localizedDescription)")
+      logger.error("Failed to fetch and process preferences: \(error.localizedDescription)")
       state = .error(error.localizedDescription)
       throw error
     }
@@ -348,8 +372,7 @@ final class PreferencesManager {
     if let preferences = try await loadPreferences() {
       // If these are complete preferences (not just default following), cache them
       if !preferences.pinnedFeeds.isEmpty && preferences.pinnedFeeds.count > 1
-        || !preferences.pinnedFeeds.allSatisfy({ SystemFeedTypes.isTimelineFeed($0) })
-      {
+        || !preferences.pinnedFeeds.allSatisfy({ SystemFeedTypes.isTimelineFeed($0) }) {
         logger.debug("Caching complete local preferences")
         cachedServerPreferences = preferences
       }
@@ -395,7 +418,7 @@ final class PreferencesManager {
     logger.debug("Preferences saved successfully")
   }
 
-  /// Updates preferences with new feed lists
+  /// Updates preferences with new feed lists AND SAVES
   @MainActor
   func updatePreferences(savedFeeds: [String], pinnedFeeds: [String]) async throws {
     guard let modelContext = modelContext else {
@@ -403,12 +426,19 @@ final class PreferencesManager {
       throw PreferencesManagerError.modelContextNotInitialized
     }
 
-    let preferences = try await getPreferences()
-    preferences.updateFeeds(pinned: pinnedFeeds, saved: savedFeeds)
-    try modelContext.save()
+    let preferences = try await getPreferences()  // Get existing or default
+    preferences.updateFeeds(pinned: pinnedFeeds, saved: savedFeeds)  // Use the model's logic
+
+    // Save the changes locally
+    try await savePreferences(preferences)  // This handles insert or update in SwiftData
+
+    // Update the cache
+    cachedServerPreferences = preferences
+
     logger.info(
-      "Preferences updated with \(savedFeeds.count) saved feeds and \(pinnedFeeds.count) pinned feeds"
+      "Preferences updated locally with \(preferences.savedFeeds.count) saved feeds and \(preferences.pinnedFeeds.count) pinned feeds"
     )
+    // Note: Syncing is handled separately by saveAndSyncPreferences or setPinned/SavedFeeds
   }
 
   /// Saves preferences to both SwiftData and Bluesky API
@@ -417,8 +447,14 @@ final class PreferencesManager {
     // First save locally
     try await savePreferences(preferences)
 
+    // Update cache so getPreferences returns the latest pinnedFeeds order
+    cachedServerPreferences = preferences
+
     // Then sync with server
     try await syncToServer(preferences)
+
+    // Refresh cache again post-sync
+    cachedServerPreferences = preferences
 
     logger.debug("Preferences saved and synced to server")
   }
@@ -477,26 +513,20 @@ final class PreferencesManager {
     }
 
     if !timelineInPinned {
-      // Put timeline feed at the beginning of the list
-      prefsToSync.pinnedFeeds.insert(SystemFeedTypes.following, at: 0)
+      // Ensure timeline feed exists without changing order
+      prefsToSync.pinnedFeeds.append(SystemFeedTypes.following)
       logger.warning("Added missing timeline feed before syncing to server")
-    } else if let timelineFeed = prefsToSync.pinnedFeeds.first(where: {
-      SystemFeedTypes.isTimelineFeed($0)
-    }) {
-      // Ensure timeline feed is first in the list
-      prefsToSync.pinnedFeeds.removeAll { $0 == timelineFeed }
-      prefsToSync.pinnedFeeds.insert(timelineFeed, at: 0)
     }
 
     // Create V2 saved feeds format
     var savedItems: [AppBskyActorDefs.SavedFeed] = []
 
-    // Add pinned feeds
-    for uri in prefsToSync.pinnedFeeds {
+    // Add pinned feeds in their exact order
+    for uri in preferences.pinnedFeeds {
       let feedType = SystemFeedTypes.isTimelineFeed(uri) ? "timeline" : "feed"
       savedItems.append(
         AppBskyActorDefs.SavedFeed(
-            id: await TIDGenerator.next(),
+          id: await TIDGenerator.next(),  // Generate new ID for server consistency
           type: feedType,
           value: uri,
           pinned: true
@@ -504,24 +534,24 @@ final class PreferencesManager {
       )
     }
 
-    // Add saved feeds
-    for uri in prefsToSync.savedFeeds {
+    // Add saved feeds (order doesn't strictly matter as much for saved, but maintain consistency)
+    for uri in preferences.savedFeeds {
       savedItems.append(
         AppBskyActorDefs.SavedFeed(
-            id: await TIDGenerator.next(),
-          type: "feed",
+          id: await TIDGenerator.next(),  // Generate new ID
+          type: "feed",  // Assume saved are always custom feeds
           value: uri,
           pinned: false
         )
       )
     }
 
-    // Add feed preferences
+    // Add feed preferences (V2)
     allPrefItems.append(.savedFeedsPrefV2(AppBskyActorDefs.SavedFeedsPrefV2(items: savedItems)))
 
-    // Add V1 format for backward compatibility
-    let pinnedUris = prefsToSync.pinnedFeeds.compactMap { try? ATProtocolURI(uriString: $0) }
-    let savedUris = prefsToSync.savedFeeds.compactMap { try? ATProtocolURI(uriString: $0) }
+    // Add V1 format for backward compatibility (order might be less critical here, but use current order)
+    let pinnedUris = preferences.pinnedFeeds.compactMap { try? ATProtocolURI(uriString: $0) }
+    let savedUris = preferences.savedFeeds.compactMap { try? ATProtocolURI(uriString: $0) }
 
     allPrefItems.append(
       .savedFeedsPref(
@@ -594,7 +624,7 @@ final class PreferencesManager {
           return target == "content" ? .content : .tag
         }
 
-        var expiresAtDate: ATProtocolDate? = nil
+        var expiresAtDate: ATProtocolDate?
         if let expires = word.expiresAt {
           let dateFormatter = ISO8601DateFormatter()
           expiresAtDate = ATProtocolDate(iso8601String: dateFormatter.string(from: expires))
@@ -630,15 +660,14 @@ final class PreferencesManager {
 
     // 10. Add app state preferences if needed
     if !prefsToSync.nuxStates.isEmpty || prefsToSync.activeProgressGuide != nil
-      || !prefsToSync.queuedNudges.isEmpty
-    {
-      var progressGuide: AppBskyActorDefs.BskyAppProgressGuide? = nil
+      || !prefsToSync.queuedNudges.isEmpty {
+      var progressGuide: AppBskyActorDefs.BskyAppProgressGuide?
       if let guide = prefsToSync.activeProgressGuide {
         progressGuide = AppBskyActorDefs.BskyAppProgressGuide(guide: guide)
       }
 
       let nuxItems = prefsToSync.nuxStates.map { nux -> AppBskyActorDefs.Nux in
-        var expiresAtDate: ATProtocolDate? = nil
+        var expiresAtDate: ATProtocolDate?
         if let expires = nux.expiresAt {
           let dateFormatter = ISO8601DateFormatter()
           expiresAtDate = ATProtocolDate(iso8601String: dateFormatter.string(from: expires))
@@ -684,97 +713,11 @@ final class PreferencesManager {
     logger.info("Successfully synced all preferences to server")
   }
 
-  /// Method to ensure the timeline feed exists and is in the pinned feeds
-  @MainActor
-  func fixTimelineFeedIssue() async throws {
-    // Load current preferences
-    let preferences = try await getPreferences()
-
-    // Log current state for debugging
-    logger.debug("Current pinned feeds: \(preferences.pinnedFeeds)")
-    logger.debug("Current saved feeds: \(preferences.savedFeeds)")
-
-    // Check if timeline feed is present in pinned feeds
-    let timelineInPinned = preferences.pinnedFeeds.contains {
-      SystemFeedTypes.isTimelineFeed($0)
-    }
-
-    if !timelineInPinned {
-      var newPinned = preferences.pinnedFeeds
-      var newSaved = preferences.savedFeeds
-
-      // Look for timeline in saved feeds first
-      if let timelineFeed = preferences.savedFeeds.first(where: {
-        SystemFeedTypes.isTimelineFeed($0)
-      }) {
-        // Move from saved to pinned
-        newPinned.append(timelineFeed)
-        newSaved.removeAll { SystemFeedTypes.isTimelineFeed($0) }
-        logger.info("Moving timeline feed from saved to pinned: \(timelineFeed)")
-      } else {
-        // Not found anywhere, add default "following" feed
-        newPinned.append(SystemFeedTypes.following)
-        logger.info("Adding default timeline feed to pinned feeds")
-      }
-
-      // Update the preferences
-      preferences.updateFeeds(pinned: newPinned, saved: newSaved)
-
-      // Save and sync with server
-      try await saveAndSyncPreferences(preferences)
-      logger.info("Timeline feed issue fixed")
-    } else {
-      logger.info("Timeline feed is already in pinned feeds, no fix needed")
-    }
-  }
-
-  /// Safely add a feed with server-first approach
-  @MainActor
-  func addFeedSafely(_ uri: String, pinned: Bool = false) async throws {
-
-    // Get local preferences
-    let preferences = try await getPreferences()
-
-    // Add the feed locally
-    preferences.addFeed(uri, pinned: pinned)
-
-    // Save locally
-    try await savePreferences(preferences)
-
-    // Sync with server
-    try await syncToServer(preferences)
-  }
-
-  /// Safely remove a feed with protection for system feeds
-  @MainActor
-  func removeFeedSafely(_ uri: String) async throws {
-    guard let modelContext = modelContext else {
-      throw PreferencesManagerError.modelContextNotInitialized
-    }
-
-    let preferences = try await getPreferences()
-
-    // Check if this is a protected feed before removing
-    let isProtected = SystemFeedTypes.isTimelineFeed(uri)
-
-    if !isProtected {
-      preferences.removeFeed(uri)
-      try modelContext.save()
-
-      // Sync with server
-      try await syncToServer(preferences)
-    } else {
-      logger.warning("Attempted to remove protected system feed: \(uri)")
-      // Don't throw an error, just don't remove the feed
-    }
-  }
-
   // MARK: - Convenience Methods for All Preference Types
 
   @MainActor
   func setContentLabelVisibility(label: String, visibility: String, labelerDid: DID? = nil)
-    async throws
-  {
+    async throws {
     let preferences = try await getPreferences()
     preferences.setContentLabelVisibility(
       for: label, visibility: visibility, labelerDid: labelerDid)
@@ -797,8 +740,7 @@ final class PreferencesManager {
 
   @MainActor
   func setThreadViewPreferences(sort: String? = nil, prioritizeFollowedUsers: Bool? = nil)
-    async throws
-  {
+    async throws {
     let preferences = try await getPreferences()
 
     // Get existing or create new
@@ -935,6 +877,14 @@ final class PreferencesManager {
     try await saveAndSyncPreferences(preferences)
   }
 
+  /// Updates the entire list of user interests and syncs with server
+  @MainActor
+  func updateInterests(_ interests: [String]) async throws {
+    let preferences = try await getPreferences()
+    preferences.interests = interests
+    try await saveAndSyncPreferences(preferences)
+  }
+
   /// Updates specific preferences with server-first approach for better safety
   @MainActor
   func updateSpecificPreferences<T>(
@@ -953,8 +903,8 @@ final class PreferencesManager {
     var allPrefs = serverPrefs.data?.preferences.items ?? []
 
     // Find existing preference of this type
-    var existingIndex: Int? = nil
-    var existingValue: T? = nil
+    var existingIndex: Int?
+    var existingValue: T?
 
     for (index, pref) in allPrefs.enumerated() {
       // Check if this is the preference type we're looking for
@@ -1240,8 +1190,7 @@ final class PreferencesManager {
 
         // If we have server feeds but local feeds are empty or different, update local
         if (!pinnedFeeds.isEmpty || !savedFeeds.isEmpty)
-          && (localPrefs.pinnedFeeds.count <= 1 || localPrefs.savedFeeds.isEmpty)
-        {
+          && (localPrefs.pinnedFeeds.count <= 1 || localPrefs.savedFeeds.isEmpty) {
           localPrefs.updateFeeds(pinned: pinnedFeeds, saved: savedFeeds)
           needsSync = true
           logger.info("Updating local feeds with server data")
@@ -1260,6 +1209,7 @@ final class PreferencesManager {
       logger.info("No preference repairs needed")
     }
   }
+
   /// Validates preferences before saving
   private func validatePreferences(_ preferences: Preferences) throws {
     // Validate feeds
@@ -1306,12 +1256,12 @@ final class PreferencesManager {
       "pinnedFeeds": prefs.pinnedFeeds,
       "savedFeeds": prefs.savedFeeds,
       "contentLabelPrefs": prefs.contentLabelPrefs,
-      "adultContentEnabled": prefs.adultContentEnabled,
+      "adultContentEnabled": prefs.adultContentEnabled
       // Add other properties as needed
     ]
 
     // Convert to JSON data
-    let jsonData = try JSONSerialization.data(withJSONObject: backup, options: .prettyPrinted)
+      let jsonData = try JSONSerialization.data(withJSONObject: backup, options: .prettyPrinted)
     try jsonData.write(to: url)
   }
 
@@ -1354,9 +1304,135 @@ final class PreferencesManager {
   /// Add the missing updatePreference function
   @MainActor
   func updatePreference<T: Codable>(_ preferenceType: String, update: @escaping (T?) -> T?)
-    async throws
-  {
+    async throws {
     return try await updateSpecificPreferences(preferenceType: preferenceType, update: update)
+  }
+
+  /// Sets the entire list of pinned feeds and syncs changes.
+  @MainActor
+  func setPinnedFeeds(_ newOrder: [String]) async throws {
+    guard modelContext != nil else {
+      logger.error("ModelContext not available for setPinnedFeeds")
+      throw PreferencesManagerError.modelContextNotInitialized
+    }
+
+    let preferences = try await getPreferences()
+
+    // Ensure timeline feed is present before setting
+    var finalOrder = newOrder
+    if !finalOrder.contains(where: { SystemFeedTypes.isTimelineFeed($0) }) {
+      // Add default timeline if missing
+      finalOrder.insert(SystemFeedTypes.following, at: 0)  // Or restore saved position if needed
+      logger.warning("Timeline feed was missing in setPinnedFeeds input, added default at front.")
+    }
+
+    preferences.pinnedFeeds = finalOrder
+    logger.debug("Setting pinned feeds to: \(finalOrder)")
+    try await saveAndSyncPreferences(preferences)
+    logger.info("Successfully set and synced pinned feeds.")
+  }
+
+  /// Sets the entire list of saved feeds and syncs changes.
+  @MainActor
+  func setSavedFeeds(_ newOrder: [String]) async throws {
+    guard modelContext != nil else {
+      logger.error("ModelContext not available for setSavedFeeds")
+      throw PreferencesManagerError.modelContextNotInitialized
+    }
+
+    let preferences = try await getPreferences()
+    // Ensure saved feeds don't contain pinned feeds
+    let pinnedSet = Set(preferences.pinnedFeeds)
+    preferences.savedFeeds = newOrder.filter { !pinnedSet.contains($0) }
+    logger.debug("Setting saved feeds to: \(preferences.savedFeeds)")
+    try await saveAndSyncPreferences(preferences)
+    logger.info("Successfully set and synced saved feeds.")
+  }
+
+  /// Synchronizes preferences with app settings to ensure consistency
+  @MainActor
+  func syncPreferencesWithAppSettings(_ appState: AppState) async throws {
+    let preferences = try await getPreferences()
+
+    // Update app settings from server preferences
+
+    // Adult content setting
+    appState.isAdultContentEnabled = preferences.adultContentEnabled
+    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(preferences.adultContentEnabled, forKey: "isAdultContentEnabled")
+
+    // Thread view preferences
+    if let threadViewPref = preferences.threadViewPref {
+      appState.appSettings.threadSortOrder = threadViewPref.sort ?? "hot"
+      appState.appSettings.prioritizeFollowedUsers = threadViewPref.prioritizeFollowedUsers ?? true
+    }
+
+    // Feed view preferences - these don't directly map to app settings
+
+    logger.info("Synchronized preferences with app settings")
+  }
+
+  /// Updates adult content setting and syncs to server
+  @MainActor
+  func updateAdultContentEnabled(_ enabled: Bool) async throws {
+    let preferences = try await getPreferences()
+    preferences.adultContentEnabled = enabled
+
+    // Also update the app state's copy for consistency
+    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(enabled, forKey: "isAdultContentEnabled")
+
+    try await saveAndSyncPreferences(preferences)
+  }
+
+  /// Updates content label preferences and syncs to server
+  @MainActor
+  func updateContentLabelPreferences(_ contentLabels: [ContentLabelPreference]) async throws {
+    let preferences = try await getPreferences()
+    preferences.contentLabelPrefs = contentLabels
+    try await saveAndSyncPreferences(preferences)
+  }
+  
+  /// Updates language preferences (stored locally only for now)
+  @MainActor
+  func updateLanguagePreferences(appLanguage: String?, primaryLanguage: String, contentLanguages: [String]) async throws {
+    // Store in UserDefaults for persistence
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+    
+    // Save app language
+    if let appLang = appLanguage {
+      defaults?.set(appLang, forKey: "appLanguage")
+    } else {
+      defaults?.removeObject(forKey: "appLanguage")
+    }
+    
+    // Save primary language
+    defaults?.set(primaryLanguage, forKey: "primaryLanguage")
+    
+    // Save content languages
+    defaults?.set(contentLanguages, forKey: "contentLanguages")
+    
+    // Also save preferred languages for post composer
+    defaults?.set(contentLanguages, forKey: "userPreferredLanguages")
+    
+    logger.info("Language preferences updated - App: \(appLanguage ?? "system"), Primary: \(primaryLanguage), Content: \(contentLanguages.joined(separator: ", "))")
+    
+    // Notify state invalidation to refresh feeds with new language filters
+    // This will be picked up by feeds to filter content appropriately
+    NotificationCenter.default.post(name: NSNotification.Name("LanguagePreferencesChanged"), object: nil)
+  }
+
+  /// Updates feed view preference and syncs to server
+  @MainActor
+  func updateFeedViewPreference(_ feedViewPref: FeedViewPreference) async throws {
+    let preferences = try await getPreferences()
+    preferences.feedViewPref = feedViewPref
+    try await saveAndSyncPreferences(preferences)
+  }
+
+  // Helper to compare relevant parts of preferences for caching logic
+  private func arePreferencesSemanticallyEqual(_ pref1: Preferences, _ pref2: Preferences) -> Bool {
+    // Compare feed orders and other critical settings if needed
+    return pref1.pinnedFeeds == pref2.pinnedFeeds && pref1.savedFeeds == pref2.savedFeeds
+    // Add comparisons for other prefs if necessary
   }
 }
 

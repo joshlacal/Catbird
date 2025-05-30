@@ -13,7 +13,7 @@ struct RepostHeaderView: View {
     @Binding var path: NavigationPath
     
     var body: some View {
-        HStack (alignment: .center, spacing: 4) {
+        HStack(alignment: .center, spacing: 4) {
             Image(systemName: "arrow.2.squarepath")
                 .foregroundColor(.secondary)
                 .font(.subheadline)
@@ -22,17 +22,16 @@ struct RepostHeaderView: View {
                 .font(.body)
                 .textScale(.secondary)
                 .foregroundColor(.secondary)
-                .lineLimit(1)
+                .lineLimit(2)
                 .truncationMode(.tail)
                 .allowsTightening(true)
                 .offset(y: -2)
-                .fixedSize(horizontal: true, vertical: false)
+                .fixedSize(horizontal: false, vertical: true)
 
         }
         .onTapGesture {
             path.append(NavigationDestination.profile(reposter.did.didString()))
         }
-        // No padding here - controlled by parent for consistency
         .padding(.leading, 3)
     }
 }

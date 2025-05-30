@@ -24,7 +24,11 @@ import SwiftUI
 }
 
 /// A view that displays a single post with its content, avatar, and actions
-struct PostView: View {
+struct PostView: View, Equatable, Identifiable {
+    static func == (lhs: PostView, rhs: PostView) -> Bool {
+        lhs.post.uri == rhs.post.uri && lhs.post.cid == rhs.post.cid
+    }
+        
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
   let post: AppBskyFeedDefs.PostView
@@ -39,11 +43,11 @@ let isToYou: Bool
   @State private var postState: PostState  // Consolidated state
   @State private var contextMenuViewModel: PostContextMenuViewModel
   @State private var viewModel: PostViewModel
-  @State private var shadowUpdateTask: Task<Void, Error>? = nil  // For AsyncStream management
+  @State private var shadowUpdateTask: Task<Void, Error>?  // For AsyncStream management
   @State private var initialLoadComplete = false  // For transaction animation control
 
   // MARK: - Computed Properties
-  private var uniqueID: String {
+var id: String {
     let postID = post.uri.uriString() + post.cid.string
     if let feedPostID = feedPostID {
       return "\(feedPostID)-\(postID)"
@@ -94,13 +98,19 @@ let isToYou: Bool
 
       // Content column
       VStack(alignment: .leading, spacing: 0) {
+        // Add content label view if there are labels
+        if let labels = postState.currentPost.labels, !labels.isEmpty {
+          ContentLabelView(labels: labels)
+            .padding(.bottom, PostView.baseUnit)
+        }
+
         postContentView
               .padding(.bottom, PostView.baseUnit)
 
         // Embed content (images, links, videos, etc.)
         if let embed = postState.currentPost.embed {
           embedContent(embed, labels: postState.currentPost.labels)
-            .environment(\.postID, uniqueID)
+            .environment(\.postID, id)
             .padding(.vertical, PostView.baseUnit)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -152,15 +162,14 @@ let isToYou: Bool
     VStack(alignment: .leading, spacing: 0) {
       // Use postState.currentPost
       if case .knownType(let postObj) = postState.currentPost.record,
-        let feedPost = postObj as? AppBskyFeedPost
-      {
+        let feedPost = postObj as? AppBskyFeedPost {
 
         HStack(alignment: .top, spacing: 0) {
           PostHeaderView(
             displayName: postState.currentPost.author.displayName
               ?? postState.currentPost.author.handle.description,
             handle: postState.currentPost.author.handle.description,
-            timeAgo: formatTimeAgo(from: feedPost.createdAt.date)
+            timeAgo: feedPost.createdAt.date
           )
 
           Spacer()
@@ -215,8 +224,7 @@ let isToYou: Bool
 
       // Use postState.currentUserDid and postState.currentPost
       if let currentUserDid = postState.currentUserDid,
-        postState.currentPost.author.did.didString() == currentUserDid
-      {
+        postState.currentPost.author.did.didString() == currentUserDid {
         Button(action: {
           Task { await contextMenuViewModel.deletePost() }
         }) {
@@ -232,15 +240,17 @@ let isToYou: Bool
     } label: {
       Image(systemName: "ellipsis")
         .foregroundStyle(.gray)
-        .padding(PostView.baseUnit * 2)
+        .padding(PostView.baseUnit * 3)
         .contentShape(Rectangle())
+        .accessibilityLabel("Post Options")
+        .accessibilityAddTraits(.isButton)
+        
     }
   }
 
   // Reply indicator text
   @ViewBuilder
-  private func replyIndicatorView(grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil) -> some View
-  {
+  private func replyIndicatorView(grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil) -> some View {
     HStack(alignment: .center, spacing: PostView.baseUnit) {
       Image(systemName: "arrow.up.forward.circle")
         .foregroundStyle(.secondary)
@@ -277,7 +287,7 @@ let isToYou: Bool
     _ embed: AppBskyFeedDefs.PostViewEmbedUnion, labels: [ComAtprotoLabelDefs.Label]?
   ) -> some View {
     PostEmbed(embed: embed, labels: labels, path: $path)
-      .environment(\.postID, uniqueID)
+      .environment(\.postID, id)
       .padding(.trailing, PostView.baseUnit * 2)
   }
 
@@ -429,7 +439,7 @@ struct AuthorAvatarColumn: View {
   private var parentPostIndicator: some View {
     if isParentPost {
       Rectangle()
-        .fill(Color.secondary.opacity(0.3))
+        .fill(Color(UIColor.systemGray4))
         .frame(width: 2)
         .frame(maxHeight: .infinity)
         .padding(.bottom, Self.avatarSize + Self.baseUnit * 2)

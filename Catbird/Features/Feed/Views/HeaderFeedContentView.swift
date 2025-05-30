@@ -128,7 +128,7 @@ struct HeaderFeedListView<Header: View>: View {
         let feedModel = FeedModelContainer.shared.getModel(for: feedType, appState: appState)
       }
     }
-    .onChange(of: appState.tabTappedAgain) { old, tapped in
+    .onChange(of: appState.tabTappedAgain) { _, tapped in
       if tapped == 0 {
         // Scroll to top when tab is tapped again
         withAnimation(.easeInOut(duration: 0.3)) {

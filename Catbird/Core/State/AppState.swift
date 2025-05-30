@@ -28,6 +28,9 @@ final class AppState {
 
   // Used to track which tab was tapped twice to trigger scroll to top
   var tabTappedAgain: Int?
+  
+  // Current user's profile data for optimistic updates
+  var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
 
   // MARK: - Component Managers
 
@@ -45,6 +48,12 @@ final class AppState {
 
   /// App-specific settings that aren't synced with the server
   let appSettings = AppSettings()
+  
+  /// Theme manager for handling app-wide theme changes
+  let themeManager = ThemeManager()
+  
+  /// Font scale manager for handling dynamic font sizing
+  let fontScaleManager = FontScaleManager()
 
   /// Navigation manager for handling navigation
   let navigationManager = AppNavigationManager()
@@ -58,8 +67,6 @@ final class AppState {
   /// Chat manager for handling Bluesky chat operations
     let chatManager: ChatManager
   
-  /// Scroll position manager for persisting feed scroll positions
-  let scrollPositionManager = ScrollPositionManager()
   
   /// Network monitor for tracking connectivity status
   let networkMonitor = NetworkMonitor()
@@ -116,8 +123,6 @@ final class AppState {
                 await self.chatManager.updateClient(client) // Update ChatManager client
               self.urlHandler.configure(with: self)
               
-              // Update scroll position manager with new user
-              self.scrollPositionManager.setCurrentUser(self.currentUserDID)
               
               Task { @MainActor in
                 await self.notificationManager.requestNotificationsAfterLogin()
@@ -133,13 +138,16 @@ final class AppState {
                   )
                 }
 
-                  guard self.currentUserDID != nil else {
+                  guard let userDID = self.currentUserDID else {
                   self.logger.error("No current user DID after authentication")
                   return
                 }
 
                 // Wait briefly for auth to fully establish
                 try? await Task.sleep(nanoseconds: 200_000_000)
+                
+                // Load current user profile for optimistic updates
+                await self.loadCurrentUserProfile(did: userDID)
               }
             }
           } else if case .unauthenticated = state {
@@ -151,9 +159,6 @@ final class AppState {
             self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
              await self.chatManager.updateClient(nil)
-            
-            // Clear scroll position manager
-            self.scrollPositionManager.setCurrentUser(nil)
             // Add profile reset if needed
           } else if case .initializing = state {
             // Handle initializing state if needed
@@ -166,6 +171,21 @@ final class AppState {
     // Set up circular references after initialization
     postManager.updateAppState(self)
     chatManager.updateAppState(self)
+    
+    // Observe app settings changes
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("AppSettingsChanged"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+      
+      // Apply theme when settings change
+      self.themeManager.applyTheme(
+        theme: self.appSettings.theme,
+        darkThemeMode: self.appSettings.darkThemeMode
+      )
+    }
     
     logger.debug("AppState initialization complete")
   }
@@ -203,6 +223,12 @@ final class AppState {
     setupModelPruningTimer()
     setupPreferencesRefreshTimer()
     setupNotifications()
+    
+    // Apply current theme settings
+    themeManager.applyTheme(
+      theme: appSettings.theme,
+      darkThemeMode: appSettings.darkThemeMode
+    )
 
     // Get accounts list if authenticated
     if isAuthenticated {
@@ -398,6 +424,42 @@ final class AppState {
   var authState: AuthState {
     authManager.state
   }
+  
+  // MARK: - User Profile Methods
+  
+  /// Load the current user's profile for optimistic updates
+  @MainActor
+  private func loadCurrentUserProfile(did: String) async {
+    guard let client = atProtoClient else { return }
+    
+    do {
+      let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
+        input: .init(actor: ATIdentifier(string: did))
+      )
+      
+      if responseCode == 200, let profile = profileData {
+        // Convert ProfileViewDetailed to ProfileViewBasic
+        currentUserProfile = AppBskyActorDefs.ProfileViewBasic(
+          did: profile.did,
+          handle: profile.handle,
+          displayName: profile.displayName,
+          avatar: profile.avatar,
+          associated: profile.associated,
+          viewer: profile.viewer,
+          labels: profile.labels,
+          createdAt: profile.createdAt,
+          verification: profile.verification,
+          status: profile.status
+        )
+        
+        logger.debug("Loaded current user profile: @\(profile.handle.description)")
+      } else {
+        logger.error("Failed to load current user profile: HTTP \(responseCode)")
+      }
+    } catch {
+      logger.error("Failed to load current user profile: \(error.localizedDescription)")
+    }
+  }
 
   // MARK: Navigation
   func configureURLHandler() {
@@ -415,6 +477,59 @@ final class AppState {
     preferencesManager.setModelContext(modelContext)
     appSettings.initialize(with: modelContext)
     logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
+    
+    // Apply initial theme settings
+    themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)
+    
+    // Apply initial font settings
+    fontScaleManager.applyFontSettings(fontSize: appSettings.fontSize, fontStyle: appSettings.fontStyle)
+    
+    // Set up proper reactive observation for settings changes
+    setupSettingsObservation()
+  }
+
+  // MARK: - Settings Observation
+  
+  /// Set up reactive observation for settings changes
+  @MainActor
+  private func setupSettingsObservation() {
+    // Track previous values to avoid unnecessary reapplication
+    var previousTheme = appSettings.theme
+    var previousDarkThemeMode = appSettings.darkThemeMode
+    var previousFontSize = appSettings.fontSize
+    var previousFontStyle = appSettings.fontStyle
+    
+    // Set up observation for theme and font changes via NotificationCenter
+    // This is more efficient than polling and only triggers when needed
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("AppSettingsChanged"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+      
+      // Check for theme changes
+      let currentTheme = self.appSettings.theme
+      let currentDarkThemeMode = self.appSettings.darkThemeMode
+      
+      if currentTheme != previousTheme || currentDarkThemeMode != previousDarkThemeMode {
+        self.themeManager.applyTheme(theme: currentTheme, darkThemeMode: currentDarkThemeMode)
+        previousTheme = currentTheme
+        previousDarkThemeMode = currentDarkThemeMode
+      }
+      
+      // Check for font changes
+      let currentFontSize = self.appSettings.fontSize
+      let currentFontStyle = self.appSettings.fontStyle
+      
+      if currentFontSize != previousFontSize || currentFontStyle != previousFontStyle {
+        self.fontScaleManager.applyFontSettings(fontSize: currentFontSize, fontStyle: currentFontStyle)
+        previousFontSize = currentFontSize
+        previousFontStyle = currentFontStyle
+      }
+    }
+    
+    logger.debug("Settings observation configured with change detection")
   }
 
   // MARK: - Post Creation Method (for backward compatibility)

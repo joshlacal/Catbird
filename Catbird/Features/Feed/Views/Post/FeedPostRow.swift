@@ -9,7 +9,11 @@ import Petrel
 import SwiftUI
 
 /// A row in the feed displaying a post with consistent layout
-struct FeedPostRow: View {
+struct FeedPostRow: View, Equatable {
+    static func == (lhs: FeedPostRow, rhs: FeedPostRow) -> Bool {
+        lhs.post == rhs.post && lhs.index == rhs.index        
+    }
+    
   // MARK: - Properties
   let post: CachedFeedViewPost
   let index: Int
@@ -21,24 +25,26 @@ struct FeedPostRow: View {
 
   // MARK: - Body
   var body: some View {
-    FeedPost(
-      post: post.feedViewPost,
+    EnhancedFeedPost(
+      cachedPost: post,
       path: $path
     )
+    .equatable()
     // This is critical for allowing interactions to reach video controls
     .allowsHitTesting(true)
     // The key to consistent sizing and avoiding layout jumps:
     .fixedSize(horizontal: false, vertical: true)
     // Apply background to the entire row
-    .background(Color(.systemBackground))
+    .themedPrimaryBackground(appState.themeManager)
     // Apply modifiers for list appearance
     .applyListRowModifiers(id: post.feedViewPost.id)
     // Prefetch data for better performance
     .task {
+      let postToProcess = post.feedViewPost
       if let client = appState.atProtoClient {
-        Task.detached(priority: .medium) {
+          Task.detached(priority: .medium) {
           await FeedPrefetchingManager.shared.prefetchPostData(
-            post: post.feedViewPost, client: client)
+            post: postToProcess, client: client)
         }
       }
     }

@@ -50,6 +50,19 @@ struct NavigationHandler {
         case .starterPack(let uri):
             StarterPackView(uri: uri, path: path)
                 .id(uri.uriString())
+            
+        case .conversation(let convoId):
+            ConversationView(convoId: convoId)
+                .id(convoId) // Use convoId for view identity
+                // Add necessary environment objects or parameters if needed
+                // .environment(appState) // Already available via @Environment
+
+        case .chatTab:
+             ChatTabView(
+                 selectedTab: selectedTab,
+                 lastTappedTab: .constant(nil) // Pass constant nil as lastTappedTab isn't available here
+             )
+             .id("chatTab") // Static ID for the tab view itself
         }
     }
     
@@ -72,6 +85,11 @@ struct NavigationHandler {
             return "List"
         case .starterPack:
             return "Starter Pack"
+        case .conversation:
+            // Title might be dynamic based on convo, but NavigationHandler provides a static one
+            return "Conversation"
+        case .chatTab:
+            return "Messages"
         }
     }
     
@@ -94,6 +112,10 @@ struct NavigationHandler {
             return "list.bullet.rectangle"
         case .starterPack:
             return "person.3"
+        case .conversation:
+            return "bubble.left.and.bubble.right.fill" // Or just "bubble.left.fill"
+        case .chatTab:
+            return "bubble.left.and.bubble.right"
         }
     }
 }

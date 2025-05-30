@@ -2,6 +2,17 @@ included:
   - Catbird
   - CatbirdNotificationWidget
   - CatbirdUITests
+
 excluded:
-  - Pods
   - .git
+  - Pods
+  - build
+  - DerivedData
+
+# Add basic rules configuration
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+  
+reporter: "xcode"
+lenient: true

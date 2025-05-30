@@ -59,14 +59,18 @@ final class StateInvalidationBus {
       eventHistory.removeFirst()
     }
     
-    // Notify all subscribers
+    // Only notify subscribers that are interested in this event
+    var interestedCount = 0
     for subscriber in subscribers {
-      Task { @MainActor in
-        await subscriber.handleStateInvalidation(event)
+      if subscriber.isInterestedIn(event) {
+        interestedCount += 1
+        Task { @MainActor in
+          await subscriber.handleStateInvalidation(event)
+        }
       }
     }
     
-    logger.debug("Event broadcast complete to \(self.subscribers.count) subscribers")
+    logger.debug("Event broadcast to \(interestedCount) of \(self.subscribers.count) subscribers")
   }
   
   // MARK: - Convenience Methods
@@ -161,6 +165,17 @@ final class StateInvalidationBus {
 protocol StateInvalidationSubscriber: AnyObject {
   /// Handle a state invalidation event
   func handleStateInvalidation(_ event: StateInvalidationEvent) async
+  
+  /// Check if this subscriber is interested in a specific event
+  /// Default implementation returns true for backward compatibility
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool
+}
+
+/// Default implementation that maintains backward compatibility
+extension StateInvalidationSubscriber {
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    return true // By default, receive all events (current behavior)
+  }
 }
 
 /// Extension to add debugging capabilities
