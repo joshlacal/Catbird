@@ -72,12 +72,14 @@ struct CatbirdApp: App {
     // The actual theme-specific configuration is done by ThemeManager
     // after app settings are loaded in AppState.initialize()
     
-    // Just apply the custom fonts initially
+    // Set initial appearance to dim theme colors to avoid black flash
     let initialAppearance = UINavigationBarAppearance()
     initialAppearance.configureWithOpaqueBackground()
+    // Use dim theme colors as default to prevent black navigation bars
+    initialAppearance.backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
     NavigationFontConfig.applyFonts(to: initialAppearance)
     
-    // Set a neutral initial appearance that will be overridden by ThemeManager
+    // Set initial appearance that prevents black flash before theme is applied
     UINavigationBar.appearance().standardAppearance = initialAppearance
     UINavigationBar.appearance().scrollEdgeAppearance = initialAppearance
     UINavigationBar.appearance().compactAppearance = initialAppearance

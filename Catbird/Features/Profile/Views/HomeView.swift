@@ -45,6 +45,12 @@ struct HomeView: View {
         // Update current tab index when this tab appears
         appState.navigationManager.updateCurrentTab(0)
         
+        // Apply theme immediately to ensure navigation bar is correct
+        appState.themeManager.applyTheme(
+          theme: appState.appSettings.theme,
+          darkThemeMode: appState.appSettings.darkThemeMode
+        )
+        
         // Set up theme change observer to update navigation stack
         NotificationCenter.default.addObserver(
           forName: NSNotification.Name("ThemeChanged"),
@@ -53,6 +59,9 @@ struct HomeView: View {
         ) { _ in
           // Force navigation stack to reload by changing its key
           navigationStackKey = UUID()
+          
+          // Also force update navigation bars immediately
+          appState.themeManager.forceUpdateNavigationBars()
         }
       }
       .navigationDestination(for: NavigationDestination.self) { destination in
@@ -109,6 +118,8 @@ struct HomeView: View {
       SettingsView()
     }
     .toolbarBackground(.visible, for: .tabBar)
+    .toolbarBackground(.visible, for: .navigationBar)
+    .toolbarColorScheme(.dark, for: .navigationBar)
     .themedPrimaryBackground(appState.themeManager)
   }
 

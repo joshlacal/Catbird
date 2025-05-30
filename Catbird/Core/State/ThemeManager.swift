@@ -190,11 +190,45 @@ import OSLog
                 // Find all navigation controllers and force update their navigation bars
                 self.updateNavigationBarsRecursively(in: window.rootViewController)
                 
+                // Force update all UINavigationBar instances directly
+                self.forceUpdateAllNavigationBarInstances(in: window)
+                
                 // Force window to update
                 window.setNeedsDisplay()
                 window.layoutIfNeeded()
             }
         }
+    }
+    
+    /// Aggressively find and update all UINavigationBar instances
+    private func forceUpdateAllNavigationBarInstances(in window: UIWindow) {
+        func findNavigationBars(in view: UIView) {
+            if let navBar = view as? UINavigationBar {
+                // Get current appearances
+                let standard = UINavigationBar.appearance().standardAppearance
+                let scrollEdge = UINavigationBar.appearance().scrollEdgeAppearance ?? standard
+                let compact = UINavigationBar.appearance().compactAppearance ?? standard
+                
+                // Force apply to this specific navigation bar
+                navBar.standardAppearance = standard
+                navBar.scrollEdgeAppearance = scrollEdge
+                navBar.compactAppearance = compact
+                
+                // Force immediate update
+                navBar.setNeedsLayout()
+                navBar.layoutIfNeeded()
+                navBar.setNeedsDisplay()
+                
+                logger.debug("Force updated navigation bar: \(navBar)")
+            }
+            
+            // Recursively check all subviews
+            for subview in view.subviews {
+                findNavigationBars(in: subview)
+            }
+        }
+        
+        findNavigationBars(in: window)
     }
     
     /// Recursively update navigation bars in view controller hierarchy
