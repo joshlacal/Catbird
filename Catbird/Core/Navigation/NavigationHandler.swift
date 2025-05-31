@@ -22,6 +22,7 @@ struct NavigationHandler {
                 path: path
             )
             .themedNavigationBar(appState.themeManager)
+            .ensureDeepNavigationFonts() // Use deep navigation fonts for profile views
             .id(did)
             
         case .post(let uri):
@@ -31,17 +32,34 @@ struct NavigationHandler {
                 .navigationBarTitleDisplayMode(.inline)
                 .themedNavigationBar(appState.themeManager)
                 .navigationTitle("Post")
+                .ensureDeepNavigationFonts() // Use deep navigation fonts for thread views
                 .onAppear {
-                    let initialAppearance = UINavigationBarAppearance()
-                    initialAppearance.configureWithOpaqueBackground()
-                    // Use dim theme colors as default to prevent black navigation bars
-                    initialAppearance.backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                    NavigationFontConfig.applyFonts(to: initialAppearance)
+                    // Configure specific appearances for post view navigation
+                    let standardAppearance = UINavigationBarAppearance()
+                    let scrollEdgeAppearance = UINavigationBarAppearance()
+                    let compactAppearance = UINavigationBarAppearance()
                     
-                    // Set initial appearance that prevents black flash before theme is applied
-                    UINavigationBar.appearance().standardAppearance = initialAppearance
-                    UINavigationBar.appearance().scrollEdgeAppearance = initialAppearance
-                    UINavigationBar.appearance().compactAppearance = initialAppearance
+                    let backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                    
+                    // Apply specific configuration: standard=default, scrollEdge=transparent, compact=opaque
+                    standardAppearance.configureWithDefaultBackground()
+                    standardAppearance.backgroundColor = backgroundColor
+                    
+                    scrollEdgeAppearance.configureWithTransparentBackground()
+                    scrollEdgeAppearance.backgroundColor = backgroundColor
+                    
+                    compactAppearance.configureWithOpaqueBackground()
+                    compactAppearance.backgroundColor = backgroundColor
+                    
+                    // Apply fonts to all appearances
+                    NavigationFontConfig.applyFonts(to: standardAppearance)
+                    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance)
+                    NavigationFontConfig.applyFonts(to: compactAppearance)
+                    
+                    // Set appearances to prevent black flash before theme is applied
+                    UINavigationBar.appearance().standardAppearance = standardAppearance
+                    UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
+                    UINavigationBar.appearance().compactAppearance = compactAppearance
                 }
                 .id(uri.uriString())
             

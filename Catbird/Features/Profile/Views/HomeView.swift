@@ -51,18 +51,8 @@ struct HomeView: View {
           darkThemeMode: appState.appSettings.darkThemeMode
         )
         
-        // Set up theme change observer to update navigation stack
-        NotificationCenter.default.addObserver(
-          forName: NSNotification.Name("ThemeChanged"),
-          object: nil,
-          queue: .main
-        ) { _ in
-          // Force navigation stack to reload by changing its key
-          navigationStackKey = UUID()
-          
-          // Note: Navigation bars are already updated by ThemeManager.applyTheme()
-          // No need to call forceUpdateNavigationBars() here to avoid infinite loops
-        }
+        // Note: Navigation bars are already updated by ThemeManager.applyTheme()
+        // No need to recreate the entire navigation stack on theme changes
       }
       .navigationDestination(for: NavigationDestination.self) { destination in
         NavigationHandler.viewForDestination(

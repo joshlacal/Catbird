@@ -26,13 +26,20 @@ struct NotificationsView: View {
 
     NavigationStack(path: navigationPath) {
       VStack(spacing: 0) {
-
+        filterPicker
+              .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing:
+                        0))
+              .listRowSeparator(.hidden)
+              .themedListRowBackground(appState.themeManager, appSettings:
+                        appState.appSettings)
+          
         notificationContent
       }
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Notifications")
       .navigationBarTitleDisplayMode(.large)
       .toolbar {
+          
         ToolbarItem(placement: .navigationBarTrailing) {
           Button(action: {
             Task {
@@ -160,10 +167,9 @@ struct NotificationsView: View {
 
     ScrollViewReader { _ in
       List {
-        filterPicker
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-          .listRowSeparator(.hidden)
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+//          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+//          .listRowSeparator(.hidden)
+//          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
 
         ForEach(viewModel.groupedNotifications, id: \.id) { group in
           NotificationCard(

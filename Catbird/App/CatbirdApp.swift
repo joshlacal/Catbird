@@ -52,7 +52,8 @@ struct CatbirdApp: App {
     }
   }
   // MARK: - State
-  @State private var appState: AppState
+  // Create AppState as a stored property to ensure it's only created once
+  private let appState = AppState()
   @State private var didInitialize = false
 
   // MARK: - SwiftData
@@ -66,42 +67,51 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     logger.info("🚀 CatbirdApp initializing")
-    
-    // Create AppState instance once
-    _appState = State(initialValue: AppState())
 
     // MARK: - Customizing Navigation Bar Fonts with CoreText
     // Note: Initial navigation bar setup is minimal here.
     // The actual theme-specific configuration is done by ThemeManager
     // after app settings are loaded in AppState.initialize()
     
-    // Set initial appearance to saved theme colors to avoid black flash
-    let initialAppearance = UINavigationBarAppearance()
-    initialAppearance.configureWithOpaqueBackground()
+    // Set initial appearances to saved theme colors to avoid black flash
+    let standardAppearance = UINavigationBarAppearance()
+    let scrollEdgeAppearance = UINavigationBarAppearance() 
+    let compactAppearance = UINavigationBarAppearance()
     
     // Load saved theme settings from UserDefaults for initial setup
     let defaults = UserDefaults.standard
     let savedTheme = defaults.string(forKey: "theme") ?? "system"
     let savedDarkMode = defaults.string(forKey: "darkThemeMode") ?? "dim"
     
-    // Apply appropriate background color based on saved settings
+    // Configure appearances based on saved settings
     if savedTheme == "dark" || (savedTheme == "system" && UITraitCollection.current.userInterfaceStyle == .dark) {
-      if savedDarkMode == "black" {
-        initialAppearance.backgroundColor = UIColor.black
-      } else {
-        // Use dim theme colors as default
-        initialAppearance.backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-      }
+      let backgroundColor = savedDarkMode == "black" ? UIColor.black : UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+      
+      // Dark mode: standard=default, scrollEdge=transparent, compact=opaque
+      standardAppearance.configureWithDefaultBackground()
+      standardAppearance.backgroundColor = backgroundColor
+      
+      scrollEdgeAppearance.configureWithTransparentBackground()
+      scrollEdgeAppearance.backgroundColor = backgroundColor
+      
+      compactAppearance.configureWithOpaqueBackground()
+      compactAppearance.backgroundColor = backgroundColor
     } else {
-      // Light mode - use default background
-      initialAppearance.configureWithDefaultBackground()
+      // Light mode: standard=default, scrollEdge=transparent, compact=opaque
+      standardAppearance.configureWithDefaultBackground()
+      scrollEdgeAppearance.configureWithTransparentBackground() 
+      compactAppearance.configureWithOpaqueBackground()
     }
-    NavigationFontConfig.applyFonts(to: initialAppearance)
     
-    // Set initial appearance that prevents black flash before theme is applied
-    UINavigationBar.appearance().standardAppearance = initialAppearance
-    UINavigationBar.appearance().scrollEdgeAppearance = initialAppearance
-    UINavigationBar.appearance().compactAppearance = initialAppearance
+    // Apply fonts to all appearances
+    NavigationFontConfig.applyFonts(to: standardAppearance)
+    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance)
+    NavigationFontConfig.applyFonts(to: compactAppearance)
+    
+    // Set initial appearances that prevent black flash before theme is applied
+    UINavigationBar.appearance().standardAppearance = standardAppearance
+    UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
+    UINavigationBar.appearance().compactAppearance = compactAppearance
 
     // Configure audio session at app launch
     do {

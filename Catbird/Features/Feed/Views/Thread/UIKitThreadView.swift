@@ -216,18 +216,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           // True black mode
           appearance.configureWithOpaqueBackground()
           appearance.backgroundColor = UIColor.black
-          appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+          appearance.shadowColor = .clear
         } else {
           // Dim mode
           let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
           appearance.configureWithOpaqueBackground()
           appearance.backgroundColor = dimBackground
-          appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+          appearance.shadowColor = .clear
         }
       } else {
         // Light mode
         appearance.configureWithDefaultBackground()
       }
+      
+      // Apply custom fonts with width=120
+      NavigationFontConfig.applyFonts(to: appearance)
       
       navBar.standardAppearance = appearance
       navBar.scrollEdgeAppearance = appearance
@@ -241,13 +244,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       if isDarkMode {
         if isBlackMode {
           toolbarAppearance.backgroundColor = UIColor.black
-          toolbarAppearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+          toolbarAppearance.shadowColor = .clear
         } else {
           // Dim mode
           let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
           toolbarAppearance.configureWithOpaqueBackground()
           toolbarAppearance.backgroundColor = dimBackground
-          toolbarAppearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+          toolbarAppearance.shadowColor = .clear
         }
       } else {
         toolbarAppearance.configureWithDefaultBackground()
@@ -277,16 +280,19 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           if isBlackMode {
             appearance.configureWithOpaqueBackground()
             appearance.backgroundColor = UIColor.black
-            appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+            appearance.shadowColor = .clear
           } else {
             let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
             appearance.configureWithOpaqueBackground()
             appearance.backgroundColor = dimBackground
-            appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+            appearance.shadowColor = .clear
           }
         } else {
           appearance.configureWithDefaultBackground()
         }
+        
+        // Apply custom fonts with width=120
+        NavigationFontConfig.applyFonts(to: appearance)
         
         navController.navigationBar.standardAppearance = appearance
         navController.navigationBar.scrollEdgeAppearance = appearance
@@ -299,12 +305,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           if isDarkMode {
             if isBlackMode {
               toolbarAppearance.backgroundColor = UIColor.black
-              toolbarAppearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+              toolbarAppearance.shadowColor = .clear
             } else {
               let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
               toolbarAppearance.configureWithOpaqueBackground()
               toolbarAppearance.backgroundColor = dimBackground
-              toolbarAppearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+              toolbarAppearance.shadowColor = .clear
             }
           } else {
             toolbarAppearance.configureWithDefaultBackground()

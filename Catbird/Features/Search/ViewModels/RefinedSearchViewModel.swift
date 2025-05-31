@@ -760,7 +760,10 @@ enum SearchState {
     
     /// Calculate relevance score for a post
     private func calculatePostRelevanceScore(_ post: AppBskyFeedDefs.PostView, query: String) -> Double {
-        guard let record = post.record.asAppBskyFeedPost else { return 0 }
+        guard case let .knownType(record) = post.record,
+              let feedPost = record as? AppBskyFeedPost else { return 0 }
+        
+        let postRecord = feedPost
         
         // Extract engagement metrics
         let engagement = EngagementMetrics(
@@ -778,11 +781,11 @@ enum SearchState {
         )
         
         // Calculate recency
-        let createdAt = record.createdAt
-        let recency = Date().timeIntervalSince(createdAt)
+        let createdAt = postRecord.createdAt
+        let recency = Date().timeIntervalSince(createdAt.date)
         
         // Get post content
-        let content = record.text
+        let content = postRecord.text
         
         return SearchRanking.calculateRelevanceScore(
             query: query,

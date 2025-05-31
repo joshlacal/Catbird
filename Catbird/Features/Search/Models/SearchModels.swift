@@ -87,7 +87,7 @@ struct SavedSearch: Codable, Identifiable {
     let query: String
     let filters: AdvancedSearchParams
     let createdAt: Date
-    let lastUsed: Date
+    var lastUsed: Date
     
     init(name: String, query: String, filters: AdvancedSearchParams) {
         self.id = UUID()

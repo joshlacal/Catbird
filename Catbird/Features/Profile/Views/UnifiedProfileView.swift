@@ -168,6 +168,7 @@ struct UnifiedProfileView: View {
     .id(viewModel.profile?.did)
     .navigationTitle(viewModel.profile != nil ? "@\(viewModel.profile!.handle)" : "Profile")
     .navigationBarTitleDisplayMode(.inline)
+    .ensureDeepNavigationFonts() // Ensure width=120 fonts work in profile navigation
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {
       case .section(let tab):

@@ -587,7 +587,7 @@ final class AuthenticationManager {
     
     if isAvailable {
       biometricType = context.biometryType
-      logger.info("Biometric authentication available: \(biometricType.description)")
+        logger.info("Biometric authentication available: \(self.biometricType.description)")
       
       // Check if user has enabled biometric auth for this app
       biometricAuthEnabled = await getBiometricAuthPreference()

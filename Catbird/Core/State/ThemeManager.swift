@@ -64,7 +64,7 @@ import OSLog
         // Batch all theme updates to reduce main thread blocking
         Task { @MainActor in
             // Apply immediate window-level changes first (most visible)
-            applyToAllWindows()
+            await applyToAllWindows()
             
             // Apply UI component themes in batches
             await applyUIComponentThemes()
@@ -81,7 +81,7 @@ import OSLog
     }
     
     /// Apply current theme settings to all windows
-    private func applyToAllWindows() {
+    private func applyToAllWindows() async {
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
             logger.warning("No window scene found")
             return
@@ -96,7 +96,7 @@ import OSLog
             }
             
             // Set window tint color based on theme
-            if getCurrentEffectiveDarkMode() && darkThemeMode == .black {
+            if await getCurrentEffectiveDarkMode() && darkThemeMode == .black {
                 // Slightly brighter accent for better visibility on black
                 window.tintColor = UIColor.systemBlue.withAlphaComponent(1.0)
             }
@@ -106,14 +106,14 @@ import OSLog
     }
     
     /// Apply theme to navigation bars
-    private func applyToNavigationBar() {
+    private func applyToNavigationBar() async {
         // Create new appearances to ensure clean state
         let standardAppearance = UINavigationBarAppearance()
         let scrollEdgeAppearance = UINavigationBarAppearance()
         let compactAppearance = UINavigationBarAppearance()
         
         // Configure based on theme
-        if getCurrentEffectiveDarkMode() {
+        if await getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
                 // True black mode - specific configuration per appearance type
                 standardAppearance.configureWithDefaultBackground()    // standard = default
@@ -156,7 +156,7 @@ import OSLog
         NavigationFontConfig.applyFonts(to: compactAppearance)
         
         // Apply text color based on theme
-        let textColor = getCurrentEffectiveDarkMode() 
+        let textColor = await getCurrentEffectiveDarkMode() 
             ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
             : UIColor.label
         
@@ -180,19 +180,19 @@ import OSLog
     /// Apply UI component themes in batches to reduce blocking
     private func applyUIComponentThemes() async {
         // Apply navigation bar theme first (most visible)
-        applyToNavigationBar()
+        await applyToNavigationBar()
         
         // Yield control briefly to prevent blocking
         await Task.yield()
         
         // Apply other component themes
-        applyToTabBar()
-        applyToToolbar()
+        await applyToTabBar()
+        await applyToToolbar()
         
         await Task.yield()
         
-        applyToTableView()
-        applyToCollectionView()
+        await applyToTableView()
+        await applyToCollectionView()
     }
     
     /// Optimized navigation bar update that reduces redundant work
@@ -401,10 +401,10 @@ import OSLog
     }
     
     /// Apply theme to tab bars
-    private func applyToTabBar() {
+    private func applyToTabBar() async {
         let appearance = UITabBarAppearance()
         
-        if getCurrentEffectiveDarkMode() {
+        if await getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
                 appearance.backgroundColor = UIColor.black
                 appearance.shadowColor = .clear
@@ -446,10 +446,10 @@ import OSLog
     }
     
     /// Apply theme to toolbars
-    private func applyToToolbar() {
+    private func applyToToolbar() async {
         let appearance = UIToolbarAppearance()
         
-        if getCurrentEffectiveDarkMode() {
+        if await getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
                 appearance.backgroundColor = UIColor.black
                 appearance.shadowColor = .clear
@@ -469,8 +469,8 @@ import OSLog
     }
     
     /// Apply theme to table views
-    private func applyToTableView() {
-        if getCurrentEffectiveDarkMode() {
+    private func applyToTableView() async {
+        if await getCurrentEffectiveDarkMode() {
             UITableView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
             UITableView.appearance().separatorColor = UIColor(Color.dynamicSeparator(self, currentScheme: .dark))
             
@@ -482,14 +482,14 @@ import OSLog
     }
     
     /// Apply theme to collection views
-    private func applyToCollectionView() {
-        if getCurrentEffectiveDarkMode() {
+    private func applyToCollectionView() async {
+        if await getCurrentEffectiveDarkMode() {
             UICollectionView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
         }
     }
     
     /// Get current effective dark mode state
-    private func getCurrentEffectiveDarkMode() -> Bool {
+    private func getCurrentEffectiveDarkMode() async -> Bool {
         switch colorSchemeOverride {
         case .light:
             return false
@@ -497,11 +497,13 @@ import OSLog
             return true
         case nil:
             // Follow system
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let window = windowScene.windows.first {
-                return window.traitCollection.userInterfaceStyle == .dark
+            return await MainActor.run {
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let window = windowScene.windows.first {
+                    return window.traitCollection.userInterfaceStyle == .dark
+                }
+                return false
             }
-            return false
         @unknown default:
             return false
         }
@@ -532,7 +534,17 @@ import OSLog
     func applyTheme(to navigationBar: UINavigationBar) {
         let appearance = UINavigationBarAppearance()
         
-        if getCurrentEffectiveDarkMode() {
+        Task { @MainActor in
+            let isDark = await getCurrentEffectiveDarkMode()
+            self.configureNavigationAppearance(appearance, isDark: isDark)
+            navigationBar.standardAppearance = appearance
+            navigationBar.scrollEdgeAppearance = appearance
+            navigationBar.compactAppearance = appearance
+        }
+    }
+    
+    private func configureNavigationAppearance(_ appearance: UINavigationBarAppearance, isDark: Bool) {
+        if isDark {
             if darkThemeMode == .black {
                 // True black mode
                 appearance.configureWithOpaqueBackground()
@@ -554,7 +566,7 @@ import OSLog
         NavigationFontConfig.applyFonts(to: appearance)
         
         // Apply text color
-        let textColor = getCurrentEffectiveDarkMode() 
+        let textColor = isDark 
             ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
             : UIColor.label
         
@@ -565,18 +577,22 @@ import OSLog
         var largeTitleAttrs = appearance.largeTitleTextAttributes
         largeTitleAttrs[.foregroundColor] = textColor
         appearance.largeTitleTextAttributes = largeTitleAttrs
-        
-        // Apply to the specific navigation bar
-        navigationBar.standardAppearance = appearance
-        navigationBar.scrollEdgeAppearance = appearance
-        navigationBar.compactAppearance = appearance
     }
     
     /// Apply theme to a specific toolbar instance
     func applyTheme(to toolbar: UIToolbar) {
         let appearance = UIToolbarAppearance()
         
-        if getCurrentEffectiveDarkMode() {
+        Task { @MainActor in
+            let isDark = await getCurrentEffectiveDarkMode()
+            self.configureToolbarAppearance(appearance, isDark: isDark)
+            toolbar.standardAppearance = appearance
+            toolbar.scrollEdgeAppearance = appearance
+        }
+    }
+    
+    private func configureToolbarAppearance(_ appearance: UIToolbarAppearance, isDark: Bool) {
+        if isDark {
             if darkThemeMode == .black {
                 appearance.backgroundColor = UIColor.black
                 appearance.shadowColor = .clear
@@ -590,9 +606,6 @@ import OSLog
         } else {
             appearance.configureWithTransparentBackground()
         }
-        
-        toolbar.standardAppearance = appearance
-        toolbar.scrollEdgeAppearance = appearance
     }
 }
 
