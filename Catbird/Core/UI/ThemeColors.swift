@@ -293,6 +293,21 @@ class ThemeColorCache {
             self.cache.removeAll()
         }
     }
+    
+    /// Selectively invalidate cache entries for a specific theme
+    /// This reduces the performance impact compared to full invalidation
+    func invalidateTheme(_ theme: String) {
+        queue.async(flags: .barrier) {
+            // Remove only cache entries that contain the theme name
+            let keysToRemove = self.cache.keys.filter { key in
+                key.contains(theme) || key.contains("dynamic")
+            }
+            
+            for key in keysToRemove {
+                self.cache.removeValue(forKey: key)
+            }
+        }
+    }
 }
 
 // MARK: - UIColor Extensions (for UIKit components)

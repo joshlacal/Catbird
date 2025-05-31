@@ -1,5 +1,6 @@
 import UIKit
 import CoreText
+import SwiftUI
 
 /// Centralized navigation font configuration to ensure consistency across the app
 enum NavigationFontConfig {
@@ -78,5 +79,128 @@ enum NavigationFontConfig {
         var largeTitleAttrs = appearance.largeTitleTextAttributes
         largeTitleAttrs[.font] = largeTitleFont
         appearance.largeTitleTextAttributes = largeTitleAttrs
+    }
+    
+    /// Force apply fonts to all current navigation bars in the app
+    /// Call this after theme changes to ensure fonts are respected
+    static func forceApplyToAllNavigationBars() {
+        // Ensure we're on the main thread for all UI operations
+        if Thread.isMainThread {
+            performFontUpdate()
+        } else {
+            DispatchQueue.main.async {
+                performFontUpdate()
+            }
+        }
+    }
+    
+    /// Perform the actual font update (must be called on main thread)
+    private static func performFontUpdate() {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        
+        for window in windowScene.windows {
+            forceUpdateNavigationBarsRecursively(in: window.rootViewController)
+        }
+    }
+    
+    /// Apply fonts to a specific navigation bar instance (for UIKit views)
+    static func applyFonts(to navigationBar: UINavigationBar) {
+        // Apply fonts to all appearances of this specific navigation bar
+        applyFonts(to: navigationBar.standardAppearance)
+        
+        if let scrollEdge = navigationBar.scrollEdgeAppearance {
+            applyFonts(to: scrollEdge)
+        } else {
+            // Create and apply scrollEdge appearance if it doesn't exist
+            let scrollEdgeAppearance = UINavigationBarAppearance()
+            scrollEdgeAppearance.configureWithTransparentBackground()
+            applyFonts(to: scrollEdgeAppearance)
+            navigationBar.scrollEdgeAppearance = scrollEdgeAppearance
+        }
+        
+        if let compact = navigationBar.compactAppearance {
+            applyFonts(to: compact)
+        } else {
+            // Create and apply compact appearance if it doesn't exist
+            let compactAppearance = UINavigationBarAppearance()
+            compactAppearance.configureWithOpaqueBackground()
+            applyFonts(to: compactAppearance)
+            navigationBar.compactAppearance = compactAppearance
+        }
+        
+        // Force the navigation bar to update
+        navigationBar.setNeedsLayout()
+    }
+    
+    /// Recursively find and update navigation bars with custom fonts
+    private static func forceUpdateNavigationBarsRecursively(in viewController: UIViewController?) {
+        guard let vc = viewController else { return }
+        
+        if let navController = vc as? UINavigationController {
+            let navBar = navController.navigationBar
+            
+            // Use the new method to apply fonts
+            applyFonts(to: navBar)
+        }
+        
+        // Check children
+        for child in vc.children {
+            forceUpdateNavigationBarsRecursively(in: child)
+        }
+        
+        // Check presented view controller
+        if let presented = vc.presentedViewController {
+            forceUpdateNavigationBarsRecursively(in: presented)
+        }
+    }
+}
+
+// MARK: - SwiftUI Integration
+
+/// ViewModifier that ensures navigation titles use the correct Core Text fonts
+struct NavigationFontModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                // Force apply fonts when view appears
+                NavigationFontConfig.forceApplyToAllNavigationBars()
+            }
+            .onChange(of: UIApplication.shared.connectedScenes.count) { _ in
+                // Reapply fonts if scene configuration changes
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NavigationFontConfig.forceApplyToAllNavigationBars()
+                }
+            }
+    }
+}
+
+/// ViewModifier that forces font application for deep navigation contexts
+struct DeepNavigationFontModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                // Apply fonts with a delay to ensure navigation context is established
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NavigationFontConfig.forceApplyToAllNavigationBars()
+                }
+            }
+            .onChange(of: UIApplication.shared.connectedScenes.count) { _ in
+                // Reapply fonts if scene configuration changes
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    NavigationFontConfig.forceApplyToAllNavigationBars()
+                }
+            }
+    }
+}
+
+extension View {
+    /// Ensures this view's navigation title uses the correct Core Text fonts with width=120
+    func ensureNavigationFonts() -> some View {
+        self.modifier(NavigationFontModifier())
+    }
+    
+    /// Ensures fonts are applied for deep navigation contexts (UIKit views, threads, profiles)
+    func ensureDeepNavigationFonts() -> some View {
+        self.modifier(DeepNavigationFontModifier())
     }
 }

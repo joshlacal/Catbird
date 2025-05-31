@@ -61,26 +61,23 @@ import OSLog
             colorSchemeOverride = nil
         }
         
-        // Apply to all windows
-        applyToAllWindows()
-        
-        // Apply to UI components
-        applyToNavigationBar()
-        applyToTabBar()
-        applyToToolbar()
-        applyToTableView()
-        applyToCollectionView()
-        
-        // Invalidate color cache when theme changes
-        ThemeColorCache.shared.invalidate()
-        
-        // Force update navigation bars to ensure they use the correct colors
-        // Note: We do this BEFORE posting notification to prevent infinite loops
-        forceUpdateNavigationBars()
-        
-        // Post notification for any components that need manual updates
-        // This should only be used for lightweight UI updates, not for triggering more force updates
-        NotificationCenter.default.post(name: NSNotification.Name("ThemeChanged"), object: nil)
+        // Batch all theme updates to reduce main thread blocking
+        Task { @MainActor in
+            // Apply immediate window-level changes first (most visible)
+            applyToAllWindows()
+            
+            // Apply UI component themes in batches
+            await applyUIComponentThemes()
+            
+            // Selectively invalidate color cache (only for changed theme)
+            ThemeColorCache.shared.invalidateTheme(theme)
+            
+            // Force update navigation bars with optimized approach
+            await optimizedNavigationBarUpdate()
+            
+            // Post notification after all updates complete
+            NotificationCenter.default.post(name: NSNotification.Name("ThemeChanged"), object: nil)
+        }
     }
     
     /// Apply current theme settings to all windows
@@ -118,40 +115,39 @@ import OSLog
         // Configure based on theme
         if getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
-                // True black mode
-                standardAppearance.configureWithOpaqueBackground()
+                // True black mode - specific configuration per appearance type
+                standardAppearance.configureWithDefaultBackground()    // standard = default
                 standardAppearance.backgroundColor = UIColor.black
-                standardAppearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                standardAppearance.shadowColor = .clear
                 
-                scrollEdgeAppearance.configureWithTransparentBackground()
+                scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
                 scrollEdgeAppearance.backgroundColor = UIColor.black
-                scrollEdgeAppearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                scrollEdgeAppearance.shadowColor = .clear
                 
-                compactAppearance.configureWithOpaqueBackground()
+                compactAppearance.configureWithOpaqueBackground()      // compact = opaque
                 compactAppearance.backgroundColor = UIColor.black
-                compactAppearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                compactAppearance.shadowColor = .clear
             } else {
-                // Dim mode - use configureWithOpaqueBackground for full control
+                // Dim mode - specific configuration per appearance type
                 let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0) // Proper gray for dim mode
-                let dimSeparator = UIColor(white: 0.45, alpha: 0.6)
                 
-                standardAppearance.configureWithOpaqueBackground()
+                standardAppearance.configureWithDefaultBackground()    // standard = default
                 standardAppearance.backgroundColor = dimBackground
-                standardAppearance.shadowColor = dimSeparator
+                standardAppearance.shadowColor = .clear
                 
-                scrollEdgeAppearance.configureWithOpaqueBackground()
+                scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
                 scrollEdgeAppearance.backgroundColor = dimBackground
-                scrollEdgeAppearance.shadowColor = .clear // Remove shadow for cleaner look
+                scrollEdgeAppearance.shadowColor = .clear
                 
-                compactAppearance.configureWithOpaqueBackground()
+                compactAppearance.configureWithOpaqueBackground()      // compact = opaque
                 compactAppearance.backgroundColor = dimBackground
-                compactAppearance.shadowColor = dimSeparator
+                compactAppearance.shadowColor = .clear
             }
         } else {
-            // Light mode
-            standardAppearance.configureWithDefaultBackground()
-            scrollEdgeAppearance.configureWithTransparentBackground()
-            compactAppearance.configureWithDefaultBackground()
+            // Light mode - specific configuration per appearance type
+            standardAppearance.configureWithDefaultBackground()     // standard = default
+            scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
+            compactAppearance.configureWithOpaqueBackground()      // compact = opaque
         }
         
         // Apply custom fonts to all appearances
@@ -181,6 +177,116 @@ import OSLog
         UINavigationBar.appearance().compactAppearance = compactAppearance
     }
     
+    /// Apply UI component themes in batches to reduce blocking
+    private func applyUIComponentThemes() async {
+        // Apply navigation bar theme first (most visible)
+        applyToNavigationBar()
+        
+        // Yield control briefly to prevent blocking
+        await Task.yield()
+        
+        // Apply other component themes
+        applyToTabBar()
+        applyToToolbar()
+        
+        await Task.yield()
+        
+        applyToTableView()
+        applyToCollectionView()
+    }
+    
+    /// Optimized navigation bar update that reduces redundant work
+    private func optimizedNavigationBarUpdate() async {
+        let now = Date()
+        
+        // Debounce to prevent infinite loops
+        if now.timeIntervalSince(lastForceUpdateTime) < forceUpdateDebounceInterval {
+            logger.debug("Skipping optimized navigation bar update due to debouncing")
+            return
+        }
+        
+        lastForceUpdateTime = now
+        logger.info("Running optimized navigation bar update")
+        
+        // Yield control before starting heavy work
+        await Task.yield()
+        
+        // Force apply custom fonts to all navigation bars after theme change
+        // This ensures width=120 fonts are respected consistently
+        NavigationFontConfig.forceApplyToAllNavigationBars()
+        
+        // Do the force update with minimal recursion
+        await performOptimizedForceUpdate()
+    }
+    
+    /// Perform force update with minimal recursion and better performance
+    private func performOptimizedForceUpdate() async {
+        // Ensure we're on the main thread for UI operations
+        await MainActor.run {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+            
+            for window in windowScene.windows {
+                // Find all navigation controllers efficiently
+                let navControllers = findAllNavigationControllers(in: window.rootViewController)
+                
+                // Update them on main thread
+                for navController in navControllers {
+                    updateSingleNavigationBar(navController.navigationBar)
+                }
+            }
+        }
+    }
+    
+    /// Efficiently find all navigation controllers without deep recursion
+    private func findAllNavigationControllers(in viewController: UIViewController?) -> [UINavigationController] {
+        var navControllers: [UINavigationController] = []
+        var queue: [UIViewController] = []
+        
+        if let vc = viewController {
+            queue.append(vc)
+        }
+        
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            
+            if let navController = current as? UINavigationController {
+                navControllers.append(navController)
+            }
+            
+            queue.append(contentsOf: current.children)
+            
+            if let presented = current.presentedViewController {
+                queue.append(presented)
+            }
+        }
+        
+        return navControllers
+    }
+    
+    /// Update a single navigation bar efficiently
+    private func updateSingleNavigationBar(_ navBar: UINavigationBar) {
+        // Ensure we're on the main thread for UI operations
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async {
+                self.updateSingleNavigationBar(navBar)
+            }
+            return
+        }
+        
+        // Get current appearances
+        let standard = UINavigationBar.appearance().standardAppearance
+        let scrollEdge = UINavigationBar.appearance().scrollEdgeAppearance ?? standard
+        let compact = UINavigationBar.appearance().compactAppearance ?? standard
+        
+        // Apply to this specific navigation bar
+        navBar.standardAppearance = standard
+        navBar.scrollEdgeAppearance = scrollEdge
+        navBar.compactAppearance = compact
+        
+        // Force immediate update (only on main thread)
+        navBar.setNeedsLayout()
+    }
+    
     /// Force update all navigation bars in the app
     func forceUpdateNavigationBars() {
         let now = Date()
@@ -197,21 +303,30 @@ import OSLog
         // Re-apply navigation bar theme
         applyToNavigationBar()
         
-        // Force all existing navigation bars to update
-        DispatchQueue.main.async {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-            
-            for window in windowScene.windows {
-                // Find all navigation controllers and force update their navigation bars
-                self.updateNavigationBarsRecursively(in: window.rootViewController)
-                
-                // Force update all UINavigationBar instances directly
-                self.forceUpdateAllNavigationBarInstances(in: window)
-                
-                // Force window to update
-                window.setNeedsDisplay()
-                window.layoutIfNeeded()
+        // Force all existing navigation bars to update (ensure main thread)
+        if Thread.isMainThread {
+            performLegacyForceUpdate()
+        } else {
+            DispatchQueue.main.async {
+                self.performLegacyForceUpdate()
             }
+        }
+    }
+    
+    /// Perform the legacy force update on main thread
+    private func performLegacyForceUpdate() {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        
+        for window in windowScene.windows {
+            // Find all navigation controllers and force update their navigation bars
+            updateNavigationBarsRecursively(in: window.rootViewController)
+            
+            // Force update all UINavigationBar instances directly
+            forceUpdateAllNavigationBarInstances(in: window)
+            
+            // Force window to update
+            window.setNeedsDisplay()
+            window.layoutIfNeeded()
         }
     }
     
@@ -229,10 +344,12 @@ import OSLog
                 navBar.scrollEdgeAppearance = scrollEdge
                 navBar.compactAppearance = compact
                 
-                // Force immediate update
-                navBar.setNeedsLayout()
-                navBar.layoutIfNeeded()
-                navBar.setNeedsDisplay()
+                // Force immediate update (main thread only)
+                if Thread.isMainThread {
+                    navBar.setNeedsLayout()
+                    navBar.layoutIfNeeded()
+                    navBar.setNeedsDisplay()
+                }
                 
                 logger.debug("Force updated navigation bar: \(navBar)")
             }
@@ -264,10 +381,12 @@ import OSLog
             navBar.scrollEdgeAppearance = scrollEdge
             navBar.compactAppearance = compact
             
-            // Force update
-            navBar.setNeedsLayout()
-            navBar.layoutIfNeeded()
-            navBar.setNeedsDisplay()
+            // Force update (main thread only)
+            if Thread.isMainThread {
+                navBar.setNeedsLayout()
+                navBar.layoutIfNeeded()
+                navBar.setNeedsDisplay()
+            }
         }
         
         // Check children
@@ -288,7 +407,7 @@ import OSLog
         if getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
                 appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                appearance.shadowColor = .clear
                 
                 // Configure item appearance
                 appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
@@ -305,7 +424,7 @@ import OSLog
                 let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = dimBackground
-                appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+                appearance.shadowColor = .clear
                 
                 // Configure item appearance for dim mode
                 appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
@@ -319,7 +438,7 @@ import OSLog
                 ]
             }
         } else {
-            appearance.configureWithDefaultBackground()
+            appearance.configureWithTransparentBackground()
         }
         
         UITabBar.appearance().standardAppearance = appearance
@@ -333,16 +452,16 @@ import OSLog
         if getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
                 appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                appearance.shadowColor = .clear
             } else {
                 // Dim mode
                 let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = dimBackground
-                appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+                appearance.shadowColor = .clear
             }
         } else {
-            appearance.configureWithDefaultBackground()
+            appearance.configureWithTransparentBackground()
         }
         
         UIToolbar.appearance().standardAppearance = appearance
@@ -418,17 +537,17 @@ import OSLog
                 // True black mode
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                appearance.shadowColor = .clear
             } else {
                 // Dim mode
                 let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = dimBackground
-                appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+                appearance.shadowColor = .clear
             }
         } else {
-            // Light mode
-            appearance.configureWithDefaultBackground()
+            // Light mode - transparent to avoid hairlines
+            appearance.configureWithTransparentBackground()
         }
         
         // Apply fonts
@@ -460,16 +579,16 @@ import OSLog
         if getCurrentEffectiveDarkMode() {
             if darkThemeMode == .black {
                 appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+                appearance.shadowColor = .clear
             } else {
                 // Dim mode
                 let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
                 appearance.configureWithOpaqueBackground()
                 appearance.backgroundColor = dimBackground
-                appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+                appearance.shadowColor = .clear
             }
         } else {
-            appearance.configureWithDefaultBackground()
+            appearance.configureWithTransparentBackground()
         }
         
         toolbar.standardAppearance = appearance
