@@ -24,9 +24,9 @@ struct MessageBubble: View {
   private var cornerRadius: CGFloat {
     switch position {
     case .single: return 18
-    case .top: return 18
+    case .first: return 18
     case .middle: return 8
-    case .bottom: return 18
+    case .last: return 18
     }
   }
   
@@ -142,30 +142,135 @@ struct MessageBubble: View {
 
 struct AttachmentView: View {
   let attachment: Attachment
+  @State private var showingFullScreen = false
 
   var body: some View {
     switch attachment.type {
     case .image:
-      AsyncImage(url: attachment.full) { image in
-        image.resizable().aspectRatio(contentMode: .fill)
-      } placeholder: {
-        ProgressView()
-      }
-      .frame(maxWidth: 200, maxHeight: 200)
-      .cornerRadius(12)
-    case .video:
-      ZStack {
-        AsyncImage(url: attachment.thumbnail) { image in
-          image.resizable().aspectRatio(contentMode: .fill)
+      Button(action: {
+        showingFullScreen = true
+      }) {
+        AsyncImage(url: attachment.full) { image in
+          image
+            .resizable()
+            .aspectRatio(contentMode: .fill)
         } placeholder: {
-          ProgressView()
+          ZStack {
+            RoundedRectangle(cornerRadius: 12)
+              .fill(Color.gray.opacity(0.2))
+              .frame(maxWidth: 200, maxHeight: 200)
+            ProgressView()
+              .progressViewStyle(CircularProgressViewStyle(tint: .gray))
+          }
         }
         .frame(maxWidth: 200, maxHeight: 200)
-        Image(systemName: "play.circle.fill")
-          .font(.system(size: 40))
-          .foregroundColor(.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+          RoundedRectangle(cornerRadius: 12)
+            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+        )
       }
-      .cornerRadius(12)
+      .buttonStyle(.plain)
+      .fullScreenCover(isPresented: $showingFullScreen) {
+        MediaFullScreenView(attachment: attachment)
+      }
+      
+    case .video:
+      Button(action: {
+        showingFullScreen = true
+      }) {
+        ZStack {
+          AsyncImage(url: attachment.thumbnail) { image in
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+          } placeholder: {
+            RoundedRectangle(cornerRadius: 12)
+              .fill(Color.gray.opacity(0.2))
+              .overlay(
+                ProgressView()
+                  .progressViewStyle(CircularProgressViewStyle(tint: .gray))
+              )
+          }
+          .frame(maxWidth: 200, maxHeight: 200)
+          .clipShape(RoundedRectangle(cornerRadius: 12))
+          
+          // Play button overlay
+          Circle()
+            .fill(Color.black.opacity(0.6))
+            .frame(width: 50, height: 50)
+            .overlay(
+              Image(systemName: "play.fill")
+                .font(.system(size: 20))
+                .foregroundColor(.white)
+                .offset(x: 2) // Slight offset to center the play triangle
+            )
+        }
+        .overlay(
+          RoundedRectangle(cornerRadius: 12)
+            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+        )
+      }
+      .buttonStyle(.plain)
+      .fullScreenCover(isPresented: $showingFullScreen) {
+        MediaFullScreenView(attachment: attachment)
+      }
+    }
+  }
+}
+
+struct MediaFullScreenView: View {
+  let attachment: Attachment
+  @Environment(\.dismiss) private var dismiss
+  
+  var body: some View {
+    ZStack {
+      Color.black.ignoresSafeArea()
+      
+      VStack {
+        HStack {
+          Spacer()
+          Button("Done") {
+            dismiss()
+          }
+          .foregroundColor(.white)
+          .padding()
+        }
+        
+        Spacer()
+        
+        switch attachment.type {
+        case .image:
+          AsyncImage(url: attachment.full) { image in
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fit)
+          } placeholder: {
+            ProgressView()
+              .progressViewStyle(CircularProgressViewStyle(tint: .white))
+          }
+          
+        case .video:
+          // Video player implementation would go here
+          // For now, show the thumbnail with a message
+          VStack {
+            AsyncImage(url: attachment.thumbnail) { image in
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+            } placeholder: {
+              ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            }
+            
+            Text("Video playback not implemented yet")
+              .foregroundColor(.white)
+              .padding()
+          }
+        }
+        
+        Spacer()
+      }
     }
   }
 }

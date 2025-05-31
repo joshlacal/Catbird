@@ -584,20 +584,21 @@ struct ConversationView: View {
   var body: some View {
     ZStack {  // Use ZStack to overlay loading indicator
       VStack(spacing: 0) {  // Use VStack to prevent content overlap
-        ChatView<AnyView, EmptyView, CustomMessageMenuAction>(
-          messages: messages,
-          chatType: .conversation,
-          replyMode: .answer,
-          didSendMessage: { draft in
-            Task {
-              await sendMessage(text: draft.text)
-            }
-          },
-          reactionDelegate: BlueskyMessageReactionDelegate(
-            chatManager: chatManager, convoId: convoId),
-          messageBuilder: { message, positionInUserGroup, _, _, _, _, _ in
-            buildMessageView(message: message, positionInUserGroup: positionInUserGroup)
-          },
+        VStack(spacing: 0) {
+          ChatView<AnyView, EmptyView, CustomMessageMenuAction>(
+            messages: messages,
+            chatType: .conversation,
+            replyMode: .answer,
+            didSendMessage: { draft in
+              Task {
+                await sendMessage(text: draft.text)
+              }
+            },
+            reactionDelegate: BlueskyMessageReactionDelegate(
+              chatManager: chatManager, convoId: convoId),
+            messageBuilder: { message, positionInUserGroup, _, _, _, _, _ in
+              buildMessageView(message: message, positionInUserGroup: positionInUserGroup)
+            },
           messageMenuAction: {
             (
               selectedAction: CustomMessageMenuAction,
@@ -618,23 +619,24 @@ struct ConversationView: View {
             }
           },
 //          localization: ChatLocalization(inputPlaceholder: <#String#>, signatureText: <#String#>, cancelButtonText: <#String#>, recentToggleText: <#String#>, waitingForNetwork: <#String#>, recordingText: <#String#>, replyToText: <#String#>)
-        )
-        .setAvailableInputs([.text])
-        .showMessageMenuOnLongPress(true)
-        .messageReactionDelegate(
-          BlueskyMessageReactionDelegate(chatManager: chatManager, convoId: convoId)
-        )
-        // Custom menu items are handled through the messageMenuAction parameter above
-        .enableLoadMore(pageSize: 20) { _ in
-          Task {
-            logger.debug("Load more triggered for convo \(convoId)")
-            await chatManager.loadMessages(convoId: convoId, refresh: false)
+          )
+          .setAvailableInputs([.text])
+          .showMessageMenuOnLongPress(true)
+          .messageReactionDelegate(
+            BlueskyMessageReactionDelegate(chatManager: chatManager, convoId: convoId)
+          )
+          // Custom menu items are handled through the messageMenuAction parameter above
+          .enableLoadMore(pageSize: 20) { _ in
+            Task {
+              logger.debug("Load more triggered for convo \(convoId)")
+              await chatManager.loadMessages(convoId: convoId, refresh: false)
+            }
           }
+          .chatTheme(accentColor: .blue)
+          
+          // Typing indicator at the bottom
+          TypingIndicatorView(convoId: convoId)
         }
-        .chatTheme(accentColor: .blue)
-        .padding(.bottom, 2)
-
-        // Helper: Extracts a post URI from the message text if present
       }
 
       // Loading overlay

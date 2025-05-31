@@ -118,6 +118,9 @@ struct FeedListView: View {
 
   // State to track refreshing status
   @State private var isRefreshing = false
+  
+  // State to track pull-to-refresh feedback
+  @State private var refreshFeedbackTimer: Timer?
 
   // Specific ID for the top anchor that's consistently used
   private let topAnchorID = "feed-top-anchor"
@@ -189,9 +192,7 @@ struct FeedListView: View {
     .scrollDisabled(false)
     .scrollDismissesKeyboard(.immediately)
     .refreshable {
-      isRefreshing = true
-      await refreshAction()
-      isRefreshing = false
+      await performOptimizedRefresh()
     }
     .onChange(of: appState.tabTappedAgain) { _, tapped in
       if tapped == 0 {
@@ -207,6 +208,41 @@ struct FeedListView: View {
             appState.tabTappedAgain = nil
           }
         }
+      }
+    }
+  }
+  
+  // MARK: - Private Methods
+  
+  /// Optimized refresh with improved UX and haptic feedback
+  private func performOptimizedRefresh() async {
+    // Provide haptic feedback for better UX
+    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    await MainActor.run {
+      isRefreshing = true
+      impactFeedback.impactOccurred()
+    }
+    
+    // Add slight delay to show refresh animation
+    try? await Task.sleep(for: .milliseconds(100))
+    
+    // Perform the actual refresh
+    await refreshAction()
+    
+    // Success haptic feedback
+    let successFeedback = UINotificationFeedbackGenerator()
+    await MainActor.run {
+      isRefreshing = false
+      successFeedback.notificationOccurred(.success)
+    }
+    
+    // Cancel any existing feedback timer
+    refreshFeedbackTimer?.invalidate()
+    
+    // Set a timer to reset refresh state if needed
+    await MainActor.run {
+      refreshFeedbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+        // Additional cleanup if needed
       }
     }
   }

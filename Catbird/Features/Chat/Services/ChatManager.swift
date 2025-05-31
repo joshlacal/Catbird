@@ -1721,7 +1721,7 @@ final class ChatManager: StateInvalidationSubscriber {
   }
   
   /// Get typing users for a conversation (excluding current user)
-  func getTypingUsers(for convoId: String) -> Set<String> {
+  func getTypingUsers(for convoId: String) async -> Set<String> {
     let currentUserDID = try? await client?.getDid()
     var typingUsers = typingIndicators[convoId] ?? Set<String>()
     

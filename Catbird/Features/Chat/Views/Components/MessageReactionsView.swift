@@ -8,35 +8,101 @@ struct MessageReactionsView: View {
   let messageView: ChatBskyConvoDefs.MessageView
 
   @Environment(AppState.self) private var appState
+  @State private var showingEmojiPicker = false
+  
+  // Group reactions by emoji and count them
+  private var groupedReactions: [String: [ChatBskyConvoDefs.ReactionView]] {
+    guard let reactions = messageView.reactions else { return [:] }
+    return Dictionary(grouping: reactions, by: { $0.value })
+  }
+  
+  // Check if current user has reacted with specific emoji
+  private func currentUserReacted(to emoji: String) -> Bool {
+    guard let userReactions = groupedReactions[emoji] else { return false }
+    return userReactions.contains { $0.sender.did.didString() == appState.currentUserDID }
+  }
 
   var body: some View {
-    VStack {
-      if let reactions = messageView.reactions {
-        HStack(spacing: 4) {
-          ForEach(reactions, id: \.value) { reaction in
+    VStack(alignment: .leading, spacing: 4) {
+      if !groupedReactions.isEmpty || messageView.reactions != nil {
+        HStack(spacing: 6) {
+          // Display existing reactions
+          ForEach(Array(groupedReactions.keys.sorted()), id: \.self) { emoji in
+            let reactions = groupedReactions[emoji] ?? []
+            let count = reactions.count
+            let userReacted = currentUserReacted(to: emoji)
+            
             Button(action: {
               Task {
-                try await toggleReaction(emoji: reaction.value)
+                try await toggleReaction(emoji: emoji)
               }
             }) {
-              HStack(spacing: 2) {
-                Text(reaction.value)
-                      .font(.caption)
+              HStack(spacing: 4) {
+                Text(emoji)
+                  .font(.caption)
+                if count > 1 {
+                  Text("\(count)")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                }
               }
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-//              .background(
-//                RoundedRectangle(cornerRadius: 12)
-//                  .fill(
-//                    reaction.sender.did.didString() == appState.currentUserDID
-//                      ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.1))
-//              )
+              .padding(.horizontal, 8)
+              .padding(.vertical, 4)
+              .background(
+                RoundedRectangle(cornerRadius: 12)
+                  .fill(userReacted ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.15))
+                  .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                      .stroke(userReacted ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+                  )
+              )
+              .foregroundColor(userReacted ? .accentColor : .primary)
             }
+            .buttonStyle(.plain)
+            .animation(.easeInOut(duration: 0.2), value: userReacted)
           }
-          // Exyte Chat will handle emoji selection UI
+          
+          // Add reaction button
+          Button(action: {
+            showingEmojiPicker = true
+          }) {
+            Image(systemName: "plus.circle")
+              .font(.caption)
+              .foregroundColor(.secondary)
+              .padding(.horizontal, 6)
+              .padding(.vertical, 4)
+              .background(
+                RoundedRectangle(cornerRadius: 12)
+                  .fill(Color.gray.opacity(0.1))
+              )
+          }
+          .buttonStyle(.plain)
         }
-        .padding(.vertical, 2)
       }
+    }
+    .sheet(isPresented: $showingEmojiPicker) {
+      VStack {
+        HStack {
+          Text("Add Reaction")
+            .font(.headline)
+            .padding(.leading)
+          Spacer()
+          Button("Cancel") {
+            showingEmojiPicker = false
+          }
+          .padding(.trailing)
+        }
+        .padding(.top)
+        
+        EmojiReactionPicker(isPresented: $showingEmojiPicker) { emoji in
+          Task {
+            try await toggleReaction(emoji: emoji)
+          }
+        }
+        .padding()
+      }
+      .presentationDetents([.height(350)])
+      .presentationDragIndicator(.visible)
     }
   }
 

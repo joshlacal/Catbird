@@ -1,18 +1,12 @@
 import SwiftUI
 import Petrel
+import Foundation
 
 struct TypingIndicatorView: View {
   let convoId: String
   @Environment(AppState.self) private var appState
   @State private var animationPhase: Double = 0
-  
-  private var typingUsers: Set<String> {
-    Task {
-      return await appState.chatManager.getTypingUsers(for: convoId)
-    }
-    // Fallback to checking local state
-    return appState.chatManager.typingIndicators[convoId] ?? Set<String>()
-  }
+  @State private var typingUsers: Set<String> = []
   
   private var typingText: String {
     let userCount = typingUsers.count
@@ -33,10 +27,11 @@ struct TypingIndicatorView: View {
       HStack(spacing: 8) {
         HStack(spacing: 3) {
           ForEach(0..<3) { index in
+            let scale = 1.0 + 0.3 * sin(animationPhase + Double(index) * 0.5)
             Circle()
               .fill(Color.gray.opacity(0.6))
               .frame(width: 6, height: 6)
-              .scaleEffect(1 + 0.3 * sin(animationPhase + Double(index) * 0.5))
+              .scaleEffect(scale)
               .animation(
                 .easeInOut(duration: 1.2)
                 .repeatForever(autoreverses: false),
@@ -61,6 +56,16 @@ struct TypingIndicatorView: View {
       .padding(.horizontal, 16)
       .padding(.bottom, 4)
       .transition(.move(edge: .bottom).combined(with: .opacity))
+      .task {
+        // Update typing users when view appears
+        typingUsers = await appState.chatManager.getTypingUsers(for: convoId)
+      }
+      .onChange(of: appState.chatManager.typingIndicators[convoId]) { _, newValue in
+        // Update typing users when indicators change
+        Task {
+          typingUsers = await appState.chatManager.getTypingUsers(for: convoId)
+        }
+      }
       .onAppear {
         withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
           animationPhase = .pi * 2

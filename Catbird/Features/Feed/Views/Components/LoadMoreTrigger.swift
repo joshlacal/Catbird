@@ -8,7 +8,7 @@
 import SwiftUI
 
 /// An invisible view that triggers loading more posts when it comes into view.
-/// Uses modern Swift concurrency patterns with @Sendable functions.
+/// Uses modern Swift concurrency patterns with @Sendable functions and optimized performance.
 struct LoadMoreTrigger: View {
     // MARK: - Properties
     
@@ -18,8 +18,17 @@ struct LoadMoreTrigger: View {
     /// Track if this trigger has already been activated
     @State private var isTriggered = false
     
+    /// Track loading state to prevent multiple simultaneous requests
+    @State private var isLoading = false
+    
+    /// Debounce timer to prevent rapid-fire triggers
+    @State private var debounceTask: Task<Void, Never>?
+    
     /// Base spacing unit (multiple of 3pt)
     private static let baseUnit: CGFloat = 3
+    
+    /// Debounce delay to prevent multiple rapid triggers
+    private static let debounceDelay: Duration = .milliseconds(200)
     
     // MARK: - Body
     var body: some View {
@@ -28,24 +37,62 @@ struct LoadMoreTrigger: View {
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets())
             .onAppear {
-                // Only trigger once to avoid repeated calls
-                guard !isTriggered else { return }
-                
-                // Mark as triggered immediately to prevent double-loading
-                isTriggered = true
-                
-                // Execute the load more action with proper task isolation
-                Task { @MainActor in
-                    #if DEBUG
-                    logger.debug("LoadMoreTrigger: Loading more posts...")
-                    #endif
-                    
-                    // Use a task detached with proper priority
-                    Task.detached(priority: .userInitiated) { @Sendable in
-                        await loadMoreAction()
-                    }
-                }
+                triggerLoadMore()
             }
+            .onDisappear {
+                // Cancel any pending debounce task if the view disappears
+                debounceTask?.cancel()
+                debounceTask = nil
+            }
+    }
+    
+    // MARK: - Private Methods
+    
+    /// Optimized trigger method with debouncing and loading state management
+    private func triggerLoadMore() {
+        // Only trigger if not already triggered and not currently loading
+        guard !isTriggered && !isLoading else { return }
+        
+        // Mark as triggered immediately to prevent double-loading
+        isTriggered = true
+        
+        // Cancel any existing debounce task
+        debounceTask?.cancel()
+        
+        // Start new debounced task
+        debounceTask = Task {
+            // Wait for debounce delay
+            try? await Task.sleep(for: LoadMoreTrigger.debounceDelay)
+            
+            // Check if task was cancelled
+            guard !Task.isCancelled else { return }
+            
+            // Set loading state
+            await MainActor.run {
+                isLoading = true
+            }
+            
+            #if DEBUG
+            logger.debug("LoadMoreTrigger: Loading more posts...")
+            #endif
+            
+            do {
+                // Execute the load more action with proper error handling
+                await loadMoreAction()
+            } catch {
+                #if DEBUG
+                logger.error("LoadMoreTrigger: Failed to load more posts: \(error)")
+                #endif
+            }
+            
+            // Reset loading state
+            await MainActor.run {
+                isLoading = false
+                // Reset triggered state to allow future triggers when scrolling
+                // This enables infinite scroll to work properly
+                isTriggered = false
+            }
+        }
     }
 }
 
