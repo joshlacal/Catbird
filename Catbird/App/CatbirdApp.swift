@@ -52,7 +52,8 @@ struct CatbirdApp: App {
     }
   }
   // MARK: - State
-  @State private var appState = AppState()
+  // Create AppState as a stored property to ensure it's only created once
+  private let appState = AppState()
   @State private var didInitialize = false
 
   // MARK: - SwiftData

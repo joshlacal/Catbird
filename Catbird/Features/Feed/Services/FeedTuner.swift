@@ -89,42 +89,57 @@ final class FeedTuner {
   func tune(_ rawPosts: [AppBskyFeedDefs.FeedViewPost]) -> [FeedSlice] {
     logger.debug("🧵 FeedTuner.tune() called with \(rawPosts.count) raw posts")
     
-    // Debug: Log posts with replies
-    for post in rawPosts {
-      if let reply = post.reply {
-          logger.debug("🧵 Post \(post.post.uri.uriString()) has reply context: parent=\(String(describing: reply.parent)), root=\(String(describing: reply.root))")
-      } else {
-          logger.debug("🧵 Post \(post.post.uri.uriString()) has NO reply context")
-      }
-    }
-    
     // Reset seen tracking for new batch
     seenKeys.removeAll()
     seenUris.removeAll()
     
-    // Step 1: Convert each raw post into a slice (following React Native logic)
-    logger.debug("🧵 Step 1: Creating slices from raw posts...")
-    let slices = rawPosts.compactMap { post in
-      logger.debug("🧵 Creating slice for post: \(post.post.uri.uriString())")
-      let slice = createSlice(from: post)
-      if let slice = slice {
-        logger.debug("🧵 ✅ Created slice with \(slice.items.count) items")
+    // Performance optimization: reduce logging in hot path
+    // Group posts by root URI for more efficient thread consolidation
+    var rootGroups: [String: [AppBskyFeedDefs.FeedViewPost]] = [:]
+    
+    for post in rawPosts {
+      let rootUri: String
+      if case .appBskyFeedDefsPostView(let rootPost) = post.reply?.root {
+        rootUri = rootPost.uri.uriString()
       } else {
-        logger.debug("🧵 ❌ Failed to create slice")
+        rootUri = post.post.uri.uriString()
       }
-      return slice
+      
+      if rootGroups[rootUri] == nil {
+        rootGroups[rootUri] = []
+      }
+      rootGroups[rootUri]?.append(post)
     }
     
-    // Step 2: Apply deduplication (like React Native)
-    logger.debug("🧵 Step 2: Deduplicating \(slices.count) slices...")
-    let dedupedSlices = deduplicateSlices(slices)
+    logger.debug("🧵 Grouped \(rawPosts.count) posts into \(rootGroups.count) root threads")
     
-    logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(dedupedSlices.count) slices")
+    // Process each group to create optimized slices
+    var allSlices: [FeedSlice] = []
     
-    // Final debug: log slice summary
-    for slice in dedupedSlices {
-      logger.debug("🧵 Final slice: \(slice.id) with \(slice.items.count) items")
+    for (rootUri, postsInGroup) in rootGroups {
+      // Sort posts in group by creation time for proper thread ordering
+      let sortedPosts = postsInGroup.sorted { post1, post2 in
+        guard case .knownType(let record1) = post1.post.record,
+              let feedPost1 = record1 as? AppBskyFeedPost,
+              case .knownType(let record2) = post2.post.record,
+              let feedPost2 = record2 as? AppBskyFeedPost else {
+          return false
+        }
+        return feedPost1.createdAt < feedPost2.createdAt
+      }
+      
+      // Create slices for each post in the sorted group
+      let groupSlices = sortedPosts.compactMap { post in
+        return createSlice(from: post)
+      }
+      
+      allSlices.append(contentsOf: groupSlices)
     }
+    
+    // Apply deduplication with improved algorithm
+    let dedupedSlices = deduplicateSlicesOptimized(allSlices)
+    
+    logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(dedupedSlices.count) slices (optimized)")
     
     return dedupedSlices
   }
@@ -299,6 +314,44 @@ final class FeedTuner {
       
       results.append(slice)
     }
+    
+    return results
+  }
+  
+  /// Optimized deduplication with batch operations and reduced allocations
+  private func deduplicateSlicesOptimized(_ slices: [FeedSlice]) -> [FeedSlice] {
+    var results: [FeedSlice] = []
+    results.reserveCapacity(slices.count) // Pre-allocate to reduce reallocations
+    
+    // Use batch operations for better performance
+    var newSeenKeys: Set<String> = seenKeys
+    var newSeenUris: Set<String> = seenUris
+    
+    for slice in slices {
+      // Skip if we've seen this exact slice before
+      guard !newSeenKeys.contains(slice.id) else {
+        continue
+      }
+      
+      // Collect all URIs in this slice
+      let sliceUris = slice.items.map { $0.post.uri.uriString() }
+      
+      // Check if any items were already seen using set intersection
+      let unseenUriCount = Set(sliceUris).subtracting(newSeenUris).count
+      guard unseenUriCount > 0 else {
+        continue
+      }
+      
+      // Mark as seen (batch operations)
+      newSeenKeys.insert(slice.id)
+      newSeenUris.formUnion(sliceUris)
+      
+      results.append(slice)
+    }
+    
+    // Update instance variables
+    seenKeys = newSeenKeys
+    seenUris = newSeenUris
     
     return results
   }

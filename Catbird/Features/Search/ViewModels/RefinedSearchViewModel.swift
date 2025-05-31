@@ -139,8 +139,13 @@ enum SearchState {
         
         isCommittedSearch = false
         
-        // Generate suggestions
-        typeaheadSuggestions = SearchSuggestion.generateSuggestions(for: query)
+        // Generate enhanced suggestions with history and trending
+        let trendingTerms = trendingTopics.map { $0.topic ?? "" }.filter { !$0.isEmpty }
+        typeaheadSuggestions = SearchSuggestion.generateSuggestions(
+            for: query, 
+            history: recentSearches,
+            trending: trendingTerms
+        )
         
         // Fetch typeahead results
         Task {

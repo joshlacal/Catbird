@@ -68,11 +68,26 @@ class PostHeightCalculator {
     private let config: Config
     private let logger = Logger(subsystem: "com.joshlacalamito.Catbird", category: "PostHeightCalculator")
     
-    // Height cache to avoid recalculating heights for the same posts
+    // Enhanced height cache with better memory management
     private var heightCache = NSCache<NSString, NSNumber>()
+    
+    // Cache for text size calculations to avoid repeated expensive operations
+    private var textSizeCache = NSCache<NSString, NSValue>()
     
     init(config: Config = .standard) {
         self.config = config
+        setupCacheConfiguration()
+    }
+    
+    /// Configure cache settings for optimal memory usage
+    private func setupCacheConfiguration() {
+        // Configure height cache
+        heightCache.countLimit = 1000 // Limit to 1000 entries
+        heightCache.totalCostLimit = 1024 * 1024 // 1MB limit
+        
+        // Configure text size cache
+        textSizeCache.countLimit = 500 // Limit to 500 text calculations
+        textSizeCache.totalCostLimit = 512 * 1024 // 512KB limit
     }
     
     // MARK: - Public API
@@ -143,9 +158,23 @@ class PostHeightCalculator {
         return totalHeight
     }
     
-    /// Invalidate the height cache
+    /// Invalidate all caches
     func invalidateCache() {
         heightCache.removeAllObjects()
+        textSizeCache.removeAllObjects()
+    }
+    
+    /// Batch calculate heights for multiple posts for better performance
+    func batchCalculateHeights(for posts: [AppBskyFeedDefs.PostView], mode: CalculationMode = .compact) -> [String: CGFloat] {
+        var results: [String: CGFloat] = [:]
+        results.reserveCapacity(posts.count)
+        
+        for post in posts {
+            let height = calculateHeight(for: post, mode: mode)
+            results[post.uri.uriString()] = height
+        }
+        
+        return results
     }
     
     // MARK: - Calculation Modes
@@ -215,7 +244,22 @@ class PostHeightCalculator {
             return 0
         }
         
-        // Create paragraph style matching your config
+        // Create cache key for text size calculation
+        let textWidth = config.maxWidth - config.avatarContainerWidth
+        let cacheKey = "\(post.text.hashValue)-\(textWidth)-\(config.textFont.pointSize)" as NSString
+        
+        // Check cache first
+        if let cachedSize = textSizeCache.object(forKey: cacheKey) {
+            let height = cachedSize.cgSizeValue.height
+            
+            // Add more height if post has tags
+            if let tags = post.tags, !tags.isEmpty {
+                return height + 24
+            }
+            return height
+        }
+        
+        // Calculate text size if not cached
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = config.lineSpacing
         
@@ -225,11 +269,8 @@ class PostHeightCalculator {
             .kern: config.letterSpacing
         ]
         
-        // Get maximum available width for text (total - avatar)
-        let textMaxWidth = config.maxWidth - config.avatarContainerWidth
-        
         let textRect = post.text.boundingRect(
-            with: CGSize(width: textMaxWidth, height: .greatestFiniteMagnitude),
+            with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: textAttributes,
             context: nil
@@ -238,9 +279,13 @@ class PostHeightCalculator {
         // Add some padding for facets and text rendering
         let height = ceil(textRect.height) + 8
         
+        // Cache the calculated size
+        let size = CGSize(width: textWidth, height: height)
+        textSizeCache.setObject(NSValue(cgSize: size), forKey: cacheKey)
+        
         // Add more height if post has tags
         if let tags = post.tags, !tags.isEmpty {
-            return height + 24 // Additional height for tags
+            return height + 24
         }
         
         return height
