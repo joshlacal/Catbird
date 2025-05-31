@@ -80,6 +80,157 @@ struct SearchHistoryItem: Codable, Identifiable {
     }
 }
 
+/// Model for saved searches
+struct SavedSearch: Codable, Identifiable {
+    let id: UUID
+    let name: String
+    let query: String
+    let filters: AdvancedSearchParams
+    let createdAt: Date
+    let lastUsed: Date
+    
+    init(name: String, query: String, filters: AdvancedSearchParams) {
+        self.id = UUID()
+        self.name = name
+        self.query = query
+        self.filters = filters
+        self.createdAt = Date()
+        self.lastUsed = Date()
+    }
+    
+    func withUpdatedLastUsed() -> SavedSearch {
+        var copy = self
+        copy.lastUsed = Date()
+        return copy
+    }
+    
+    private init(id: UUID, name: String, query: String, filters: AdvancedSearchParams, createdAt: Date, lastUsed: Date) {
+        self.id = id
+        self.name = name
+        self.query = query
+        self.filters = filters
+        self.createdAt = createdAt
+        self.lastUsed = lastUsed
+    }
+}
+
+/// Enhanced search history manager
+class SearchHistoryManager {
+    private let userDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+    private let maxHistoryItems = 50
+    private let maxSavedSearches = 20
+    
+    /// Save a search to history
+    func saveToHistory(_ query: String, resultCount: Int, userDID: String?) {
+        let key = historyKey(for: userDID)
+        var history = loadHistory(for: userDID)
+        
+        // Remove duplicates
+        history.removeAll { $0.query == query }
+        
+        // Add new item
+        let item = SearchHistoryItem(query: query, resultCount: resultCount)
+        history.insert(item, at: 0)
+        
+        // Limit size
+        if history.count > maxHistoryItems {
+            history = Array(history.prefix(maxHistoryItems))
+        }
+        
+        // Save to UserDefaults
+        if let encoded = try? JSONEncoder().encode(history) {
+            userDefaults?.set(encoded, forKey: key)
+        }
+    }
+    
+    /// Load search history
+    func loadHistory(for userDID: String?) -> [SearchHistoryItem] {
+        let key = historyKey(for: userDID)
+        guard let data = userDefaults?.data(forKey: key),
+              let history = try? JSONDecoder().decode([SearchHistoryItem].self, from: data) else {
+            return []
+        }
+        return history
+    }
+    
+    /// Clear search history
+    func clearHistory(for userDID: String?) {
+        let key = historyKey(for: userDID)
+        userDefaults?.removeObject(forKey: key)
+    }
+    
+    /// Save a search for later use
+    func saveSearch(_ savedSearch: SavedSearch, userDID: String?) {
+        let key = savedSearchesKey(for: userDID)
+        var savedSearches = loadSavedSearches(for: userDID)
+        
+        // Remove existing with same name
+        savedSearches.removeAll { $0.name == savedSearch.name }
+        
+        // Add new search
+        savedSearches.insert(savedSearch, at: 0)
+        
+        // Limit size
+        if savedSearches.count > maxSavedSearches {
+            savedSearches = Array(savedSearches.prefix(maxSavedSearches))
+        }
+        
+        // Save to UserDefaults
+        if let encoded = try? JSONEncoder().encode(savedSearches) {
+            userDefaults?.set(encoded, forKey: key)
+        }
+    }
+    
+    /// Load saved searches
+    func loadSavedSearches(for userDID: String?) -> [SavedSearch] {
+        let key = savedSearchesKey(for: userDID)
+        guard let data = userDefaults?.data(forKey: key),
+              let savedSearches = try? JSONDecoder().decode([SavedSearch].self, from: data) else {
+            return []
+        }
+        return savedSearches.sorted { $0.lastUsed > $1.lastUsed }
+    }
+    
+    /// Delete a saved search
+    func deleteSavedSearch(_ id: UUID, userDID: String?) {
+        let key = savedSearchesKey(for: userDID)
+        var savedSearches = loadSavedSearches(for: userDID)
+        savedSearches.removeAll { $0.id == id }
+        
+        if let encoded = try? JSONEncoder().encode(savedSearches) {
+            userDefaults?.set(encoded, forKey: key)
+        }
+    }
+    
+    /// Update last used time for a saved search
+    func updateLastUsed(_ id: UUID, userDID: String?) {
+        let key = savedSearchesKey(for: userDID)
+        var savedSearches = loadSavedSearches(for: userDID)
+        
+        if let index = savedSearches.firstIndex(where: { $0.id == id }) {
+            savedSearches[index] = savedSearches[index].withUpdatedLastUsed()
+            
+            if let encoded = try? JSONEncoder().encode(savedSearches) {
+                userDefaults?.set(encoded, forKey: key)
+            }
+        }
+    }
+    
+    private func historyKey(for userDID: String?) -> String {
+        if let userDID = userDID {
+            return "searchHistory_\(userDID)"
+        }
+        return "searchHistory_default"
+    }
+    
+    private func savedSearchesKey(for userDID: String?) -> String {
+        if let userDID = userDID {
+            return "savedSearches_\(userDID)"
+        }
+        return "savedSearches_default"
+    }
+}
+
 // MARK: - Search Ranking and Relevance
 
 /// Advanced search result ranking system

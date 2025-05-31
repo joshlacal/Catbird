@@ -1,7 +1,7 @@
 import Foundation
 
 /// Advanced search parameters for comprehensive filtering and ranking
-struct AdvancedSearchParams: Equatable {
+struct AdvancedSearchParams: Equatable, Codable {
     // Content Filtering
     var excludeReplies: Bool = false
     var excludeReposts: Bool = false
@@ -41,7 +41,7 @@ struct AdvancedSearchParams: Equatable {
     var nearLocation: String?
     var radiusKm: Double = 50.0
     
-    enum DateRange: String, CaseIterable, Identifiable {
+    enum DateRange: String, CaseIterable, Identifiable, Codable {
         case anytime = "anytime"
         case today = "today"
         case week = "week"
@@ -63,7 +63,7 @@ struct AdvancedSearchParams: Equatable {
         }
     }
     
-    enum SortOption: String, CaseIterable, Identifiable {
+    enum SortOption: String, CaseIterable, Identifiable, Codable {
         case latest = "latest"
         case relevance = "relevance"
         case popular = "popular"
@@ -81,7 +81,7 @@ struct AdvancedSearchParams: Equatable {
         }
     }
     
-    enum RelevanceBoost: String, CaseIterable, Identifiable {
+    enum RelevanceBoost: String, CaseIterable, Identifiable, Codable {
         case minimal = "minimal"
         case balanced = "balanced"
         case aggressive = "aggressive"

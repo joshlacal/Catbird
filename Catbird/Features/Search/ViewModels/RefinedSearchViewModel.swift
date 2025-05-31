@@ -60,8 +60,12 @@ enum SearchState {
     var feedCursor: String?
     var starterPackCursor: String?
     
+    // MARK: - Saved Searches
+    var savedSearches: [SavedSearch] = []
+    
     // MARK: - Dependencies
     private let appState: AppState
+    private let searchHistoryManager = SearchHistoryManager()
     private let logger = Logger(subsystem: "blue.catbird", category: "RefinedSearchViewModel")
     
     // MARK: - Computed Properties
@@ -99,6 +103,7 @@ enum SearchState {
         // Load recent searches from UserDefaults
         loadRecentSearches()
         loadRecentProfileSearches()
+        loadSavedSearches()
         
         // Register for state invalidation events
         appState.stateInvalidationBus.subscribe(self)
@@ -491,6 +496,50 @@ enum SearchState {
         UserDefaults(suiteName: "group.blue.catbird.shared")?.removeObject(forKey: key)
     }
     
+    // MARK: - Saved Searches Management
+    
+    /// Save current search with filters for later use
+    func saveCurrentSearch(name: String) {
+        let savedSearch = SavedSearch(
+            name: name,
+            query: searchQuery,
+            filters: advancedParams
+        )
+        
+        let userDID = appState.authManager.state.userDID
+        searchHistoryManager.saveSearch(savedSearch, userDID: userDID)
+        loadSavedSearches()
+    }
+    
+    /// Load a saved search and apply it
+    func loadSavedSearch(_ savedSearch: SavedSearch, client: ATProtoClient) {
+        let userDID = appState.authManager.state.userDID
+        searchHistoryManager.updateLastUsed(savedSearch.id, userDID: userDID)
+        
+        // Apply the saved search
+        searchQuery = savedSearch.query
+        advancedParams = savedSearch.filters
+        
+        // Execute the search
+        commitSearch(client: client)
+        
+        // Reload saved searches to update order
+        loadSavedSearches()
+    }
+    
+    /// Delete a saved search
+    func deleteSavedSearch(_ id: UUID) {
+        let userDID = appState.authManager.state.userDID
+        searchHistoryManager.deleteSavedSearch(id, userDID: userDID)
+        loadSavedSearches()
+    }
+    
+    /// Load saved searches for current user
+    private func loadSavedSearches() {
+        let userDID = appState.authManager.state.userDID
+        savedSearches = searchHistoryManager.loadSavedSearches(for: userDID)
+    }
+    
     // MARK: - Private Methods
     
     /// Load recent searches from UserDefaults for current account
@@ -620,9 +669,12 @@ enum SearchState {
         }
     }
     
-    /// Search for posts matching the query
+    /// Search for posts matching the query with enhanced hashtag and mention support
     private func searchPosts(client: ATProtoClient) async {
         do {
+            // Enhanced query processing for hashtags and mentions
+            let enhancedQuery = enhanceQueryForSpecialTypes(searchQuery)
+            
             // Prepare query parameters with filters
             var queryParams: [String: String] = [:]
             
@@ -644,9 +696,9 @@ enum SearchState {
             let advancedQueryParams = advancedParams.toQueryParameters()
             queryParams.merge(advancedQueryParams) { (_, new) in new }
             
-            // Create input parameter
+            // Create input parameter with enhanced query
             let input = AppBskyFeedSearchPosts.Parameters(
-                q: searchQuery,
+                q: enhancedQuery,
                 limit: 25,
                 cursor: postCursor
             )
@@ -655,13 +707,91 @@ enum SearchState {
             let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
             
             if let postsResponse = response {
-                postResults = postsResponse.posts
+                var results = postsResponse.posts
+                
+                // Apply local ranking if relevance boost is enabled
+                if advancedParams.relevanceBoost != .minimal {
+                    results = rankSearchResults(results, query: searchQuery)
+                }
+                
+                postResults = results
                 postCursor = postsResponse.cursor
             }
         } catch {
             logger.error("Error searching posts: \(error.localizedDescription)")
             postResults = []
         }
+    }
+    
+    /// Enhance query for hashtags, mentions, and special search types
+    private func enhanceQueryForSpecialTypes(_ query: String) -> String {
+        var enhancedQuery = query
+        
+        // Handle hashtag searches
+        if SearchUtilities.isHashtag(query) {
+            // For hashtag searches, also search for the tag without #
+            let tagWithoutHash = String(query.dropFirst())
+            enhancedQuery = "\(query) OR #\(tagWithoutHash) OR \(tagWithoutHash)"
+        }
+        
+        // Handle mention searches
+        else if SearchUtilities.isHandle(query) {
+            // For handle searches, search for both @handle and handle
+            let handleWithoutAt = String(query.dropFirst())
+            enhancedQuery = "\(query) OR @\(handleWithoutAt) OR \(handleWithoutAt)"
+        }
+        
+        // Handle URL searches
+        else if SearchUtilities.isURL(query) {
+            enhancedQuery = "url:\(query)"
+        }
+        
+        return enhancedQuery
+    }
+    
+    /// Rank search results using the enhanced ranking system
+    private func rankSearchResults(_ posts: [AppBskyFeedDefs.PostView], query: String) -> [AppBskyFeedDefs.PostView] {
+        return posts.sorted { post1, post2 in
+            let score1 = calculatePostRelevanceScore(post1, query: query)
+            let score2 = calculatePostRelevanceScore(post2, query: query)
+            return score1 > score2
+        }
+    }
+    
+    /// Calculate relevance score for a post
+    private func calculatePostRelevanceScore(_ post: AppBskyFeedDefs.PostView, query: String) -> Double {
+        guard let record = post.record.asAppBskyFeedPost else { return 0 }
+        
+        // Extract engagement metrics
+        let engagement = EngagementMetrics(
+            likes: post.likeCount ?? 0,
+            reposts: post.repostCount ?? 0,
+            replies: post.replyCount ?? 0
+        )
+        
+        // Extract user metrics
+        // Note: ProfileViewBasic doesn't have followerCount, so we use 0 as default
+        let userMetrics = UserMetrics(
+            followerCount: 0,  // ProfileViewBasic doesn't expose follower count
+            isVerified: post.author.labels?.contains { $0.val == "verified" } ?? false,
+            isFollowing: post.author.viewer?.following != nil
+        )
+        
+        // Calculate recency
+        let createdAt = record.createdAt
+        let recency = Date().timeIntervalSince(createdAt)
+        
+        // Get post content
+        let content = record.text
+        
+        return SearchRanking.calculateRelevanceScore(
+            query: query,
+            content: content,
+            engagement: engagement,
+            userMetrics: userMetrics,
+            recency: recency,
+            boost: advancedParams.relevanceBoost
+        )
     }
     
     /// Search for feeds matching the query
