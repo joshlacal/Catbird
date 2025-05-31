@@ -35,7 +35,7 @@ struct ThemeTestView: View {
                 }
                 .padding()
             }
-            .themedPrimaryBackground(appState.themeManager)
+            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
             .navigationTitle("Theme Test")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -53,30 +53,30 @@ struct ThemeStatusCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Current Theme Status")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Color Scheme:")
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     Spacer()
                     Text(colorScheme == .dark ? "Dark" : "Light")
                         .fontWeight(.medium)
-                        .themedText(appState.themeManager, style: .primary)
+                        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 }
                 
                 HStack {
                     Text("Theme Override:")
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     Spacer()
                     Text(themeOverrideText)
                         .fontWeight(.medium)
-                        .themedText(appState.themeManager, style: .primary)
+                        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 }
                 
                 HStack {
                     Text("Dark Mode Style:")
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     Spacer()
                     Text(appState.themeManager.isUsingTrueBlack ? "True Black" : "Dim")
                         .fontWeight(.medium)
@@ -85,19 +85,19 @@ struct ThemeStatusCard: View {
                 
                 HStack {
                     Text("Is Dark Mode:")
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     Spacer()
                     Text(appState.themeManager.isDarkMode(for: colorScheme) ? "Yes" : "No")
                         .fontWeight(.medium)
-                        .themedText(appState.themeManager, style: .primary)
+                        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 }
             }
             .font(.body)
         }
         .padding()
-        .themedElevatedBackground(appState.themeManager, elevation: .low)
+        .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
         .cornerRadius(12)
-        .themedSolariumCard(themeManager: appState.themeManager)
+        .themedSolariumCard(themeManager: appState.themeManager, appSettings: appState.appSettings)
     }
     
     private var themeOverrideText: String {
@@ -117,14 +117,14 @@ struct ThemeComparisonView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Theme Comparison")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             HStack(spacing: 16) {
                 // Dim mode preview
                 VStack {
                     Text("Dim Mode")
                         .font(.caption)
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     
                     MockThemePreview(isDarkMode: true, isBlackMode: false)
                 }
@@ -134,7 +134,7 @@ struct ThemeComparisonView: View {
                 VStack {
                     Text("True Black")
                         .font(.caption)
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     
                     MockThemePreview(isDarkMode: true, isBlackMode: true)
                 }
@@ -142,7 +142,7 @@ struct ThemeComparisonView: View {
             }
         }
         .padding()
-        .themedSecondaryBackground(appState.themeManager)
+        .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
 }
@@ -288,7 +288,7 @@ struct BackgroundHierarchyTest: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Background Hierarchy Test")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
                 BackgroundTestRow(
@@ -296,7 +296,7 @@ struct BackgroundHierarchyTest: View {
                     description: "Main app background"
                 ) {
                     Rectangle()
-                        .themedPrimaryBackground(appState.themeManager)
+                        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
                 }
                 
                 BackgroundTestRow(
@@ -304,7 +304,7 @@ struct BackgroundHierarchyTest: View {
                     description: "Content areas"
                 ) {
                     Rectangle()
-                        .themedSecondaryBackground(appState.themeManager)
+                        .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
                 }
                 
                 BackgroundTestRow(
@@ -312,7 +312,7 @@ struct BackgroundHierarchyTest: View {
                     description: "Subtle areas"
                 ) {
                     Rectangle()
-                        .themedTertiaryBackground(appState.themeManager)
+                        .themedTertiaryBackground(appState.themeManager, appSettings: appState.appSettings)
                 }
                 
                 BackgroundTestRow(
@@ -320,7 +320,7 @@ struct BackgroundHierarchyTest: View {
                     description: "Cards"
                 ) {
                     Rectangle()
-                        .themedElevatedBackground(appState.themeManager, elevation: .low)
+                        .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
                 }
                 
                 BackgroundTestRow(
@@ -328,7 +328,7 @@ struct BackgroundHierarchyTest: View {
                     description: "Elevated cards"
                 ) {
                     Rectangle()
-                        .themedElevatedBackground(appState.themeManager, elevation: .medium)
+                        .themedElevatedBackground(appState.themeManager, elevation: .medium, appSettings: appState.appSettings)
                 }
                 
                 BackgroundTestRow(
@@ -336,7 +336,7 @@ struct BackgroundHierarchyTest: View {
                     description: "Modals"
                 ) {
                     Rectangle()
-                        .themedElevatedBackground(appState.themeManager, elevation: .high)
+                        .themedElevatedBackground(appState.themeManager, elevation: .high, appSettings: appState.appSettings)
                 }
                 
                 BackgroundTestRow(
@@ -344,12 +344,12 @@ struct BackgroundHierarchyTest: View {
                     description: "List backgrounds"
                 ) {
                     Rectangle()
-                        .themedGroupedBackground(appState.themeManager)
+                        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
                 }
             }
         }
         .padding()
-        .themedSecondaryBackground(appState.themeManager)
+        .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
 }
@@ -375,11 +375,11 @@ struct BackgroundTestRow<Background: View>: View {
                 Text(title)
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .themedText(appState.themeManager, style: .primary)
+                    .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 
                 Text(description)
                     .font(.caption)
-                    .themedText(appState.themeManager, style: .secondary)
+                    .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             }
             
             Spacer()
@@ -394,7 +394,7 @@ struct GlassEffectsTest: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Glass Effects Test")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
                 Text("Subtle Glass Card")
@@ -402,7 +402,8 @@ struct GlassEffectsTest: View {
                     .frame(maxWidth: .infinity)
                     .themedSolariumCard(
                         intensity: .subtle,
-                        themeManager: appState.themeManager
+                        themeManager: appState.themeManager,
+                        appSettings: appState.appSettings
                     )
                 
                 Text("Medium Glass Card")
@@ -410,7 +411,8 @@ struct GlassEffectsTest: View {
                     .frame(maxWidth: .infinity)
                     .themedSolariumCard(
                         intensity: .medium,
-                        themeManager: appState.themeManager
+                        themeManager: appState.themeManager,
+                        appSettings: appState.appSettings
                     )
                 
                 Text("Strong Glass Card")
@@ -418,32 +420,36 @@ struct GlassEffectsTest: View {
                     .frame(maxWidth: .infinity)
                     .themedSolariumCard(
                         intensity: .strong,
-                        themeManager: appState.themeManager
+                        themeManager: appState.themeManager,
+                        appSettings: appState.appSettings
                     )
                 
                 HStack {
                     Text("Glass Button")
                         .themedSolariumButton(
                             intensity: .subtle,
-                            themeManager: appState.themeManager
+                            themeManager: appState.themeManager,
+                            appSettings: appState.appSettings
                         )
                     
                     Text("Glass Button")
                         .themedSolariumButton(
                             intensity: .medium,
-                            themeManager: appState.themeManager
+                            themeManager: appState.themeManager,
+                            appSettings: appState.appSettings
                         )
                     
                     Text("Glass Button")
                         .themedSolariumButton(
                             intensity: .strong,
-                            themeManager: appState.themeManager
+                            themeManager: appState.themeManager,
+                            appSettings: appState.appSettings
                         )
                 }
             }
         }
         .padding()
-        .themedTertiaryBackground(appState.themeManager)
+        .themedTertiaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
 }
@@ -458,7 +464,7 @@ struct InteractiveElementsTest: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Interactive Elements Test")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
                 // Buttons
@@ -474,17 +480,17 @@ struct InteractiveElementsTest: View {
                 }
                 
                 Divider()
-                    .themedDivider(appState.themeManager)
+                    .themedDivider(appState.themeManager, appSettings: appState.appSettings)
                 
                 // Toggle
                 Toggle("Toggle Option", isOn: $isToggled)
-                    .themedText(appState.themeManager, style: .primary)
+                    .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 
                 // Slider
                 VStack(alignment: .leading) {
                     Text("Slider: \(Int(sliderValue * 100))%")
                         .font(.caption)
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     
                     Slider(value: $sliderValue)
                 }
@@ -499,7 +505,7 @@ struct InteractiveElementsTest: View {
             }
         }
         .padding()
-        .themedElevatedBackground(appState.themeManager, elevation: .low)
+        .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
 }
@@ -512,7 +518,7 @@ struct ListComponentsTest: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("List Components Test")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             // Simulated list rows
             VStack(spacing: 0) {
@@ -521,7 +527,7 @@ struct ListComponentsTest: View {
                     
                     if index < 2 {
                         Divider()
-                            .themedDivider(appState.themeManager)
+                            .themedDivider(appState.themeManager, appSettings: appState.appSettings)
                     }
                 }
             }
@@ -532,7 +538,7 @@ struct ListComponentsTest: View {
             )
         }
         .padding()
-        .themedSecondaryBackground(appState.themeManager)
+        .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
 }
@@ -546,35 +552,35 @@ struct AccessibilityTest: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Accessibility Test")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Differentiate Without Color:")
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     Spacer()
                     Text(differentiateWithoutColor ? "Enabled" : "Disabled")
-                        .themedText(appState.themeManager, style: .primary)
+                        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 }
                 
                 HStack {
                     Text("Reduce Transparency:")
-                        .themedText(appState.themeManager, style: .secondary)
+                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     Spacer()
                     Text(reduceTransparency ? "Enabled" : "Disabled")
-                        .themedText(appState.themeManager, style: .primary)
+                        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 }
             }
             
             Text("Adaptive Contrast Example")
                 .padding()
                 .frame(maxWidth: .infinity)
-                .themedElevatedBackground(appState.themeManager)
+                .themedElevatedBackground(appState.themeManager, appSettings: appState.appSettings)
                 .cornerRadius(8)
                 .adaptiveContrast(appState.themeManager)
         }
         .padding()
-        .themedTertiaryBackground(appState.themeManager)
+        .themedTertiaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
 }
@@ -587,7 +593,7 @@ struct ThemeControlsTest: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Theme Controls")
                 .font(.headline)
-                .themedText(appState.themeManager, style: .primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
                 // Theme picker
@@ -619,7 +625,7 @@ struct ThemeControlsTest: View {
                     toggleDarkModeStyle()
                 }
                 .frame(maxWidth: .infinity)
-                .themedSolariumButton(themeManager: appState.themeManager)
+                .themedSolariumButton(themeManager: appState.themeManager, appSettings: appState.appSettings)
                 
                 // Test haptic feedback
                 Button("Test Haptic Feedback") {
@@ -629,12 +635,13 @@ struct ThemeControlsTest: View {
                 .frame(maxWidth: .infinity)
                 .themedSolariumButton(
                     intensity: .subtle,
-                    themeManager: appState.themeManager
+                    themeManager: appState.themeManager,
+                    appSettings: appState.appSettings
                 )
             }
         }
         .padding()
-        .themedSecondaryBackground(appState.themeManager)
+        .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .cornerRadius(12)
     }
     
@@ -678,23 +685,23 @@ private struct ThemeTestListItemRow: View {
         HStack {
             Image(systemName: "person.circle.fill")
                 .font(.title2)
-                .themedText(appState.themeManager, style: .secondary)
+                .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text("List Item \(index + 1)")
                     .font(.body)
-                    .themedText(appState.themeManager, style: .primary)
+                    .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 
                 Text("Subtitle text here")
                     .font(.caption)
-                    .themedText(appState.themeManager, style: .secondary)
+                    .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             }
             
             Spacer()
             
             Image(systemName: "chevron.right")
                 .font(.caption)
-                .themedText(appState.themeManager, style: .tertiary)
+                .themedText(appState.themeManager, style: .tertiary, appSettings: appState.appSettings)
         }
         .padding()
         .background(

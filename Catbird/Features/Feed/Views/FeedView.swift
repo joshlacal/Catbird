@@ -79,7 +79,7 @@ struct FeedView: View {
       }
       .animation(.easeInOut(duration: 0.3), value: isInitialLoad)
       .animation(.easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty)
-      .themedPrimaryBackground(appState.themeManager)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
 
       if showScrollToTop {
         VStack {

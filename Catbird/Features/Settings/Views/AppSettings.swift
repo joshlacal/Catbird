@@ -60,6 +60,9 @@ import OSLog
         do {
             try modelContext.save()
             
+            // Also save critical theme settings to UserDefaults for reliability
+            saveThemeSettingsToUserDefaults()
+            
             // Post notification that settings have changed
             NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
         } catch {
@@ -67,11 +70,69 @@ import OSLog
         }
     }
     
+    /// Save critical theme settings to UserDefaults as backup
+    private func saveThemeSettingsToUserDefaults() {
+        let defaults = UserDefaults.standard
+        
+        // Save theme settings
+        defaults.set(theme, forKey: "theme")
+        defaults.set(darkThemeMode, forKey: "darkThemeMode")
+        
+        // Save font settings for reliability
+        defaults.set(fontStyle, forKey: "fontStyle")
+        defaults.set(fontSize, forKey: "fontSize")
+        defaults.set(lineSpacing, forKey: "lineSpacing")
+        defaults.set(dynamicTypeEnabled, forKey: "dynamicTypeEnabled")
+        defaults.set(maxDynamicTypeSize, forKey: "maxDynamicTypeSize")
+        
+        // Also save to app group for widgets
+        let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+        groupDefaults?.set(theme, forKey: "theme")
+        groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
+        
+        logger.debug("Theme and font settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), fontStyle=\(self.fontStyle), fontSize=\(self.fontSize)")
+    }
+    
+    /// Load theme settings from UserDefaults if SwiftData is not available
+    private func loadThemeSettingsFromUserDefaults() -> (theme: String, darkThemeMode: String) {
+        let defaults = UserDefaults.standard
+        
+        let savedTheme = defaults.string(forKey: "theme") ?? "system"
+        let savedDarkMode = defaults.string(forKey: "darkThemeMode") ?? "dim"
+        
+        return (theme: savedTheme, darkThemeMode: savedDarkMode)
+    }
+    
+    /// Load font settings from UserDefaults if SwiftData is not available
+    private func loadFontSettingsFromUserDefaults() -> (fontStyle: String, fontSize: String, lineSpacing: String, dynamicTypeEnabled: Bool, maxDynamicTypeSize: String) {
+        let defaults = UserDefaults.standard
+        
+        let savedFontStyle = defaults.string(forKey: "fontStyle") ?? "system"
+        let savedFontSize = defaults.string(forKey: "fontSize") ?? "default"
+        let savedLineSpacing = defaults.string(forKey: "lineSpacing") ?? "normal"
+        let savedDynamicTypeEnabled = defaults.object(forKey: "dynamicTypeEnabled") != nil ? defaults.bool(forKey: "dynamicTypeEnabled") : true
+        let savedMaxDynamicTypeSize = defaults.string(forKey: "maxDynamicTypeSize") ?? "accessibility1"
+        
+        return (
+            fontStyle: savedFontStyle,
+            fontSize: savedFontSize,
+            lineSpacing: savedLineSpacing,
+            dynamicTypeEnabled: savedDynamicTypeEnabled,
+            maxDynamicTypeSize: savedMaxDynamicTypeSize
+        )
+    }
+    
     // MARK: - Computed Properties
     
     // Appearance
     var theme: String {
-        get { settingsModel?.theme ?? defaults.theme }
+        get { 
+            // Try SwiftData first, then UserDefaults fallback
+            if let theme = settingsModel?.theme {
+                return theme
+            }
+            return loadThemeSettingsFromUserDefaults().theme
+        }
         set {
             settingsModel?.theme = newValue
             saveChanges()
@@ -79,7 +140,13 @@ import OSLog
     }
     
     var darkThemeMode: String {
-        get { settingsModel?.darkThemeMode ?? defaults.darkThemeMode }
+        get { 
+            // Try SwiftData first, then UserDefaults fallback
+            if let darkMode = settingsModel?.darkThemeMode {
+                return darkMode
+            }
+            return loadThemeSettingsFromUserDefaults().darkThemeMode
+        }
         set {
             settingsModel?.darkThemeMode = newValue
             saveChanges()
@@ -98,6 +165,30 @@ import OSLog
         get { settingsModel?.fontSize ?? defaults.fontSize }
         set {
             settingsModel?.fontSize = newValue
+            saveChanges()
+        }
+    }
+    
+    var lineSpacing: String {
+        get { settingsModel?.lineSpacing ?? defaults.lineSpacing }
+        set {
+            settingsModel?.lineSpacing = newValue
+            saveChanges()
+        }
+    }
+    
+    var dynamicTypeEnabled: Bool {
+        get { settingsModel?.dynamicTypeEnabled ?? defaults.dynamicTypeEnabled }
+        set {
+            settingsModel?.dynamicTypeEnabled = newValue
+            saveChanges()
+        }
+    }
+    
+    var maxDynamicTypeSize: String {
+        get { settingsModel?.maxDynamicTypeSize ?? defaults.maxDynamicTypeSize }
+        set {
+            settingsModel?.maxDynamicTypeSize = newValue
             saveChanges()
         }
     }
@@ -399,6 +490,35 @@ import OSLog
     func resetToDefaults() {
         settingsModel?.resetToDefaults()
         saveChanges()
+    }
+    
+    /// Apply initial theme settings even before SwiftData is fully initialized
+    /// This ensures theme is applied immediately on app startup
+    func applyInitialThemeSettings(to themeManager: ThemeManager) {
+        let themeSettings = loadThemeSettingsFromUserDefaults()
+        
+        logger.info("Applying initial theme settings from UserDefaults: theme=\(themeSettings.theme), darkMode=\(themeSettings.darkThemeMode)")
+        
+        themeManager.applyTheme(
+            theme: themeSettings.theme,
+            darkThemeMode: themeSettings.darkThemeMode
+        )
+    }
+    
+    /// Apply initial font settings immediately from UserDefaults if SwiftData is not available
+    /// This ensures fonts are applied immediately on app startup
+    func applyInitialFontSettings(to fontManager: FontManager) {
+        let fontSettings = loadFontSettingsFromUserDefaults()
+        
+        logger.info("Applying initial font settings from UserDefaults: style=\(fontSettings.fontStyle), size=\(fontSettings.fontSize), spacing=\(fontSettings.lineSpacing), dynamic=\(fontSettings.dynamicTypeEnabled)")
+        
+        fontManager.applyFontSettings(
+            fontStyle: fontSettings.fontStyle,
+            fontSize: fontSettings.fontSize,
+            lineSpacing: fontSettings.lineSpacing,
+            dynamicTypeEnabled: fontSettings.dynamicTypeEnabled,
+            maxDynamicTypeSize: fontSettings.maxDynamicTypeSize
+        )
     }
 }
 

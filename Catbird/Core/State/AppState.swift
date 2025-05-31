@@ -52,8 +52,8 @@ final class AppState {
   /// Theme manager for handling app-wide theme changes
   let themeManager = ThemeManager()
   
-  /// Font scale manager for handling dynamic font sizing
-  let fontScaleManager = FontScaleManager()
+  /// Font manager for handling typography and font settings
+  let fontManager = FontManager()
 
   /// Navigation manager for handling navigation
   let navigationManager = AppNavigationManager()
@@ -185,7 +185,26 @@ final class AppState {
         theme: self.appSettings.theme,
         darkThemeMode: self.appSettings.darkThemeMode
       )
+      
+      // Apply font settings when they change
+      self.fontManager.applyFontSettings(
+        fontStyle: self.appSettings.fontStyle,
+        fontSize: self.appSettings.fontSize,
+        lineSpacing: self.appSettings.lineSpacing,
+        dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
+        maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
+      )
+      
+      // Update URL handler with new browser preference
+      self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
     }
+    
+    // Apply initial theme settings immediately from UserDefaults
+    // This ensures proper theme is applied even before SwiftData is fully initialized
+    appSettings.applyInitialThemeSettings(to: themeManager)
+    
+    // Apply initial font settings immediately from UserDefaults
+    appSettings.applyInitialFontSettings(to: fontManager)
     
     logger.debug("AppState initialization complete")
   }
@@ -224,11 +243,13 @@ final class AppState {
     setupPreferencesRefreshTimer()
     setupNotifications()
     
-    // Apply current theme settings
+    // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
     themeManager.applyTheme(
       theme: appSettings.theme,
       darkThemeMode: appSettings.darkThemeMode
     )
+    
+    logger.info("Theme applied on startup: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode)")
 
     // Get accounts list if authenticated
     if isAuthenticated {
@@ -478,11 +499,18 @@ final class AppState {
     appSettings.initialize(with: modelContext)
     logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
     
-    // Apply initial theme settings
+    // Apply theme settings (now that SwiftData is available, this will use the persisted values)
     themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)
+    logger.info("Theme reapplied after SwiftData initialization: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode)")
     
     // Apply initial font settings
-    fontScaleManager.applyFontSettings(fontSize: appSettings.fontSize, fontStyle: appSettings.fontStyle)
+    fontManager.applyFontSettings(
+      fontStyle: self.appSettings.fontStyle,
+      fontSize: self.appSettings.fontSize,
+      lineSpacing: self.appSettings.lineSpacing,
+      dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
+      maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
+    )
     
     // Set up proper reactive observation for settings changes
     setupSettingsObservation()
@@ -523,7 +551,13 @@ final class AppState {
       let currentFontStyle = self.appSettings.fontStyle
       
       if currentFontSize != previousFontSize || currentFontStyle != previousFontStyle {
-        self.fontScaleManager.applyFontSettings(fontSize: currentFontSize, fontStyle: currentFontStyle)
+        self.fontManager.applyFontSettings(
+          fontStyle: currentFontStyle,
+          fontSize: currentFontSize,
+          lineSpacing: self.appSettings.lineSpacing,
+          dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
+          maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
+        )
         previousFontSize = currentFontSize
         previousFontStyle = currentFontStyle
       }

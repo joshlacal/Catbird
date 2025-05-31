@@ -19,6 +19,7 @@ struct ModernVideoPlayerView18: View {
     @State private var showControls = false
     @State private var showFullscreen = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(AppState.self) private var appState
     let postID: String
     @Namespace private var videoTransitionNamespace
     
@@ -135,6 +136,8 @@ struct ModernVideoPlayerView18: View {
         }
         .onAppear {
             if let player = player {
+                // Ensure VideoCoordinator has access to app settings
+                VideoCoordinator.shared.appSettings = appState.appSettings
                 VideoCoordinator.shared.register(model, player: player)
             }
         }
@@ -255,6 +258,7 @@ struct ModernVideoPlayerView17: View {
     @State private var showControls = false
     @State private var showFullscreen = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(AppState.self) private var appState
     let postID: String
     
     // For transition effect (iOS 17 alternative to namespace)
@@ -382,6 +386,8 @@ struct ModernVideoPlayerView17: View {
         }
         .onAppear {
             if let player = player {
+                // Ensure VideoCoordinator has access to app settings
+                VideoCoordinator.shared.appSettings = appState.appSettings
                 VideoCoordinator.shared.register(model, player: player)
             }
         }

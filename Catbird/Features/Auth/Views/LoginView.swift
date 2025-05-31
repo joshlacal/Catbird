@@ -106,41 +106,17 @@ struct LoginView: View {
                                     .scaleEffect(0.98)
                                 
                                 // Main icon with realistic lighting
-                                Image("CatbirdIcon")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: adaptiveSize(geometry, base: 250, min: 120),
-                                           height: adaptiveSize(geometry, base: 250, min: 120))
-                                    .overlay(
-                                        // Subtle highlight gradient
-                                        LinearGradient(
-                                            colors: [
-                                                Color.white.opacity(0.15),
-                                                Color.white.opacity(0.0)
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                        .mask(
-                                            Image("CatbirdIcon")
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fit)
-                                        )
-                                        .blendMode(.colorBurn)
-                                    )
-                                    .symbolEffect(.bounce, options: .repeating, value: isLoggingIn)
-                                    .shadow(color: colorScheme == .dark ? .black.opacity(0.6) : .black.opacity(0.2), radius: 1, x: 0, y: 1)
-                                    .shadow(color: colorScheme == .dark ? .white.opacity(0.1) : .white.opacity(0.8), radius: 1, x: 0, y: -1)
+                                mainIconWithLighting(geometry: geometry)
                             }
                             .padding(.bottom, adaptiveSpacing(geometry, factor: 0.2))
                             
                             VStack(spacing: 3) {
                                 Text("Catbird")
-                                    .font(.customSystemFont(size: adaptiveSize(geometry, base: 34, min: 28), weight: .bold, width: 120, design: .default, relativeTo: .largeTitle))
+                                    .font(catbirdTitleFont(geometry: geometry))
                                     .foregroundStyle(.primary)
                                 
                                 Text("for Bluesky")
-                                    .font(.customSystemFont(size: adaptiveSize(geometry, base: 20, min: 16), weight: .medium, width: 120, design: .default, relativeTo: .title))
+                                    .font(catbirdSubtitleFont(geometry: geometry))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -153,47 +129,8 @@ struct LoginView: View {
                     VStack(spacing: adaptiveSpacing(geometry, factor: 0.7)) {
                         // Selection Mode - Vertically stacked buttons
                         if authMode == .selection {
-                            VStack(spacing: 16) {
-                                // Login Button
-                                Button {
-                                    withAnimation(.spring(duration: 0.4)) {
-                                        authMode = .login
-                                        focusedField = .username
-                                    }
-                                } label: {
-                                    Text("Sign In")
-                                        .font(.headline)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.accentColor)
-                                .buttonBorderShape(.roundedRectangle(radius: 16))
-                                .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-                                .scaleEffect(authMode == .selection ? 1.0 : 0.95)
-                                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: authMode)
-                                
-                                // Sign Up Button
-                                Button {
-                                    withAnimation(.spring(duration: 0.4)) {
-                                        authMode = .signup
-                                    }
-                                } label: {
-                                    Text("Create Account")
-                                        .font(.headline)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.accentColor)
-                                .buttonBorderShape(.roundedRectangle(radius: 16))
-                                .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-                                .scaleEffect(authMode == .selection ? 1.0 : 0.95)
-                                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: authMode)
-                            }
-                            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+                            authSelectionButtons
+                                .frame(maxWidth: min(geometry.size.width * 0.9, 400))
                         }
                         
                         // Username field (for login mode)
@@ -203,130 +140,17 @@ struct LoginView: View {
                                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
                                 .padding(.bottom, 4)
                             
-                            ValidatingTextField(
-                                text: $handle,
-                                prompt: "username.bsky.social",
-                                icon: "at",
-                                validationError: validationError,
-                                isDisabled: isLoggingIn,
-                                keyboardType: .emailAddress,
-                                submitLabel: .go,
-                                onSubmit: {
-                                    handleLogin()
-                                }
-                            )
-                            .focused($focusedField, equals: .username)
-                            .shake(animatableParameter: showInvalidAnimation)
-                            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-                            .background(
-                                ZStack {
-                                    // Glass morphism background
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .fill(.ultraThinMaterial)
-                                    
-                                    // Inner shadow for depth
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .stroke(
-                                            LinearGradient(
-                                                colors: [
-                                                    Color.black.opacity(0.2),
-                                                    Color.clear
-                                                ],
-                                                startPoint: .top,
-                                                endPoint: .bottom
-                                            ),
-                                            lineWidth: 1
-                                        )
-                                        .blur(radius: 1)
-                                }
-                            )
-                            .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
-                            .shadow(color: .white.opacity(colorScheme == .dark ? 0.1 : 0.5), radius: 10, x: 0, y: -5)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(
-                                        LinearGradient(
-                                            colors: [
-                                                Color.white.opacity(0.4),
-                                                Color.white.opacity(0.1)
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        ),
-                                        lineWidth: 0.5
-                                    )
-                            )
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.95).combined(with: .opacity),
-                                removal: .scale(scale: 1.05).combined(with: .opacity)
-                            ))
+                            validatingTextFieldWithBackground(geometry: geometry)
                         }
                         
                         // PDS URL field (for advanced mode)
                         if authMode == .advanced {
-                            Text("Create account on custom PDS")
-                                .font(.headline)
-                                .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
-                                .padding(.bottom, 4)
-                            
-                            ValidatingTextField(
-                                text: $pdsURL,
-                                prompt: "PDS URL (e.g., https://bsky.social)",
-                                icon: "link",
-                                validationError: validationError,
-                                isDisabled: isLoggingIn,
-                                keyboardType: .URL,
-                                submitLabel: .go,
-                                onSubmit: {
-                                    handleAdvancedSignup()
-                                }
-                            )
-                            .focused($focusedField, equals: .pdsurl)
-                            .shake(animatableParameter: showInvalidAnimation)
-                            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            advancedPDSField(geometry: geometry)
                         }
                         
                         // Action button
                         if authMode != .selection {
-                            if isLoggingIn {
-                                HStack(spacing: 12) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    
-                                    Text(authModeActionText())
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-                                .padding()
-                                .backgroundStyle(.quaternary)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                            } else {
-                                Button {
-                                    switch authMode {
-                                    case .login:
-                                        handleLogin()
-                                    case .signup:
-                                        handleSignup()
-                                    case .advanced:
-                                        handleAdvancedSignup()
-                                    case .selection:
-                                        break // Should never happen
-                                    }
-                                } label: {
-                                    Label {
-                                        Text(authModeActionButtonText())
-                                            .font(.headline)
-                                    } icon: {
-                                        Image(systemName: authModeActionIcon())
-                                    }
-                                    .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-                                    .padding(.vertical, 12)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(isButtonDisabled())
-                            }
+                            actionButtonView(geometry: geometry)
                         }
                         
                         // Advanced toggle (only in signup mode)
@@ -445,6 +269,102 @@ struct LoginView: View {
     
     // MARK: - Computed Properties
     
+    private func validatingTextFieldWithBackground(geometry: GeometryProxy) -> some View {
+        ValidatingTextField(
+            text: $handle,
+            prompt: "username.bsky.social",
+            icon: "at",
+            validationError: validationError,
+            isDisabled: isLoggingIn,
+            keyboardType: .emailAddress,
+            submitLabel: .go,
+            onSubmit: {
+                handleLogin()
+            }
+        )
+        .focused($focusedField, equals: .username)
+        .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
+        .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+        .background(textFieldBackgroundView)
+        .modifier(TextFieldShadowModifier(colorScheme: colorScheme))
+        .overlay(textFieldOverlayView)
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.95).combined(with: .opacity),
+            removal: .scale(scale: 1.05).combined(with: .opacity)
+        ))
+    }
+    
+    private var textFieldBackgroundView: some View {
+        ZStack {
+            // Glass morphism background
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+            
+            // Inner shadow for depth
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(textFieldStrokeGradient, lineWidth: 1)
+                .blur(radius: 1)
+        }
+    }
+    
+    private var textFieldStrokeGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.black.opacity(0.2),
+                Color.clear
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+    
+    private var textFieldOverlayView: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .stroke(textFieldOverlayGradient, lineWidth: 0.5)
+    }
+    
+    private var textFieldOverlayGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(0.4),
+                Color.white.opacity(0.1)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+    
+    private var authSelectionButtons: some View {
+        VStack(spacing: 16) {
+            // Login Button
+            Button {
+                withAnimation(.spring(duration: 0.4)) {
+                    authMode = .login
+                    focusedField = .username
+                }
+            } label: {
+                Text("Sign In")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .modifier(PrimaryButtonModifier(authMode: authMode))
+            
+            // Sign Up Button
+            Button {
+                withAnimation(.spring(duration: 0.4)) {
+                    authMode = .signup
+                }
+            } label: {
+                Text("Create Account")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .modifier(PrimaryButtonModifier(authMode: authMode))
+        }
+    }
+    
     private var deepBlueSkyBackground: some View {
         ZStack {
             // Deep fall blue sky - the intense blue of autumn skies
@@ -480,6 +400,141 @@ struct LoginView: View {
                 )
         }
         .ignoresSafeArea()
+    }
+    
+    // MARK: - View Functions
+    
+    private func mainIconWithLighting(geometry: GeometryProxy) -> some View {
+        let iconSize = adaptiveSize(geometry, base: 250, min: 120)
+        
+        return Image("CatbirdIcon")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: iconSize, height: iconSize)
+            .overlay(iconHighlightOverlay)
+            .symbolEffect(.bounce, options: .repeating, value: isLoggingIn)
+            .modifier(IconShadowModifier(colorScheme: colorScheme))
+    }
+    
+    private var iconHighlightOverlay: some View {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(0.15),
+                Color.white.opacity(0.0)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .mask(
+            Image("CatbirdIcon")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+        )
+        .blendMode(.colorBurn)
+    }
+    
+    private func advancedPDSField(geometry: GeometryProxy) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Create account on custom PDS")
+                .font(.headline)
+                .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
+            
+            ValidatingTextField(
+                text: $pdsURL,
+                prompt: "PDS URL (e.g., https://bsky.social)",
+                icon: "link",
+                validationError: validationError,
+                isDisabled: isLoggingIn,
+                keyboardType: .URL,
+                submitLabel: .go,
+                onSubmit: {
+                    handleAdvancedSignup()
+                }
+            )
+            .focused($focusedField, equals: .pdsurl)
+            .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
+            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+    
+    private func actionButtonView(geometry: GeometryProxy) -> some View {
+        Group {
+            if isLoggingIn {
+                loadingButtonView(geometry: geometry)
+            } else {
+                actionButton(geometry: geometry)
+            }
+        }
+    }
+    
+    private func loadingButtonView(geometry: GeometryProxy) -> some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+            
+            Text(authModeActionText())
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+        .padding()
+        .backgroundStyle(.quaternary)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    private func actionButton(geometry: GeometryProxy) -> some View {
+        Button {
+            handleActionButtonTap()
+        } label: {
+            Label {
+                Text(authModeActionButtonText())
+                    .font(.headline)
+            } icon: {
+                Image(systemName: authModeActionIcon())
+            }
+            .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isButtonDisabled())
+    }
+    
+    private func handleActionButtonTap() {
+        switch authMode {
+        case .login:
+            handleLogin()
+        case .signup:
+            handleSignup()
+        case .advanced:
+            handleAdvancedSignup()
+        case .selection:
+            break // Should never happen
+        }
+    }
+    
+    // MARK: - Font Helpers
+    
+    private func catbirdTitleFont(geometry: GeometryProxy) -> Font {
+        let size = adaptiveSize(geometry, base: 34, min: 28)
+        return .customSystemFont(
+            size: size, 
+            weight: .bold, 
+            width: 120, 
+            design: .default, 
+            relativeTo: .largeTitle
+        )
+    }
+    
+    private func catbirdSubtitleFont(geometry: GeometryProxy) -> Font {
+        let size = adaptiveSize(geometry, base: 20, min: 16)
+        return .customSystemFont(
+            size: size, 
+            weight: .medium, 
+            width: 120, 
+            design: .default, 
+            relativeTo: .title
+        )
     }
     
     // MARK: - Helper Methods
@@ -756,4 +811,41 @@ struct LoginView: View {
     
     LoginView()
         .environment(appState)
+}
+
+// MARK: - View Modifiers
+
+struct TextFieldShadowModifier: ViewModifier {
+    let colorScheme: ColorScheme
+    
+    func body(content: Content) -> some View {
+        content
+            .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
+            .shadow(color: .white.opacity(colorScheme == .dark ? 0.1 : 0.5), radius: 10, x: 0, y: -5)
+    }
+}
+
+struct IconShadowModifier: ViewModifier {
+    let colorScheme: ColorScheme
+    
+    func body(content: Content) -> some View {
+        content
+            .shadow(color: colorScheme == .dark ? .black.opacity(0.6) : .black.opacity(0.2), radius: 1, x: 0, y: 1)
+            .shadow(color: colorScheme == .dark ? .white.opacity(0.1) : .white.opacity(0.8), radius: 1, x: 0, y: -1)
+    }
+}
+
+struct PrimaryButtonModifier: ViewModifier {
+    let authMode: LoginView.AuthMode
+    
+    func body(content: Content) -> some View {
+        content
+            .buttonStyle(.borderedProminent)
+            .tint(.accentColor)
+            .buttonBorderShape(.roundedRectangle(radius: 16))
+            .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+            .scaleEffect(authMode == .selection ? 1.0 : 0.95)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: authMode)
+    }
 }

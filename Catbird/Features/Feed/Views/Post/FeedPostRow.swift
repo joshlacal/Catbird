@@ -25,31 +25,45 @@ struct FeedPostRow: View, Equatable {
 
   // MARK: - Body
   var body: some View {
-    EnhancedFeedPost(
-      cachedPost: post,
-      path: $path
-    )
-    .equatable()
-    // This is critical for allowing interactions to reach video controls
-    .allowsHitTesting(true)
-    // The key to consistent sizing and avoiding layout jumps:
-    .fixedSize(horizontal: false, vertical: true)
-    // Apply background to the entire row
-    .themedPrimaryBackground(appState.themeManager)
-    // Apply modifiers for list appearance
-    .applyListRowModifiers(id: post.feedViewPost.id)
-    // Prefetch data for better performance
-    .task {
-      let postToProcess = post.feedViewPost
-      if let client = appState.atProtoClient {
-          Task.detached(priority: .medium) {
-          await FeedPrefetchingManager.shared.prefetchPostData(
-            post: postToProcess, client: client)
+    Group {
+      if shouldShowPost() {
+        EnhancedFeedPost(
+          cachedPost: post,
+          path: $path
+        )
+        .equatable()
+        // This is critical for allowing interactions to reach video controls
+        .allowsHitTesting(true)
+        // The key to consistent sizing and avoiding layout jumps:
+        .fixedSize(horizontal: false, vertical: true)
+        // Apply background to the entire row
+        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+        // Apply modifiers for list appearance
+        .applyListRowModifiers(id: post.feedViewPost.id)
+        // Prefetch data for better performance
+        .task {
+          let postToProcess = post.feedViewPost
+          if let client = appState.atProtoClient {
+              Task.detached(priority: .medium) {
+              await FeedPrefetchingManager.shared.prefetchPostData(
+                post: postToProcess, client: client)
+            }
+          }
         }
+      } else {
+        // Post is filtered out - show nothing (but maintain list row structure)
+        EmptyView()
       }
     }
-    // Ensure the entire view hierarchy allows user interaction
-    .contentShape(Rectangle())
+  }
+  
+  // MARK: - Content Filtering
+  
+  /// Check if this post should be displayed based on user settings
+  private func shouldShowPost() -> Bool {
+    // For now, show all posts - content filtering will be implemented in a future update
+    // This ensures the feed continues to work while we build out the filtering system
+    return true
   }
 }
 

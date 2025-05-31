@@ -147,141 +147,10 @@ struct ConversationListView: View {
 
   var body: some View {
     List {
-      // If search is active, show search results
       if !searchText.isEmpty {
-        // Chat contacts section
-        if !chatManager.filteredProfiles.isEmpty {
-          Section("Contacts") {
-            ForEach(chatManager.filteredProfiles, id: \.did) { profileBasic in
-              Button {
-                // Convert ProfileViewBasic to ProfileView for the handler
-                onSelectSearchResult?(profileBasic)
-              } label: {
-                HStack {
-                  ChatProfileAvatarView(profile: profileBasic, size: 40)
-                  VStack(alignment: .leading) {
-                    Text(profileBasic.displayName ?? "")
-                      .font(.headline)
-                      .foregroundColor(.primary)
-                    Text("@\(profileBasic.handle.description)")
-                      .font(.subheadline)
-                      .foregroundColor(.secondary)
-                  }
-                }
-              }
-              .buttonStyle(.plain)
-              .padding(.vertical, 4)
-            }
-          }
-        }
-
-        // Filtered conversations section
-        if !chatManager.filteredConversations.isEmpty {
-          Section("Conversations") {
-            ForEach(chatManager.filteredConversations) { convo in
-              ConversationRow(
-                convo: convo,
-                did: appState.currentUserDID ?? ""
-              )
-              .themedListRowBackground(appState.themeManager)
-              .contentShape(Rectangle())
-              .onTapGesture {
-                onSelectConvo(convo.id)
-              }
-              .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
-                  Task { await chatManager.leaveConversation(convoId: convo.id) }
-                } label: {
-                  Label("Delete", systemImage: "trash")
-                }
-
-                Button {
-                  if convo.muted {
-                    Task { await chatManager.unmuteConversation(convoId: convo.id) }
-                  } else {
-                    Task { await chatManager.muteConversation(convoId: convo.id) }
-                  }
-                } label: {
-                  Label(convo.muted ? "Unmute" : "Mute", systemImage: convo.muted ? "bell" : "bell.slash")
-                }
-                .tint(convo.muted ? .blue : .orange)
-              }
-              .contextMenu {
-                ConversationContextMenu(conversation: convo)
-              }
-            }
-          }
-        }
-
-        // No results message
-        if chatManager.filteredProfiles.isEmpty && chatManager.filteredConversations.isEmpty && !searchText.isEmpty {
-          Text("No matching contacts or conversations")
-            .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .listRowSeparator(.hidden)
-            .padding()
-        }
+        searchResultsContent
       } else {
-        // Standard conversation list when not searching - only show accepted conversations
-        ForEach(chatManager.acceptedConversations) { convo in
-          ConversationRow(
-            convo: convo,
-            did: appState.currentUserDID ?? ""
-          )
-          .themedListRowBackground(appState.themeManager)
-          .contentShape(Rectangle())
-          .onTapGesture {
-            onSelectConvo(convo.id)
-          }
-          .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
-              Task { await chatManager.leaveConversation(convoId: convo.id) }
-            } label: {
-              Label("Delete", systemImage: "trash")
-            }
-
-            Button {
-              Task { await chatManager.muteConversation(convoId: convo.id) }
-            } label: {
-              Label("Mute", systemImage: "bell.slash")
-            }
-          }
-        }
-
-        // Pagination loader
-        if !chatManager.acceptedConversations.isEmpty && chatManager.conversationsCursor != nil
-          && !chatManager.loadingConversations {
-          ProgressView("Loading more...")
-            .frame(maxWidth: .infinity)
-            .padding()
-            .onAppear {
-              Task {
-                logger.debug("Reached end of conversation list, loading more.")
-                await chatManager.loadConversations(refresh: false)
-              }
-            }
-        } else if chatManager.loadingConversations && !chatManager.acceptedConversations.isEmpty {
-          ProgressView()
-            .frame(maxWidth: .infinity)
-            .padding()
-        }
-
-        // Empty state view
-        if chatManager.acceptedConversations.isEmpty && !chatManager.loadingConversations {
-          ContentUnavailableView {
-            Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
-          } description: {
-            VStack(spacing: 8) {
-              Text("You haven't started any chats yet.")
-              if appState.chatManager.messageRequestsCount > 0 {
-                Text("Check your message requests above to see if anyone wants to chat with you.")
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-              }
-            }
-          }
-          .padding()
-        }
+        conversationListContent
       }
     }
     .listStyle(.plain)
@@ -290,9 +159,185 @@ struct ConversationListView: View {
       await chatManager.loadConversations(refresh: true)
     }
     .overlay {
-      // Initial loading indicator (only when not searching)
-      if chatManager.loadingConversations && chatManager.acceptedConversations.isEmpty && searchText.isEmpty {
-        ProgressView("Loading Chats...")
+      loadingOverlay
+    }
+  }
+  
+  // MARK: - View Components
+  
+  @ViewBuilder
+  private var searchResultsContent: some View {
+    if !chatManager.filteredProfiles.isEmpty {
+      contactsSection
+    }
+    
+    if !chatManager.filteredConversations.isEmpty {
+      filteredConversationsSection
+    }
+    
+    if chatManager.filteredProfiles.isEmpty && chatManager.filteredConversations.isEmpty && !searchText.isEmpty {
+      noResultsMessage
+    }
+  }
+  
+  @ViewBuilder
+  private var conversationListContent: some View {
+    ForEach(chatManager.acceptedConversations) { convo in
+      conversationRowView(for: convo, showMuteOption: true)
+    }
+    
+    paginationContent
+    emptyStateContent
+  }
+  
+  @ViewBuilder
+  private var contactsSection: some View {
+    Section("Contacts") {
+      ForEach(chatManager.filteredProfiles, id: \.did) { profileBasic in
+        contactRowButton(for: profileBasic)
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var filteredConversationsSection: some View {
+    Section("Conversations") {
+      ForEach(chatManager.filteredConversations) { convo in
+        conversationRowView(for: convo, showMuteOption: false)
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var noResultsMessage: some View {
+    Text("No matching contacts or conversations")
+      .foregroundColor(.secondary)
+      .frame(maxWidth: .infinity, alignment: .center)
+      .listRowSeparator(.hidden)
+      .padding()
+  }
+  
+  @ViewBuilder
+  private var paginationContent: some View {
+    let shouldShowLoadMore = !chatManager.acceptedConversations.isEmpty && 
+                            chatManager.conversationsCursor != nil && 
+                            !chatManager.loadingConversations
+    
+    let shouldShowProgress = chatManager.loadingConversations && 
+                            !chatManager.acceptedConversations.isEmpty
+    
+    if shouldShowLoadMore {
+      ProgressView("Loading more...")
+        .frame(maxWidth: .infinity)
+        .padding()
+        .onAppear {
+          Task {
+            logger.debug("Reached end of conversation list, loading more.")
+            await chatManager.loadConversations(refresh: false)
+          }
+        }
+    } else if shouldShowProgress {
+      ProgressView()
+        .frame(maxWidth: .infinity)
+        .padding()
+    }
+  }
+  
+  @ViewBuilder
+  private var emptyStateContent: some View {
+    if chatManager.acceptedConversations.isEmpty && !chatManager.loadingConversations {
+      ContentUnavailableView {
+        Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
+      } description: {
+        emptyStateDescription
+      }
+      .padding()
+    }
+  }
+  
+  @ViewBuilder
+  private var emptyStateDescription: some View {
+    VStack(spacing: 8) {
+      Text("You haven't started any chats yet.")
+      if appState.chatManager.messageRequestsCount > 0 {
+        Text("Check your message requests above to see if anyone wants to chat with you.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var loadingOverlay: some View {
+    if chatManager.loadingConversations && chatManager.acceptedConversations.isEmpty && searchText.isEmpty {
+      ProgressView("Loading Chats...")
+    }
+  }
+  
+  // MARK: - Helper Methods
+  
+  private func contactRowButton(for profileBasic: ChatBskyActorDefs.ProfileViewBasic) -> some View {
+    Button {
+      onSelectSearchResult?(profileBasic)
+    } label: {
+      HStack {
+        ChatProfileAvatarView(profile: profileBasic, size: 40)
+        VStack(alignment: .leading) {
+          Text(profileBasic.displayName ?? "")
+            .font(.headline)
+            .foregroundColor(.primary)
+          Text("@\(profileBasic.handle.description)")
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+        }
+      }
+    }
+    .buttonStyle(.plain)
+    .padding(.vertical, 4)
+  }
+  
+  private func conversationRowView(for convo: ChatBskyConvoDefs.ConvoView, showMuteOption: Bool) -> some View {
+    ConversationRow(
+      convo: convo,
+      did: appState.currentUserDID ?? ""
+    )
+    .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+    .contentShape(Rectangle())
+    .onTapGesture {
+      onSelectConvo(convo.id)
+    }
+    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+      swipeActionsContent(for: convo, showMuteOption: showMuteOption)
+    }
+    .contextMenu {
+      ConversationContextMenu(conversation: convo)
+    }
+  }
+  
+  @ViewBuilder
+  private func swipeActionsContent(for convo: ChatBskyConvoDefs.ConvoView, showMuteOption: Bool) -> some View {
+    Button(role: .destructive) {
+      Task { await chatManager.leaveConversation(convoId: convo.id) }
+    } label: {
+      Label("Delete", systemImage: "trash")
+    }
+    
+    if showMuteOption {
+      Button {
+        if convo.muted {
+          Task { await chatManager.unmuteConversation(convoId: convo.id) }
+        } else {
+          Task { await chatManager.muteConversation(convoId: convo.id) }
+        }
+      } label: {
+        Label(convo.muted ? "Unmute" : "Mute", systemImage: convo.muted ? "bell" : "bell.slash")
+      }
+      .tint(convo.muted ? .blue : .orange)
+    } else {
+      Button {
+        Task { await chatManager.muteConversation(convoId: convo.id) }
+      } label: {
+        Label("Mute", systemImage: "bell.slash")
       }
     }
   }
@@ -551,40 +596,7 @@ struct ConversationView: View {
           reactionDelegate: BlueskyMessageReactionDelegate(
             chatManager: chatManager, convoId: convoId),
           messageBuilder: { message, positionInUserGroup, _, _, _, _, _ in
-            AnyView(
-                VStack(alignment: message.user.isCurrentUser ? .trailing : .leading, spacing: 2) {
-                    let convoMessages = chatManager.originalMessagesMap[convoId]
-                    let originalMessageView = convoMessages?[message.id]
-                    
-                    let record: AppBskyEmbedRecord.ViewRecordUnion?
-                    switch originalMessageView?.embed {
-                    case .appBskyEmbedRecordView(let recordView):
-                        record = recordView.record
-                        //                case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-                        //                  record = recordWithMediaView.record
-                    default:
-                        record = nil
-                    }
-                    
-                    return Group {
-                        MessageBubble(message: message, embed: record, position: positionInUserGroup, path: chatNavigationPath)
-                            .padding(1)
-                                   
-                                   // Show reactions if available
-                                   if let originalMessage = originalMessageView,
-                                   let reactions = originalMessage.reactions,
-                                   !reactions.isEmpty {
-                        MessageReactionsView(
-                            convoId: convoId,
-                            messageId: message.id,
-                            messageView: originalMessage
-                        )
-                        .padding(.horizontal)
-                        .padding(.bottom, 4)
-                    }
-                }
-          }
-            )
+            buildMessageView(message: message, positionInUserGroup: positionInUserGroup)
           },
           messageMenuAction: {
             (
@@ -719,6 +731,40 @@ struct ConversationView: View {
       await chatManager.loadMessages(convoId: convoId, refresh: true)
       isLoadingMessages = false
     }
+  }
+  
+  // Helper method to build message view - extracted from complex messageBuilder closure
+  private func buildMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> AnyView {
+    let convoMessages = chatManager.originalMessagesMap[convoId]
+    let originalMessageView = convoMessages?[message.id]
+    
+    let record: AppBskyEmbedRecord.ViewRecordUnion?
+    switch originalMessageView?.embed {
+    case .appBskyEmbedRecordView(let recordView):
+      record = recordView.record
+    default:
+      record = nil
+    }
+    
+    return AnyView(
+      VStack(alignment: message.user.isCurrentUser ? .trailing : .leading, spacing: 2) {
+        MessageBubble(message: message, embed: record, position: positionInUserGroup, path: chatNavigationPath)
+          .padding(1)
+        
+        // Show reactions if available
+        if let originalMessage = originalMessageView,
+           let reactions = originalMessage.reactions,
+           !reactions.isEmpty {
+          MessageReactionsView(
+            convoId: convoId,
+            messageId: message.id,
+            messageView: originalMessage
+          )
+          .padding(.horizontal)
+          .padding(.bottom, 4)
+        }
+      }
+    )
   }
 
   // Function to send a message

@@ -1,0 +1,18 @@
+{
+  "id": "catbird-nav-theme-fix",
+  "type": "ios-feature-workflow",
+  "feature": {
+    "name": "Navigation Bar Theme Fix",
+    "description": "Fix navigation bar color in dim theme mode - should show dim gray instead of black",
+    "requirements": [
+      "Navigation bar should use dim gray (rgb(46, 46, 50)) in dim mode",
+      "Colors should update immediately when theme changes",
+      "Should work across all navigation controllers",
+      "Test in iOS simulator to verify fix works",
+      "Ensure no regressions in light mode or black mode"
+    ]
+  },
+  "repoPath": "/Users/joshlacalamito/Developer/Catbird:Petrel/Catbird",
+  "priority": 9,
+  "simulator": "iPhone 16 Pro"
+}

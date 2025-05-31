@@ -72,11 +72,27 @@ struct CatbirdApp: App {
     // The actual theme-specific configuration is done by ThemeManager
     // after app settings are loaded in AppState.initialize()
     
-    // Set initial appearance to dim theme colors to avoid black flash
+    // Set initial appearance to saved theme colors to avoid black flash
     let initialAppearance = UINavigationBarAppearance()
     initialAppearance.configureWithOpaqueBackground()
-    // Use dim theme colors as default to prevent black navigation bars
-    initialAppearance.backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+    
+    // Load saved theme settings from UserDefaults for initial setup
+    let defaults = UserDefaults.standard
+    let savedTheme = defaults.string(forKey: "theme") ?? "system"
+    let savedDarkMode = defaults.string(forKey: "darkThemeMode") ?? "dim"
+    
+    // Apply appropriate background color based on saved settings
+    if savedTheme == "dark" || (savedTheme == "system" && UITraitCollection.current.userInterfaceStyle == .dark) {
+      if savedDarkMode == "black" {
+        initialAppearance.backgroundColor = UIColor.black
+      } else {
+        // Use dim theme colors as default
+        initialAppearance.backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+      }
+    } else {
+      // Light mode - use default background
+      initialAppearance.configureWithDefaultBackground()
+    }
     NavigationFontConfig.applyFonts(to: initialAppearance)
     
     // Set initial appearance that prevents black flash before theme is applied

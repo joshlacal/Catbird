@@ -12,19 +12,20 @@ struct FeedDropDelegate: DropDelegate {
   @Binding var draggedItemCategory: String?
   @Binding var dropTargetItem: String?
   let resetDragState: () -> Void
+  let appSettings: AppSettings
 
   let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
 
   func dropEntered(info: DropInfo) {
     guard draggedItem != nil, draggedItem != item else { return }
-    withAnimation(.spring(duration: 0.3)) {
+    MotionManager.withSpringAnimation(for: appSettings, duration: 0.3) {
       dropTargetItem = item
     }
     feedbackGenerator.impactOccurred(intensity: 0.7)
   }
 
   func performDrop(info: DropInfo) -> Bool {
-    defer { withAnimation(.spring(duration: 0.3)) { resetDragState() } }
+    defer { MotionManager.withSpringAnimation(for: appSettings, duration: 0.3) { resetDragState() } }
     guard let currentDraggedItem = draggedItem,
           let currentDraggedCategory = draggedItemCategory
     else {

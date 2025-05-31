@@ -82,7 +82,7 @@ struct UnifiedProfileView: View {
                       isEditingProfile: $isEditingProfile,
                       path: $navigationPath
                   )
-                  .themedListRowBackground(appState.themeManager)
+                  .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
                   // 1. Define specific insets for the header row
                   .listRowInsets(EdgeInsets())
                   // 2. Apply padding below the header if needed
@@ -122,7 +122,7 @@ struct UnifiedProfileView: View {
                 }
               )
             }
-            .themedListRowBackground(appState.themeManager)
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
             .listRowSeparator(.hidden)
             .padding(.vertical, 0)
             .listSectionSpacing(0)
@@ -135,7 +135,7 @@ struct UnifiedProfileView: View {
           .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
             .listSectionSpacing(0)
           .listStyle(.plain)
-          .themedPrimaryBackground(appState.themeManager)
+          .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
           .refreshable {
             // Pull to refresh all content - using a single task
             await refreshAllContent()

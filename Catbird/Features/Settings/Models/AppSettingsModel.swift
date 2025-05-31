@@ -13,8 +13,13 @@ final class AppSettingsModel {
     // Appearance
     var theme: String = "system"
     var darkThemeMode: String = "dim"
-    var fontStyle: String = "system"
-    var fontSize: String = "default"
+    
+    // Typography Settings
+    var fontStyle: String = "system"  // system, serif, rounded, monospaced
+    var fontSize: String = "default"  // small, default, large, extraLarge
+    var lineSpacing: String = "normal"  // tight, normal, relaxed
+    var dynamicTypeEnabled: Bool = true
+    var maxDynamicTypeSize: String = "accessibility1"  // xxLarge, xxxLarge, accessibility1, accessibility2, accessibility3, accessibility4, accessibility5
     
     // Accessibility
     var requireAltText: Bool = false
@@ -94,8 +99,19 @@ final class AppSettingsModel {
         // Appearance
         if let value = defaults.string(forKey: "theme") { theme = value }
         if let value = defaults.string(forKey: "darkThemeMode") { darkThemeMode = value }
+        
+        // Ensure theme settings are also saved to app group for widgets
+        let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+        groupDefaults?.set(theme, forKey: "theme")
+        groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
         if let value = defaults.string(forKey: "fontStyle") { fontStyle = value }
         if let value = defaults.string(forKey: "fontSize") { fontSize = value }
+        if let value = defaults.string(forKey: "lineSpacing") { lineSpacing = value }
+        dynamicTypeEnabled = defaults.bool(forKey: "dynamicTypeEnabled")
+        if dynamicTypeEnabled == false && defaults.object(forKey: "dynamicTypeEnabled") == nil {
+            dynamicTypeEnabled = true // Default to true if not set
+        }
+        if let value = defaults.string(forKey: "maxDynamicTypeSize") { maxDynamicTypeSize = value }
         
         // Accessibility
         requireAltText = defaults.bool(forKey: "requireAltText")
@@ -164,8 +180,21 @@ final class AppSettingsModel {
         // Appearance
         theme = "system"
         darkThemeMode = "dim"
+        
+        // Also update UserDefaults
+        let defaults = UserDefaults.standard
+        defaults.set(theme, forKey: "theme")
+        defaults.set(darkThemeMode, forKey: "darkThemeMode")
+        
+        // Also update app group
+        let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+        groupDefaults?.set(theme, forKey: "theme")
+        groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
         fontStyle = "system"
         fontSize = "default"
+        lineSpacing = "normal"
+        dynamicTypeEnabled = true
+        maxDynamicTypeSize = "accessibility1"
         
         // Accessibility
         requireAltText = false

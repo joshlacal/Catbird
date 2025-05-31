@@ -38,7 +38,11 @@ final class URLHandler {
     /// Configure the handler with a reference to app state
     func configure(with appState: AppState) {
         self.appState = appState
-        logger.debug("URLHandler configured with AppState reference")
+        
+        // Update in-app browser setting from AppSettings
+        self.useInAppBrowser = appState.appSettings.useInAppBrowser
+        
+        logger.debug("URLHandler configured with AppState reference, useInAppBrowser: \(self.useInAppBrowser)")
     }
     
     /// Register a top-level view controller for presenting UI

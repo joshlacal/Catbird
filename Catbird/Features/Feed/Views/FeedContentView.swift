@@ -147,7 +147,7 @@ struct FeedListView: View {
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets())
         .accessibilityHidden(true)
-        .themedListRowBackground(appState.themeManager)
+        .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
 
       // Post content - using indexedPosts with guaranteed unique IDs
       ForEach(indexedPosts) { indexedPost in
@@ -185,7 +185,7 @@ struct FeedListView: View {
     .listStyle(PlainListStyle())
     .environment(\.defaultMinListRowHeight, 0)
     .scrollContentBackground(.hidden)
-    .themedPrimaryBackground(appState.themeManager)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .scrollDisabled(false)
     .scrollDismissesKeyboard(.immediately)
     .refreshable {

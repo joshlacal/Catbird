@@ -19,7 +19,7 @@ struct NetworkStatusIndicator: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(Color.red)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .motionAwareTransition(.move(edge: .top).combined(with: .opacity), appSettings: appState.appSettings)
         }
     }
 }
@@ -30,7 +30,7 @@ struct PersistentNetworkStatusIndicator: View {
     var body: some View {
         VStack(spacing: 0) {
             NetworkStatusIndicator()
-                .animation(.easeInOut(duration: 0.3), value: appState.networkMonitor.isConnected)
+                .motionAwareAnimation(.easeInOut(duration: 0.3), value: appState.networkMonitor.isConnected, appSettings: appState.appSettings)
             
             Spacer()
         }

@@ -23,7 +23,7 @@ extension View {
     // MARK: - Primary Background
     
     /// Apply primary background color based on theme
-    func themedPrimaryBackground(_ themeManager: ThemeManager) -> some View {
+    func themedPrimaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         ZStack {
             Color.clear
             self
@@ -33,13 +33,13 @@ extension View {
                 Color.dynamicBackground(themeManager, currentScheme: colorScheme)
             }
         }
-        .themeTransition(themeManager)
+        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Secondary Background
     
     /// Apply secondary background color based on theme
-    func themedSecondaryBackground(_ themeManager: ThemeManager) -> some View {
+    func themedSecondaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         ZStack {
             Color.clear
             self
@@ -49,13 +49,13 @@ extension View {
                 Color.dynamicSecondaryBackground(themeManager, currentScheme: colorScheme)
             }
         }
-        .themeTransition(themeManager)
+        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Tertiary Background
     
     /// Apply tertiary background color based on theme
-    func themedTertiaryBackground(_ themeManager: ThemeManager) -> some View {
+    func themedTertiaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         ZStack {
             Color.clear
             self
@@ -65,13 +65,13 @@ extension View {
                 Color.dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
             }
         }
-        .themeTransition(themeManager)
+        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Elevated Background
     
     /// Apply elevated background color based on theme (for cards and modals)
-    func themedElevatedBackground(_ themeManager: ThemeManager, elevation: ColorElevation = .low) -> some View {
+    func themedElevatedBackground(_ themeManager: ThemeManager, elevation: ColorElevation = .low, appSettings: AppSettings) -> some View {
         ZStack {
             Color.clear
             self
@@ -79,13 +79,13 @@ extension View {
         .background { 
             ThemedElevatedBackground(themeManager: themeManager, elevation: elevation)
         }
-        .themeTransition(themeManager)
+        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Grouped Background
     
     /// Apply grouped background color based on theme (for list backgrounds)
-    func themedGroupedBackground(_ themeManager: ThemeManager) -> some View {
+    func themedGroupedBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         ZStack {
             Color.clear
             self
@@ -95,7 +95,7 @@ extension View {
                 Color.dynamicGroupedBackground(themeManager, currentScheme: colorScheme)
             }
         }
-        .themeTransition(themeManager)
+        .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Glass Effects
@@ -103,20 +103,22 @@ extension View {
     /// Apply a glass-like card effect based on theme
     func themedSolariumCard(
         intensity: GlassIntensity = .medium,
-        themeManager: ThemeManager
+        themeManager: ThemeManager,
+        appSettings: AppSettings
     ) -> some View {
         self
             .background(glassBackground(intensity: intensity, themeManager: themeManager))
             .overlay(glassBorder(intensity: intensity, themeManager: themeManager))
             .cornerRadius(12)
             .background(glassShadow(intensity: intensity, themeManager: themeManager))
-            .themeTransition(themeManager)
+            .themeTransition(themeManager, appSettings: appSettings)
     }
     
     /// Apply a glass-like button effect based on theme
     func themedSolariumButton(
         intensity: GlassIntensity = .medium,
-        themeManager: ThemeManager
+        themeManager: ThemeManager,
+        appSettings: AppSettings
     ) -> some View {
         self
             .padding(.horizontal, 16)
@@ -124,7 +126,7 @@ extension View {
             .background(glassBackground(intensity: intensity, themeManager: themeManager))
             .overlay(glassBorder(intensity: intensity, themeManager: themeManager).cornerRadius(8))
             .cornerRadius(8)
-            .themeTransition(themeManager)
+            .themeTransition(themeManager, appSettings: appSettings)
     }
     
     // MARK: - Private Helper Methods
@@ -158,9 +160,9 @@ extension View {
 
 extension View {
     /// Apply themed text color
-    func themedText(_ themeManager: ThemeManager, style: TextStyle = .primary) -> some View {
+    func themedText(_ themeManager: ThemeManager, style: TextStyle = .primary, appSettings: AppSettings) -> some View {
         ThemedTextView(content: self, themeManager: themeManager, style: style)
-            .themeTransition(themeManager)
+            .themeTransition(themeManager, appSettings: appSettings)
     }
 }
 
@@ -168,14 +170,14 @@ extension View {
 
 extension View {
     /// Add a themed separator
-    func themedDivider(_ themeManager: ThemeManager) -> some View {
+    func themedDivider(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         Divider()
             .background {
                 ThemedBackground(themeManager: themeManager) { colorScheme in
                     Color.dynamicSeparator(themeManager, currentScheme: colorScheme)
                 }
             }
-            .themeTransition(themeManager)
+            .themeTransition(themeManager, appSettings: appSettings)
     }
 }
 
@@ -183,12 +185,12 @@ extension View {
 
 extension View {
     /// Apply themed list row background
-    func themedListRowBackground(_ themeManager: ThemeManager) -> some View {
+    func themedListRowBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         self.listRowBackground(
             ThemedBackground(themeManager: themeManager) { colorScheme in
                 Color.dynamicBackground(themeManager, currentScheme: colorScheme)
             }
-            .themeTransition(themeManager)
+            .themeTransition(themeManager, appSettings: appSettings)
         )
     }
 }
@@ -197,14 +199,14 @@ extension View {
 
 extension View {
     /// Apply themed sheet background
-    func themedSheetBackground(_ themeManager: ThemeManager) -> some View {
+    func themedSheetBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         self
             .background {
                 ThemedBackground(themeManager: themeManager) { colorScheme in
                     Color.elevatedBackground(themeManager, elevation: .modal, currentScheme: colorScheme)
                 }
             }
-            .themeTransition(themeManager)
+            .themeTransition(themeManager, appSettings: appSettings)
     }
 }
 
@@ -237,6 +239,57 @@ struct AdaptiveContrastModifier: ViewModifier {
                     }
                 }
             }
+    }
+}
+
+// MARK: - Navigation Bar Modifiers
+
+extension View {
+    /// Apply themed navigation bar appearance
+    func themedNavigationBar(_ themeManager: ThemeManager) -> some View {
+        self.modifier(ThemedNavigationBarModifier(themeManager: themeManager))
+    }
+}
+
+struct ThemedNavigationBarModifier: ViewModifier {
+    let themeManager: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
+    
+    func body(content: Content) -> some View {
+        let isDarkMode = themeManager.isDarkMode(for: colorScheme)
+        let isBlackMode = themeManager.isUsingTrueBlack
+        
+        content
+            .onAppear {
+                applyNavigationBarTheme()
+            }
+            .onChange(of: colorScheme) {
+                applyNavigationBarTheme()
+            }
+            .onChange(of: themeManager.darkThemeMode) {
+                applyNavigationBarTheme()
+            }
+            .onChange(of: themeManager.colorSchemeOverride) {
+                applyNavigationBarTheme()
+            }
+            // Apply toolbar background based on theme
+            .toolbarBackground(
+                isDarkMode ? (isBlackMode ? Color.black : Color(red: 0.18, green: 0.18, blue: 0.20)) : Color.clear,
+                for: .navigationBar
+            )
+            .toolbarBackground(
+                isDarkMode ? (isBlackMode ? Color.black : Color(red: 0.18, green: 0.18, blue: 0.20)) : Color.clear,
+                for: .tabBar
+            )
+            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
+    }
+    
+    private func applyNavigationBarTheme() {
+        // This will ensure the global navigation bar appearance is up to date
+        // It's important to reapply when this specific view appears
+        DispatchQueue.main.async {
+            themeManager.forceUpdateNavigationBars()
+        }
     }
 }
 

@@ -120,7 +120,7 @@ struct HomeView: View {
     .toolbarBackground(.visible, for: .tabBar)
     .toolbarBackground(.visible, for: .navigationBar)
     .toolbarColorScheme(.dark, for: .navigationBar)
-    .themedPrimaryBackground(appState.themeManager)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
   private func handleNavigationChange(oldCount: Int, newCount: Int) {

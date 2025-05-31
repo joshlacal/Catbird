@@ -11,6 +11,48 @@ import UIKit
 // MARK: - Typography Constants
 
 /// Defines the app's typography system
+/// 
+/// ## Font System Overview
+/// 
+/// This typography system provides two complementary approaches:
+/// 
+/// ### 1. Traditional Typography (Direct Usage)
+/// - Use `Typography.Size.*` constants for fixed font sizes
+/// - Use view modifiers like `.textStyle()`, `.headlineStyle()`, `.bodyStyle()`
+/// - These provide precise control but don't respond to user font preferences
+/// 
+/// ### 2. App Font System (Recommended)
+/// - Use `.appBody()`, `.appHeadline()`, `.appTitle()` etc. for automatic scaling
+/// - These respect user settings for:
+///   - Font size preference (small, default, large, extra large)
+///   - Font style preference (system, serif, rounded, monospaced)  
+///   - Line spacing preference (tight, normal, relaxed)
+///   - Dynamic Type accessibility settings
+///   - Maximum Dynamic Type size limits
+/// 
+/// ### Accessibility Integration
+/// 
+/// The app font system automatically:
+/// - Scales text based on user's font size preference (85% to 130%)
+/// - Respects iOS Dynamic Type when `dynamicTypeEnabled` is true
+/// - Constrains Dynamic Type to user's maximum preferred size
+/// - Applies user's preferred font design (serif, rounded, etc.)
+/// - Adjusts line spacing based on user preference
+/// 
+/// ### Usage Examples
+/// 
+/// ```swift
+/// // Recommended: Respects all user preferences
+/// Text("Title").appTitle()
+/// Text("Body text").appBody()
+/// Text("Custom").appText(size: 18, weight: .medium)
+/// 
+/// // Traditional: Fixed styling
+/// Text("Fixed headline").headlineStyle()
+/// Text("Fixed body").bodyStyle()
+/// ```
+/// 
+/// The FontManager provides the bridge between user settings and font application.
 enum Typography {
     // Font sizes for different text roles
     enum Size {
@@ -279,6 +321,61 @@ extension View {
         self.modifier(CaptionModifier(color: color))
     }
     
+    // MARK: - App Font Helpers
+    
+    /// Quick helpers for common text roles using the app font system
+    /// These automatically respect user font size, style, and accessibility preferences
+    func appHeadline() -> some View {
+        self.appFont(.headline)
+    }
+    
+    func appTitle() -> some View {
+        self.appFont(.title1)
+    }
+    
+    func appBody() -> some View {
+        self.appFont(.body)
+    }
+    
+    func appCaption() -> some View {
+        self.appFont(.caption)
+    }
+    
+    func appSubheadline() -> some View {
+        self.appFont(.subheadline)
+    }
+    
+    func appLargeTitle() -> some View {
+        self.appFont(.largeTitle)
+    }
+    
+    func appTitle2() -> some View {
+        self.appFont(.title2)
+    }
+    
+    func appTitle3() -> some View {
+        self.appFont(.title3)
+    }
+    
+    func appCallout() -> some View {
+        self.appFont(.callout)
+    }
+    
+    func appFootnote() -> some View {
+        self.appFont(.footnote)
+    }
+    
+    /// Apply app text style with custom parameters
+    /// Respects user font preferences while allowing customization
+    func appText(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        relativeTo textStyle: Font.TextStyle? = .body
+    ) -> some View {
+        self.appFont(size: size, weight: weight, relativeTo: textStyle)
+            .appLineSpacing()
+    }
+    
     /// Applies a custom font with optical scaling and width variants
     func customScaledFont(
         size: CGFloat? = nil,
@@ -389,10 +486,15 @@ extension Font {
 
 // MARK: - Preview Examples
 
-#Preview {
+#Preview("Typography System") {
     ScrollView {
         VStack(alignment: .leading, spacing: 20) {
+            // Traditional Typography Examples
             Group {
+                Text("Traditional Typography Examples")
+                    .font(.title2.bold())
+                    .padding(.bottom, 8)
+                
                 Text("Standard SF Pro Headline")
                     .headlineStyle()
                 
@@ -408,36 +510,99 @@ extension Font {
                 
                 Text("Body Text with Custom Line Height")
                     .bodyStyle(lineHeight: Typography.LineHeight.relaxed)
-                
-                Text("Gradient Text Effect")
-                    .font(.system(size: 24, weight: .bold))
-                    .gradientText(colors: [.blue, .purple])
-                
-                Text("Text with Depth Effect")
-                    .font(.system(size: 22, weight: .bold))
-                    .textDepth(radius: 1, y: 1, opacity: 0.5)
-                
-                Text("Text with Glow Effect")
-                    .font(.system(size: 22, weight: .bold))
-                    .textGlow(color: .blue.opacity(0.5), radius: 4)
-                
-                Text("Custom Letter Spacing")
-                    .font(.system(size: 18))
-                    .tracking(0.8)
-                    .textCase(.uppercase)
-                
-                Text("SF Pro Width Variant")
-                    .customScaledFont(size: 18, weight: .medium, width: 62)
             }
             .padding()
             .background(Color(.systemBackground))
             .cornerRadius(10)
-            .shadow(radius: 2)
+            .shadow(radius: 1)
+            .padding(.horizontal)
+            
+            // New App Font System Examples
+            Group {
+                Text("App Font System (Accessibility-Aware)")
+                    .font(.title2.bold())
+                    .padding(.bottom, 8)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("App Large Title")
+                        .appLargeTitle()
+                    
+                    Text("App Title")
+                        .appTitle()
+                    
+                    Text("App Title 2")
+                        .appTitle2()
+                    
+                    Text("App Title 3")
+                        .appTitle3()
+                    
+                    Text("App Headline")
+                        .appHeadline()
+                    
+                    Text("App Subheadline")
+                        .appSubheadline()
+                    
+                    Text("App Body Text - This text automatically scales with user font size preferences, respects Dynamic Type settings, and adapts to the user's chosen font style.")
+                        .appBody()
+                    
+                    Text("App Callout")
+                        .appCallout()
+                    
+                    Text("App Footnote")
+                        .appFootnote()
+                    
+                    Text("App Caption")
+                        .appCaption()
+                    
+                    Divider()
+                    
+                    Text("Custom App Text (20pt, medium weight)")
+                        .appText(size: 20, weight: .medium)
+                    
+                    Text("Accessibility-optimized text that respects user preferences")
+                        .appFont(.body)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding()
+            .background(Color(.systemBackground))
+            .cornerRadius(10)
+            .shadow(radius: 1)
+            .padding(.horizontal)
+            
+            // Effects Examples
+            Group {
+                Text("Text Effects")
+                    .font(.title2.bold())
+                    .padding(.bottom, 8)
+                
+                Text("Gradient Text Effect")
+                    .appHeadline()
+                    .gradientText(colors: [.blue, .purple])
+                
+                Text("Text with Depth Effect")
+                    .appHeadline()
+                    .textDepth(radius: 1, y: 1, opacity: 0.5)
+                
+                Text("Text with Glow Effect")
+                    .appHeadline()
+                    .textGlow(color: .blue.opacity(0.5), radius: 4)
+                
+                Text("CUSTOM LETTER SPACING")
+                    .appBody()
+                    .tracking(0.8)
+                    .textCase(.uppercase)
+            }
+            .padding()
+            .background(Color(.systemBackground))
+            .cornerRadius(10)
+            .shadow(radius: 1)
             .padding(.horizontal)
         }
         .padding(.vertical)
         .background(Color(.systemGroupedBackground))
     }
+    .fontManager(FontManager()) // Provide default FontManager for preview
 }
 /*
 extension Font {

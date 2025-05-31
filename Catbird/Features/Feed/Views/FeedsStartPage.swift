@@ -12,6 +12,7 @@ struct FeedsStartPage: View {
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.colorScheme) private var colorScheme
   @State private var editMode: EditMode = .inactive
   @Binding var isDrawerOpen: Bool
   @State private var viewModel: FeedsStartPageViewModel
@@ -507,7 +508,8 @@ struct FeedsStartPage: View {
         isDragging: $isDragging,
         draggedItemCategory: $draggedItemCategory,
         dropTargetItem: $dropTargetItem,
-        resetDragState: resetDragState
+        resetDragState: resetDragState,
+        appSettings: appState.appSettings
       )
     )
     .accessibility(
@@ -581,7 +583,8 @@ struct FeedsStartPage: View {
         isDragging: $isDragging,
         draggedItemCategory: $draggedItemCategory,
         dropTargetItem: $dropTargetItem,
-        resetDragState: resetDragState
+        resetDragState: resetDragState,
+        appSettings: appState.appSettings
       )
     )
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
@@ -853,7 +856,7 @@ struct FeedsStartPage: View {
     NavigationStack {
       ZStack(alignment: .top) {
         // Base background
-        Color(UIColor.systemBackground)
+          Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
           .ignoresSafeArea()
 
         // Main scrollable content

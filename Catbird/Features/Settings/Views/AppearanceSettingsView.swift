@@ -9,6 +9,9 @@ struct AppearanceSettingsView: View {
     @State private var darkThemeMode: String
     @State private var fontStyle: String
     @State private var fontSize: String
+    @State private var lineSpacing: String
+    @State private var dynamicTypeEnabled: Bool
+    @State private var maxDynamicTypeSize: String
     
     // Initialize with current settings
     init() {
@@ -17,6 +20,9 @@ struct AppearanceSettingsView: View {
         _darkThemeMode = State(initialValue: appSettings.darkThemeMode)
         _fontStyle = State(initialValue: appSettings.fontStyle)
         _fontSize = State(initialValue: appSettings.fontSize)
+        _lineSpacing = State(initialValue: appSettings.lineSpacing)
+        _dynamicTypeEnabled = State(initialValue: appSettings.dynamicTypeEnabled)
+        _maxDynamicTypeSize = State(initialValue: appSettings.maxDynamicTypeSize)
     }
     
     var body: some View {
@@ -54,6 +60,7 @@ struct AppearanceSettingsView: View {
                 }
                 .onChange(of: fontStyle) {
                     appState.appSettings.fontStyle = fontStyle
+                    updateFontManager()
                 }
                 
                 Picker("Font Size", selection: $fontSize) {
@@ -64,9 +71,52 @@ struct AppearanceSettingsView: View {
                 }
                 .onChange(of: fontSize) {
                     appState.appSettings.fontSize = fontSize
+                    updateFontManager()
                 }
                 
-                FontPreviewRow(fontStyle: fontStyle, fontSize: fontSize)
+                Picker("Line Spacing", selection: $lineSpacing) {
+                    Text("Tight").tag("tight")
+                    Text("Normal").tag("normal")
+                    Text("Relaxed").tag("relaxed")
+                }
+                .onChange(of: lineSpacing) {
+                    appState.appSettings.lineSpacing = lineSpacing
+                    updateFontManager()
+                }
+                
+                FontPreviewRow(
+                    fontStyle: fontStyle,
+                    fontSize: fontSize,
+                    lineSpacing: lineSpacing,
+                    dynamicTypeEnabled: dynamicTypeEnabled
+                )
+            }
+            
+            // Accessibility Section
+            Section("Accessibility") {
+                Toggle("Dynamic Type", isOn: $dynamicTypeEnabled)
+                    .onChange(of: dynamicTypeEnabled) {
+                        appState.appSettings.dynamicTypeEnabled = dynamicTypeEnabled
+                        updateFontManager()
+                    }
+                
+                if dynamicTypeEnabled {
+                    Picker("Maximum Text Size", selection: $maxDynamicTypeSize) {
+                        Text("Extra Extra Large").tag("xxLarge")
+                        Text("Extra Extra Extra Large").tag("xxxLarge")
+                        Text("Accessibility Medium").tag("accessibility1")
+                        Text("Accessibility Large").tag("accessibility2")
+                        Text("Accessibility Extra Large").tag("accessibility3")
+                        Text("Accessibility Extra Extra Large").tag("accessibility4")
+                        Text("Accessibility Extra Extra Extra Large").tag("accessibility5")
+                    }
+                    .onChange(of: maxDynamicTypeSize) {
+                        appState.appSettings.maxDynamicTypeSize = maxDynamicTypeSize
+                        updateFontManager()
+                    }
+                }
+                
+                AccessibilityQuickActionsRow()
             }
             .pickerStyle(.menu)
             
@@ -87,12 +137,19 @@ struct AppearanceSettingsView: View {
                     darkThemeMode = "dim"
                     fontStyle = "system"
                     fontSize = "default"
+                    lineSpacing = "normal"
+                    dynamicTypeEnabled = true
+                    maxDynamicTypeSize = "accessibility1"
                     
                     // Update app settings
                     appState.appSettings.theme = theme
                     appState.appSettings.darkThemeMode = darkThemeMode
                     appState.appSettings.fontStyle = fontStyle
                     appState.appSettings.fontSize = fontSize
+                    appState.appSettings.lineSpacing = lineSpacing
+                    appState.appSettings.dynamicTypeEnabled = dynamicTypeEnabled
+                    appState.appSettings.maxDynamicTypeSize = maxDynamicTypeSize
+                    updateFontManager()
                 }
                 .foregroundStyle(.red)
             }
@@ -105,7 +162,22 @@ struct AppearanceSettingsView: View {
             darkThemeMode = appState.appSettings.darkThemeMode
             fontStyle = appState.appSettings.fontStyle
             fontSize = appState.appSettings.fontSize
+            lineSpacing = appState.appSettings.lineSpacing
+            dynamicTypeEnabled = appState.appSettings.dynamicTypeEnabled
+            maxDynamicTypeSize = appState.appSettings.maxDynamicTypeSize
         }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func updateFontManager() {
+        appState.fontManager.applyFontSettings(
+            fontStyle: fontStyle,
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            dynamicTypeEnabled: dynamicTypeEnabled,
+            maxDynamicTypeSize: maxDynamicTypeSize
+        )
     }
 }
 
@@ -114,6 +186,8 @@ struct AppearanceSettingsView: View {
 struct FontPreviewRow: View {
     let fontStyle: String
     let fontSize: String
+    let lineSpacing: String
+    let dynamicTypeEnabled: Bool
     
     var previewFont: Font {
         let size: CGFloat
@@ -129,15 +203,34 @@ struct FontPreviewRow: View {
             size = 16
         }
         
+        let design: Font.Design
         switch fontStyle {
         case "serif":
-            return .system(size: size, design: .serif)
+            design = .serif
         case "rounded":
-            return .system(size: size, design: .rounded)
+            design = .rounded
         case "monospaced":
-            return .system(size: size, design: .monospaced)
+            design = .monospaced
         default: // system
-            return .system(size: size)
+            design = .default
+        }
+        
+        if dynamicTypeEnabled {
+            return .system(.body, design: design)
+        } else {
+            return .system(size: size, design: design)
+        }
+    }
+    
+    var previewLineSpacing: CGFloat {
+        let baseSize: CGFloat = 16
+        switch lineSpacing {
+        case "tight":
+            return baseSize * 0.3
+        case "relaxed":
+            return baseSize * 0.8
+        default: // normal
+            return baseSize * 0.5
         }
     }
     
@@ -155,6 +248,7 @@ struct FontPreviewRow: View {
                     
                     Text("This is how your text will appear throughout the app.")
                         .font(previewFont)
+                        .lineSpacing(previewLineSpacing)
                         .lineLimit(2)
                     
                     HStack {
@@ -286,6 +380,51 @@ struct ColorSchemePreview: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 8)
+    }
+}
+
+struct AccessibilityQuickActionsRow: View {
+    @Environment(AppState.self) private var appState
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Quick Actions")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            
+            HStack(spacing: 12) {
+                Button("Optimize for Reading") {
+                    appState.appSettings.fontSize = "large"
+                    appState.appSettings.lineSpacing = "relaxed"
+                    appState.appSettings.dynamicTypeEnabled = true
+                    updateFontManager()
+                }
+                .buttonStyle(.bordered)
+                .font(.caption)
+                
+                Button("Maximum Accessibility") {
+                    appState.fontManager.applyAccessibilityOptimizations()
+                    // Sync settings with the optimized values
+                    appState.appSettings.fontSize = "large"
+                    appState.appSettings.lineSpacing = "relaxed"
+                    appState.appSettings.dynamicTypeEnabled = true
+                    appState.appSettings.maxDynamicTypeSize = "accessibility3"
+                }
+                .buttonStyle(.bordered)
+                .font(.caption)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+    
+    private func updateFontManager() {
+        appState.fontManager.applyFontSettings(
+            fontStyle: appState.appSettings.fontStyle,
+            fontSize: appState.appSettings.fontSize,
+            lineSpacing: appState.appSettings.lineSpacing,
+            dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled,
+            maxDynamicTypeSize: appState.appSettings.maxDynamicTypeSize
+        )
     }
 }
 

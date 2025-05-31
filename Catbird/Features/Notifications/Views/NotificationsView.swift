@@ -29,7 +29,7 @@ struct NotificationsView: View {
 
         notificationContent
       }
-      .themedPrimaryBackground(appState.themeManager)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Notifications")
       .navigationBarTitleDisplayMode(.large)
       .toolbar {
@@ -163,7 +163,7 @@ struct NotificationsView: View {
         filterPicker
           .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
           .listRowSeparator(.hidden)
-          .themedListRowBackground(appState.themeManager)
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
 
         ForEach(viewModel.groupedNotifications, id: \.id) { group in
           NotificationCard(
@@ -178,7 +178,7 @@ struct NotificationsView: View {
           .alignmentGuide(.listRowSeparatorLeading) { _ in
             0
           }
-          .themedListRowBackground(appState.themeManager)
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           .onAppear {
             let index =
               viewModel.groupedNotifications.firstIndex(where: { $0.id == group.id }) ?? 0
@@ -206,7 +206,7 @@ struct NotificationsView: View {
       }
 
       .listStyle(.plain)
-      .themedPrimaryBackground(appState.themeManager)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
       .scrollPosition($scrollPosition)
       //      .overlay(alignment: .top) {
       //        if viewModel.isRefreshing {

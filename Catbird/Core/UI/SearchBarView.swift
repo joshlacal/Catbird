@@ -9,6 +9,7 @@ struct SearchBarView: View {
   
   @FocusState private var isTextFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(AppState.self) private var appState
   
   init(
     searchText: Binding<String>,
@@ -53,7 +54,7 @@ struct SearchBarView: View {
       // Enhanced clear button with glass treatment
       if !searchText.isEmpty {
         Button {
-          withAnimation(.easeInOut(duration: 0.2)) {
+          MotionManager.withAnimation(for: appState.appSettings, animation: .easeInOut(duration: 0.2)) {
             searchText = ""
             Task { await onSearchChange() }
           }
@@ -63,7 +64,7 @@ struct SearchBarView: View {
             .font(.system(size: 16, weight: .medium))
             .solariumText(intensity: intensity)
         }
-        .transition(.scale.combined(with: .opacity))
+        .motionAwareTransition(.scale.combined(with: .opacity), appSettings: appState.appSettings)
         .interactiveGlass()
       }
     }
@@ -71,7 +72,7 @@ struct SearchBarView: View {
     .padding(.vertical, 12)
     .solariumOverlay(intensity: intensity)
     .interactiveGlass()
-    .animation(.easeInOut(duration: 0.2), value: searchText.isEmpty)
+    .motionAwareAnimation(.easeInOut(duration: 0.2), value: searchText.isEmpty, appSettings: appState.appSettings)
     .padding(.bottom, 8)
   }
 }

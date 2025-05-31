@@ -21,6 +21,7 @@ struct NavigationHandler {
                 appState: appState, 
                 path: path
             )
+            .themedNavigationBar(appState.themeManager)
             .id(did)
             
         case .post(let uri):
@@ -28,31 +29,50 @@ struct NavigationHandler {
                 .toolbarVisibility(.visible, for: .automatic)
                 .toolbarBackgroundVisibility(.visible, for: .automatic)
                 .navigationBarTitleDisplayMode(.inline)
+                .themedNavigationBar(appState.themeManager)
                 .navigationTitle("Post")
+                .onAppear {
+                    let initialAppearance = UINavigationBarAppearance()
+                    initialAppearance.configureWithOpaqueBackground()
+                    // Use dim theme colors as default to prevent black navigation bars
+                    initialAppearance.backgroundColor = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                    NavigationFontConfig.applyFonts(to: initialAppearance)
+                    
+                    // Set initial appearance that prevents black flash before theme is applied
+                    UINavigationBar.appearance().standardAppearance = initialAppearance
+                    UINavigationBar.appearance().scrollEdgeAppearance = initialAppearance
+                    UINavigationBar.appearance().compactAppearance = initialAppearance
+                }
                 .id(uri.uriString())
             
         case .hashtag(let tag):
             HashtagView(tag: tag, path: path)
+                .themedNavigationBar(appState.themeManager)
                 .id(tag)
             
         case .timeline:
             FeedView(appState: appState, fetch: .timeline, path: path, selectedTab: selectedTab)
+                .themedNavigationBar(appState.themeManager)
                 .id("timeline")
             
         case .feed(let uri):
             FeedView(appState: appState, fetch: .feed(uri), path: path, selectedTab: selectedTab)
+                .themedNavigationBar(appState.themeManager)
                 .id(uri.uriString())
             
         case .list(let uri):
             ListView(listURI: uri, path: path)
+                .themedNavigationBar(appState.themeManager)
                 .id(uri.uriString())
             
         case .starterPack(let uri):
             StarterPackView(uri: uri, path: path)
+                .themedNavigationBar(appState.themeManager)
                 .id(uri.uriString())
             
         case .conversation(let convoId):
             ConversationView(convoId: convoId)
+//                .themedNavigationBar(appState.themeManager)
                 .id(convoId) // Use convoId for view identity
                 // Add necessary environment objects or parameters if needed
                 // .environment(appState) // Already available via @Environment
@@ -62,6 +82,7 @@ struct NavigationHandler {
                  selectedTab: selectedTab,
                  lastTappedTab: .constant(nil) // Pass constant nil as lastTappedTab isn't available here
              )
+//             .themedNavigationBar(appState.themeManager)
              .id("chatTab") // Static ID for the tab view itself
         }
     }

@@ -57,7 +57,7 @@ struct ContentView: View {
       }
     }
     .applyTheme(appState.themeManager)
-    .fontScaleManager(appState.fontScaleManager)
+    .fontManager(appState.fontManager)
   }
 }
 

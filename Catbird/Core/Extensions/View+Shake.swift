@@ -9,9 +9,10 @@ extension View {
     ///   - intensity: How strong the shake should be (default: 5)
     ///   - cycles: How many times to shake back and forth (default: 4)
     ///   - duration: How long the animation lasts (default: 0.6 seconds)
+    ///   - appSettings: App settings to check motion reduction preferences
     @ViewBuilder
-    func shake(animatableParameter: Bool, intensity: CGFloat = 5, cycles: CGFloat = 4, duration: CGFloat = 0.6) -> some View {
-        modifier(ShakeEffect(animating: animatableParameter, intensity: intensity, cycles: cycles, duration: duration))
+    func shake(animatableParameter: Bool, intensity: CGFloat = 5, cycles: CGFloat = 4, duration: CGFloat = 0.6, appSettings: AppSettings) -> some View {
+        modifier(ShakeEffect(animating: animatableParameter, intensity: intensity, cycles: cycles, duration: duration, appSettings: appSettings))
     }
 }
 
@@ -22,6 +23,7 @@ struct ShakeEffect: ViewModifier {
     var intensity: CGFloat
     var cycles: CGFloat
     var duration: CGFloat
+    var appSettings: AppSettings
     
     // Animatable binding for smooth transitions
     @State private var animatableParameter: CGFloat = 0
@@ -32,18 +34,27 @@ struct ShakeEffect: ViewModifier {
             .onChange(of: animating) { _, newValue in
                 guard newValue else { return }
                 
-                withAnimation(.interactiveSpring(response: duration, dampingFraction: 0.6)) {
-                    // Start with a bit of the animation
-                    animatableParameter = intensity * 0.5
-                } completion: {
-                    // Quick motion in opposite direction
-                    withAnimation(.bouncy(duration: duration, extraBounce: 0.1)) {
+                // Skip animation if motion reduction is enabled or shake is disabled
+                if MotionManager.shouldReduceMotion(appSettings: appSettings) || !appSettings.shakeToUndo {
+                    return
+                }
+                
+                // Use Task for sequential animations since MotionManager doesn't support completion blocks
+                Task { @MainActor in
+                    MotionManager.withAnimation(for: appSettings, animation: .interactiveSpring(response: duration * 0.3, dampingFraction: 0.6)) {
+                        animatableParameter = intensity * 0.5
+                    }
+                    
+                    try? await Task.sleep(nanoseconds: UInt64(duration * 0.3 * 1_000_000_000))
+                    
+                    MotionManager.withAnimation(for: appSettings, animation: .bouncy(duration: duration * 0.4, extraBounce: 0.1)) {
                         animatableParameter = -intensity
-                    } completion: {
-                        // Settling animation
-                        withAnimation(.interpolatingSpring(mass: 1.0, stiffness: 100, damping: 10)) {
-                            animatableParameter = 0
-                        }
+                    }
+                    
+                    try? await Task.sleep(nanoseconds: UInt64(duration * 0.4 * 1_000_000_000))
+                    
+                    MotionManager.withAnimation(for: appSettings, animation: .interpolatingSpring(mass: 1.0, stiffness: 100, damping: 10)) {
+                        animatableParameter = 0
                     }
                 }
             }

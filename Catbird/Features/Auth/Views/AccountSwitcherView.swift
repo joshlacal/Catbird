@@ -245,7 +245,7 @@ struct AccountSwitcherView: View {
               addNewAccount()
             }
           )
-          .shake(animatableParameter: showInvalidAnimation)
+          .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
 
           if isLoading {
             HStack(spacing: 12) {

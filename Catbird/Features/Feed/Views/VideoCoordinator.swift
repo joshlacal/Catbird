@@ -23,6 +23,9 @@ final class VideoCoordinator {
     private var loopingWrappers: [String: LoopingPlayerWrapper] = [:]
     private var statusObservers: [String: Task<Void, Never>] = [:]
     
+    // App settings for autoplay preference
+    weak var appSettings: AppSettings?
+    
     // Cache for video positions with automatic eviction
     private let positionCache: NSCache<NSString, NSNumber> = {
         let cache = NSCache<NSString, NSNumber>()
@@ -36,6 +39,14 @@ final class VideoCoordinator {
         
         // Explicitly request silent mode at initialization
         AudioSessionManager.shared.configureForSilentPlayback()
+    }
+    
+    // MARK: - Autoplay Check
+    
+    /// Check if videos should autoplay based on user settings
+    private func shouldAutoplayVideos() -> Bool {
+        // Default to true if settings are not available (fallback behavior)
+        return appSettings?.autoplayVideos ?? true
     }
     
     // MARK: - Video Management
@@ -156,14 +167,17 @@ final class VideoCoordinator {
                 player.volume = 0
                 
                 if id == topVideoId {
-                    // Play the top visible video if it's not already playing
-                    if !model.isPlaying {
+                    // Play the top visible video if it's not already playing AND autoplay is enabled
+                    if !model.isPlaying && shouldAutoplayVideos() {
                         player.seek(to: lastPlaybackTime)
                         player.play()
                         
                         // Update states
                         activeVideos[id]?.model.isPlaying = true
                         currentlyPlayingVideoId = id
+                    } else if !shouldAutoplayVideos() && model.isPlaying {
+                        // If autoplay is disabled but video is playing, pause it
+                        pauseVideo(id)
                     }
                 } else {
                     // Pause non-visible videos

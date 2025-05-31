@@ -390,6 +390,76 @@ import OSLog
     var isUsingTrueBlack: Bool {
         darkThemeMode == .black
     }
+    
+    // MARK: - UIKit Bridge Methods
+    
+    /// Apply theme to a specific navigation bar instance
+    /// This is useful for UIKit views embedded in SwiftUI
+    func applyTheme(to navigationBar: UINavigationBar) {
+        let appearance = UINavigationBarAppearance()
+        
+        if getCurrentEffectiveDarkMode() {
+            if darkThemeMode == .black {
+                // True black mode
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = UIColor.black
+                appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+            } else {
+                // Dim mode
+                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = dimBackground
+                appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+            }
+        } else {
+            // Light mode
+            appearance.configureWithDefaultBackground()
+        }
+        
+        // Apply fonts
+        NavigationFontConfig.applyFonts(to: appearance)
+        
+        // Apply text color
+        let textColor = getCurrentEffectiveDarkMode() 
+            ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
+            : UIColor.label
+        
+        var titleAttrs = appearance.titleTextAttributes
+        titleAttrs[.foregroundColor] = textColor
+        appearance.titleTextAttributes = titleAttrs
+        
+        var largeTitleAttrs = appearance.largeTitleTextAttributes
+        largeTitleAttrs[.foregroundColor] = textColor
+        appearance.largeTitleTextAttributes = largeTitleAttrs
+        
+        // Apply to the specific navigation bar
+        navigationBar.standardAppearance = appearance
+        navigationBar.scrollEdgeAppearance = appearance
+        navigationBar.compactAppearance = appearance
+    }
+    
+    /// Apply theme to a specific toolbar instance
+    func applyTheme(to toolbar: UIToolbar) {
+        let appearance = UIToolbarAppearance()
+        
+        if getCurrentEffectiveDarkMode() {
+            if darkThemeMode == .black {
+                appearance.backgroundColor = UIColor.black
+                appearance.shadowColor = UIColor(white: 0.15, alpha: 0.3)
+            } else {
+                // Dim mode
+                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = dimBackground
+                appearance.shadowColor = UIColor(white: 0.45, alpha: 0.6)
+            }
+        } else {
+            appearance.configureWithDefaultBackground()
+        }
+        
+        toolbar.standardAppearance = appearance
+        toolbar.scrollEdgeAppearance = appearance
+    }
 }
 
 // MARK: - View Modifiers
@@ -429,17 +499,18 @@ extension EnvironmentValues {
 
 struct ThemeTransitionModifier: ViewModifier {
     let themeManager: ThemeManager
+    let appSettings: AppSettings
     
     func body(content: Content) -> some View {
         content
-            .animation(.easeInOut(duration: 0.3), value: themeManager.darkThemeMode)
-            .animation(.easeInOut(duration: 0.3), value: themeManager.colorSchemeOverride)
+            .motionAwareAnimation(.easeInOut(duration: 0.3), value: themeManager.darkThemeMode, appSettings: appSettings)
+            .motionAwareAnimation(.easeInOut(duration: 0.3), value: themeManager.colorSchemeOverride, appSettings: appSettings)
     }
 }
 
 extension View {
     /// Add smooth transitions when theme changes
-    func themeTransition(_ themeManager: ThemeManager) -> some View {
-        self.modifier(ThemeTransitionModifier(themeManager: themeManager))
+    func themeTransition(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
+        self.modifier(ThemeTransitionModifier(themeManager: themeManager, appSettings: appSettings))
     }
 }
