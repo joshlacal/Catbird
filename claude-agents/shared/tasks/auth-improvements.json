@@ -1,0 +1,32 @@
+{
+  "id": "auth-improvements-v1",
+  "type": "ios-feature-workflow", 
+  "feature": {
+    "name": "Authentication System Improvements",
+    "description": "Enhance OAuth flow, token refresh reliability, and biometric authentication",
+    "worktree": "/Users/joshlacalamito/Developer/Catbird-Release-Worktrees/feature-auth-improvements",
+    "requirements": [
+      "Improve OAuth 2.0 flow reliability and error handling",
+      "Enhance token refresh logic with better retry mechanisms",
+      "Add biometric authentication (Face ID/Touch ID) support",
+      "Implement secure credential storage improvements",
+      "Add authentication state persistence across app launches",
+      "Improve login UX with better loading states and error messages"
+    ],
+    "key_files": [
+      "Catbird/Core/State/AuthManager.swift",
+      "Catbird/Features/Auth/Views/LoginView.swift",
+      "Catbird/Features/Auth/Views/AccountSwitcherView.swift"
+    ],
+    "testing_criteria": [
+      "Test OAuth flow on simulator",
+      "Verify token refresh works correctly",
+      "Test biometric authentication if available",
+      "Verify secure storage of credentials",
+      "Test account switching functionality"
+    ]
+  },
+  "priority": 10,
+  "simulator": "iPhone 16 Pro",
+  "estimated_duration": "120 minutes"
+}

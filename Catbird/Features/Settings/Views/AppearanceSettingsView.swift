@@ -4,26 +4,14 @@ struct AppearanceSettingsView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     
-    // Local state for AppSettings
-    @State private var theme: String
-    @State private var darkThemeMode: String
-    @State private var fontStyle: String
-    @State private var fontSize: String
-    @State private var lineSpacing: String
-    @State private var dynamicTypeEnabled: Bool
-    @State private var maxDynamicTypeSize: String
-    
-    // Initialize with current settings
-    init() {
-        let appSettings = AppSettings()
-        _theme = State(initialValue: appSettings.theme)
-        _darkThemeMode = State(initialValue: appSettings.darkThemeMode)
-        _fontStyle = State(initialValue: appSettings.fontStyle)
-        _fontSize = State(initialValue: appSettings.fontSize)
-        _lineSpacing = State(initialValue: appSettings.lineSpacing)
-        _dynamicTypeEnabled = State(initialValue: appSettings.dynamicTypeEnabled)
-        _maxDynamicTypeSize = State(initialValue: appSettings.maxDynamicTypeSize)
-    }
+    // Local state for AppSettings - initialize with defaults
+    @State private var theme: String = "system"
+    @State private var darkThemeMode: String = "dim"
+    @State private var fontStyle: String = "system"
+    @State private var fontSize: String = "default"
+    @State private var lineSpacing: String = "normal"
+    @State private var dynamicTypeEnabled: Bool = true
+    @State private var maxDynamicTypeSize: String = "accessibility1"
     
     var body: some View {
         Form {
@@ -60,7 +48,7 @@ struct AppearanceSettingsView: View {
                 }
                 .onChange(of: fontStyle) {
                     appState.appSettings.fontStyle = fontStyle
-                    updateFontManager()
+                    // FontManager will be updated automatically via AppSettings notification
                 }
                 
                 Picker("Font Size", selection: $fontSize) {
@@ -71,7 +59,7 @@ struct AppearanceSettingsView: View {
                 }
                 .onChange(of: fontSize) {
                     appState.appSettings.fontSize = fontSize
-                    updateFontManager()
+                    // FontManager will be updated automatically via AppSettings notification
                 }
                 
                 Picker("Line Spacing", selection: $lineSpacing) {
@@ -81,7 +69,7 @@ struct AppearanceSettingsView: View {
                 }
                 .onChange(of: lineSpacing) {
                     appState.appSettings.lineSpacing = lineSpacing
-                    updateFontManager()
+                    // FontManager will be updated automatically via AppSettings notification
                 }
                 
                 FontPreviewRow(
@@ -97,7 +85,7 @@ struct AppearanceSettingsView: View {
                 Toggle("Dynamic Type", isOn: $dynamicTypeEnabled)
                     .onChange(of: dynamicTypeEnabled) {
                         appState.appSettings.dynamicTypeEnabled = dynamicTypeEnabled
-                        updateFontManager()
+                        // FontManager will be updated automatically via AppSettings notification
                     }
                 
                 if dynamicTypeEnabled {
@@ -112,7 +100,7 @@ struct AppearanceSettingsView: View {
                     }
                     .onChange(of: maxDynamicTypeSize) {
                         appState.appSettings.maxDynamicTypeSize = maxDynamicTypeSize
-                        updateFontManager()
+                        // FontManager will be updated automatically via AppSettings notification
                     }
                 }
                 
@@ -149,7 +137,7 @@ struct AppearanceSettingsView: View {
                     appState.appSettings.lineSpacing = lineSpacing
                     appState.appSettings.dynamicTypeEnabled = dynamicTypeEnabled
                     appState.appSettings.maxDynamicTypeSize = maxDynamicTypeSize
-                    updateFontManager()
+                    // FontManager will be updated automatically via AppSettings notification
                 }
                 .foregroundStyle(.red)
             }
@@ -157,27 +145,29 @@ struct AppearanceSettingsView: View {
         .navigationTitle("Appearance")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            // Ensure values are synced with AppSettings
-            theme = appState.appSettings.theme
-            darkThemeMode = appState.appSettings.darkThemeMode
-            fontStyle = appState.appSettings.fontStyle
-            fontSize = appState.appSettings.fontSize
-            lineSpacing = appState.appSettings.lineSpacing
-            dynamicTypeEnabled = appState.appSettings.dynamicTypeEnabled
-            maxDynamicTypeSize = appState.appSettings.maxDynamicTypeSize
+            // Sync local state with AppSettings safely with retry mechanism
+            syncSettings()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AppSettingsChanged"))) { _ in
+            // Update local state when app settings change
+            syncSettings()
         }
     }
     
     // MARK: - Helper Methods
     
-    private func updateFontManager() {
-        appState.fontManager.applyFontSettings(
-            fontStyle: fontStyle,
-            fontSize: fontSize,
-            lineSpacing: lineSpacing,
-            dynamicTypeEnabled: dynamicTypeEnabled,
-            maxDynamicTypeSize: maxDynamicTypeSize
-        )
+    private func syncSettings() {
+        // Use async dispatch to avoid blocking and ensure we're on main thread
+        DispatchQueue.main.async {
+            // Safely read settings with fallback values
+            self.theme = self.appState.appSettings.theme
+            self.darkThemeMode = self.appState.appSettings.darkThemeMode
+            self.fontStyle = self.appState.appSettings.fontStyle
+            self.fontSize = self.appState.appSettings.fontSize
+            self.lineSpacing = self.appState.appSettings.lineSpacing
+            self.dynamicTypeEnabled = self.appState.appSettings.dynamicTypeEnabled
+            self.maxDynamicTypeSize = self.appState.appSettings.maxDynamicTypeSize
+        }
     }
 }
 
@@ -397,14 +387,11 @@ struct AccessibilityQuickActionsRow: View {
                     appState.appSettings.fontSize = "large"
                     appState.appSettings.lineSpacing = "relaxed"
                     appState.appSettings.dynamicTypeEnabled = true
-                    updateFontManager()
                 }
                 .buttonStyle(.bordered)
                 .font(.caption)
                 
                 Button("Maximum Accessibility") {
-                    appState.fontManager.applyAccessibilityOptimizations()
-                    // Sync settings with the optimized values
                     appState.appSettings.fontSize = "large"
                     appState.appSettings.lineSpacing = "relaxed"
                     appState.appSettings.dynamicTypeEnabled = true
@@ -417,15 +404,7 @@ struct AccessibilityQuickActionsRow: View {
         .padding(.vertical, 8)
     }
     
-    private func updateFontManager() {
-        appState.fontManager.applyFontSettings(
-            fontStyle: appState.appSettings.fontStyle,
-            fontSize: appState.appSettings.fontSize,
-            lineSpacing: appState.appSettings.lineSpacing,
-            dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled,
-            maxDynamicTypeSize: appState.appSettings.maxDynamicTypeSize
-        )
-    }
+    // Font manager updates are handled automatically via AppSettings notifications
 }
 
 #Preview {

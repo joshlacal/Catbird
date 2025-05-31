@@ -10,6 +10,9 @@ import UserNotifications
 @Observable
 final class AppState {
   // MARK: - Core Properties
+  
+  // Static tracking to prevent multiple instances
+  private static var initializationCount = 0
 
   // Logger
   private let logger = Logger(subsystem: "blue.catbird", category: "AppState")
@@ -86,7 +89,12 @@ final class AppState {
   // MARK: - Initialization
 
   init() {
-    logger.debug("AppState initializing")
+    AppState.initializationCount += 1
+    logger.debug("AppState initializing (instance #\(AppState.initializationCount))")
+    
+    if AppState.initializationCount > 1 {
+      logger.warning("⚠️ Multiple AppState instances detected! This may indicate a problem with view recreation.")
+    }
     self.urlHandler = URLHandler()
 
     // Initialize post manager with nil client (will be updated later)

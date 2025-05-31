@@ -1,0 +1,34 @@
+{
+  "id": "onboarding-ux-v1",
+  "type": "ios-feature-workflow", 
+  "feature": {
+    "name": "User Onboarding and Experience Improvements",
+    "description": "Create compelling first-time user experience, accessibility improvements, and UX polish",
+    "worktree": "/Users/joshlacalamito/Developer/Catbird-Release-Worktrees/feature-onboarding-ux",
+    "requirements": [
+      "Design and implement first-time user onboarding flow",
+      "Add app intro screens explaining Bluesky and Catbird features",
+      "Implement accessibility improvements (VoiceOver, Dynamic Type)",
+      "Add haptic feedback for better interaction feedback",
+      "Improve loading states and empty states throughout the app",
+      "Add contextual help and tooltips for complex features"
+    ],
+    "key_files": [
+      "Catbird/Core/Extensions/View+Extensions.swift",
+      "Catbird/Core/State/PreferencesManager.swift",
+      "Catbird/Core/Utilities/MotionManager.swift",
+      "Catbird/Features/Settings/Views/AccessibilitySettingsView.swift",
+      "Catbird/Core/UI/ErrorStateView.swift"
+    ],
+    "testing_criteria": [
+      "Test onboarding flow for new users",
+      "Verify accessibility features work with VoiceOver",
+      "Test haptic feedback on supported devices",
+      "Verify dynamic type scaling works correctly",
+      "Test empty states and loading indicators"
+    ]
+  },
+  "priority": 6,
+  "simulator": "iPhone 16 Pro",
+  "estimated_duration": "110 minutes"
+}

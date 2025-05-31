@@ -1,0 +1,34 @@
+{
+  "id": "media-performance-v1", 
+  "type": "ios-feature-workflow",
+  "feature": {
+    "name": "Media Handling and Performance Optimization",
+    "description": "Improve video player stability, image loading performance, and media gallery UX",
+    "worktree": "/Users/joshlacalamito/Developer/Catbird-Release-Worktrees/feature-media-performance",
+    "requirements": [
+      "Optimize video player for better stability and performance",
+      "Improve image loading with progressive loading and caching",
+      "Enhance media gallery with better navigation and zoom",
+      "Implement adaptive bitrate streaming for videos",
+      "Add media compression and optimization for uploads",
+      "Improve memory management for media-heavy content"
+    ],
+    "key_files": [
+      "Catbird/Features/Media/Views/ModernVideoPlayerView.swift",
+      "Catbird/Features/Feed/Services/ImageLoadingManager.swift", 
+      "Catbird/Features/Feed/Views/VideoAssetManager.swift",
+      "Catbird/Features/Feed/Views/VideoCoordinator.swift",
+      "Catbird/Features/Feed/Views/ViewImageGridView.swift"
+    ],
+    "testing_criteria": [
+      "Test video playback stability",
+      "Verify image loading performance",
+      "Test media gallery navigation",
+      "Monitor memory usage with media content",
+      "Test media upload and compression"
+    ]
+  },
+  "priority": 8,
+  "simulator": "iPhone 16 Pro",
+  "estimated_duration": "140 minutes"
+}

@@ -60,8 +60,8 @@ struct HomeView: View {
           // Force navigation stack to reload by changing its key
           navigationStackKey = UUID()
           
-          // Also force update navigation bars immediately
-          appState.themeManager.forceUpdateNavigationBars()
+          // Note: Navigation bars are already updated by ThemeManager.applyTheme()
+          // No need to call forceUpdateNavigationBars() here to avoid infinite loops
         }
       }
       .navigationDestination(for: NavigationDestination.self) { destination in

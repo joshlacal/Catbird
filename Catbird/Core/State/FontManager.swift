@@ -112,18 +112,19 @@ import OSLog
         dynamicTypeEnabled: Bool,
         maxDynamicTypeSize: String
     ) {
-        // Skip if settings haven't changed
+        // Skip if settings haven't changed to prevent infinite loops
         if fontStyle == currentFontStyle &&
            fontSize == currentFontSize &&
            lineSpacing == currentLineSpacing &&
            dynamicTypeEnabled == currentDynamicTypeEnabled &&
            maxDynamicTypeSize == currentMaxDynamicTypeSize {
+            logger.debug("Font settings unchanged, skipping update")
             return
         }
         
         logger.info("Applying font settings - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
         
-        // Update cache
+        // Update cache FIRST to prevent re-entrance
         currentFontStyle = fontStyle
         currentFontSize = fontSize
         currentLineSpacing = lineSpacing
@@ -143,7 +144,10 @@ import OSLog
         }
         
         // Post notification for any components that need manual updates
-        NotificationCenter.default.post(name: NSNotification.Name("FontSettingsChanged"), object: nil)
+        // Use async dispatch to prevent blocking
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name("FontSettingsChanged"), object: nil)
+        }
     }
     
     /// Apply Dynamic Type size constraints

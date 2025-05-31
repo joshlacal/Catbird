@@ -207,12 +207,12 @@ struct FontSettingsTestView: View {
                         
                         if !appState.fontManager.isAccessibilityOptimized {
                             Button("Optimize") {
-                                appState.fontManager.applyAccessibilityOptimizations()
-                                // Sync with AppSettings
+                                // Apply accessibility-optimized settings via AppSettings
                                 appState.appSettings.fontSize = "large"
                                 appState.appSettings.lineSpacing = "relaxed"
                                 appState.appSettings.dynamicTypeEnabled = true
                                 appState.appSettings.maxDynamicTypeSize = "accessibility3"
+                                // FontManager will be updated automatically via notification
                             }
                             .buttonStyle(.bordered)
                             .font(.caption)

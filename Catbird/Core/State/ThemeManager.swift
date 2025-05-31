@@ -20,6 +20,10 @@ import OSLog
     private var currentTheme: String = ""
     private var currentDarkThemeMode: String = ""
     
+    /// Debounce force navigation bar updates to prevent infinite loops
+    private var lastForceUpdateTime: Date = Date.distantPast
+    private let forceUpdateDebounceInterval: TimeInterval = 0.1 // 100ms
+    
     // MARK: - Theme Definitions
     
     enum DarkThemeMode {
@@ -71,9 +75,11 @@ import OSLog
         ThemeColorCache.shared.invalidate()
         
         // Force update navigation bars to ensure they use the correct colors
+        // Note: We do this BEFORE posting notification to prevent infinite loops
         forceUpdateNavigationBars()
         
         // Post notification for any components that need manual updates
+        // This should only be used for lightweight UI updates, not for triggering more force updates
         NotificationCenter.default.post(name: NSNotification.Name("ThemeChanged"), object: nil)
     }
     
@@ -177,6 +183,15 @@ import OSLog
     
     /// Force update all navigation bars in the app
     func forceUpdateNavigationBars() {
+        let now = Date()
+        
+        // Debounce to prevent infinite loops
+        if now.timeIntervalSince(lastForceUpdateTime) < forceUpdateDebounceInterval {
+            logger.debug("Skipping force navigation bar update due to debouncing")
+            return
+        }
+        
+        lastForceUpdateTime = now
         logger.info("Force updating all navigation bars")
         
         // Re-apply navigation bar theme

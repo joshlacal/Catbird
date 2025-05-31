@@ -285,11 +285,9 @@ struct ThemedNavigationBarModifier: ViewModifier {
     }
     
     private func applyNavigationBarTheme() {
-        // This will ensure the global navigation bar appearance is up to date
-        // It's important to reapply when this specific view appears
-        DispatchQueue.main.async {
-            themeManager.forceUpdateNavigationBars()
-        }
+        // Navigation bar theme is already applied by ThemeManager.applyTheme()
+        // No need to call forceUpdateNavigationBars() here to avoid infinite loops
+        // The toolbar modifiers above handle the appearance for this specific view
     }
 }
 

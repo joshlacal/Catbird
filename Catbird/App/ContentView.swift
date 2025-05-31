@@ -220,7 +220,7 @@ struct MainContentView18: View {
           object: nil,
           queue: .main
         ) { _ in
-          // Force update all UIKit components immediately
+          // Only force update tab bars here, since navigation bars are already handled by ThemeManager
           if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
             for window in windowScene.windows {
               // Force tab bars to update
@@ -228,32 +228,6 @@ struct MainContentView18: View {
                 tabBarController.tabBar.setNeedsDisplay()
                 tabBarController.tabBar.layoutIfNeeded()
               }
-              
-              // Force all navigation bars in the window to update
-              window.rootViewController?.view.subviews.forEach { subview in
-                if let navBar = subview as? UINavigationBar {
-                  navBar.setNeedsDisplay()
-                  navBar.layoutIfNeeded()
-                }
-              }
-              
-              // Also recursively find navigation controllers and force their nav bars to update
-              func updateNavigationBars(in viewController: UIViewController?) {
-                guard let vc = viewController else { return }
-                
-                if let navController = vc as? UINavigationController {
-                  navController.navigationBar.setNeedsDisplay()
-                  navController.navigationBar.layoutIfNeeded()
-                }
-                
-                vc.children.forEach { updateNavigationBars(in: $0) }
-                
-                if let presentedVC = vc.presentedViewController {
-                  updateNavigationBars(in: presentedVC)
-                }
-              }
-              
-              updateNavigationBars(in: window.rootViewController)
             }
           }
         }
@@ -501,7 +475,7 @@ struct MainContentView17: View {
           object: nil,
           queue: .main
         ) { _ in
-          // Force update all UIKit components immediately
+          // Only force update tab bars here, since navigation bars are already handled by ThemeManager
           if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
             for window in windowScene.windows {
               // Force tab bars to update
@@ -509,32 +483,6 @@ struct MainContentView17: View {
                 tabBarController.tabBar.setNeedsDisplay()
                 tabBarController.tabBar.layoutIfNeeded()
               }
-              
-              // Force all navigation bars in the window to update
-              window.rootViewController?.view.subviews.forEach { subview in
-                if let navBar = subview as? UINavigationBar {
-                  navBar.setNeedsDisplay()
-                  navBar.layoutIfNeeded()
-                }
-              }
-              
-              // Also recursively find navigation controllers and force their nav bars to update
-              func updateNavigationBars(in viewController: UIViewController?) {
-                guard let vc = viewController else { return }
-                
-                if let navController = vc as? UINavigationController {
-                  navController.navigationBar.setNeedsDisplay()
-                  navController.navigationBar.layoutIfNeeded()
-                }
-                
-                vc.children.forEach { updateNavigationBars(in: $0) }
-                
-                if let presentedVC = vc.presentedViewController {
-                  updateNavigationBars(in: presentedVC)
-                }
-              }
-              
-              updateNavigationBars(in: window.rootViewController)
             }
           }
         }

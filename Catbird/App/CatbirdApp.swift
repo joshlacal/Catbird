@@ -165,10 +165,14 @@ struct CatbirdApp: App {
         .task {
 
           // Only run the initialization process once
-          guard !didInitialize else { return }
+          guard !didInitialize else { 
+            logger.debug("⚠️ Skipping duplicate initialization - already initialized")
+            return 
+          }
 
           // Mark as initialized immediately to prevent duplicate initialization
           didInitialize = true
+          logger.debug("🎯 Starting first-time app initialization")
 
           // Perform the initialization process
           logger.info("Starting app initialization")

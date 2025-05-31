@@ -1,0 +1,34 @@
+{
+  "id": "chat-enhancements-v1",
+  "type": "ios-feature-workflow",
+  "feature": {
+    "name": "Chat and Direct Messaging Enhancements",
+    "description": "Improve real-time messaging, push notifications, and chat UI/UX",
+    "worktree": "/Users/joshlacalamito/Developer/Catbird-Release-Worktrees/feature-chat-enhancements",
+    "requirements": [
+      "Enhance real-time message delivery and reliability",
+      "Improve chat UI with better message bubbles and animations",
+      "Add typing indicators and read receipts",
+      "Implement better emoji picker and reactions",
+      "Improve conversation management and message threading",
+      "Add support for media sharing in messages"
+    ],
+    "key_files": [
+      "Catbird/Features/Chat/Services/ChatManager.swift",
+      "Catbird/Features/Chat/Views/ChatUI.swift",
+      "Catbird/Features/Chat/Views/Components/MessageBubble.swift",
+      "Catbird/Features/Chat/Views/Components/MessageReactionsView.swift",
+      "Catbird/Features/Chat/Extensions/EmojiPickerExtension.swift"
+    ],
+    "testing_criteria": [
+      "Test sending and receiving messages",
+      "Verify message delivery indicators work",
+      "Test emoji reactions and picker",
+      "Verify conversation threading",
+      "Test media sharing functionality"
+    ]
+  },
+  "priority": 8,
+  "simulator": "iPhone 16 Pro", 
+  "estimated_duration": "135 minutes"
+}

@@ -24,16 +24,19 @@ import OSLog
     func initialize(with modelContext: ModelContext) {
         self.modelContext = modelContext
         
-        // Try to fetch existing settings
+        // Try to fetch existing settings with timeout protection
         do {
             let descriptor = FetchDescriptor<AppSettingsModel>(
                 predicate: #Predicate { $0.id == "app_settings" }
             )
+            
+            // Fetch with error handling
             let existingSettings = try modelContext.fetch(descriptor)
             
             if let settings = existingSettings.first {
                 // Found existing settings
                 self.settingsModel = settings
+                logger.debug("Loaded existing app settings from SwiftData")
             } else {
                 // Create new settings with defaults
                 let newSettings = AppSettingsModel()
@@ -44,18 +47,27 @@ import OSLog
                 modelContext.insert(newSettings)
                 self.settingsModel = newSettings
                 
-                // Save the context
+                // Save the context with error handling
                 try modelContext.save()
+                logger.debug("Created new app settings in SwiftData")
             }
         } catch {
-            logger.debug("Error initializing app settings: \(error)")
+            logger.error("Error initializing app settings: \(error.localizedDescription)")
+            // Continue with defaults if SwiftData fails - don't block the app
+            logger.info("Continuing with UserDefaults fallback for app settings")
         }
     }
     
     // MARK: - Helper Methods
     
     private func saveChanges() {
-        guard let modelContext = modelContext else { return }
+        guard let modelContext = modelContext else { 
+            logger.debug("No modelContext available, using UserDefaults fallback")
+            // Save to UserDefaults as fallback
+            saveThemeSettingsToUserDefaults()
+            NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
+            return 
+        }
         
         do {
             try modelContext.save()
@@ -66,7 +78,10 @@ import OSLog
             // Post notification that settings have changed
             NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
         } catch {
-            logger.debug("Error saving app settings: \(error)")
+            logger.error("Error saving app settings: \(error.localizedDescription)")
+            // Fall back to UserDefaults if SwiftData save fails
+            saveThemeSettingsToUserDefaults()
+            NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
         }
     }
     
@@ -154,41 +169,76 @@ import OSLog
     }
     
     var fontStyle: String {
-        get { settingsModel?.fontStyle ?? defaults.fontStyle }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.fontStyle
+            }
+            return loadFontSettingsFromUserDefaults().fontStyle
+        }
         set {
-            settingsModel?.fontStyle = newValue
+            if let settingsModel = settingsModel {
+                settingsModel.fontStyle = newValue
+            }
             saveChanges()
         }
     }
     
     var fontSize: String {
-        get { settingsModel?.fontSize ?? defaults.fontSize }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.fontSize
+            }
+            return loadFontSettingsFromUserDefaults().fontSize
+        }
         set {
-            settingsModel?.fontSize = newValue
+            if let settingsModel = settingsModel {
+                settingsModel.fontSize = newValue
+            }
             saveChanges()
         }
     }
     
     var lineSpacing: String {
-        get { settingsModel?.lineSpacing ?? defaults.lineSpacing }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.lineSpacing
+            }
+            return loadFontSettingsFromUserDefaults().lineSpacing
+        }
         set {
-            settingsModel?.lineSpacing = newValue
+            if let settingsModel = settingsModel {
+                settingsModel.lineSpacing = newValue
+            }
             saveChanges()
         }
     }
     
     var dynamicTypeEnabled: Bool {
-        get { settingsModel?.dynamicTypeEnabled ?? defaults.dynamicTypeEnabled }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.dynamicTypeEnabled
+            }
+            return loadFontSettingsFromUserDefaults().dynamicTypeEnabled
+        }
         set {
-            settingsModel?.dynamicTypeEnabled = newValue
+            if let settingsModel = settingsModel {
+                settingsModel.dynamicTypeEnabled = newValue
+            }
             saveChanges()
         }
     }
     
     var maxDynamicTypeSize: String {
-        get { settingsModel?.maxDynamicTypeSize ?? defaults.maxDynamicTypeSize }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.maxDynamicTypeSize
+            }
+            return loadFontSettingsFromUserDefaults().maxDynamicTypeSize
+        }
         set {
-            settingsModel?.maxDynamicTypeSize = newValue
+            if let settingsModel = settingsModel {
+                settingsModel.maxDynamicTypeSize = newValue
+            }
             saveChanges()
         }
     }
