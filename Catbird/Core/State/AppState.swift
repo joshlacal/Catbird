@@ -13,6 +13,12 @@ final class AppState {
   
   // Static tracking to prevent multiple instances
   private static var initializationCount = 0
+  #if DEBUG
+  // Reset method for debugging purposes only
+  static func resetInitializationCount() {
+    initializationCount = 0
+  }
+  #endif
 
   // Logger
   private let logger = Logger(subsystem: "blue.catbird", category: "AppState")
@@ -180,33 +186,6 @@ final class AppState {
     postManager.updateAppState(self)
     chatManager.updateAppState(self)
     
-    // Observe app settings changes
-    NotificationCenter.default.addObserver(
-      forName: NSNotification.Name("AppSettingsChanged"),
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      guard let self = self else { return }
-      
-      // Apply theme when settings change
-      self.themeManager.applyTheme(
-        theme: self.appSettings.theme,
-        darkThemeMode: self.appSettings.darkThemeMode
-      )
-      
-      // Apply font settings when they change
-      self.fontManager.applyFontSettings(
-        fontStyle: self.appSettings.fontStyle,
-        fontSize: self.appSettings.fontSize,
-        lineSpacing: self.appSettings.lineSpacing,
-        dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
-        maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
-      )
-      
-      // Update URL handler with new browser preference
-      self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
-    }
-    
     // Apply initial theme settings immediately from UserDefaults
     // This ensures proper theme is applied even before SwiftData is fully initialized
     appSettings.applyInitialThemeSettings(to: themeManager)
@@ -214,7 +193,18 @@ final class AppState {
     // Apply initial font settings immediately from UserDefaults
     appSettings.applyInitialFontSettings(to: fontManager)
     
+    // NOTE: Settings observation is set up later in initializePreferencesManager
+    // to avoid duplicate observers
+    
     logger.debug("AppState initialization complete")
+  }
+  
+  deinit {
+    logger.debug("AppState deinitializing (instance #\(AppState.initializationCount))")
+    // Clean up notification observers
+    NotificationCenter.default.removeObserver(self)
+    // Cancel auth state observation task
+    authStateObservationTask?.cancel()
   }
 
   // MARK: - App Initialization
@@ -529,14 +519,10 @@ final class AppState {
   /// Set up reactive observation for settings changes
   @MainActor
   private func setupSettingsObservation() {
-    // Track previous values to avoid unnecessary reapplication
-    var previousTheme = appSettings.theme
-    var previousDarkThemeMode = appSettings.darkThemeMode
-    var previousFontSize = appSettings.fontSize
-    var previousFontStyle = appSettings.fontStyle
+    // Remove any existing observers to prevent duplicates
+    NotificationCenter.default.removeObserver(self, name: NSNotification.Name("AppSettingsChanged"), object: nil)
     
     // Set up observation for theme and font changes via NotificationCenter
-    // This is more efficient than polling and only triggers when needed
     NotificationCenter.default.addObserver(
       forName: NSNotification.Name("AppSettingsChanged"),
       object: nil,
@@ -544,34 +530,28 @@ final class AppState {
     ) { [weak self] _ in
       guard let self = self else { return }
       
-      // Check for theme changes
-      let currentTheme = self.appSettings.theme
-      let currentDarkThemeMode = self.appSettings.darkThemeMode
+      // Apply theme when settings change
+      self.themeManager.applyTheme(
+        theme: self.appSettings.theme,
+        darkThemeMode: self.appSettings.darkThemeMode
+      )
       
-      if currentTheme != previousTheme || currentDarkThemeMode != previousDarkThemeMode {
-        self.themeManager.applyTheme(theme: currentTheme, darkThemeMode: currentDarkThemeMode)
-        previousTheme = currentTheme
-        previousDarkThemeMode = currentDarkThemeMode
-      }
+      // Apply font settings when they change
+      self.fontManager.applyFontSettings(
+        fontStyle: self.appSettings.fontStyle,
+        fontSize: self.appSettings.fontSize,
+        lineSpacing: self.appSettings.lineSpacing,
+        dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
+        maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
+      )
       
-      // Check for font changes
-      let currentFontSize = self.appSettings.fontSize
-      let currentFontStyle = self.appSettings.fontStyle
+      // Update URL handler with new browser preference
+      self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
       
-      if currentFontSize != previousFontSize || currentFontStyle != previousFontStyle {
-        self.fontManager.applyFontSettings(
-          fontStyle: currentFontStyle,
-          fontSize: currentFontSize,
-          lineSpacing: self.appSettings.lineSpacing,
-          dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
-          maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
-        )
-        previousFontSize = currentFontSize
-        previousFontStyle = currentFontStyle
-      }
+      logger.debug("Applied settings changes - theme: \(self.appSettings.theme), font: \(self.appSettings.fontStyle)")
     }
     
-    logger.debug("Settings observation configured with change detection")
+    logger.debug("Settings observation configured")
   }
 
   // MARK: - Post Creation Method (for backward compatibility)

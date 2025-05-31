@@ -566,6 +566,8 @@ struct MainContentView17: View {
   }
 }
 #Preview {
-  ContentView()
-    .environment(AppState())
+  // Create a shared AppState instance for previews
+  let previewAppState = AppState()
+  return ContentView()
+    .environment(previewAppState)
 }

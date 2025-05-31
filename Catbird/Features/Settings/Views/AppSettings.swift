@@ -14,6 +14,9 @@ import OSLog
     // Default values used until SwiftData is initialized
     private var defaults = AppSettingsModel()
     
+    // Flag to prevent notification loops during initialization
+    private var isInitializing = true
+    
     // MARK: - Initialization
     
     init() {
@@ -56,11 +59,21 @@ import OSLog
             // Continue with defaults if SwiftData fails - don't block the app
             logger.info("Continuing with UserDefaults fallback for app settings")
         }
+        
+        // IMPORTANT: Set isInitializing to false after initialization completes
+        isInitializing = false
+        logger.debug("AppSettings initialization complete, isInitializing set to false")
     }
     
     // MARK: - Helper Methods
     
     private func saveChanges() {
+        // Skip notifications during initialization to prevent loops
+        guard !isInitializing else {
+            logger.debug("Skipping notification during initialization")
+            return
+        }
+        
         guard let modelContext = modelContext else { 
             logger.debug("No modelContext available, using UserDefaults fallback")
             // Save to UserDefaults as fallback
@@ -545,6 +558,11 @@ import OSLog
     /// Apply initial theme settings even before SwiftData is fully initialized
     /// This ensures theme is applied immediately on app startup
     func applyInitialThemeSettings(to themeManager: ThemeManager) {
+        // Temporarily set isInitializing to true to prevent notification loops
+        let wasInitializing = isInitializing
+        isInitializing = true
+        defer { isInitializing = wasInitializing }
+        
         let themeSettings = loadThemeSettingsFromUserDefaults()
         
         logger.info("Applying initial theme settings from UserDefaults: theme=\(themeSettings.theme), darkMode=\(themeSettings.darkThemeMode)")
@@ -558,6 +576,11 @@ import OSLog
     /// Apply initial font settings immediately from UserDefaults if SwiftData is not available
     /// This ensures fonts are applied immediately on app startup
     func applyInitialFontSettings(to fontManager: FontManager) {
+        // Temporarily set isInitializing to true to prevent notification loops
+        let wasInitializing = isInitializing
+        isInitializing = true
+        defer { isInitializing = wasInitializing }
+        
         let fontSettings = loadFontSettingsFromUserDefaults()
         
         logger.info("Applying initial font settings from UserDefaults: style=\(fontSettings.fontStyle), size=\(fontSettings.fontSize), spacing=\(fontSettings.lineSpacing), dynamic=\(fontSettings.dynamicTypeEnabled)")

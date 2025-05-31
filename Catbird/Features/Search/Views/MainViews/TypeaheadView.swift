@@ -200,7 +200,7 @@ struct TypeaheadView: View {
 }
 
 // Model representing a search suggestion
-struct SearchSuggestion: Identifiable, Hashable {
+struct TypeaheadSuggestion: Identifiable, Hashable {
     let id = UUID()
     let text: String
     let type: SuggestionType

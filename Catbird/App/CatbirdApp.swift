@@ -52,8 +52,7 @@ struct CatbirdApp: App {
     }
   }
   // MARK: - State
-  // Create AppState as a stored property to ensure it's only created once
-  private let appState = AppState()
+  @State private var appState: AppState
   @State private var didInitialize = false
 
   // MARK: - SwiftData
@@ -67,6 +66,9 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     logger.info("🚀 CatbirdApp initializing")
+    
+    // Create AppState instance once
+    _appState = State(initialValue: AppState())
 
     // MARK: - Customizing Navigation Bar Fonts with CoreText
     // Note: Initial navigation bar setup is minimal here.
@@ -148,7 +150,7 @@ struct CatbirdApp: App {
 
   // MARK: - Body
   var body: some Scene {
-    WindowGroup {            
+    WindowGroup {
             ContentView()
         .onAppear {
           // Set app state reference in app delegate
@@ -166,9 +168,9 @@ struct CatbirdApp: App {
         .task {
 
           // Only run the initialization process once
-          guard !didInitialize else { 
+          guard !didInitialize else {
             logger.debug("⚠️ Skipping duplicate initialization - already initialized")
-            return 
+            return
           }
 
           // Mark as initialized immediately to prevent duplicate initialization
