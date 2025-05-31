@@ -20,6 +20,16 @@ struct LoginView: View {
     @State private var authenticationCancelled = false
     @State private var showAdvancedOptions = false
     @State private var authMode: AuthMode = .selection
+    @State private var loginProgress: LoginProgress = .idle
+    @State private var biometricAuthAvailable = false
+    
+    enum LoginProgress {
+        case idle
+        case startingAuth
+        case authenticating
+        case processingCallback
+        case completing
+    }
     
     enum AuthMode {
         case selection
@@ -263,7 +273,16 @@ struct LoginView: View {
             if case .error(let message) = newValue {
                 error = message
                 isLoggingIn = false
+                loginProgress = .idle
+            } else if case .authenticated = newValue {
+                // Successfully authenticated
+                isLoggingIn = false
+                loginProgress = .idle
             }
+        }
+        .task {
+            // Check biometric authentication availability
+            biometricAuthAvailable = (appState.authManager.biometricType != .none)
         }
     }
     
@@ -473,9 +492,15 @@ struct LoginView: View {
             ProgressView()
                 .controlSize(.small)
             
-            Text(authModeActionText())
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(authModeActionText())
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                
+                Text(loginProgressDescription())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .padding()
@@ -542,13 +567,28 @@ struct LoginView: View {
     private func authModeActionText() -> String {
         switch authMode {
         case .login:
-            return "Authenticating..."
+            return "Signing In..."
         case .signup:
-            return "Creating account with Bluesky..."
+            return "Creating Account..."
         case .advanced:
-            return "Connecting to custom PDS..."
+            return "Connecting to PDS..."
         case .selection:
             return "" // Should never be used
+        }
+    }
+    
+    private func loginProgressDescription() -> String {
+        switch loginProgress {
+        case .idle:
+            return ""
+        case .startingAuth:
+            return "Starting authentication flow"
+        case .authenticating:
+            return "Opening browser for secure login"
+        case .processingCallback:
+            return "Processing authentication"
+        case .completing:
+            return "Finalizing login"
         }
     }
     
@@ -658,6 +698,7 @@ struct LoginView: View {
         
         // Update state
         isLoggingIn = true
+        loginProgress = .startingAuth
         error = nil
         
         // Clean up handle - remove @ prefix and whitespace
@@ -667,6 +708,9 @@ struct LoginView: View {
         do {
             // Get auth URL
             let authURL = try await appState.authManager.login(handle: cleanHandle)
+            
+            // Update progress
+            loginProgress = .authenticating
             
             // Open web authentication session
             do {
@@ -686,8 +730,14 @@ struct LoginView: View {
 
                 logger.info("Authentication session completed successfully")
                 
+                // Update progress
+                loginProgress = .processingCallback
+                
                 // Process callback
                 try await appState.authManager.handleCallback(callbackURL)
+                
+                // Update progress  
+                loginProgress = .completing
                 
                 // Success is handled via onChange of authState
                 
@@ -696,11 +746,13 @@ struct LoginView: View {
                 logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                 authenticationCancelled = true
                 isLoggingIn = false
+                loginProgress = .idle
             } catch {
                 // Other authentication errors
                 logger.error("Authentication error: \(error.localizedDescription)")
                 self.error = error.localizedDescription
                 isLoggingIn = false
+                loginProgress = .idle
             }
             
         } catch {
@@ -708,6 +760,7 @@ struct LoginView: View {
             logger.error("Error starting login: \(error.localizedDescription)")
             self.error = error.localizedDescription
             isLoggingIn = false
+            loginProgress = .idle
         }
     }
     

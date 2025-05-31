@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import OSLog
 import Petrel
 import SwiftUI
@@ -60,6 +61,10 @@ final class AuthenticationManager {
    var availableAccounts: [AccountInfo] = [] // Removed private(set) as @Observable handles it
    var isSwitchingAccount = false // Removed private(set)
 
+  // Biometric authentication
+  private(set) var biometricAuthEnabled = false
+  private(set) var biometricType: LABiometryType = .none
+
   // OAuth configuration
   private let oauthConfig = OAuthConfiguration(
     clientId: "https://catbird.blue/oauth/client-metadata.json",
@@ -71,6 +76,11 @@ final class AuthenticationManager {
 
   init() {
     logger.debug("AuthenticationManager initialized")
+    
+    // Configure biometric authentication asynchronously
+    Task {
+      await configureBiometricAuthentication()
+    }
   }
 
   // MARK: - State Management
@@ -140,7 +150,7 @@ final class AuthenticationManager {
     await checkAuthenticationState()
   }
 
-  /// Check the current authentication state
+  /// Check the current authentication state with enhanced token refresh
   @MainActor
   func checkAuthenticationState() async {
     guard let client = client else {
@@ -151,13 +161,11 @@ final class AuthenticationManager {
     logger.debug("Checking authentication state")
 
     do {
-      // First, try to refresh token if it exists
+      // First, try to refresh token if it exists with retry logic
       if await client.hasValidSession() {
-        // Try refreshing the token explicitly
-        do {
-          _ = try await client.refreshToken()
-        } catch {
-          logger.warning("Token refresh failed, continuing: \(error.localizedDescription)")
+        let refreshSuccess = await refreshTokenWithRetry(client: client)
+        if !refreshSuccess {
+          logger.warning("Token refresh failed after retries, proceeding with existing session")
         }
       }
 
@@ -194,7 +202,67 @@ final class AuthenticationManager {
     }
   }
 
-  /// Start the OAuth authentication flow
+  /// Enhanced token refresh with retry logic and exponential backoff
+  @MainActor
+  private func refreshTokenWithRetry(client: ATProtoClient) async -> Bool {
+    let maxRetries = 3
+    var lastError: Error?
+    
+    for attempt in 1...maxRetries {
+      do {
+        logger.debug("Token refresh attempt \(attempt) of \(maxRetries)")
+        let success = try await client.refreshToken()
+        if success {
+          logger.info("Token refresh successful on attempt \(attempt)")
+          return true
+        } else {
+          logger.warning("Token refresh returned false on attempt \(attempt)")
+          lastError = AuthError.invalidSession
+        }
+      } catch {
+        lastError = error
+        logger.warning("Token refresh attempt \(attempt) failed: \(error.localizedDescription)")
+        
+        // Check if this is a non-retryable error
+        if let nsError = error as NSError? {
+          // Don't retry authentication errors (invalid refresh token)
+          if nsError.code == 401 || nsError.code == 403 {
+            logger.info("Authentication error detected, not retrying token refresh")
+            break
+          }
+          
+          // Network errors - worth retrying
+          if nsError.domain == NSURLErrorDomain && [
+            NSURLErrorTimedOut,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorNetworkConnectionLost
+          ].contains(nsError.code) {
+            if attempt < maxRetries {
+              logger.info("Network error during token refresh, retrying in \(attempt) seconds...")
+              try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
+              continue
+            }
+          }
+        }
+        
+        // If this was the last attempt, break
+        if attempt == maxRetries {
+          break
+        }
+        
+        // Wait before retrying with exponential backoff
+        try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
+      }
+    }
+    
+    // All retries failed
+    if let error = lastError {
+      logger.error("Token refresh failed after \(maxRetries) attempts: \(error.localizedDescription)")
+    }
+    return false
+  }
+
+  /// Start the OAuth authentication flow with improved error handling
   @MainActor
   func login(handle: String) async throws -> URL {
     logger.info("Starting OAuth flow for handle: \(handle)")
@@ -209,16 +277,55 @@ final class AuthenticationManager {
       throw error
     }
 
-    // Start OAuth flow
-    do {
-      let authURL = try await client.startOAuthFlow(identifier: handle)
-      logger.debug("OAuth URL generated: \(authURL)")
-      return authURL
-    } catch {
-      logger.error("Failed to start OAuth flow: \(error.localizedDescription)")
-      updateState(.error(message: "Failed to start login: \(error.localizedDescription)"))
-      throw error
+    // Start OAuth flow with retry logic
+    var lastError: Error?
+    let maxRetries = 3
+    
+    for attempt in 1...maxRetries {
+      do {
+        logger.debug("OAuth flow attempt \(attempt) of \(maxRetries)")
+        let authURL = try await client.startOAuthFlow(identifier: handle)
+        logger.debug("OAuth URL generated successfully: \(authURL)")
+        return authURL
+      } catch {
+        lastError = error
+        logger.warning("OAuth flow attempt \(attempt) failed: \(error.localizedDescription)")
+        
+        // Don't retry certain types of errors
+        if let nsError = error as NSError? {
+          // Network timeout or connection errors - worth retrying
+          if nsError.domain == NSURLErrorDomain && [
+            NSURLErrorTimedOut,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorNetworkConnectionLost
+          ].contains(nsError.code) {
+            if attempt < maxRetries {
+              logger.info("Retrying OAuth flow after network error in \(attempt) seconds...")
+              try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000)) // Exponential backoff
+              continue
+            }
+          }
+          // Authentication errors - don't retry
+          else if nsError.code == 401 || nsError.code == 403 {
+            break
+          }
+        }
+        
+        // If this was the last attempt, break
+        if attempt == maxRetries {
+          break
+        }
+        
+        // Wait before retrying with exponential backoff
+        try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
+      }
     }
+    
+    // All retries failed
+    let finalError = lastError ?? AuthError.unknown(NSError(domain: "OAuth", code: -1))
+    logger.error("Failed to start OAuth flow after \(maxRetries) attempts: \(finalError.localizedDescription)")
+    updateState(.error(message: "Failed to start login: \(finalError.localizedDescription)"))
+    throw finalError
   }
 
   /// Handle the OAuth callback after web authentication
@@ -467,6 +574,124 @@ final class AuthenticationManager {
 
     return AccountInfo(did: did, handle: currentHandle, isActive: true)
   }
+
+  // MARK: - Biometric Authentication
+
+  /// Check if biometric authentication is available and configure it
+  @MainActor
+  func configureBiometricAuthentication() async {
+    let context = LAContext()
+    var error: NSError?
+    
+    let isAvailable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+    
+    if isAvailable {
+      biometricType = context.biometryType
+      logger.info("Biometric authentication available: \(biometricType.description)")
+      
+      // Check if user has enabled biometric auth for this app
+      biometricAuthEnabled = await getBiometricAuthPreference()
+    } else {
+      biometricType = .none
+      biometricAuthEnabled = false
+      if let error = error {
+        logger.warning("Biometric authentication not available: \(error.localizedDescription)")
+      } else {
+        logger.info("Biometric authentication not available on this device")
+      }
+    }
+  }
+
+  /// Enable or disable biometric authentication
+  @MainActor
+  func setBiometricAuthEnabled(_ enabled: Bool) async {
+    guard biometricType != .none else {
+      logger.warning("Cannot enable biometric auth: not available on device")
+      return
+    }
+    
+    if enabled {
+      // Test biometric authentication before enabling
+      let success = await authenticateWithBiometrics(reason: "Enable biometric authentication for Catbird")
+      if success {
+        biometricAuthEnabled = true
+        await saveBiometricAuthPreference(enabled: true)
+        logger.info("Biometric authentication enabled")
+      } else {
+        logger.warning("Failed to enable biometric authentication")
+      }
+    } else {
+      biometricAuthEnabled = false
+      await saveBiometricAuthPreference(enabled: false)
+      logger.info("Biometric authentication disabled")
+    }
+  }
+
+  /// Authenticate using biometrics
+  @MainActor
+  func authenticateWithBiometrics(reason: String) async -> Bool {
+    guard biometricType != .none else {
+      logger.warning("Biometric authentication not available")
+      return false
+    }
+    
+    let context = LAContext()
+    context.localizedFallbackTitle = "Use Password"
+    
+    do {
+      let success = try await context.evaluatePolicy(
+        .deviceOwnerAuthenticationWithBiometrics,
+        localizedReason: reason
+      )
+      
+      if success {
+        logger.info("Biometric authentication successful")
+        return true
+      } else {
+        logger.warning("Biometric authentication failed")
+        return false
+      }
+    } catch let error as LAError {
+      switch error.code {
+      case .userCancel:
+        logger.info("User cancelled biometric authentication")
+      case .userFallback:
+        logger.info("User chose to use fallback authentication")
+      case .biometryNotAvailable:
+        logger.warning("Biometric authentication not available")
+      case .biometryNotEnrolled:
+        logger.warning("No biometric credentials enrolled")
+      case .biometryLockout:
+        logger.warning("Biometric authentication locked out")
+      default:
+        logger.error("Biometric authentication error: \(error.localizedDescription)")
+      }
+      return false
+    } catch {
+      logger.error("Unexpected biometric authentication error: \(error.localizedDescription)")
+      return false
+    }
+  }
+
+  /// Quick authentication check for app unlock
+  @MainActor
+  func quickAuthenticationCheck() async -> Bool {
+    guard biometricAuthEnabled && biometricType != .none else {
+      return true // No biometric auth required, proceed
+    }
+    
+    return await authenticateWithBiometrics(reason: "Unlock Catbird")
+  }
+
+  // MARK: - Biometric Preferences
+
+  private func getBiometricAuthPreference() async -> Bool {
+    return UserDefaults.standard.bool(forKey: "biometric_auth_enabled")
+  }
+
+  private func saveBiometricAuthPreference(enabled: Bool) async {
+    UserDefaults.standard.set(enabled, forKey: "biometric_auth_enabled")
+  }
 }
 
 // MARK: - Error Types
@@ -509,5 +734,39 @@ extension AsyncStream {
       continuation = cont
     }
     return (stream, continuation)
+  }
+}
+
+// MARK: - LABiometryType Extension
+
+extension LABiometryType {
+  var description: String {
+    switch self {
+    case .none:
+      return "None"
+    case .touchID:
+      return "Touch ID"
+    case .faceID:
+      return "Face ID"
+    case .opticID:
+      return "Optic ID"
+    @unknown default:
+      return "Unknown"
+    }
+  }
+  
+  var displayName: String {
+    switch self {
+    case .none:
+      return "No biometric authentication"
+    case .touchID:
+      return "Touch ID"
+    case .faceID:
+      return "Face ID"
+    case .opticID:
+      return "Optic ID"
+    @unknown default:
+      return "Biometric authentication"
+    }
   }
 }
