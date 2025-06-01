@@ -941,6 +941,16 @@ enum SearchState {
     
     // MARK: - StateInvalidationSubscriber
     
+    /// Check if SearchViewModel is interested in a specific state invalidation event
+    func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+        switch event {
+        case .accountSwitched:
+            return true
+        default:
+            return false // SearchViewModel only cares about account switches
+        }
+    }
+    
     /// Handle state invalidation events
     func handleStateInvalidation(_ event: StateInvalidationEvent) async {
         switch event {

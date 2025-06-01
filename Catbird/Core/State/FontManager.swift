@@ -123,6 +123,7 @@ import OSLog
         }
         
         logger.info("Applying font settings - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
+        logger.debug("Previous settings - style: \(currentFontStyle), size: \(currentFontSize), spacing: \(currentLineSpacing), dynamic: \(currentDynamicTypeEnabled), maxSize: \(currentMaxDynamicTypeSize)")
         
         // Update cache FIRST to prevent re-entrance
         currentFontStyle = fontStyle
@@ -131,14 +132,22 @@ import OSLog
         currentDynamicTypeEnabled = dynamicTypeEnabled
         currentMaxDynamicTypeSize = maxDynamicTypeSize
         
-        // Update actual settings - force SwiftUI to detect changes
-        // Use Task to ensure changes happen on the main actor
-        Task { @MainActor in
+        // Update actual settings immediately on main actor
+        // Since FontManager is @Observable, changes should trigger UI updates
+        if Thread.isMainThread {
             self.fontStyle = fontStyle
             self.fontSize = fontSize
             self.lineSpacing = lineSpacing
             self.dynamicTypeEnabled = dynamicTypeEnabled
             self.maxDynamicTypeSize = maxDynamicTypeSize
+        } else {
+            Task { @MainActor in
+                self.fontStyle = fontStyle
+                self.fontSize = fontSize
+                self.lineSpacing = lineSpacing
+                self.dynamicTypeEnabled = dynamicTypeEnabled
+                self.maxDynamicTypeSize = maxDynamicTypeSize
+            }
         }
         
         // Apply Dynamic Type constraints if enabled
@@ -147,9 +156,14 @@ import OSLog
         }
         
         // Post notification for any components that need manual updates
-        // Use async dispatch to prevent blocking
-        DispatchQueue.main.async {
+        if Thread.isMainThread {
             NotificationCenter.default.post(name: NSNotification.Name("FontSettingsChanged"), object: nil)
+            logger.debug("Posted FontSettingsChanged notification synchronously")
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: NSNotification.Name("FontSettingsChanged"), object: nil)
+                self.logger.debug("Posted FontSettingsChanged notification asynchronously")
+            }
         }
     }
     

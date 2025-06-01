@@ -139,6 +139,16 @@ final class ChatManager: StateInvalidationSubscriber {
   
   // MARK: - State Invalidation Handling
   
+  /// Check if ChatManager is interested in a specific state invalidation event
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    switch event {
+    case .accountSwitched, .chatMessageReceived:
+      return true
+    default:
+      return false // ChatManager only cares about account switches and chat messages
+    }
+  }
+  
   /// Handle state invalidation events from the central event bus
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
     logger.debug("Chat handling state invalidation event: \(String(describing: event))")

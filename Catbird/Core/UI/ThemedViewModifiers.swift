@@ -277,10 +277,8 @@ struct ThemedNavigationBarModifier: ViewModifier {
                 isDarkMode ? (isBlackMode ? Color.black : Color(red: 0.18, green: 0.18, blue: 0.20)) : Color.clear,
                 for: .navigationBar
             )
-            .toolbarBackground(
-                isDarkMode ? (isBlackMode ? Color.black : Color(red: 0.18, green: 0.18, blue: 0.20)) : Color.clear,
-                for: .tabBar
-            )
+            // Remove tabBar override to let ThemeManager's global UITabBar.appearance() settings work
+            // .toolbarBackground is removed for .tabBar to prevent conflicts with global theme
             .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
     }
     

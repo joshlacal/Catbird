@@ -171,22 +171,24 @@ struct CustomEmojiPickerView: View {
             
             Divider()
             
-            // Emoji grid
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 8), spacing: 8) {
-                    ForEach(filteredEmojis, id: \.self) { emoji in
-                        Button {
-                            onEmojiSelected(emoji)
-                            isPresented = false
-                        } label: {
-                            Text(emoji)
-                                .font(.title2)
-                                .frame(width: 40, height: 40)
+            // Emoji grid - responsive layout
+            GeometryReader { geometry in
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: max(6, min(10, Int(geometry.size.width / 45)))), spacing: 4) {
+                        ForEach(filteredEmojis, id: \.self) { emoji in
+                            Button {
+                                onEmojiSelected(emoji)
+                                isPresented = false
+                            } label: {
+                                Text(emoji)
+                                    .font(.title3)
+                                    .frame(width: 36, height: 36)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding()
                 }
-                .padding()
             }
         }
         .navigationBarHidden(true)

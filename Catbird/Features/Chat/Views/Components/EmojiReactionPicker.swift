@@ -16,23 +16,25 @@ struct EmojiReactionPicker: View {
   
   var body: some View {
     VStack(spacing: 0) {
-      // Quick reactions bar
-      HStack(spacing: 16) {
-        ForEach(commonEmojis, id: \.self) { emoji in
-          Button(action: {
-            onEmojiSelected(emoji)
-            isPresented = false
-          }) {
-            Text(emoji)
-              .font(.title2)
-              .frame(width: 44, height: 44)
-              .background(Color.gray.opacity(0.1))
-              .clipShape(Circle())
+      // Quick reactions bar - responsive layout
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 12) {
+          ForEach(commonEmojis, id: \.self) { emoji in
+            Button(action: {
+              onEmojiSelected(emoji)
+              isPresented = false
+            }) {
+              Text(emoji)
+                .font(.title2)
+                .frame(width: 44, height: 44)
+                .background(Color.gray.opacity(0.1))
+                .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
           }
-          .buttonStyle(.plain)
         }
+        .padding(.horizontal, 16)
       }
-      .padding(.horizontal, 16)
       .padding(.vertical, 12)
       
       Divider()
@@ -56,22 +58,24 @@ struct EmojiReactionPicker: View {
       }
       .padding(.vertical, 8)
       
-      // Emoji grid
-      ScrollView {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 8) {
-          ForEach(emojiCategories[selectedCategory].emojis, id: \.self) { emoji in
-            Button(action: {
-              onEmojiSelected(emoji)
-              isPresented = false
-            }) {
-              Text(emoji)
-                .font(.title3)
-                .frame(width: 40, height: 40)
+      // Emoji grid - responsive columns based on available width
+      GeometryReader { geometry in
+        ScrollView {
+          LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: max(6, min(10, Int(geometry.size.width / 45)))), spacing: 4) {
+            ForEach(emojiCategories[selectedCategory].emojis, id: \.self) { emoji in
+              Button(action: {
+                onEmojiSelected(emoji)
+                isPresented = false
+              }) {
+                Text(emoji)
+                  .font(.title3)
+                  .frame(width: 36, height: 36)
+              }
+              .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
           }
+          .padding(.horizontal, 16)
         }
-        .padding(.horizontal, 16)
       }
       .frame(height: 200)
     }

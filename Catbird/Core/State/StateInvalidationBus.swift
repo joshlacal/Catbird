@@ -32,6 +32,10 @@ final class StateInvalidationBus {
   private var eventHistory: [StateInvalidationEvent] = []
   private let maxHistorySize = 50
   
+  /// Throttling to prevent overeager invalidation
+  private var lastEventTimes: [String: Date] = [:]
+  private let throttleInterval: TimeInterval = 0.5 // 500ms throttle
+  
   // MARK: - Subscription Management
   
   /// Subscribe to state invalidation events
@@ -51,6 +55,17 @@ final class StateInvalidationBus {
   /// Notify all subscribers of a state invalidation event
   @MainActor
   func notify(_ event: StateInvalidationEvent) {
+    let eventKey = self.eventKey(event)
+    let now = Date()
+    
+    // Check if we should throttle this event
+    if let lastTime = lastEventTimes[eventKey],
+       now.timeIntervalSince(lastTime) < throttleInterval {
+      logger.debug("Throttling event: \(self.eventDescription(event)) (last fired \(String(format: "%.3f", now.timeIntervalSince(lastTime)))s ago)")
+      return
+    }
+    
+    lastEventTimes[eventKey] = now
     logger.info("Broadcasting event: \(self.eventDescription(event))")
     
     // Add to history
@@ -129,7 +144,43 @@ final class StateInvalidationBus {
     logger.debug("Event history cleared")
   }
   
+  /// Clear throttle cache (useful for testing)
+  func clearThrottleCache() {
+    lastEventTimes.removeAll()
+    logger.debug("Throttle cache cleared")
+  }
+  
   // MARK: - Private Helpers
+  
+  /// Generate a key for throttling similar events
+  private func eventKey(_ event: StateInvalidationEvent) -> String {
+    switch event {
+    case .postCreated(_):
+      return "postCreated"
+    case .replyCreated(_, _):
+      return "replyCreated"
+    case .postLiked(_):
+      return "postLiked"
+    case .postUnliked(_):
+      return "postUnliked"
+    case .postReposted(_):
+      return "postReposted"
+    case .postUnreposted(_):
+      return "postUnreposted"
+    case .accountSwitched:
+      return "accountSwitched"
+    case .feedUpdated(let fetchType):
+      return "feedUpdated_\(fetchType.identifier)"
+    case .profileUpdated(let did):
+      return "profileUpdated_\(did)"
+    case .threadUpdated(let rootUri):
+      return "threadUpdated_\(rootUri)"
+    case .chatMessageReceived:
+      return "chatMessageReceived"
+    case .notificationsUpdated:
+      return "notificationsUpdated"
+    }
+  }
   
   private func eventDescription(_ event: StateInvalidationEvent) -> String {
     switch event {
