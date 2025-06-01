@@ -1,6 +1,7 @@
 import ExyteChat
 import Petrel
 import SwiftUI
+import OSLog
 
 struct MessageReactionsView: View {
   let convoId: String
@@ -9,6 +10,9 @@ struct MessageReactionsView: View {
 
   @Environment(AppState.self) private var appState
   @State private var showingEmojiPicker = false
+  @State private var reactionTask: Task<Void, Never>?
+  
+  private let logger = Logger(subsystem: "blue.catbird", category: "MessageReactionsView")
   
   // Group reactions by emoji and count them
   private var groupedReactions: [String: [ChatBskyConvoDefs.ReactionView]] {
@@ -33,8 +37,19 @@ struct MessageReactionsView: View {
             let userReacted = currentUserReacted(to: emoji)
             
             Button(action: {
-              Task {
-                try await toggleReaction(emoji: emoji)
+              // Cancel any existing reaction task to prevent concurrent operations
+              reactionTask?.cancel()
+              
+              reactionTask = Task {
+                do {
+                  try await toggleReaction(emoji: emoji)
+                } catch {
+                  // Handle cancellation and other errors gracefully
+                  if !(error is CancellationError) && !error.localizedDescription.lowercased().contains("cancel") {
+                    logger.error("Reaction error: \(error.localizedDescription)")
+                    // Could optionally show a brief toast here instead of alert
+                  }
+                }
               }
             }) {
               HStack(spacing: 4) {
@@ -95,14 +110,29 @@ struct MessageReactionsView: View {
         .padding(.top)
         
         EmojiReactionPicker(isPresented: $showingEmojiPicker) { emoji in
-          Task {
-            try await toggleReaction(emoji: emoji)
+          // Cancel any existing reaction task to prevent concurrent operations
+          reactionTask?.cancel()
+          
+          reactionTask = Task {
+            do {
+              try await toggleReaction(emoji: emoji)
+            } catch {
+              // Handle cancellation and other errors gracefully
+              if !(error is CancellationError) && !error.localizedDescription.lowercased().contains("cancel") {
+                logger.error("Emoji picker reaction error: \(error.localizedDescription)")
+                // Could optionally show a brief toast here instead of alert
+              }
+            }
           }
         }
         .padding()
       }
       .presentationDetents([.height(350)])
       .presentationDragIndicator(.visible)
+    }
+    .onDisappear {
+      // Clean up any pending reaction tasks when view disappears
+      reactionTask?.cancel()
     }
   }
 

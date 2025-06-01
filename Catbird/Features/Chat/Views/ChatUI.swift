@@ -13,6 +13,8 @@ struct ChatTabView: View {
   @Binding var lastTappedTab: Int?
   @State private var selectedConvoId: String?  // Track navigation state locally if needed
   @State private var searchText = ""
+  @State private var isShowingErrorAlert = false
+  @State private var lastErrorMessage: String?
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
   // Ensure NavigationManager path binding uses the correct tab index (4)
@@ -85,28 +87,45 @@ struct ChatTabView: View {
         // Stop polling when leaving the chat tab
         appState.chatManager.stopConversationsPolling()
       }
-      // Handle potential errors from ChatManager
+      // Handle potential errors from ChatManager with debouncing
       .alert(
-        isPresented: Binding(
-          get: { appState.chatManager.errorState != nil },
-          set: { _ in appState.chatManager.errorState = nil }  // Clear error on dismiss
-        )
+        isPresented: $isShowingErrorAlert
       ) {
         Alert(
           title: Text("Chat Error"),
-          message: Text(
-            appState.chatManager.errorState?.localizedDescription ?? "An unknown error occurred."),
-          dismissButton: .default(Text("OK"))
+          message: Text(lastErrorMessage ?? "An unknown error occurred."),
+          dismissButton: .default(Text("OK")) {
+            // Clear the error state when alert is dismissed
+            appState.chatManager.errorState = nil
+            lastErrorMessage = nil
+          }
         )
       }
+      .onChange(of: appState.chatManager.errorState) { _, newError in
+        // Only show alert if there's a new error and we're not already showing one
+        if let error = newError, !isShowingErrorAlert {
+          let errorMessage = error.localizedDescription
+          
+          // Prevent showing the same error message repeatedly
+          if lastErrorMessage != errorMessage {
+            lastErrorMessage = errorMessage
+            isShowingErrorAlert = true
+          }
+        } else if newError == nil {
+          // Clear alert state when error is cleared
+          isShowingErrorAlert = false
+          lastErrorMessage = nil
+        }
+      }
 
-//      // Add the ChatFAB with a new message action, but only if we're not already in a conversation
-//      if chatNavigationPath.wrappedValue.isEmpty {
-//        ChatFAB(newMessageAction: {
-//          showingNewMessageSheet = true
-//        })
-//        .offset(y: -80)  // Match the offset of the main FAB
-//      }
+      // Add the ChatFAB with a new message action, but only if we're not already in a conversation
+      // Commenting out for now - uncomment when NewMessageSheet is implemented
+      // if chatNavigationPath.wrappedValue.isEmpty {
+      //   ChatFAB(newMessageAction: {
+      //     showingNewMessageSheet = true
+      //   })
+      //   .offset(y: -80)  // Match the offset of the main FAB
+      // }
     }
   }
 

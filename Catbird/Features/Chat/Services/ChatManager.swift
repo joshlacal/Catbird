@@ -977,22 +977,37 @@ final class ChatManager: StateInvalidationSubscriber {
   // MARK: - Reaction Actions (Live)
   @MainActor
   func toggleReaction(convoId: String, messageId: String, emoji: String) async throws {
-    // Check if the user has already reacted with this emoji
-    guard let messageView = originalMessagesMap[convoId]?[messageId] else { return }
+    do {
+      // Check if the user has already reacted with this emoji
+      guard let messageView = originalMessagesMap[convoId]?[messageId] else { return }
 
-    // Get the current user's DID first
-    let currentUserDid = try await client?.getDid()
+      // Get the current user's DID first
+      let currentUserDid = try await client?.getDid()
 
-    // Then use it in the contains check
-    let hasReacted =
-      messageView.reactions?.contains(where: {
-        $0.value == emoji && $0.sender.did.didString() == currentUserDid
-      }) ?? false
+      // Then use it in the contains check
+      let hasReacted =
+        messageView.reactions?.contains(where: {
+          $0.value == emoji && $0.sender.did.didString() == currentUserDid
+        }) ?? false
 
-    if hasReacted {
-      _ = await removeReaction(convoId: convoId, messageId: messageId, emoji: emoji)
-    } else {
-      _ = await addReaction(convoId: convoId, messageId: messageId, emoji: emoji)
+      if hasReacted {
+        _ = await removeReaction(convoId: convoId, messageId: messageId, emoji: emoji)
+      } else {
+        _ = await addReaction(convoId: convoId, messageId: messageId, emoji: emoji)
+      }
+    } catch {
+      logger.error("Error in toggleReaction: \(error.localizedDescription)")
+      
+      // Only set error state for non-cancellation errors to prevent alert loops
+      if shouldShowError(error) {
+        setErrorState(error)
+      }
+      
+      // Re-throw only non-cancellation errors to maintain API contract while preventing loops
+      if shouldShowError(error) {
+        throw error
+      }
+      // For cancellation errors, we silently return without throwing
     }
   }
 
@@ -1012,6 +1027,10 @@ final class ChatManager: StateInvalidationSubscriber {
       return true
     } catch {
       logger.error("Failed to add reaction: \(error.localizedDescription)")
+      // Only set error state for non-cancellation errors
+      if shouldShowError(error) {
+        setErrorState(error)
+      }
       return false
     }
   }
@@ -1032,6 +1051,10 @@ final class ChatManager: StateInvalidationSubscriber {
       return true
     } catch {
       logger.error("Failed to remove reaction: \(error.localizedDescription)")
+      // Only set error state for non-cancellation errors
+      if shouldShowError(error) {
+        setErrorState(error)
+      }
       return false
     }
   }
