@@ -418,57 +418,90 @@ import OSLog
     }
     
     /// Apply theme to tab bars
+    @MainActor
     private func applyToTabBar() async {
-        await MainActor.run {
-            let appearance = UITabBarAppearance()
-            
-            Task {
-                let isDarkMode = await getCurrentEffectiveDarkMode()
+        let appearance = UITabBarAppearance()
+        let isDarkMode = await getCurrentEffectiveDarkMode()
+        
+        if isDarkMode {
+            if darkThemeMode == .black {
+                // Black mode
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = UIColor.black
+                appearance.shadowColor = .clear
                 
-                await MainActor.run {
-                    if isDarkMode {
-                        if darkThemeMode == .black {
-                            appearance.backgroundColor = UIColor.black
-                            appearance.shadowColor = .clear
-                            
-                            // Configure item appearance
-                            appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                                .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                            ]
-                            
-                            appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-                            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                                .foregroundColor: UIColor.systemBlue
-                            ]
-                        } else {
-                            // Dim mode
-                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                            appearance.configureWithOpaqueBackground()
-                            appearance.backgroundColor = dimBackground
-                            appearance.shadowColor = .clear
-                            
-                            // Configure item appearance for dim mode
-                            appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                                .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                            ]
-                            
-                            appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-                            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                                .foregroundColor: UIColor.systemBlue
-                            ]
+                // Configure item appearance
+                appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+                    .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                ]
+                
+                appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
+                appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+                    .foregroundColor: UIColor.systemBlue
+                ]
+            } else {
+                // Dim mode
+                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = dimBackground
+                appearance.shadowColor = .clear
+                
+                // Configure item appearance for dim mode
+                appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+                    .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                ]
+                
+                appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
+                appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+                    .foregroundColor: UIColor.systemBlue
+                ]
+            }
+        } else {
+            // Light mode - use proper light appearance
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = UIColor.systemBackground
+            appearance.shadowColor = UIColor.opaqueSeparator
+            
+            // Configure item appearance for light mode  
+            appearance.stackedLayoutAppearance.normal.iconColor = UIColor.secondaryLabel
+            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+                .foregroundColor: UIColor.secondaryLabel
+            ]
+            
+            appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
+            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+                .foregroundColor: UIColor.systemBlue
+            ]
+        }
+        
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+        
+        // Force refresh all existing tab bars immediately
+        for scene in UIApplication.shared.connectedScenes {
+            if let windowScene = scene as? UIWindowScene {
+                for window in windowScene.windows {
+                    // Find tab bars in the view hierarchy
+                    func findAndUpdateTabBars(in view: UIView) {
+                        if let tabBar = view as? UITabBar {
+                            tabBar.standardAppearance = appearance
+                            tabBar.scrollEdgeAppearance = appearance
+                            tabBar.setNeedsLayout()
+                            tabBar.layoutIfNeeded()
                         }
-                    } else {
-                        // Light mode - use opaque background with system colors
-                        appearance.configureWithOpaqueBackground()
+                        view.subviews.forEach(findAndUpdateTabBars)
                     }
                     
-                    UITabBar.appearance().standardAppearance = appearance
-                    UITabBar.appearance().scrollEdgeAppearance = appearance
+                    if let rootView = window.rootViewController?.view {
+                        findAndUpdateTabBars(in: rootView)
+                    }
                 }
             }
         }
+        
+        logger.info("Applied tab bar theme - isDark: \(isDarkMode), darkMode: \(darkThemeMode), background: \(appearance.backgroundColor?.description ?? "nil")")
     }
     
     /// Apply theme to toolbars
