@@ -46,7 +46,7 @@ struct StatLabel: View {
             Text("\(count)")
         } icon: {
             Image(systemName: iconName)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
         }
     }
 }
@@ -98,7 +98,7 @@ struct PostEmbedPreview: View {
     // Since we don't have an actual PostView to preview, we'll just show a placeholder
     VStack {
         Text("Post Row Preview")
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .padding()
         
         Text("This is a preview placeholder since we need real data to show the actual ModernPostRow")

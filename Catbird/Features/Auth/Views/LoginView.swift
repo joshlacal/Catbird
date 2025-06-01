@@ -146,7 +146,7 @@ struct LoginView: View {
                         // Username field (for login mode)
                         if authMode == .login {
                             Text("Sign in to your account")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
                                 .padding(.bottom, 4)
                             
@@ -175,7 +175,7 @@ struct LoginView: View {
                                 }
                             } label: {
                                 Text(showAdvancedOptions ? "Basic Options" : "Advanced Options")
-                                    .font(.footnote)
+                                    .appFont(AppTextRole.footnote)
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.top, 8)
@@ -191,7 +191,7 @@ struct LoginView: View {
                                     .foregroundStyle(.orange)
                                     .symbolEffect(.pulse)
                                 Text("Login Error")
-                                    .font(.headline)
+                                    .appFont(AppTextRole.headline)
                                 Spacer()
                                 Button(action: { error = nil }) {
                                     Image(systemName: "xmark.circle.fill")
@@ -202,7 +202,7 @@ struct LoginView: View {
                             }
                             
                             Text(errorMessage)
-                                .font(.callout)
+                                .appFont(AppTextRole.callout)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -229,7 +229,7 @@ struct LoginView: View {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.secondary)
                                 Text("Authentication cancelled")
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .foregroundColor(.secondary)
                             }
                             
@@ -363,7 +363,7 @@ struct LoginView: View {
                 }
             } label: {
                 Text("Sign In")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             }
@@ -376,7 +376,7 @@ struct LoginView: View {
                 }
             } label: {
                 Text("Create Account")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             }
@@ -455,7 +455,7 @@ struct LoginView: View {
     private func advancedPDSField(geometry: GeometryProxy) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Create account on custom PDS")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
             
             ValidatingTextField(
@@ -494,11 +494,11 @@ struct LoginView: View {
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(authModeActionText())
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.primary)
                 
                 Text(loginProgressDescription())
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -514,7 +514,7 @@ struct LoginView: View {
         } label: {
             Label {
                 Text(authModeActionButtonText())
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
             } icon: {
                 Image(systemName: authModeActionIcon())
             }

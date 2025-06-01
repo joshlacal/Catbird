@@ -517,7 +517,7 @@ struct MuteButton17: View {
                 
                 Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .foregroundColor(.white)
-                    .font(.system(size: 14))
+                    .appFont(size: 14)
             }
         }
         .onAppear {

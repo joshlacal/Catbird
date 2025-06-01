@@ -55,7 +55,7 @@ struct ThreadViewMainPostView: View {
         } else {
           Image(systemName: "person.circle.fill")
             .foregroundColor(.gray)
-            .font(.system(size: 60))
+            .appFont(size: 60)
         }
       }
       .onTapGesture {
@@ -80,7 +80,7 @@ struct ThreadViewMainPostView: View {
               VStack(alignment: .leading, spacing: 0) {
                   Text((post.author.displayName ?? post.author.handle.description).truncated(to: 30))
                       .lineLimit(1, reservesSpace: true)
-                  .font(.headline)
+                  .appHeadline()
                   .foregroundColor(.primary)
                   .truncationMode(.tail)
                   .allowsTightening(true)
@@ -88,7 +88,7 @@ struct ThreadViewMainPostView: View {
                   .padding(.bottom, 1)
 
                 Text("@\(post.author.handle)".truncated(to: 30))
-                  .font(.subheadline)
+                  .appSubheadline()
                   .foregroundColor(.secondary)
                   .lineLimit(1)
                   .truncationMode(.tail)
@@ -135,7 +135,7 @@ struct ThreadViewMainPostView: View {
             }
 
             Text(Self.dateTimeFormatter.string(from: feedPost.createdAt.date))
-              .font(.subheadline)
+              .appSubheadline()
               .textScale(.secondary)
               .foregroundColor(.secondary)
               .padding(Self.baseUnit * 3)

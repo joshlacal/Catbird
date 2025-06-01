@@ -55,11 +55,11 @@ struct AccountSettingsView: View {
                             
                             if email.isEmpty {
                                 Text("No email set")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             } else {
                                 Text(email)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -68,7 +68,7 @@ struct AccountSettingsView: View {
                         
                         if isEmailVerified {
                             Text("Verified")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .fontWeight(.medium)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -77,7 +77,7 @@ struct AccountSettingsView: View {
                                 .cornerRadius(4)
                         } else if !email.isEmpty {
                             Text("Unverified")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .fontWeight(.medium)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -108,7 +108,7 @@ struct AccountSettingsView: View {
                                     .fontWeight(.medium)
                                 
                                 Text("@\(handle)")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                             
@@ -193,7 +193,7 @@ struct AccountSettingsView: View {
                                 Text("Server DID")
                                     .fontWeight(.medium)
                                 Text(serverDID.didString())
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                         
@@ -202,7 +202,7 @@ struct AccountSettingsView: View {
                                 Text("Available Domains")
                                     .fontWeight(.medium)
                                 Text(availableUserDomains.joined(separator: ", "))
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                     }
@@ -491,7 +491,7 @@ struct ProfileHeaderRow: View {
                     .frame(width: 60, height: 60)
                     .overlay(
                         Text(profile.handle.description.prefix(1).uppercased())
-                            .font(.title2.weight(.medium))
+                            .appFont(AppTextRole.title2.weight(.medium))
                             .foregroundStyle(.gray)
                     )
             }
@@ -500,16 +500,16 @@ struct ProfileHeaderRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 if let displayName = profile.displayName {
                     Text(displayName)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                 }
                 
                 Text("@\(profile.handle.description)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                 
                 if let followersCount = profile.followersCount {
                     Text("\(followersCount) followers")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -543,12 +543,12 @@ struct EmailUpdateView: View {
                         .autocorrectionDisabled()
                     
                     Text("We'll send a verification email to confirm this address.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     
                     if let error = errorMessage {
                         Text(error)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.red)
                     }
                 }
@@ -631,7 +631,7 @@ struct HandleUpdateView: View {
                     
                     if let error = errorMessage {
                         Text(error)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.red)
                     }
                     
@@ -665,11 +665,11 @@ struct HandleUpdateView: View {
                 
                 Section("About Handles") {
                     Text("Your handle is your unique identifier on Bluesky. It can contain letters, numbers, and underscores.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     
                     Text("You can also use a custom domain as your handle if you verify domain ownership.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
                 }
@@ -757,7 +757,7 @@ struct PasswordUpdateView: View {
                 Section {
                     Text(error)
                         .foregroundStyle(.red)
-                        .font(.callout)
+                        .appFont(AppTextRole.callout)
                 }
             }
             
@@ -765,7 +765,7 @@ struct PasswordUpdateView: View {
                 Section {
                     Text(success)
                         .foregroundStyle(.green)
-                        .font(.callout)
+                        .appFont(AppTextRole.callout)
                 }
             }
             
@@ -906,7 +906,7 @@ struct PasswordStrengthIndicator: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Password Strength: \(strengthLabel)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(strengthColor)
             
             GeometryReader { geometry in
@@ -925,7 +925,7 @@ struct PasswordStrengthIndicator: View {
             .frame(height: 6)
             
             Text("Use at least 8 characters with a mix of letters, numbers, and symbols.")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -1074,7 +1074,7 @@ struct AppPasswordRow: View {
                     .fontWeight(.medium)
                 
                 Text("Created: \(createdDate)")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
@@ -1111,20 +1111,20 @@ struct CreateAppPasswordView: View {
                     if let error = errorMessage {
                         Text(error)
                             .foregroundStyle(.red)
-                            .font(.callout)
+                            .appFont(AppTextRole.callout)
                     }
                 }
                 
                 if let password = newPassword {
                     Section("Your New Password") {
                         Text(password)
-                            .font(.title3.monospaced())
+                            .appFont(AppTextRole.title3.monospaced())
                             .padding()
                             .frame(maxWidth: .infinity)
                             .multilineTextAlignment(.center)
                         
                         Text("Save this password now. You won't be able to see it again!")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }

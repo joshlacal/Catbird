@@ -73,7 +73,7 @@ struct ContentViewLoadingView: View {
         .scaleEffect(1.5)
 
       Text(message)
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .textCase(.uppercase)
         .foregroundStyle(.secondary)
         .textScale(.secondary)

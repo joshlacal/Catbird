@@ -119,7 +119,7 @@ struct ExternalEmbedView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                 
                 Text(external.uri.authority)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .lineLimit(1)
                     .foregroundColor(.white)
                     .padding(.horizontal, 6)
@@ -138,7 +138,7 @@ struct ExternalEmbedView: View {
                     .foregroundColor(.gray)
                     .frame(width: 20, height: 20)
                 Text(external.uri.authority)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .textScale(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -223,7 +223,7 @@ struct ExternalEmbedView: View {
                     .cornerRadius(10)
                 Text("Tap to reveal")
                     .foregroundColor(.white)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
             }
         }
     }
@@ -266,7 +266,7 @@ struct ExternalEmbedView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                 
                 Text(external.uri.authority)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .lineLimit(1)
                     .foregroundColor(.white)
                     .padding(.horizontal, 6)
@@ -295,14 +295,14 @@ struct ExternalEmbedView: View {
         VStack(alignment: .leading, spacing: 3) {
             if !external.title.isEmpty {
                 Text(external.title)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .lineLimit(3)
                     .truncationMode(.tail)
             }
             
             if !external.description.isEmpty {
                 Text(external.description)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .lineLimit(3)
                     .truncationMode(.tail)
             }

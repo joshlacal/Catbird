@@ -47,7 +47,7 @@ struct TypingIndicatorView: View {
         )
         
         Text(typingText)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
           .animation(.easeInOut(duration: 0.3), value: typingText)
         

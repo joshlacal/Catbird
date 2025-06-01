@@ -11,7 +11,7 @@ struct FeedHeaderView: View {
   var body: some View {
     HStack {
       Text(title)
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .lineLimit(1)
 
       Spacer()
@@ -38,7 +38,7 @@ private struct FilterButton: View {
 
       if activeFilterCount > 0 {
         Text("\(activeFilterCount)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .padding(4)
           .background(Circle().fill(Color.accentColor))
           .foregroundColor(.white)

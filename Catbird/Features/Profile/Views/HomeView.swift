@@ -37,7 +37,7 @@ struct HomeView: View {
         if let error = feedViewError {
           Text("Error: \(error)")
             .foregroundStyle(.red)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .padding()
         }
       }
@@ -107,9 +107,6 @@ struct HomeView: View {
     .sheet(isPresented: $showingSettings) {
       SettingsView()
     }
-    .toolbarBackground(.visible, for: .tabBar)
-    .toolbarBackground(.visible, for: .navigationBar)
-    .toolbarColorScheme(.dark, for: .navigationBar)
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 

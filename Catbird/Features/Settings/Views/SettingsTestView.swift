@@ -14,7 +14,7 @@ struct SettingsTestView: View {
                     GroupBox("Theme Test") {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Current Theme: \(appState.appSettings.theme)")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                             
                             Text("System Color Scheme: \(systemColorScheme == .dark ? "Dark" : "Light")")
                             
@@ -49,13 +49,13 @@ struct SettingsTestView: View {
                                 .scaledFont(size: 15)
                             
                             Text("Scale Factor: \(fontScaleManager.sizeScale, specifier: "%.2f")")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                             
                             Divider()
                             
                             // Font size buttons
                             Text("Font Size:")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                             HStack {
                                 ForEach(["small", "default", "large", "extraLarge"], id: \.self) { size in
                                     Button(sizeLabel(for: size)) {
@@ -68,7 +68,7 @@ struct SettingsTestView: View {
                             
                             // Font style buttons
                             Text("Font Style:")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                             HStack {
                                 ForEach(["system", "serif", "rounded", "monospaced"], id: \.self) { style in
                                     Button(style.capitalized) {
@@ -126,7 +126,7 @@ struct SettingsTestView: View {
                             Divider()
                             
                             Text("✅ Settings properly separated")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }

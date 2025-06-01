@@ -31,14 +31,14 @@ struct EnhancedResultsSection<Content: View>: View {
             HStack {
                 Image(systemName: icon)
                     .foregroundColor(.accentColor)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Text(title)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 if let count = count {
                     Text("(\(count))")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                         .padding(.leading, 2)
                 }

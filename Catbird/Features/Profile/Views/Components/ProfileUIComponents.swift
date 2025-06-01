@@ -62,18 +62,18 @@ struct ListRow: View {
       // List details
       VStack(alignment: .leading, spacing: 4) {
         Text(list.name)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
 
         if let description = list.description, !description.isEmpty {
           Text(description)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundColor(.secondary)
             .lineLimit(2)
         }
 
         // Item count
         Text("\(list.listItemCount ?? 0) items")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
       }
 

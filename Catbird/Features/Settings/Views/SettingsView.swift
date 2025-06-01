@@ -309,7 +309,7 @@ struct AccountHeaderView: View {
     VStack(spacing: 12) {
       HStack {
         Text("Signed in as")
-          .font(.headline)
+          .appHeadline()
         Spacer()
 
         Group {
@@ -371,35 +371,35 @@ struct AccountSwitchButton: View {
           Group {
             if isLoadingProfile {
               Text("Loading...")
-                .font(.headline)
+                .appHeadline()
                 .foregroundStyle(.secondary)
             } else if let displayName = profile?.displayName {
               Text(displayName)
-                .font(.headline)
+                .appHeadline()
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             } else if let handle = profile?.handle.description {
               Text("@\(handle)")
-                .font(.headline)
+                .appHeadline()
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             } else {
               Text("Unknown profile")
-                .font(.body)
+                .appBody()
                 .fontWeight(.medium)
             }
           }
 
           if let handle = profile?.handle.description {
             Text("@\(handle)")
-              .font(.subheadline)
+              .appSubheadline()
               .foregroundStyle(.secondary)
               .lineLimit(1)
           }
           
           if availableAccounts > 1 {
             Text("\(availableAccounts) accounts available")
-              .font(.caption)
+              .appCaption()
               .foregroundStyle(.secondary)
           }
         }
@@ -408,7 +408,7 @@ struct AccountSwitchButton: View {
 
         Image(systemName: "chevron.right")
           .foregroundColor(.gray)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
       }
       .padding(12)
     }

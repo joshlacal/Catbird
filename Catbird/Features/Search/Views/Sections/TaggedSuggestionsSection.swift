@@ -37,7 +37,7 @@ struct TaggedSuggestionsSection: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Discover")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Spacer()
                 
@@ -81,7 +81,7 @@ struct TaggedSuggestionsSection: View {
                     .padding(.bottom, 4)
                 
                 Text("Loading suggestions...")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.vertical, 12)
@@ -101,11 +101,11 @@ struct TaggedSuggestionsSection: View {
                     .padding(.bottom, 2)
                 
                 Text("Error loading suggestions")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 
                 Text(message)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20)
@@ -136,13 +136,13 @@ struct TaggedSuggestionsSection: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(suggestion.tag.capitalized)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Spacer()
                 
                 NavigationLink(destination: AllTaggedProfilesView(tag: suggestion.tag, profiles: suggestion.profiles, onSelectProfile: onSelectProfile)) {
                     Text("See All")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.accentColor)
                 }
             }
@@ -161,7 +161,7 @@ struct TaggedSuggestionsSection: View {
             Spacer()
             
             Text("No profiles found for \(tag)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
                 .padding(.vertical, 12)
             
@@ -338,14 +338,14 @@ struct TaggedSuggestionsSection: View {
 //                
 //                // Profile name
 //                Text(profile.displayName ?? "@\(profile.handle)")
-//                    .font(.subheadline)
+//                    .appFont(AppTextRole.subheadline)
 //                    .fontWeight(.medium)
 //                    .lineLimit(1)
 //                    .frame(width: 90)
 //                
 //                // Handle with truncation
 //                Text("@\(profile.handle)")
-//                    .font(.caption)
+//                    .appFont(AppTextRole.caption)
 //                    .foregroundColor(.secondary)
 //                    .lineLimit(1)
 //                    .frame(width: 90)
@@ -353,7 +353,7 @@ struct TaggedSuggestionsSection: View {
 //                // Follower count if available
 //                if let followers = profile.viewer?.followersCount {
 //                    Text("\(followers) followers")
-//                        .font(.caption2)
+//                        .appFont(AppTextRole.caption2)
 //                        .foregroundColor(.secondary)
 //                        .lineLimit(1)
 //                        .frame(width: 90)

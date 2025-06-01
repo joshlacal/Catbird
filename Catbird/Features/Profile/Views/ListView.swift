@@ -98,22 +98,23 @@ struct ListHeaderView: View {
                         .overlay(
                             Image(systemName: "list.bullet")
                                 .foregroundColor(.accentColor)
-                                .font(.system(size: 32))
+                                .appFont(size: 32)
+
                         )
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(list.name)
-                        .font(.title2)
+                        .appFont(AppTextRole.title2)
                         .fontWeight(.bold)
                     
                     Text("By @\(list.creator.handle)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                     
                     if let itemCount = list.listItemCount {
                         Text("\(itemCount) items")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -121,7 +122,7 @@ struct ListHeaderView: View {
             
             if let description = list.description, !description.isEmpty {
                 Text(description)
-                    .font(.body)
+                                    .appFont(AppTextRole.body)
                     .padding(.top, 4)
             }
         }
@@ -159,10 +160,10 @@ struct ListItemRow: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.subject.displayName ?? item.subject.handle.description)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Text("@\(item.subject.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
             }
             

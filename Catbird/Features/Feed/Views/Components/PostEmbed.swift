@@ -134,7 +134,7 @@ struct PostEmbed: View {
                                 .frame(maxWidth: .infinity)
                         } else {
                             Text("Unable to load video")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -149,7 +149,7 @@ struct PostEmbed: View {
                             .frame(maxWidth: .infinity)
                     } else {
                         Text("Unable to load video")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -184,7 +184,7 @@ struct PostEmbed: View {
                         .frame(maxWidth: .infinity)
                 } else {
                     Text("Unable to load video")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -199,7 +199,7 @@ struct PostEmbed: View {
                     .frame(maxWidth: .infinity)
             } else {
                 Text("Unable to load video")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
         }

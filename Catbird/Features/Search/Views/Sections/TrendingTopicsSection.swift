@@ -37,7 +37,7 @@ struct TrendingTopicsSection: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Trending", systemImage: "chart.line.uptrend.xyaxis")
-                    .font(.customSystemFont(size: 17, weight: .medium, width: 120, relativeTo: .headline))
+                    .appFont(.customSystemFont(size: 17, weight: .medium, width: 120, relativeTo: .headline))
 
                 Spacer()
                 
@@ -46,9 +46,9 @@ struct TrendingTopicsSection: View {
                         HStack(spacing: 4) {
                             Text("See All")
                             Image(systemName: "chevron.right")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                         }
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.accentColor)
                     }
                 }
@@ -72,7 +72,7 @@ struct TrendingTopicsSection: View {
                     .padding(.bottom, 4)
                 
                 Text("Loading trending topics...")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.vertical, 12)
@@ -128,7 +128,7 @@ struct TrendingTopicsSection: View {
         } label: {
             HStack(alignment: .center, spacing: 12) {
                 categoryIcon(for: topic.category)
-                    .font(.title3)
+                    .appFont(AppTextRole.title3)
                     .foregroundColor(categoryColor(for: topic.category))
                     .padding(8)
                     .frame(width: 32, height: 32)
@@ -142,7 +142,7 @@ struct TrendingTopicsSection: View {
                     
                     if let category = topic.category {
                         Text(formatCategory(category))
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .textCase(.uppercase)
                             .textScale(.secondary)
                             .foregroundColor(.secondary)
@@ -156,7 +156,7 @@ struct TrendingTopicsSection: View {
                     
                     HStack(spacing: 8) {
                         Text(topic.displayName)
-                            .font(.customSystemFont(size: 23, weight: .medium, width: 120, relativeTo: .title3))
+                            .appFont(.customSystemFont(size: 23, weight: .medium, width: 120, relativeTo: .title3))
                             .padding(.bottom, 3)
                             .foregroundColor(.primary)
                         
@@ -167,11 +167,11 @@ struct TrendingTopicsSection: View {
                     
                     HStack(spacing: 12) {
                         Label(formatPostCount(topic.postCount), systemImage: "text.bubble")
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundColor(.secondary)
                         
                         Label(formatTimeSince(topic.startedAt.date), systemImage: "clock")
-                                .font(.caption2)
+                                .appFont(AppTextRole.caption2)
                                 .foregroundColor(.secondary)
                     }
                     .padding(.top, 2)
@@ -180,7 +180,7 @@ struct TrendingTopicsSection: View {
                 Spacer()
                 
                 Image(systemName: "arrow.up.right")
-                    .font(.footnote)
+                    .appFont(AppTextRole.footnote)
                     .foregroundColor(.accentColor)
                     .padding(8)
                     .background(
@@ -198,7 +198,7 @@ struct TrendingTopicsSection: View {
     
     private func trendingBadge(status: String) -> some View {
         Text(status.uppercased())
-            .font(.system(size: 10, weight: .bold))
+            .appFont(size: 10)
             .foregroundColor(.white)
             .padding(.vertical, 2)
             .padding(.horizontal, 6)

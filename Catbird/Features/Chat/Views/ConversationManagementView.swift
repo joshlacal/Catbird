@@ -176,7 +176,7 @@ struct ConversationInfoRow: View {
       // Members
       VStack(alignment: .leading, spacing: 8) {
         Text("Members")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         
         ForEach(otherMembers, id: \.did) { member in
           HStack {
@@ -184,10 +184,10 @@ struct ConversationInfoRow: View {
             
             VStack(alignment: .leading, spacing: 2) {
               Text(member.displayName ?? "Unknown")
-                .font(.body)
+                                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
               Text("@\(member.handle.description)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             }
             
@@ -195,7 +195,7 @@ struct ConversationInfoRow: View {
             
             if member.chatDisabled == true {
               Text("Chat Disabled")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Color.red.opacity(0.2))
@@ -211,7 +211,7 @@ struct ConversationInfoRow: View {
       // Conversation details
       VStack(alignment: .leading, spacing: 8) {
         Text("Details")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         
         DetailRow(label: "Conversation ID", value: conversation.id)
         DetailRow(label: "Revision", value: conversation.rev)
@@ -237,7 +237,7 @@ struct DetailRow: View {
         .fontWeight(.medium)
         .multilineTextAlignment(.trailing)
     }
-    .font(.caption)
+    .appFont(AppTextRole.caption)
   }
 }
 
@@ -261,11 +261,11 @@ struct ConversationInvitationView: View {
       // Header
       VStack(spacing: 12) {
         Image(systemName: "message.circle")
-          .font(.system(size: 64))
+          .appFont(size: 64)
           .foregroundColor(.blue)
         
         Text("New Conversation")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
         
         if otherMembers.count == 1 {
@@ -282,7 +282,7 @@ struct ConversationInvitationView: View {
       // Members preview
       VStack(alignment: .leading, spacing: 12) {
         Text("Participants")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         
         ForEach(otherMembers.prefix(3), id: \.did) { member in
           HStack {
@@ -290,10 +290,10 @@ struct ConversationInvitationView: View {
             
             VStack(alignment: .leading, spacing: 2) {
               Text(member.displayName ?? "Unknown")
-                .font(.body)
+                                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
               Text("@\(member.handle.description)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             }
             
@@ -303,7 +303,7 @@ struct ConversationInvitationView: View {
         
         if otherMembers.count > 3 {
           Text("and \(otherMembers.count - 3) more...")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
         }
       }

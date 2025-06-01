@@ -31,11 +31,11 @@ struct PostQuoteRowView: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(post.author.displayName ?? post.author.handle.description)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .lineLimit(1)
                     
                     Text("@\(post.author.handle)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -43,7 +43,7 @@ struct PostQuoteRowView: View {
                 Spacer()
                 
                 Text(relativeTime(from: post.indexedAt.date))
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             

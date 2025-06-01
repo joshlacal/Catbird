@@ -243,10 +243,10 @@ struct EnhancedFeedPost: View, Equatable {
     HStack(alignment: .center, spacing: 4) {
       Image(systemName: "pin")
         .foregroundColor(.secondary)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
       
       Text("Pinned")
-        .font(.body)
+                        .appFont(AppTextRole.body)
         .textScale(.secondary)
         .foregroundColor(.secondary)
         .lineLimit(1)
@@ -280,14 +280,14 @@ struct EnhancedFeedPost: View, Equatable {
       }
     case .appBskyFeedDefsNotFoundPost:
       Text("Post not found")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, EnhancedFeedPost.baseUnit * 2)
     case .appBskyFeedDefsBlockedPost(let blocked):
       BlockedPostView(blockedPost: blocked, path: $path)
     case .unexpected:
       Text("Unexpected post type")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, EnhancedFeedPost.baseUnit * 2)
     }

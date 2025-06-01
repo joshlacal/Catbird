@@ -133,7 +133,7 @@ struct AllTrendingTopicsView: View {
                     Button(showContributors ? "Hide Contributors" : "Show Contributors") {
                         showContributors.toggle()
                     }
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
@@ -164,7 +164,7 @@ struct AllTrendingTopicsView: View {
             }
         } label: {
             Text(category?.capitalized ?? "All")
-                .font(.footnote.weight(selectedCategory == category ? .semibold : .regular))
+                .appFont(AppTextRole.footnote.weight(selectedCategory == category ? .semibold : .regular))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
@@ -218,7 +218,7 @@ struct AllTrendingTopicsView: View {
     private func topicHeader(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         HStack(alignment: .top, spacing: 12) {
             categoryIcon(for: topic.category)
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .foregroundColor(categoryColor(for: topic.category))
                 .frame(width: 40, height: 40)
                 .background(
@@ -228,13 +228,13 @@ struct AllTrendingTopicsView: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(topic.displayName)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .foregroundColor(.primary)
                 
                 HStack {
                     if let category = topic.category {
                         Text(category.capitalized)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     
@@ -260,7 +260,7 @@ struct AllTrendingTopicsView: View {
                 dismiss()
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .font(.body)
+                    .appFont(AppTextRole.from(.body))
                     .foregroundColor(.accentColor)
                     .frame(width: 36, height: 36)
                     .background(
@@ -278,10 +278,10 @@ struct AllTrendingTopicsView: View {
                 // Post count
                 VStack(alignment: .leading, spacing: 2) {
                     Text(formatPostCount(topic.postCount))
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .foregroundColor(.primary)
                     Text("Total Posts")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
                 
@@ -291,11 +291,11 @@ struct AllTrendingTopicsView: View {
                 // Time since started trending
                     VStack(alignment: .leading, spacing: 2) {
                         Text(formatTimeSince(topic.startedAt.date))
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundColor(.primary)
                         
                         Text("Trending Since")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                 
@@ -309,7 +309,7 @@ struct AllTrendingTopicsView: View {
                     }
                 } label: {
                     Text("Visit Feed")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                         .foregroundColor(.white)
                         .padding(.vertical, 6)
                         .padding(.horizontal, 12)
@@ -326,7 +326,7 @@ struct AllTrendingTopicsView: View {
     private func topicContributors(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Top Contributors")
-                .font(.subheadline.weight(.medium))
+                .appFont(AppTextRole.subheadline.weight(.medium))
                 .padding(.horizontal)
             
             ScrollView(.horizontal, showsIndicators: false) {
@@ -356,13 +356,13 @@ struct AllTrendingTopicsView: View {
                 
                 VStack(spacing: 0) {
                     Text(actor.displayName ?? "@\(actor.handle)")
-                        .font(.caption.weight(.medium))
+                        .appFont(AppTextRole.caption.weight(.medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundColor(.primary)
                     
                     Text("@\(actor.handle.description.prefix(15))\(actor.handle.description.count > 15 ? "..." : "")")
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -416,7 +416,7 @@ struct AllTrendingTopicsView: View {
     
     private func trendingBadge(status: String) -> some View {
         Text(status.uppercased())
-            .font(.system(size: 10, weight: .bold))
+            .appFont(size: 10)
             .foregroundColor(.white)
             .padding(.vertical, 2)
             .padding(.horizontal, 6)
@@ -428,7 +428,7 @@ struct AllTrendingTopicsView: View {
     
     private func newBadge() -> some View {
         Text("NEW")
-            .font(.system(size: 10, weight: .bold))
+            .appFont(size: 10)
             .foregroundColor(.white)
             .padding(.vertical, 2)
             .padding(.horizontal, 6)

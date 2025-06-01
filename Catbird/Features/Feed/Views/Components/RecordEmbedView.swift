@@ -77,7 +77,7 @@ struct RecordEmbedView: View {
                    let feedPost = record as? AppBskyFeedPost {
                     if !feedPost.text.isEmpty {
                         Text(feedPost.text)
-                            .font(.body)
+                                            .appFont(AppTextRole.body)
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -143,16 +143,16 @@ struct RecordEmbedView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Image(systemName: "chevron.right.circle")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                                 
                                 Text("Quoting @\(viewRecord.author.handle)")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
                                     .foregroundStyle(.secondary)
                                 
                                 Image(systemName: "quote.bubble")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                                     .textScale(.secondary)
                                 
@@ -160,7 +160,7 @@ struct RecordEmbedView: View {
                                 //                               let feedPost = postRecord as? AppBskyFeedPost,
                                 //                               !feedPost.text.isEmpty {
                                 //                                Text(feedPost.text)
-                                //                                    .font(.caption2)
+                                //                                    .appFont(AppTextRole.caption2)
                                 //                                    .foregroundStyle(.secondary)
                                 //                                    .lineLimit(2)
                                 //                            }
@@ -169,27 +169,27 @@ struct RecordEmbedView: View {
                         .padding(.top, 6)
                     case .appBskyEmbedRecordViewNotFound:
                         Text("Quoting a deleted post")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     case .appBskyEmbedRecordViewBlocked:
                         Text("Quoting a blocked post")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     case .appBskyFeedDefsGeneratorView(let generator):
                         Text("Quoting feed: \(generator.displayName)")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     case .appBskyGraphDefsListView(let list):
                         Text("Quoting list: \(list.name)")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     default:
                         Text("Quoting content")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     }
@@ -233,7 +233,7 @@ struct RecordEmbedView: View {
                 case .unexpected:
                     // Simple fallback for unexpected content
                     Text("Unsupported content")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 6)
                 }
@@ -288,13 +288,13 @@ struct RecordEmbedView: View {
                 Image(systemName: "newspaper")
                     .foregroundColor(Color.accentColor)
                 Text("Feed: \(generator.displayName)")
-                    .font(.subheadline.weight(.medium))
+                    .appFont(AppTextRole.subheadline.weight(.medium))
                 Spacer()
             }
             
             if let description = generator.description {
                 Text(description)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -317,13 +317,13 @@ struct RecordEmbedView: View {
                 Image(systemName: "list.bullet")
                     .foregroundColor(.green)
                 Text("List: \(list.name)")
-                    .font(.subheadline.weight(.medium))
+                    .appFont(AppTextRole.subheadline.weight(.medium))
                 Spacer()
             }
             
             if let description = list.description {
                 Text(description)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }

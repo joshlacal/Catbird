@@ -25,16 +25,7 @@ struct NotificationsView: View {
     let navigationPath = appState.navigationManager.pathBinding(for: 2)
 
     NavigationStack(path: navigationPath) {
-      VStack(spacing: 0) {
-        filterPicker
-              .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing:
-                        0))
-              .listRowSeparator(.hidden)
-              .themedListRowBackground(appState.themeManager, appSettings:
-                        appState.appSettings)
-          
-        notificationContent
-      }
+      notificationContentWithHeader
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Notifications")
       .navigationBarTitleDisplayMode(.large)
@@ -104,6 +95,38 @@ struct NotificationsView: View {
   }
 
   @ViewBuilder
+  private var notificationContentWithHeader: some View {
+    if let error = viewModel.error {
+      VStack(spacing: 0) {
+        filterPicker
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        
+        ErrorStateView(
+          error: error,
+          context: "Failed to load notifications",
+          retryAction: { Task { await retryLoadNotifications() } }
+        )
+      }
+    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
+      VStack(spacing: 0) {
+        filterPicker
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        
+        loadingView
+      }
+    } else if viewModel.groupedNotifications.isEmpty {
+      VStack(spacing: 0) {
+        filterPicker
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        
+        emptyView
+      }
+    } else {
+      notificationsListWithHeader
+    }
+  }
+
+  @ViewBuilder
   private var notificationContent: some View {
     if let error = viewModel.error {
       ErrorStateView(
@@ -134,11 +157,11 @@ struct NotificationsView: View {
   private var emptyView: some View {
     VStack(spacing: 16) {
       Image(systemName: "bell.slash")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundColor(.secondary)
 
       Text("No Notifications")
-        .font(.title2)
+        .appTitle2()
         .fontWeight(.semibold)
 
       Text("You don't have any notifications yet")
@@ -159,6 +182,67 @@ struct NotificationsView: View {
       .padding(.top, 8)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  @ViewBuilder
+  private var notificationsListWithHeader: some View {
+    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+
+    ScrollViewReader { _ in
+      List {
+        // Filter picker as the first list item
+        filterPicker
+          .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+          .listRowSeparator(.hidden)
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+
+        ForEach(viewModel.groupedNotifications, id: \.id) { group in
+          NotificationCard(
+            group: group,
+            onTap: { destination in
+              navigationPath.wrappedValue.append(destination)
+            }, path: navigationPath
+          )
+          .id(group.id)
+          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+          .listRowSeparator(.visible)
+          .alignmentGuide(.listRowSeparatorLeading) { _ in
+            0
+          }
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+          .onAppear {
+            let index =
+              viewModel.groupedNotifications.firstIndex(where: { $0.id == group.id }) ?? 0
+            let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
+
+            if index >= thresholdIndex && viewModel.hasMoreNotifications
+              && !viewModel.isLoadingMore {
+              Task {
+                await viewModel.loadMoreNotifications()
+              }
+            }
+          }
+        }
+
+        if viewModel.hasMoreNotifications {
+          HStack {
+            Spacer()
+            ProgressView()
+              .padding()
+            Spacer()
+          }
+          .id("loadingIndicator")
+          .listRowSeparator(.hidden)
+        }
+      }
+      .listStyle(.plain)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+      .scrollPosition($scrollPosition)
+    }
+    .refreshable {
+      try? await viewModel.markNotificationsAsSeen()
+      await viewModel.refreshNotifications()
+    }
   }
 
   @ViewBuilder
@@ -324,14 +408,14 @@ struct NotificationCard: View {
                 .foregroundColor(.primary)
 
               Text("@\(notification.author.handle)")
-                .font(.subheadline)
+                .appSubheadline()
                 .foregroundColor(.secondary)
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary.opacity(0.6))
           }
           .padding(.horizontal)
@@ -383,7 +467,7 @@ struct NotificationCard: View {
                 systemName: isFollowExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill"
               )
               .foregroundStyle(Color.secondary)
-              .font(.system(size: 18))
+              .appFont(size: 18)
               .padding(.leading, 5)
             }
           } else {
@@ -392,14 +476,14 @@ struct NotificationCard: View {
 
           Spacer()
           Text(formatTimeAgo(from: group.latestNotification.indexedAt.date))
-            .font(.subheadline)
+            .appSubheadline()
             .foregroundColor(.secondary)
             .accessibilityLabel(formatTimeAgo(from: group.latestNotification.indexedAt.date, forAccessibility: true))
 
         }
 
         Text(notificationText)
-          .font(.body)
+          .appBody()
           .foregroundColor(.primary)
           .lineLimit(nil)
           .fixedSize(horizontal: false, vertical: true)
@@ -484,7 +568,7 @@ struct NotificationCard: View {
       if case .knownType(let postObj) = post.record, let feedPost = postObj as? AppBskyFeedPost,
         !feedPost.text.isEmpty {
         Text(feedPost.text)
-          .font(.body)
+          .appBody()
           .foregroundColor(.secondary)
           .lineLimit(nil)
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -492,21 +576,21 @@ struct NotificationCard: View {
         switch embed {
         case .appBskyEmbedImagesView(let images):
           Text(images.images.map { $0.thumb.uriString() }.joined(separator: ", "))
-            .font(.body)
+            .appBody()
             .foregroundColor(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .appBskyEmbedVideoView(let video):
           Text(video.playlist.uriString())
-            .font(.body)
+            .appBody()
             .foregroundColor(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .appBskyEmbedExternalView(let external):
           Text(external.external.uri.uriString())
-            .font(.body)
+            .appBody()
             .foregroundColor(.secondary)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -517,7 +601,7 @@ struct NotificationCard: View {
             if case let .knownType(recordPost) = viewRecord.value,
               let post = recordPost as? AppBskyFeedPost {
               Text(post.text)
-                .font(.body)
+                .appBody()
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -533,7 +617,7 @@ struct NotificationCard: View {
             if case let .knownType(recordPost) = viewRecord.value,
               let post = recordPost as? AppBskyFeedPost {
               Text(post.text)
-                .font(.body)
+                .appBody()
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -578,7 +662,7 @@ struct NotificationIcon: View {
   var body: some View {
     Image(systemName: type.icon)
       .foregroundColor(type.color)
-      .font(.system(size: 28, weight: .medium))
+      .appFont(size: 28)
       .frame(width: 44, height: 44, alignment: .trailing)
   }
 }
@@ -615,7 +699,7 @@ struct AvatarStack: View {
 
       if notifications.count > 3 {
         Text("+\(notifications.count - 3)")
-          .font(.customSystemFont(size: 16, weight: .medium, width: 60, relativeTo: .caption))
+          .appFont(.customSystemFont(size: 16, weight: .medium, width: 60, relativeTo: .caption))
           .textScale(.secondary)
           .frame(width: 44, height: 44)
           .background(Color(.systemGray6).opacity(0.7))

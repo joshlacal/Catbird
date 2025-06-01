@@ -82,99 +82,114 @@ import OSLog
     
     /// Apply current theme settings to all windows
     private func applyToAllWindows() async {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
-            logger.warning("No window scene found")
-            return
-        }
-        
-        for window in windowScene.windows {
-            // Apply color scheme override
-            if let override = colorSchemeOverride {
-                window.overrideUserInterfaceStyle = override == .dark ? .dark : .light
-            } else {
-                window.overrideUserInterfaceStyle = .unspecified
+        await MainActor.run {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
+                logger.warning("No window scene found")
+                return
             }
             
-            // Set window tint color based on theme
-            if await getCurrentEffectiveDarkMode() && darkThemeMode == .black {
-                // Slightly brighter accent for better visibility on black
-                window.tintColor = UIColor.systemBlue.withAlphaComponent(1.0)
+            for window in windowScene.windows {
+                // Apply color scheme override
+                if let override = colorSchemeOverride {
+                    window.overrideUserInterfaceStyle = override == .dark ? .dark : .light
+                } else {
+                    window.overrideUserInterfaceStyle = .unspecified
+                }
+                
+                // Set window tint color based on theme if dark mode
+                Task {
+                    let isDarkMode = await getCurrentEffectiveDarkMode()
+                    await MainActor.run {
+                        if isDarkMode && darkThemeMode == .black {
+                            // Slightly brighter accent for better visibility on black
+                            window.tintColor = UIColor.systemBlue.withAlphaComponent(1.0)
+                        }
+                    }
+                }
             }
+            
+            logger.info("Theme applied to \(windowScene.windows.count) windows")
         }
-        
-        logger.info("Theme applied to \(windowScene.windows.count) windows")
     }
     
     /// Apply theme to navigation bars
     private func applyToNavigationBar() async {
-        // Create new appearances to ensure clean state
-        let standardAppearance = UINavigationBarAppearance()
-        let scrollEdgeAppearance = UINavigationBarAppearance()
-        let compactAppearance = UINavigationBarAppearance()
-        
-        // Configure based on theme
-        if await getCurrentEffectiveDarkMode() {
-            if darkThemeMode == .black {
-                // True black mode - specific configuration per appearance type
-                standardAppearance.configureWithDefaultBackground()    // standard = default
-                standardAppearance.backgroundColor = UIColor.black
-                standardAppearance.shadowColor = .clear
-                
-                scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
-                scrollEdgeAppearance.backgroundColor = UIColor.black
-                scrollEdgeAppearance.shadowColor = .clear
-                
-                compactAppearance.configureWithOpaqueBackground()      // compact = opaque
-                compactAppearance.backgroundColor = UIColor.black
-                compactAppearance.shadowColor = .clear
-            } else {
-                // Dim mode - specific configuration per appearance type
-                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0) // Proper gray for dim mode
-                
-                standardAppearance.configureWithDefaultBackground()    // standard = default
-                standardAppearance.backgroundColor = dimBackground
-                standardAppearance.shadowColor = .clear
-                
-                scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
-                scrollEdgeAppearance.backgroundColor = dimBackground
-                scrollEdgeAppearance.shadowColor = .clear
-                
-                compactAppearance.configureWithOpaqueBackground()      // compact = opaque
-                compactAppearance.backgroundColor = dimBackground
-                compactAppearance.shadowColor = .clear
-            }
-        } else {
-            // Light mode - specific configuration per appearance type
-            standardAppearance.configureWithDefaultBackground()     // standard = default
-            scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
-            compactAppearance.configureWithOpaqueBackground()      // compact = opaque
-        }
-        
-        // Apply custom fonts to all appearances
-        NavigationFontConfig.applyFonts(to: standardAppearance)
-        NavigationFontConfig.applyFonts(to: scrollEdgeAppearance)
-        NavigationFontConfig.applyFonts(to: compactAppearance)
-        
-        // Apply text color based on theme
-        let textColor = await getCurrentEffectiveDarkMode() 
-            ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
-            : UIColor.label
-        
-        [standardAppearance, scrollEdgeAppearance, compactAppearance].forEach { appearance in
-            // Update colors while preserving fonts
-            var titleAttrs = appearance.titleTextAttributes
-            titleAttrs[.foregroundColor] = textColor
-            appearance.titleTextAttributes = titleAttrs
+        await MainActor.run {
+            // Create new appearances to ensure clean state
+            let standardAppearance = UINavigationBarAppearance()
+            let scrollEdgeAppearance = UINavigationBarAppearance()
+            let compactAppearance = UINavigationBarAppearance()
             
-            var largeTitleAttrs = appearance.largeTitleTextAttributes
-            largeTitleAttrs[.foregroundColor] = textColor
-            appearance.largeTitleTextAttributes = largeTitleAttrs
+            Task {
+                let isDarkMode = await getCurrentEffectiveDarkMode()
+                
+                await MainActor.run {
+                    // Configure based on theme
+                    if isDarkMode {
+                        if darkThemeMode == .black {
+                            // True black mode - specific configuration per appearance type
+                            standardAppearance.configureWithDefaultBackground()    // standard = default
+                            standardAppearance.backgroundColor = UIColor.black
+                            standardAppearance.shadowColor = .clear
+                            
+                            scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
+                            scrollEdgeAppearance.backgroundColor = UIColor.black
+                            scrollEdgeAppearance.shadowColor = .clear
+                            
+                            compactAppearance.configureWithOpaqueBackground()      // compact = opaque
+                            compactAppearance.backgroundColor = UIColor.black
+                            compactAppearance.shadowColor = .clear
+                        } else {
+                            // Dim mode - specific configuration per appearance type
+                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0) // Proper gray for dim mode
+                            
+                            standardAppearance.configureWithDefaultBackground()    // standard = default
+                            standardAppearance.backgroundColor = dimBackground
+                            standardAppearance.shadowColor = .clear
+                            
+                            scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
+                            scrollEdgeAppearance.backgroundColor = dimBackground
+                            scrollEdgeAppearance.shadowColor = .clear
+                            
+                            compactAppearance.configureWithOpaqueBackground()      // compact = opaque
+                            compactAppearance.backgroundColor = dimBackground
+                            compactAppearance.shadowColor = .clear
+                        }
+                    } else {
+                        // Light mode - specific configuration per appearance type
+                        standardAppearance.configureWithDefaultBackground()     // standard = default
+                        scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
+                        compactAppearance.configureWithOpaqueBackground()      // compact = opaque
+                    }
+                    
+                    // Apply custom fonts to all appearances
+                    NavigationFontConfig.applyFonts(to: standardAppearance)
+                    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance)
+                    NavigationFontConfig.applyFonts(to: compactAppearance)
+                    
+                    // Apply text color based on theme
+                    let textColor = isDarkMode
+                        ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
+                        : UIColor.label
+                    
+                    [standardAppearance, scrollEdgeAppearance, compactAppearance].forEach { appearance in
+                        // Update colors while preserving fonts
+                        var titleAttrs = appearance.titleTextAttributes
+                        titleAttrs[.foregroundColor] = textColor
+                        appearance.titleTextAttributes = titleAttrs
+                        
+                        var largeTitleAttrs = appearance.largeTitleTextAttributes
+                        largeTitleAttrs[.foregroundColor] = textColor
+                        appearance.largeTitleTextAttributes = largeTitleAttrs
+                    }
+                    
+                    // Apply the appearances
+                    UINavigationBar.appearance().standardAppearance = standardAppearance
+                    UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
+                    UINavigationBar.appearance().compactAppearance = compactAppearance
+                }
+            }
         }
-        
-        // Apply the appearances
-        UINavigationBar.appearance().standardAppearance = standardAppearance
-        UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
-        UINavigationBar.appearance().compactAppearance = compactAppearance
     }
     
     /// Apply UI component themes in batches to reduce blocking
@@ -273,7 +288,7 @@ import OSLog
             return
         }
         
-        // Get current appearances
+        // Get current appearances async
         let standard = UINavigationBar.appearance().standardAppearance
         let scrollEdge = UINavigationBar.appearance().scrollEdgeAppearance ?? standard
         let compact = UINavigationBar.appearance().compactAppearance ?? standard
@@ -301,7 +316,9 @@ import OSLog
         logger.info("Force updating all navigation bars")
         
         // Re-apply navigation bar theme
-        applyToNavigationBar()
+        Task {
+            await applyToNavigationBar()
+        }
         
         // Force all existing navigation bars to update (ensure main thread)
         if Thread.isMainThread {
@@ -402,89 +419,112 @@ import OSLog
     
     /// Apply theme to tab bars
     private func applyToTabBar() async {
-        let appearance = UITabBarAppearance()
-        
-        if await getCurrentEffectiveDarkMode() {
-            if darkThemeMode == .black {
-                appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = .clear
+        await MainActor.run {
+            let appearance = UITabBarAppearance()
+            
+            Task {
+                let isDarkMode = await getCurrentEffectiveDarkMode()
                 
-                // Configure item appearance
-                appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                    .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                ]
-                
-                appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-                appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                    .foregroundColor: UIColor.systemBlue
-                ]
-            } else {
-                // Dim mode
-                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = dimBackground
-                appearance.shadowColor = .clear
-                
-                // Configure item appearance for dim mode
-                appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                    .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                ]
-                
-                appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-                appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                    .foregroundColor: UIColor.systemBlue
-                ]
+                await MainActor.run {
+                    if isDarkMode {
+                        if darkThemeMode == .black {
+                            appearance.backgroundColor = UIColor.black
+                            appearance.shadowColor = .clear
+                            
+                            // Configure item appearance
+                            appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+                                .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                            ]
+                            
+                            appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
+                            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+                                .foregroundColor: UIColor.systemBlue
+                            ]
+                        } else {
+                            // Dim mode
+                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                            appearance.configureWithOpaqueBackground()
+                            appearance.backgroundColor = dimBackground
+                            appearance.shadowColor = .clear
+                            
+                            // Configure item appearance for dim mode
+                            appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+                                .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
+                            ]
+                            
+                            appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
+                            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+                                .foregroundColor: UIColor.systemBlue
+                            ]
+                        }
+                    } else {
+                        // Light mode - use opaque background with system colors
+                        appearance.configureWithOpaqueBackground()
+                    }
+                    
+                    UITabBar.appearance().standardAppearance = appearance
+                    UITabBar.appearance().scrollEdgeAppearance = appearance
+                }
             }
-        } else {
-            appearance.configureWithTransparentBackground()
         }
-        
-        UITabBar.appearance().standardAppearance = appearance
-        UITabBar.appearance().scrollEdgeAppearance = appearance
     }
     
     /// Apply theme to toolbars
     private func applyToToolbar() async {
-        let appearance = UIToolbarAppearance()
-        
-        if await getCurrentEffectiveDarkMode() {
-            if darkThemeMode == .black {
-                appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = .clear
-            } else {
-                // Dim mode
-                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = dimBackground
-                appearance.shadowColor = .clear
+        await MainActor.run {
+            let appearance = UIToolbarAppearance()
+            
+            Task {
+                let isDarkMode = await getCurrentEffectiveDarkMode()
+                
+                await MainActor.run {
+                    if isDarkMode {
+                        if darkThemeMode == .black {
+                            appearance.backgroundColor = UIColor.black
+                            appearance.shadowColor = .clear
+                        } else {
+                            // Dim mode
+                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+                            appearance.configureWithOpaqueBackground()
+                            appearance.backgroundColor = dimBackground
+                            appearance.shadowColor = .clear
+                        }
+                    } else {
+                        appearance.configureWithTransparentBackground()
+                    }
+                    
+                    UIToolbar.appearance().standardAppearance = appearance
+                    UIToolbar.appearance().scrollEdgeAppearance = appearance
+                }
             }
-        } else {
-            appearance.configureWithTransparentBackground()
         }
-        
-        UIToolbar.appearance().standardAppearance = appearance
-        UIToolbar.appearance().scrollEdgeAppearance = appearance
     }
     
     /// Apply theme to table views
     private func applyToTableView() async {
-        if await getCurrentEffectiveDarkMode() {
-            UITableView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
-            UITableView.appearance().separatorColor = UIColor(Color.dynamicSeparator(self, currentScheme: .dark))
-            
-            UITableViewCell.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
-            
-            // Configure section headers
-            UITableViewHeaderFooterView.appearance().tintColor = UIColor(Color.dynamicSecondaryBackground(self, currentScheme: .dark))
+        let isDarkMode = await getCurrentEffectiveDarkMode()
+        await MainActor.run {
+            if isDarkMode {
+                UITableView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
+                UITableView.appearance().separatorColor = UIColor(Color.dynamicSeparator(self, currentScheme: .dark))
+                
+                UITableViewCell.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
+                
+                // Configure section headers
+                UITableViewHeaderFooterView.appearance().tintColor = UIColor(Color.dynamicSecondaryBackground(self, currentScheme: .dark))
+            }
         }
     }
     
     /// Apply theme to collection views
     private func applyToCollectionView() async {
-        if await getCurrentEffectiveDarkMode() {
-            UICollectionView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
+        let isDarkMode = await getCurrentEffectiveDarkMode()
+        await MainActor.run {
+            if isDarkMode {
+                UICollectionView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
+            }
         }
     }
     

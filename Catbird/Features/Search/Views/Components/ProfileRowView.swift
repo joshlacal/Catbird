@@ -17,18 +17,18 @@ struct ProfileRowView: View {
                     if profile.displayName?.isEmpty ?? true {
                         // Display handle if no display name
                         Text("@\(profile.handle)")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .lineLimit(1)
                     } else {
                         // Display display name if available
                         Text(profile.displayName ?? profile.handle.description)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                     }
                                         
                 HStack {
 
                 Text("@\(profile.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                     
                     // Handle "Follows you" badge if available
@@ -47,7 +47,7 @@ struct ProfileRowView: View {
                    let description = profileView.description, !description.isEmpty {
                     Text(description)
                         .multilineTextAlignment(.leading)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .padding(.top, 2)
                         .lineLimit(3)
@@ -125,7 +125,7 @@ struct ProfileRowView: View {
     @ViewBuilder
     private func buttonLabel(_ text: String, color: Color, backgroundColor: Color, outlined: Bool = false) -> some View {
         Text(text)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .fontWeight(.medium)
             .foregroundColor(color)
             .padding(.horizontal, 12)

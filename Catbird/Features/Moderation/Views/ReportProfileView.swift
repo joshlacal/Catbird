@@ -29,7 +29,7 @@ struct ReportProfileView: View {
                 Section("User being reported") {
                     HStack {
                         Text("@\(profile.handle)")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         if let displayName = profile.displayName {
                             Text("(\(displayName))")

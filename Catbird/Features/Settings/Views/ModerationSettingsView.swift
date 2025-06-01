@@ -188,7 +188,7 @@ struct ModerationSettingsView: View {
                                         
                                         if let description = labeler.description {
                                             Text(description)
-                                                .font(.caption)
+                                                .appFont(AppTextRole.caption)
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
@@ -197,7 +197,7 @@ struct ModerationSettingsView: View {
                                     
                                     if labeler.isEnabled {
                                         Text("Enabled")
-                                            .font(.caption)
+                                            .appFont(AppTextRole.caption)
                                             .fontWeight(.medium)
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 4)
@@ -217,18 +217,18 @@ struct ModerationSettingsView: View {
                     Section {
                         Text(error)
                             .foregroundStyle(.red)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                     }
                 }
                 
                 Section("About Moderation") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Content filters help you customize your experience. Changes take effect immediately.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                         
                         Text("Bluesky uses moderation services to help manage content. These preferences control what you'll see in your feeds.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
                     }
@@ -520,7 +520,7 @@ struct ModerationListView<T: Identifiable>: View {
                 Section {
                     Text(error)
                         .foregroundStyle(.red)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
             }
         }
@@ -606,7 +606,7 @@ struct ModerationAccountRow: View {
                 }
                 
                 Text("@\(handle)")
-                    .font(.callout)
+                    .appFont(AppTextRole.callout)
                     .foregroundStyle(.secondary)
             }
             
@@ -626,7 +626,7 @@ struct ModerationAccountRow: View {
                         .controlSize(.small)
                 } else {
                     Text(isBlocked ? "Unblock" : "Unmute")
-                        .font(.callout)
+                        .appFont(AppTextRole.callout)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(Color(.systemGray5))
@@ -670,7 +670,7 @@ struct AddLabelerView: View {
                     .autocorrectionDisabled()
                 
                 Text("Enter the DID of the content labeler you want to add to your moderation settings.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
@@ -678,7 +678,7 @@ struct AddLabelerView: View {
                 Section {
                     Text(error)
                         .foregroundStyle(.red)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
             }
             
@@ -686,7 +686,7 @@ struct AddLabelerView: View {
                 Section {
                     Text(success)
                         .foregroundStyle(.green)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
             }
             
@@ -766,21 +766,21 @@ struct LabelerDetailView: View {
             Section("Labeler Information") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Name")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     
                     Text(labeler.name)
-                        .font(.body)
+                                        .appFont(AppTextRole.body)
                     
                     Divider()
                         .padding(.vertical, 4)
                     
                     Text("DID")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     
                     Text(labeler.id)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .padding(8)
                         .background(Color(.systemGray6))
@@ -792,11 +792,11 @@ struct LabelerDetailView: View {
                             .padding(.vertical, 4)
                         
                         Text("Description")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                         
                         Text(description)
-                            .font(.body)
+                                            .appFont(AppTextRole.body)
                     }
                 }
                 .padding(.vertical, 4)
@@ -806,7 +806,7 @@ struct LabelerDetailView: View {
                 Section {
                     Text(error)
                         .foregroundStyle(.red)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
             }
             
@@ -884,7 +884,7 @@ struct ContentPreviewSection: View {
         Section("Content Preview") {
             VStack(spacing: 12) {
                 Text("See how your moderation settings affect content display")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 
@@ -930,7 +930,7 @@ struct ContentPreviewSection: View {
                     )
                 } else {
                     Text("Enable adult content to see preview examples")
-                        .font(.callout)
+                        .appFont(AppTextRole.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
@@ -957,17 +957,17 @@ struct ContentPreviewView: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .foregroundStyle(iconColor)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                 
                 Text(label)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .fontWeight(.medium)
                 
                 Spacer()
                 
                 // Visibility Badge
                 Text(contentVisibility.rawValue.capitalized)
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .fontWeight(.medium)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -994,15 +994,15 @@ struct ContentPreviewView: View {
                     // Mock text
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Example User")
-                            .font(.callout)
+                            .appFont(AppTextRole.callout)
                             .fontWeight(.medium)
                         
                         Text(sampleText)
-                            .font(.callout)
+                            .appFont(AppTextRole.callout)
                             .foregroundStyle(.primary)
                         
                         Text("2 hours ago")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     
@@ -1034,15 +1034,15 @@ struct ContentPreviewView: View {
                 // Warning content
                 VStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.title2)
+                        .appFont(AppTextRole.title2)
                         .foregroundStyle(iconColor)
                     
                     Text("Content Warning")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.semibold)
                     
                     Text(label)
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundStyle(.secondary)
                     
                     Button("Show content") {
@@ -1050,7 +1050,7 @@ struct ContentPreviewView: View {
                             isRevealed = true
                         }
                     }
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(Color.accentColor)
@@ -1073,16 +1073,16 @@ struct ContentPreviewView: View {
                 .overlay(
                     VStack(spacing: 8) {
                         Image(systemName: "eye.slash.fill")
-                            .font(.title2)
+                            .appFont(AppTextRole.title2)
                             .foregroundStyle(.secondary)
                         
                         Text("Content hidden: \(label)")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
                         
                         Text("This content is hidden based on your preferences")
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)

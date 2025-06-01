@@ -38,7 +38,7 @@ struct MediaItemView: View {
                         // Video play indicator if this is a video
                         if isVideo {
                             Image(systemName: "play.circle.fill")
-                                .font(.system(size: 28))
+                                .appFont(size: 28)
                                 .foregroundStyle(.white)
                                 .shadow(radius: 2)
                         }
@@ -54,7 +54,7 @@ struct MediaItemView: View {
             // Remove button
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
                     .foregroundStyle(.white, Color(.systemGray3))
                     .background(Circle().fill(Color.black.opacity(0.3)))
             }
@@ -71,10 +71,10 @@ struct MediaItemView: View {
                     Button(action: onEditAlt) {
                         HStack(spacing: 4) {
                             Image(systemName: item.altText.isEmpty ? "text.badge.plus" : "text.badge.checkmark")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                             
                             Text(item.altText.isEmpty ? "Add alt" : "Edit alt")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)

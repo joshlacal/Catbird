@@ -131,12 +131,15 @@ import OSLog
         currentDynamicTypeEnabled = dynamicTypeEnabled
         currentMaxDynamicTypeSize = maxDynamicTypeSize
         
-        // Update actual settings
-        self.fontStyle = fontStyle
-        self.fontSize = fontSize
-        self.lineSpacing = lineSpacing
-        self.dynamicTypeEnabled = dynamicTypeEnabled
-        self.maxDynamicTypeSize = maxDynamicTypeSize
+        // Update actual settings - force SwiftUI to detect changes
+        // Use Task to ensure changes happen on the main actor
+        Task { @MainActor in
+            self.fontStyle = fontStyle
+            self.fontSize = fontSize
+            self.lineSpacing = lineSpacing
+            self.dynamicTypeEnabled = dynamicTypeEnabled
+            self.maxDynamicTypeSize = maxDynamicTypeSize
+        }
         
         // Apply Dynamic Type constraints if enabled
         if dynamicTypeEnabled {
@@ -238,7 +241,7 @@ import OSLog
     }
     
     /// Get appropriate font for a specific text role
-    func fontForTextRole(_ role: TextRole) -> Font {
+    func fontForTextRole(_ role: AppTextRole) -> Font {
         switch role {
         case .largeTitle:
             return accessibleFont(size: Typography.Size.largeTitle, weight: .bold, relativeTo: .largeTitle)
@@ -268,7 +271,7 @@ import OSLog
 
 // MARK: - Text Role Enum
 
-enum TextRole: CaseIterable {
+enum AppTextRole: CaseIterable {
     case largeTitle
     case title1
     case title2
@@ -280,6 +283,39 @@ enum TextRole: CaseIterable {
     case footnote
     case caption
     case caption2
+    
+    /// Convert SwiftUI Font.TextStyle to AppTextRole
+    static func from(_ textStyle: Font.TextStyle) -> AppTextRole {
+        switch textStyle {
+        case .largeTitle: return .largeTitle
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .body: return .body
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption
+        case .caption2: return .caption2
+        @unknown default: return .body
+        }
+    }
+    
+    /// Handle .weight() calls on AppTextRole (return self for compatibility)
+    func weight(_ weight: Font.Weight) -> AppTextRole {
+        return self
+    }
+    
+    /// Handle .design() calls on AppTextRole (return self for compatibility)  
+    func design(_ design: Font.Design) -> AppTextRole {
+        return self
+    }
+    
+    /// Handle .monospaced() calls on AppTextRole (return self for compatibility)
+    func monospaced() -> AppTextRole {
+        return self
+    }
 }
 
 
@@ -288,7 +324,7 @@ enum TextRole: CaseIterable {
 struct AppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
     
-    let role: TextRole
+    let role: AppTextRole
     
     func body(content: Content) -> some View {
         content
@@ -311,6 +347,18 @@ struct CustomAppFontModifier: ViewModifier {
     }
 }
 
+struct DirectFontModifier: ViewModifier {
+    @Environment(\.fontManager) private var fontManager
+    
+    let font: Font
+    
+    func body(content: Content) -> some View {
+        content
+            .font(font)
+            .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body))
+    }
+}
+
 // MARK: - Environment Key
 
 private struct FontManagerKey: EnvironmentKey {
@@ -328,7 +376,7 @@ extension EnvironmentValues {
 
 extension View {
     /// Apply app font based on text role
-    func appFont(_ role: TextRole) -> some View {
+    func appFont(_ role: AppTextRole) -> some View {
         self.modifier(AppFontModifier(role: role))
     }
     
@@ -340,6 +388,29 @@ extension View {
     ) -> some View {
         self.modifier(CustomAppFontModifier(size: size, weight: weight, textStyle: textStyle))
     }
+    
+    /// Apply app font with a Font object (compatibility layer)
+    func appFont(_ font: Font) -> some View {
+        self.modifier(DirectFontModifier(font: font))
+    }
+    
+    /// Apply app font with SwiftUI's built-in text styles (compatibility layer)
+    func appFont(_ textStyle: Font.TextStyle) -> some View {
+        let appRole = AppTextRole.from(textStyle)
+        return self.modifier(AppFontModifier(role: appRole))
+    }
+    
+    /// Compatibility layer for .system() method calls on AppTextRole
+    func appFont(_ systemCall: SystemFontCall) -> some View {
+        switch systemCall {
+        case .system(let textStyle, let design, let weight):
+            let appRole = AppTextRole.from(textStyle)
+            return AnyView(self.modifier(AppFontModifier(role: appRole)))
+        case .systemSize(let size, let weight, let design):
+            return AnyView(self.modifier(CustomAppFontModifier(size: size, weight: weight, textStyle: .body)))
+        }
+    }
+    
     
     /// Provide font manager to the environment
     func fontManager(_ manager: FontManager) -> some View {
@@ -358,6 +429,130 @@ struct AppLineSpacingModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body))
+    }
+}
+
+// MARK: - Compatibility Types
+
+/// Represents system font calls found in existing code for compatibility
+enum SystemFontCall {
+    case system(Font.TextStyle, design: Font.Design = .default, weight: Font.Weight = .regular)
+    case systemSize(CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default)
+}
+
+// MARK: - Font Compatibility Extensions
+
+/// Extensions to handle common font patterns and method calls
+extension Font {
+    /// Compatibility layer for .system calls
+    static func appSystem(
+        _ textStyle: Font.TextStyle,
+        design: Font.Design = .default,
+        weight: Font.Weight = .regular
+    ) -> Font {
+        return .system(textStyle, design: design).weight(weight)
+    }
+    
+    /// Compatibility layer for size-based system calls
+    static func appSystem(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> Font {
+        return .system(size: size, weight: weight, design: design)
+    }
+}
+
+// MARK: - Global Compatibility Functions
+
+/// Global function to handle .system() calls that might appear in migrated code
+func system(
+    _ textStyle: Font.TextStyle,
+    design: Font.Design = .default
+) -> AppTextRole {
+    return AppTextRole.from(textStyle)
+}
+
+/// Global function to handle .system() calls with size
+func system(
+    size: CGFloat,
+    weight: Font.Weight = .regular,
+    design: Font.Design = .default
+) -> SystemFontCall {
+    return .systemSize(size, weight: weight, design: design)
+}
+
+
+// MARK: - Font Builder for System Calls
+
+/// A builder that can handle various system font calls and convert them to app font specifications
+struct SystemFontBuilder {
+    private let spec: SystemFontSpec
+    
+    enum SystemFontSpec {
+        case textStyle(Font.TextStyle, design: Font.Design, weight: Font.Weight)
+        case size(CGFloat, weight: Font.Weight, design: Font.Design)
+    }
+    
+    private init(_ spec: SystemFontSpec) {
+        self.spec = spec
+    }
+    
+    /// Create a system font with text style
+    static func system(
+        _ textStyle: Font.TextStyle,
+        design: Font.Design = .default
+    ) -> SystemFontBuilder {
+        return SystemFontBuilder(.textStyle(textStyle, design: design, weight: .regular))
+    }
+    
+    /// Create a system font with size
+    static func system(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> SystemFontBuilder {
+        return SystemFontBuilder(.size(size, weight: weight, design: design))
+    }
+    
+    /// Add weight to the font
+    func weight(_ weight: Font.Weight) -> SystemFontBuilder {
+        switch spec {
+        case .textStyle(let textStyle, let design, _):
+            return SystemFontBuilder(.textStyle(textStyle, design: design, weight: weight))
+        case .size(let size, _, let design):
+            return SystemFontBuilder(.size(size, weight: weight, design: design))
+        }
+    }
+    
+    /// Add design to the font
+    func design(_ design: Font.Design) -> SystemFontBuilder {
+        switch spec {
+        case .textStyle(let textStyle, _, let weight):
+            return SystemFontBuilder(.textStyle(textStyle, design: design, weight: weight))
+        case .size(let size, let weight, _):
+            return SystemFontBuilder(.size(size, weight: weight, design: design))
+        }
+    }
+    
+    /// Convert to AppTextRole for role-based fonts
+    func toAppTextRole() -> AppTextRole {
+        switch spec {
+        case .textStyle(let textStyle, _, _):
+            return AppTextRole.from(textStyle)
+        case .size(_, _, _):
+            return .body // Default for size-based fonts
+        }
+    }
+    
+    /// Convert to SystemFontCall for custom size fonts
+    func toSystemFontCall() -> SystemFontCall {
+        switch spec {
+        case .textStyle(let textStyle, let design, let weight):
+            return .system(textStyle, design: design, weight: weight)
+        case .size(let size, let weight, let design):
+            return .systemSize(size, weight: weight, design: design)
+        }
     }
 }
 
@@ -386,3 +581,4 @@ extension FontManager {
         )
     }
 }
+

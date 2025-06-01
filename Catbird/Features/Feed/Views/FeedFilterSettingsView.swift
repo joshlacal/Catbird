@@ -15,9 +15,9 @@ struct FeedFilterSettingsView: View {
           ) {
             VStack(alignment: .leading, spacing: 4) {
               Text(appState.feedFilterSettings.filters[index].name)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
               Text(appState.feedFilterSettings.filters[index].description)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
           }
@@ -26,7 +26,7 @@ struct FeedFilterSettingsView: View {
 
       Section(header: Text("About Filtering")) {
         Text("Filters are applied as posts load. Changes will affect newly loaded content.")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
     }

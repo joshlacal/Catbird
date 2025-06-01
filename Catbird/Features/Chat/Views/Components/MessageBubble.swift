@@ -56,11 +56,11 @@ struct MessageBubble: View {
         }
       case .sent:
         Image(systemName: "checkmark")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundColor(.gray)
       case .read:
         Image(systemName: "checkmark.circle.fill")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundColor(.blue)
       default:
         EmptyView()
@@ -87,10 +87,10 @@ struct MessageBubble: View {
               .foregroundStyle(.primary)
               .padding(8)
           }
-          
+
           Text(message.text)
-            .font(.body)
-            .padding(.horizontal, 14)
+                .appFont(AppTextRole.body)
+                .padding(.horizontal, 14)
             .padding(.vertical, 10)
           
           if !message.attachments.isEmpty {
@@ -201,7 +201,7 @@ struct AttachmentView: View {
             .frame(width: 50, height: 50)
             .overlay(
               Image(systemName: "play.fill")
-                .font(.system(size: 20))
+                .appFont(size: 20)
                 .foregroundColor(.white)
                 .offset(x: 2) // Slight offset to center the play triangle
             )
@@ -288,7 +288,7 @@ struct AudioRecordingView: View {
         }
       }
       Text(formatDuration(recording.duration))
-        .font(.caption)
+        .appFont(AppTextRole.caption)
     }
     .padding(8)
     .background(Color.gray.opacity(0.1))

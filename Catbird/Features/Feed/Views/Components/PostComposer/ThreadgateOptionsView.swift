@@ -26,7 +26,7 @@ struct ThreadgateOptionsView: View {
       VStack(spacing: 0) {
         // Main options group
         Text("Allow replies from:")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding()
 
@@ -98,7 +98,7 @@ struct ThreadgateOptionsView: View {
 
         // Combined options
         Text("Or combine these options:")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal)
 

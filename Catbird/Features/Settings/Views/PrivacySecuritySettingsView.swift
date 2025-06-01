@@ -36,7 +36,7 @@ struct PrivacySecuritySettingsView: View {
                                 .fontWeight(.medium)
                             
                             Text("Create passwords for third-party apps")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -61,7 +61,7 @@ struct PrivacySecuritySettingsView: View {
                     }
                 
                 Text("When enabled, people who aren't signed into Bluesky can view your profile and posts.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
@@ -75,7 +75,7 @@ struct PrivacySecuritySettingsView: View {
                                 .fontWeight(.medium)
                             
                             Text("Manage accounts you've blocked")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -100,7 +100,7 @@ struct PrivacySecuritySettingsView: View {
                                 .fontWeight(.medium)
                             
                             Text("Manage accounts you've muted")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -119,18 +119,18 @@ struct PrivacySecuritySettingsView: View {
             
             Section("About App Passwords") {
                 Text("App passwords let you securely use third-party apps with your Bluesky account without sharing your main password.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
             Section("About Privacy Controls") {
                 Text("Blocking prevents an account from interacting with you, including following you or seeing your content in their feeds.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 4)
                 
                 Text("Muting hides content from an account without them knowing. They can still interact with your posts, but you won't see their content.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -266,18 +266,18 @@ struct PrivacySecuritySettingsView: View {
 //                                    .fontWeight(.medium)
 //                                
 //                                Text("Created \(formattedDate(password.createdAt))")
-//                                    .font(.caption)
+//                                    .appFont(AppTextRole.caption)
 //                                    .foregroundStyle(.secondary)
 //                                
 //                                if let lastUsed = password.lastUsed {
 //                                    Text("Last used \(formattedDate(lastUsed))")
-//                                        .font(.caption)
+//                                        .appFont(AppTextRole.caption)
 //                                        .foregroundStyle(.secondary)
 //                                }
 //                                
 //                                if password.isPrivileged {
 //                                    Text("Privileged")
-//                                        .font(.caption)
+//                                        .appFont(AppTextRole.caption)
 //                                        .padding(.horizontal, 6)
 //                                        .padding(.vertical, 2)
 //                                        .background(Color.blue.opacity(0.2))
@@ -303,11 +303,11 @@ struct PrivacySecuritySettingsView: View {
 //            
 //            Section("About App Passwords") {
 //                Text("App passwords are used with third-party apps that don't support Bluesky's secure sign-in flow. Each app password provides limited access to your account.")
-//                    .font(.caption)
+//                    .appFont(AppTextRole.caption)
 //                    .foregroundStyle(.secondary)
 //                
 //                Text("Never share your main account password with third-party apps. Use app passwords instead.")
-//                    .font(.caption)
+//                    .appFont(AppTextRole.caption)
 //                    .foregroundStyle(.secondary)
 //                    .padding(.top, 4)
 //            }
@@ -515,7 +515,7 @@ struct BlockedAccountsView: View {
                                 
                                 if profile.displayName != nil {
                                     Text("@\(profile.handle)")
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -527,7 +527,7 @@ struct BlockedAccountsView: View {
                                 showingUnblockAlert = true
                             } label: {
                                 Text("Unblock")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
                                     .background(Color.gray.opacity(0.2))
@@ -542,11 +542,11 @@ struct BlockedAccountsView: View {
             
             Section("About Blocking") {
                 Text("Blocking prevents an account from interacting with you. Blocked accounts cannot follow you, see your content in their feeds, or mention you in posts.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                 
                 Text("Blocks are not visible to the blocked account - they won't be notified that you've blocked them.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
             }
@@ -694,7 +694,7 @@ struct MutedAccountsView: View {
                                 
                                 if profile.displayName != nil {
                                     Text("@\(profile.handle)")
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -706,7 +706,7 @@ struct MutedAccountsView: View {
                                 showingUnmuteAlert = true
                             } label: {
                                 Text("Unmute")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
                                     .background(Color.gray.opacity(0.2))
@@ -721,11 +721,11 @@ struct MutedAccountsView: View {
             
             Section("About Muting") {
                 Text("Muting hides an account's content from you without them knowing. Muted accounts can still interact with your content, but you won't see their posts, replies, or mentions.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                 
                 Text("Mutes are private - muted accounts won't know that you've muted them.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
             }

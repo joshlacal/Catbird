@@ -1,5 +1,4 @@
 import ExyteChat
-import MCEmojiPicker
 import Nuke
 import NukeUI
 import OSLog
@@ -261,7 +260,7 @@ struct ConversationListView: View {
       Text("You haven't started any chats yet.")
       if appState.chatManager.messageRequestsCount > 0 {
         Text("Check your message requests above to see if anyone wants to chat with you.")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
       }
     }
@@ -284,10 +283,10 @@ struct ConversationListView: View {
         ChatProfileAvatarView(profile: profileBasic, size: 40)
         VStack(alignment: .leading) {
           Text(profileBasic.displayName ?? "")
-            .font(.headline)
+            .appHeadline()
             .foregroundColor(.primary)
           Text("@\(profileBasic.handle.description)")
-            .font(.subheadline)
+            .appSubheadline()
             .foregroundColor(.secondary)
         }
       }
@@ -366,7 +365,7 @@ struct ConversationRow: View {
 
       VStack(alignment: .leading, spacing: 4) {
         Text(displayName.isEmpty ? handle : displayName)  // Show handle if display name is empty
-          .font(.headline)
+          .appHeadline()
           .lineLimit(1)
 
         // Last message preview
@@ -374,7 +373,7 @@ struct ConversationRow: View {
           LastMessagePreview(lastMessage: lastMessage)
         } else {
           Text("No messages yet")
-            .font(.subheadline)
+            .appSubheadline()
             .foregroundColor(.gray)
         }
       }
@@ -385,14 +384,15 @@ struct ConversationRow: View {
         // Timestamp of the last message
         if let lastMessage = convo.lastMessage, let date = lastMessageDate(lastMessage) {
           Text(formatDate(date))
-            .font(.caption)
+            .appCaption()
             .foregroundColor(.gray)
         }
 
         // Unread message count badge
         if convo.unreadCount > 0 {
           Text("\(convo.unreadCount)")
-            .font(.caption.bold())
+            .appCaption()
+            .fontWeight(.bold)
             .foregroundColor(.white)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -472,17 +472,17 @@ struct LastMessagePreview: View {
       switch lastMessage {
       case .chatBskyConvoDefsMessageView(let messageView):
           Text(messageView.sender.did.didString() == appState.currentUserDID ? "You: \(messageView.text)" : messageView.text)
-          .font(.subheadline)
+          .appSubheadline()
           .foregroundColor(.gray)
           .lineLimit(2)
       case .chatBskyConvoDefsDeletedMessageView:
         Text("Message deleted")
-          .font(.subheadline)
+          .appSubheadline()
           .foregroundColor(.gray)
           .italic()
       case .unexpected:
         Text("Unsupported message")
-          .font(.subheadline)
+          .appSubheadline()
           .foregroundColor(.gray)
           .italic()
       }
@@ -515,7 +515,7 @@ struct ChatProfileAvatarView: View {
               .foregroundColor(.red)
           } else {
             Text(initials)
-              .font(.system(size: size * 0.4))
+              .appFont(size: size * 0.4)
               .foregroundColor(.secondary)
           }
           // NukeUI doesn't expose isLoading directly in the builder like this,
@@ -672,18 +672,6 @@ struct ConversationView: View {
     .onDisappear {
       // Stop polling when leaving the conversation
       chatManager.stopMessagePolling(for: convoId)
-    }
-    // Handle potential errors specific to this conversation view
-    .alert(
-      "Error Loading Messages",
-      isPresented: Binding(
-        get: { chatManager.errorState != nil && chatManager.loadingMessages[convoId] == false },  // Show if error exists and not loading
-        set: { _ in chatManager.errorState = nil }
-      )
-    ) {
-      Button("OK") {}
-    } message: {
-      Text(chatManager.errorState?.localizedDescription ?? "Could not load messages.")
     }
     .alert("Delete Message", isPresented: $showingDeleteAlert) {
       Button("Cancel", role: .cancel) { }
@@ -1000,12 +988,12 @@ struct MessageRequestsButton: View {
     } label: {
       ZStack {
         Image(systemName: "tray")
-          .font(.body)
+          .appBody()
         
         if requestsCount > 0 {
           // Badge for total requests count
           Text("\(requestsCount)")
-            .font(.caption2)
+            .appCaption()
             .fontWeight(.bold)
             .foregroundColor(.white)
             .padding(.horizontal, 6)
@@ -1085,7 +1073,7 @@ struct ReportChatMessageView: View {
       Form {
         Section("Message to Report") {
           Text(message.text)
-            .font(.callout)
+            .appCallout()
             .foregroundColor(.secondary)
             .padding(.vertical, 4)
         }
@@ -1108,7 +1096,7 @@ struct ReportChatMessageView: View {
         
         Section {
           Text("This report will be sent to the moderation team for review. False reports may result in action against your account.")
-            .font(.caption)
+            .appCaption()
             .foregroundColor(.secondary)
         }
       }

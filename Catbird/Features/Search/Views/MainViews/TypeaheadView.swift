@@ -40,16 +40,16 @@ struct TypeaheadView: View {
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 48))
+                .appFont(size: 48)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
                 .padding(.top, 60)
             
             Text("Start typing to search")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Text("Search for handles, feeds, hashtags, or keywords")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
@@ -135,7 +135,7 @@ struct TypeaheadView: View {
                                 Spacer()
                                 
                                 Image(systemName: "arrow.up.left")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                             }
                             .padding(.vertical, 12)
@@ -186,10 +186,10 @@ struct TypeaheadView: View {
         HStack {
             Image(systemName: icon)
                 .foregroundColor(.accentColor)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
             
             Text(title)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Spacer()
         }

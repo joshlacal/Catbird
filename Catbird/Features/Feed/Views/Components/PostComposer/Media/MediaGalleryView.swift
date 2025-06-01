@@ -26,12 +26,12 @@ struct MediaGalleryView: View {
             // Header with count
             HStack {
                 Text("Media")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Spacer()
                 
                 Text("\(mediaItems.count)/\(maxImagesAllowed)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal)
@@ -69,10 +69,10 @@ struct MediaGalleryView: View {
         Button(action: action) {
             VStack(spacing: 8) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 24))
+                    .appFont(size: 24)
                 
                 Text("Paste")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
             }
             .frame(width: itemSize, height: itemSize)
             .foregroundStyle(Color.accentColor)
@@ -87,10 +87,10 @@ struct MediaGalleryView: View {
         Button(action: onAddMore) {
             VStack(spacing: 8) {
                 Image(systemName: "plus.circle")
-                    .font(.system(size: 24))
+                    .appFont(size: 24)
                 
                 Text("Add Media")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
             }
             .frame(width: itemSize, height: itemSize)
             .foregroundStyle(Color.accentColor)

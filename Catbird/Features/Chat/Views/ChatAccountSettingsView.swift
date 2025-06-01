@@ -21,7 +21,7 @@ struct ChatAccountSettingsView: View {
       Form {
         Section {
           Text("Manage your chat account data and settings")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
         }
         
@@ -52,7 +52,7 @@ struct ChatAccountSettingsView: View {
         
         Section {
           Text("Deleting your chat account will remove all your messages and conversations. This action cannot be undone.")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
         }
       }
@@ -169,12 +169,12 @@ struct ChatActivityLogView: View {
       ForEach(logEntries) { entry in
         VStack(alignment: .leading, spacing: 4) {
           Text(entry.type)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
           Text(entry.description)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
           Text(entry.timestamp, style: .relative)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundColor(.secondary)
         }
         .padding(.vertical, 4)

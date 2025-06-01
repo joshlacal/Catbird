@@ -36,6 +36,6 @@ struct PostInteractionContext: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .font(.caption)
+        .appFont(AppTextRole.caption)
     }
 }

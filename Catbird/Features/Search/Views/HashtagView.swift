@@ -18,11 +18,11 @@ struct HashtagView: View {
             // Enhanced hashtag header
             VStack(spacing: 4) {
                 Text("#\(tag)")
-                    .font(.title.weight(.bold))
+                    .appFont(AppTextRole.title1.weight(.bold))
                     .padding(.top)
                 
                 Text("Posts with this hashtag")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 
                 // Sort toggle
@@ -49,7 +49,7 @@ struct HashtagView: View {
                                     path.append(NavigationDestination.hashtag(relatedTag))
                                 } label: {
                                     Text("#\(relatedTag)")
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 6)
                                         .background(
@@ -114,16 +114,16 @@ struct HashtagView: View {
             Spacer()
             
             Image(systemName: "number.square.fill")
-                .font(.system(size: 60))
+                .appFont(size: 60)
                 .foregroundColor(.accentColor.opacity(0.7))
                 .padding()
                 .symbolEffect(.bounce, options: .repeat(.periodic(1, delay: 3)))
             
             Text("No posts found with #\(tag)")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Text("Be the first to post about this topic!")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)

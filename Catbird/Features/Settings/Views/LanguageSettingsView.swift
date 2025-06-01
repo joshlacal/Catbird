@@ -187,7 +187,7 @@ struct LanguageSettingsView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Language settings control both the app interface and content preferences.")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                     
                     if let detectedLanguage = Language.detectSystemLanguage() {
@@ -195,7 +195,7 @@ struct LanguageSettingsView: View {
                             Image(systemName: "info.circle")
                                 .foregroundStyle(.blue)
                             Text("System language detected: \(detectedLanguage.flag) \(detectedLanguage.englishName)")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.blue)
                         }
                     }
@@ -223,7 +223,7 @@ struct LanguageSettingsView: View {
                             Image(systemName: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
                             Text(error)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.red)
                         }
                     }
@@ -261,7 +261,7 @@ struct LanguageSettingsView: View {
                         HStack(spacing: 4) {
                             if appState.appSettings.appLanguage == "system" {
                                 Image(systemName: "gear")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                             } else if let lang = Language.allLanguages.first(where: { $0.id == appState.appSettings.appLanguage }) {
                                 Text(lang.flag)
                             }
@@ -272,7 +272,7 @@ struct LanguageSettingsView: View {
                 }
                 
                 Text("Controls the language used in menus and system messages.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
@@ -315,7 +315,7 @@ struct LanguageSettingsView: View {
                 }
                 
                 Text("Your preferred language for content. This is shared with other apps.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
             
@@ -350,7 +350,7 @@ struct LanguageSettingsView: View {
                                     ForEach(appState.appSettings.contentLanguages.prefix(3), id: \.self) { code in
                                         if let lang = Language.allLanguages.first(where: { $0.id == code }) {
                                             Text(lang.flag)
-                                                .font(.caption2)
+                                                .appFont(AppTextRole.caption2)
                                         }
                                     }
                                 }
@@ -360,7 +360,7 @@ struct LanguageSettingsView: View {
                 }
                 
                 Text("Languages you'd like to see content in. Posts in other languages may be filtered out.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -522,14 +522,14 @@ struct LanguageRow: View {
         Button(action: onSelect) {
             HStack {
                 Text(language.flag)
-                    .font(.title3)
+                    .appFont(AppTextRole.title3)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(language.englishName)
                         .foregroundStyle(.primary)
                     if language.englishName != language.nativeName {
                         Text(language.nativeName)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -605,7 +605,7 @@ struct EnhancedContentLanguagesView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Selected Languages (\(selectedLanguageObjects.count))")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                             
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 8) {
@@ -613,7 +613,7 @@ struct EnhancedContentLanguagesView: View {
                                         HStack(spacing: 4) {
                                             Text(language.flag)
                                             Text(language.englishName)
-                                                .font(.caption)
+                                                .appFont(AppTextRole.caption)
                                         }
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
@@ -705,7 +705,7 @@ struct ContentLanguageRow: View {
         Button(action: onToggle) {
             HStack {
                 Text(language.flag)
-                    .font(.title3)
+                    .appFont(AppTextRole.title3)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -713,7 +713,7 @@ struct ContentLanguageRow: View {
                             .foregroundStyle(.primary)
                         if isPrimary {
                             Text("Primary")
-                                .font(.caption2)
+                                .appFont(AppTextRole.caption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.blue.opacity(0.2))
@@ -722,7 +722,7 @@ struct ContentLanguageRow: View {
                     }
                     if language.englishName != language.nativeName {
                         Text(language.nativeName)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -731,7 +731,7 @@ struct ContentLanguageRow: View {
                 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isSelected ? .blue : .secondary)
-                    .font(.title3)
+                    .appFont(AppTextRole.title3)
             }
         }
         .contentShape(Rectangle())

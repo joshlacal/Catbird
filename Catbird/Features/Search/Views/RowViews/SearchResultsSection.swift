@@ -17,7 +17,7 @@ struct ResultsSection<Content: View>: View {
             content()
         } header: {
             Text(title)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .padding(.vertical, 10)
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -57,17 +57,17 @@ struct NoResultsView: View {
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: icon)
-                .font(.system(size: 48))
+                .appFont(size: 48)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
                 .symbolEffect(.pulse, options: isAnimationRepeating ? .repeating : .nonRepeating)
             
             Text("No \(type) found for \"\(query)\"")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             if let message = message {
                 Text(message)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
@@ -76,7 +76,7 @@ struct NoResultsView: View {
             if let actionLabel = actionLabel, let action = action {
                 Button(action: action) {
                     Text(actionLabel)
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.white)
                         .padding(.vertical, 8)
                         .padding(.horizontal, 16)

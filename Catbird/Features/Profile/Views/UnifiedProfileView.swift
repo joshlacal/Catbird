@@ -186,7 +186,7 @@ struct UnifiedProfileView: View {
       if let profile = viewModel.profile {
         ToolbarItem(placement: .principal) {
           Text(profile.displayName ?? profile.handle.description)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
         }
 
         // Only show the report option for other users' profiles
@@ -650,15 +650,15 @@ struct UnifiedProfileView: View {
           } else {
               VStack(spacing: 16) {
                   Image(systemName: "exclamationmark.triangle")
-                      .font(.system(size: 48))
+                      .appFont(size: 48)
                       .foregroundColor(.orange)
                   
                   Text("Profile Not Found")
-                      .font(.title2)
+                      .appFont(AppTextRole.title2)
                       .fontWeight(.semibold)
                   
                   Text("This profile may not exist or is not accessible")
-                      .font(.subheadline)
+                      .appFont(AppTextRole.subheadline)
                       .foregroundStyle(.secondary)
                       .multilineTextAlignment(.center)
                       .padding(.horizontal)
@@ -674,11 +674,11 @@ struct UnifiedProfileView: View {
       Spacer()
 
       Image(systemName: "square.stack.3d.up.slash")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
 
       Text(title)
-        .font(.title3)
+        .appFont(AppTextRole.title3)
         .fontWeight(.semibold)
 
       Text(message)
@@ -816,7 +816,7 @@ struct ProfileHeader: View {
             VStack(alignment: .leading, spacing: 4) {
                     
                     Text(profile.displayName ?? profile.handle.description)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                         .fontWeight(.bold)
                         .lineLimit(nil)
                         .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
@@ -824,7 +824,7 @@ struct ProfileHeader: View {
             HStack(spacing: 0) {
 
                 Text("@\(profile.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
@@ -840,7 +840,7 @@ struct ProfileHeader: View {
             // Bio
             if let description = profile.description, !description.isEmpty {
                 Text(description)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .lineLimit(nil)
                     .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
             }
@@ -856,12 +856,12 @@ struct ProfileHeader: View {
                     HStack(spacing: 4) {
                         Text("\(profile.followsCount ?? 0)")
                             .fixedSize(horizontal: true, vertical: false)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                         
                         Text("Following")
                             .fixedSize(horizontal: true, vertical: false)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -874,12 +874,12 @@ struct ProfileHeader: View {
                     HStack(spacing: 4) {
                         Text("\(profile.followersCount ?? 0)")
                             .fixedSize(horizontal: true, vertical: false)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                         
                         Text("Followers")
                             .fixedSize(horizontal: true, vertical: false)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -898,7 +898,7 @@ struct ProfileHeader: View {
             isEditingProfile = true
         }) {
             Text("Edit Profile")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -925,11 +925,11 @@ struct ProfileHeader: View {
             }) {
                 HStack {
                     Image(systemName: "person.crop.circle.badge.xmark")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                     Text("Blocked")
                         .fixedSize(horizontal: true, vertical: false)
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -946,11 +946,11 @@ struct ProfileHeader: View {
             }) {
                 HStack {
                     Image(systemName: "speaker.slash")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                     Text("Muted")
                         .fixedSize(horizontal: true, vertical: false)
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -991,11 +991,11 @@ struct ProfileHeader: View {
             }) {
                 HStack {
                     Image(systemName: "checkmark")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                     Text("Following")
                         .fixedSize(horizontal: true, vertical: false)
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -1037,10 +1037,10 @@ struct ProfileHeader: View {
             }) {
                 HStack {
                     Image(systemName: "plus")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                     Text("Follow")
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -1096,7 +1096,7 @@ struct ProfileImageViewerView: View {
 
                         } else if state.error != nil {
                             Image(systemName: "exclamationmark.triangle")
-                                .font(.largeTitle)
+                                .appFont(AppTextRole.largeTitle)
                                 .foregroundColor(.white)
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                         } else {
@@ -1170,17 +1170,17 @@ struct FeedRowView: View {
             // Feed info
             VStack(alignment: .leading, spacing: 4) {
                 Text(feed.displayName)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .lineLimit(1)
                 
                 Text("by @\(feed.creator.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
                 if let description = feed.description, !description.isEmpty {
                     Text(description)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .padding(.top, 2)
@@ -1189,7 +1189,7 @@ struct FeedRowView: View {
                 // Show likes count if available
                 if feed.likeCount ?? 0 > 0 {
                     Text("\(feed.likeCount ?? 0) likes")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1199,7 +1199,7 @@ struct FeedRowView: View {
             // Chevron indicator
             Image(systemName: "chevron.right")
                 .foregroundStyle(.secondary)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
         }
         .padding(.vertical, 8)
         .contentShape(Rectangle())

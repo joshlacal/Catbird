@@ -24,7 +24,7 @@ struct EnhancedFollowButton: View {
             }
         } label: {
             Text(isFollowing ? "Following" : "Follow")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.medium)
                 .foregroundColor(isFollowing ? .secondary : .white)
                 .padding(.vertical, 5)

@@ -47,9 +47,9 @@ struct RepostOptionsView: View {
             } label: {
                 HStack {
                     Image(systemName: "arrow.2.squarepath")
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                     Text("Repost")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     Spacer()
                 }
                 .foregroundColor(.primary)
@@ -68,9 +68,9 @@ struct RepostOptionsView: View {
             } label: {
                 HStack {
                     Image(systemName: "quote.bubble")
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                     Text("Quote Post")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     Spacer()
                 }
                 .foregroundColor(.primary)

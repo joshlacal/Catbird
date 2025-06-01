@@ -263,7 +263,7 @@ struct FilterView: View {
                 
                 if language.isPreferred {
                     Text("Preferred")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

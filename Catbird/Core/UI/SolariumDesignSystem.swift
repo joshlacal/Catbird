@@ -475,12 +475,12 @@ struct SolariumShimmerModifier: ViewModifier {
             // Glass intensity demonstration
             VStack(spacing: 16) {
                 Text("Glass Intensity Levels")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .solariumText(intensity: .medium)
                 
                 ForEach(SolariumDesignSystem.GlassIntensity.allCases, id: \.self) { intensity in
                     Text("\(String(describing: intensity).capitalized) Glass")
-                        .font(.body)
+                                            .appFont(AppTextRole.body)
                         .solariumText(intensity: intensity)
                         .padding()
                         .frame(maxWidth: .infinity)
@@ -492,7 +492,7 @@ struct SolariumShimmerModifier: ViewModifier {
             // Interactive buttons
             VStack(spacing: 16) {
                 Text("Interactive Elements")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .solariumText(intensity: .medium)
                 
                 Button("Primary Glass Button") {

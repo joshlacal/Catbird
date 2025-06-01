@@ -120,7 +120,7 @@ struct ResultsView: View {
                                     selectedContentType = .profiles
                                 } label: {
                                     Text("See all \(viewModel.profileResults.count) profiles")
-                                        .font(.subheadline)
+                                        .appFont(AppTextRole.subheadline)
                                         .foregroundColor(.accentColor)
                                         .padding(.vertical, 12)
                                 }
@@ -157,7 +157,7 @@ struct ResultsView: View {
                                     selectedContentType = .posts
                                 } label: {
                                     Text("See all \(viewModel.postResults.count) posts")
-                                        .font(.subheadline)
+                                        .appFont(AppTextRole.subheadline)
                                         .foregroundColor(.accentColor)
                                         .padding(.vertical, 12)
                                 }
@@ -193,7 +193,7 @@ struct ResultsView: View {
                                     selectedContentType = .feeds
                                 } label: {
                                     Text("See all \(viewModel.feedResults.count) feeds")
-                                        .font(.subheadline)
+                                        .appFont(AppTextRole.subheadline)
                                         .foregroundColor(.accentColor)
                                         .padding(.vertical, 12)
                                 }
@@ -229,7 +229,7 @@ struct ResultsView: View {
 //                                    selectedContentType = .starterPacks
 //                                } label: {
 //                                    Text("See all \(viewModel.starterPackResults.count) starter packs")
-//                                        .font(.subheadline)
+//                                        .appFont(AppTextRole.subheadline)
 //                                        .foregroundColor(.accentColor)
 //                                        .padding(.vertical, 12)
 //                                }
@@ -347,16 +347,16 @@ struct ResultsView: View {
     private func emptyResultsView(for type: ContentType) -> some View {
         VStack(spacing: 16) {
             Image(systemName: type.emptyIcon)
-                .font(.system(size: 48))
+                .appFont(size: 48)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
                 .symbolEffect(.pulse, options: .repeating)
             
             Text("No \(type.title.lowercased()) found")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Text("Try a different search term or check out our suggestions")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
@@ -366,7 +366,7 @@ struct ResultsView: View {
                 viewModel.resetSearch()
             } label: {
                 Text("Explore Trending Content")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.white)
                     .padding(.vertical, 8)
                     .padding(.horizontal, 16)
@@ -405,11 +405,11 @@ struct ResultsView: View {
 //                // Author info
 //                HStack {
 //                    Text(post.author.displayName ?? "@\(post.author.handle)")
-//                        .font(.headline)
+//                        .appFont(AppTextRole.headline)
 //                        .lineLimit(1)
 //                    
 //                    Text("@\(post.author.handle)")
-//                        .font(.subheadline)
+//                        .appFont(AppTextRole.subheadline)
 //                        .foregroundColor(.secondary)
 //                        .lineLimit(1)
 //                    
@@ -419,7 +419,7 @@ struct ResultsView: View {
 //                    if case .knownType(let postObj) = post.record,
 //                       let feedPost = postObj as? AppBskyFeedPost {
 //                        Text(formatTimeAgo(from: feedPost.createdAt.date))
-//                            .font(.caption)
+//                            .appFont(AppTextRole.caption)
 //                            .foregroundColor(.secondary)
 //                    }
 //                }
@@ -428,7 +428,7 @@ struct ResultsView: View {
 //                if case .knownType(let postObj) = post.record,
 //                   let feedPost = postObj as? AppBskyFeedPost {
 //                    Text(feedPost.text)
-//                        .font(.body)
+//                                        .appFont(AppTextRole.body)
 //                        .lineLimit(3)
 //                        .padding(.vertical, 2)
 //                }
@@ -437,17 +437,17 @@ struct ResultsView: View {
 //                HStack(spacing: 16) {
 //                    // Reply count
 //                    Label("\(post.replyCount ?? 0)", systemImage: "bubble.right")
-//                        .font(.caption)
+//                        .appFont(AppTextRole.caption)
 //                        .foregroundColor(.secondary)
 //                    
 //                    // Repost count
 //                    Label("\(post.repostCount ?? 0)", systemImage: "arrow.2.squarepath")
-//                        .font(.caption)
+//                        .appFont(AppTextRole.caption)
 //                        .foregroundColor(.secondary)
 //                    
 //                    // Like count
 //                    Label("\(post.likeCount ?? 0)", systemImage: "heart")
-//                        .font(.caption)
+//                        .appFont(AppTextRole.caption)
 //                        .foregroundColor(.secondary)
 //                }
 //                .padding(.top, 4)

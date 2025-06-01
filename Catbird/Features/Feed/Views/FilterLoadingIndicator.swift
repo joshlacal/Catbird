@@ -7,7 +7,7 @@ struct FilterLoadingIndicator: View {
         .scaleEffect(0.8)
 
       Text("Applying filters...")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
     }
     .padding(.vertical, 8)

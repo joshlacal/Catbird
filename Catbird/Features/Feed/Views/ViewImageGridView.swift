@@ -775,7 +775,7 @@ struct EnhancedImageViewer: View {
                   liveTextEnabled.toggle()
                 } label: {
                   Image(systemName: liveTextEnabled ? "text.viewfinder.fill" : "text.viewfinder")
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .foregroundColor(.white)
                     .frame(width: 40, height: 40)
                 }
@@ -787,7 +787,7 @@ struct EnhancedImageViewer: View {
                 shareCurrentImage()
               } label: {
                 Image(systemName: "square.and.arrow.up")
-                  .font(.title2)
+                  .appFont(AppTextRole.title2)
                   .foregroundColor(.white)
                   .offset(y: -3)
 
@@ -800,7 +800,7 @@ struct EnhancedImageViewer: View {
               } label: {
                 Image(systemName: "xmark")
                   .foregroundColor(.white)
-                  .font(.title2)
+                  .appFont(AppTextRole.title2)
                   .frame(width: 40, height: 40)
               }
               .padding(.trailing, 8)
@@ -874,7 +874,7 @@ struct EnhancedImageViewer: View {
   private var altTextView: some View {
     VStack(spacing: 4) {
       Text(images[currentIndex].alt)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .lineLimit(isAltTextExpanded ? nil : 2)
         .multilineTextAlignment(.leading)
 
@@ -885,7 +885,7 @@ struct EnhancedImageViewer: View {
           }
         }) {
           Text("Show More")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundColor(Color.accentColor)
         }
         .accessibilityLabel("Show more alt text")

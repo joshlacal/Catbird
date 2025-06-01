@@ -22,14 +22,14 @@ struct ProfileSectionView: View {
             } else if let error = loadError {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
+                        .appFont(AppTextRole.largeTitle)
                         .foregroundColor(.orange)
                     
                     Text("Could not load content")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Text(error.localizedDescription)
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                     
                     Button("Try Again") {
@@ -289,11 +289,11 @@ struct ProfileSectionView: View {
       Spacer()
 
       Image(systemName: "square.stack.3d.up.slash")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundColor(.secondary)
 
       Text(title)
-        .font(.title3)
+        .appFont(AppTextRole.title3)
         .fontWeight(.semibold)
 
       Text(message)

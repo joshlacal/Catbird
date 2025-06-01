@@ -6,14 +6,14 @@ struct ColorDemoView: View {
         ScrollView {
             VStack(spacing: 20) {
                 Text("Theme Color Comparison")
-                    .font(.title)
+                    .appFont(AppTextRole.title1)
                     .padding()
                 
                 HStack(spacing: 20) {
                     // Dim Mode Column
                     VStack(spacing: 12) {
                         Text("Dim Mode (Gray)")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundColor(.primary)
                         
                         ColorSampleView(
@@ -51,7 +51,7 @@ struct ColorDemoView: View {
                     // True Black Mode Column
                     VStack(spacing: 12) {
                         Text("True Black Mode")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundColor(.primary)
                         
                         ColorSampleView(
@@ -90,20 +90,20 @@ struct ColorDemoView: View {
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Key Differences:")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Text("• Dim Mode: Uses proper gray colors (0.18-0.37 RGB range)")
-                        .font(.body)
+                                        .appFont(AppTextRole.body)
                     
                     Text("• True Black: Uses pure black with subtle white elevations")
-                        .font(.body)
+                                        .appFont(AppTextRole.body)
                     
                     Text("• Dim Mode is now clearly gray, not black")
-                        .font(.body)
+                                        .appFont(AppTextRole.body)
                         .foregroundColor(.green)
                     
                     Text("• True Black remains OLED-optimized")
-                        .font(.body)
+                                        .appFont(AppTextRole.body)
                         .foregroundColor(.blue)
                 }
                 .padding()
@@ -132,7 +132,7 @@ struct ColorSampleView: View {
                 .overlay(
                     Text(title)
                         .foregroundColor(textColor)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                 )
                 .cornerRadius(8)
@@ -142,7 +142,7 @@ struct ColorSampleView: View {
                 )
             
             Text(colorDescription(for: color))
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
         }
     }

@@ -16,7 +16,7 @@ struct AboutSettingsView: View {
                         Text("Terms of Service")
                         Spacer()
                         Image(systemName: "arrow.up.right")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -26,7 +26,7 @@ struct AboutSettingsView: View {
                         Text("Privacy Policy")
                         Spacer()
                         Image(systemName: "arrow.up.right")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -36,7 +36,7 @@ struct AboutSettingsView: View {
                         Text("Status Page")
                         Spacer()
                         Image(systemName: "arrow.up.right")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -81,16 +81,16 @@ struct AboutSettingsView: View {
             
             Section {
                 Image(systemName: "bird.fill")
-                    .font(.system(size: 48))
+                    .appFont(size: 48)
                     .foregroundStyle(.blue)
                     .padding(.top, 8)
 
                 VStack(alignment: .center, spacing: 12) {
                     Text("Catbird")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Text("A native Bluesky client for iOS")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                     
                 }
@@ -165,23 +165,23 @@ struct SystemLogView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(entry.level.rawValue)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .fontWeight(.semibold)
                                     .foregroundStyle(entry.level.color)
                                 
                                 Text(entry.subsystem)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                                 
                                 Spacer()
                                 
                                 Text(formatDate(entry.timestamp))
-                                    .font(.caption2)
+                                    .appFont(AppTextRole.caption2)
                                     .foregroundStyle(.secondary)
                             }
                             
                             Text(entry.message)
-                                .font(.callout)
+                                .appFont(AppTextRole.callout)
                                 .padding(.top, 2)
                         }
                         .padding(.vertical, 4)

@@ -200,11 +200,11 @@ struct FeedsStartPage: View {
 
       if title == "Pinned" {
         Image(systemName: "pin.fill")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
       } else if title == "Saved" {
         Image(systemName: "bookmark.fill")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
       }
     }
@@ -218,10 +218,10 @@ struct FeedsStartPage: View {
     HStack(spacing: 12) {
       Image(systemName: "magnifyingglass")
         .foregroundColor(.secondary)
-        .font(.system(size: 16, weight: .medium))
+        .appFont(size: 16)
 
       TextField("Search feeds...", text: $searchText)
-        .font(.system(size: 16, weight: .regular))
+        .appFont(size: 16)
         .foregroundColor(.primary)
         .onChange(of: searchText) { _, _ in
           Task { await updateFilteredFeeds() }
@@ -236,7 +236,7 @@ struct FeedsStartPage: View {
         } label: {
           Image(systemName: "xmark.circle.fill")
             .foregroundColor(.secondary)
-            .font(.system(size: 16, weight: .medium))
+            .appFont(size: 16)
         }
         .transition(.scale.combined(with: .opacity))
       }
@@ -300,7 +300,7 @@ struct FeedsStartPage: View {
             // Feed name
             Text(defaultFeedName)
               .padding(.leading, 6)
-              .font(.headline)
+              .appFont(AppTextRole.headline)
               .foregroundStyle(.primary)
               .multilineTextAlignment(.leading)
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -308,7 +308,7 @@ struct FeedsStartPage: View {
             Spacer()
 
             Image(systemName: "chevron.right")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
           }
         }
@@ -386,7 +386,7 @@ struct FeedsStartPage: View {
           )
 
           Image(systemName: "clock")
-            .font(.system(size: 24, weight: .semibold))
+            .appFont(size: 24)
             .foregroundColor(.white)
         }
         .frame(width: iconSize, height: iconSize)
@@ -452,7 +452,7 @@ struct FeedsStartPage: View {
 
         // Feed name
         Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.primary)
           .padding(.top, 4)
           .lineLimit(2)
@@ -480,7 +480,7 @@ struct FeedsStartPage: View {
                 Task { await viewModel.removeFeed(feedURI) }
               } label: {
                 Image(systemName: "minus.circle.fill")
-                  .font(.system(size: 20))
+                  .appFont(size: 20)
                   .foregroundColor(.red)
                   .background(Circle().fill(Color.white))
               }
@@ -540,7 +540,7 @@ struct FeedsStartPage: View {
           )
 
           Image(systemName: "clock")
-            .font(.system(size: 24, weight: .semibold))
+            .appFont(size: 24)
             .foregroundColor(.white)
         }
         .frame(width: iconSize, height: iconSize)
@@ -548,7 +548,7 @@ struct FeedsStartPage: View {
 
         // Feed name
         Text("Timeline")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.primary)
           .padding(.top, 4)
           .lineLimit(2)
@@ -607,7 +607,7 @@ struct FeedsStartPage: View {
 
       // First letter of feed name
       Text(title.prefix(1).uppercased())
-        .font(.system(.headline, design: .rounded, weight: .bold))
+        .appFont(AppTextRole.from(.headline))
         .foregroundColor(.white)
     }
   }
@@ -629,7 +629,7 @@ struct FeedsStartPage: View {
                           .frame(width: 56, height: 56)
                       
                       Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
-                          .font(.system(size: 22, weight: .semibold))
+                          .appFont(size: 22)
                           .foregroundColor(.accentColor)
                   }
               }
@@ -724,7 +724,7 @@ struct FeedsStartPage: View {
                   }
                 } label: {
                   Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
-                    .font(.system(size: 16, weight: .medium))
+                    .appFont(size: 16)
                     .foregroundStyle(Color.accentColor)
                 }
                 .tint(.accentColor.opacity(0.8))
@@ -736,7 +736,7 @@ struct FeedsStartPage: View {
                     editMode = .inactive
                   } label: {
                     Image(systemName: "checkmark")
-                      .font(.system(size: 16, weight: .medium))
+                      .appFont(size: 16)
                   }
                   .tint(.accentColor.opacity(0.8))
                   .accessibilityLabel("Done Editing")
@@ -746,7 +746,7 @@ struct FeedsStartPage: View {
                     editMode = .active
                   } label: {
                     Image(systemName: "slider.horizontal.3")
-                      .font(.system(size: 16, weight: .medium))
+                      .appFont(size: 16)
                   }
                   .tint(.accentColor.opacity(0.8))
                   .accessibility(label: Text("Edit Feeds"))

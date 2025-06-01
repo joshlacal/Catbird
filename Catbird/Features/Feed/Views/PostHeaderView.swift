@@ -24,14 +24,14 @@ struct PostHeaderView: View {
                 // DisplayName with potential truncation
                 if displayName != "" {
                     Text(displayName)
-                        .font(.headline)
+                        .appHeadline()
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .layoutPriority(1)
                 }
                 // Handle with conditional visibility and truncation
                 Text("@\(handle)")
-                    .font(.body)
+                    .appBody()
                     .foregroundColor(.gray)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -45,7 +45,7 @@ struct PostHeaderView: View {
                     .accessibilityHidden(true)
                 
                 Text(formatTimeAgo(from: timeAgo))
-                    .font(.body)
+                    .appBody()
                     .foregroundStyle(.gray)
                     .accessibilityLabel(formatTimeAgo(from: timeAgo, forAccessibility: true))
 

@@ -1958,17 +1958,17 @@ struct ParentPostView: View {
 
     case .appBskyFeedDefsNotFoundPost(let notFoundPost):
       Text("Parent post not found \(notFoundPost.uri)")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundColor(.red)
 
     case .appBskyFeedDefsBlockedPost(let blockedPost):
       BlockedPostView(blockedPost: blockedPost, path: $path)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundColor(.gray)
 
     case .unexpected(let unexpected):
       Text("Unexpected parent post type: \(unexpected.textRepresentation)")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundColor(.orange)
 
     case .pending:
@@ -2044,10 +2044,10 @@ struct ReplyView: View {
         }) {
           HStack {
             Text("Continue thread")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundColor(.accentColor)
             Image(systemName: "chevron.right")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundColor(.accentColor)
           }
           .padding(.vertical, 8)

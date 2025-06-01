@@ -34,22 +34,22 @@ struct StarterPackCardView: View {
                         if case .knownType(let recordValue) = starterPack.record,
                            let pack = recordValue as? AppBskyGraphStarterpack {
                             Text(pack.name)
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                                 .lineLimit(1)
                         } else {
                             Text("Starter Pack")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                         }
                         
                         Text("By @\(starterPack.creator.handle)")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     
                     Spacer()
                     
                     Image(systemName: "chevron.right")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
                 
@@ -80,7 +80,7 @@ struct StarterPackCardView: View {
                     }
                     
                     Text("Tap to see recommended profiles and feeds")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .padding(.leading, 4)
                 }
@@ -101,11 +101,11 @@ struct StarterPackCardView: View {
     private func statView(count: Int, label: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(count)")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.semibold)
             
             Text(label)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
         }
     }

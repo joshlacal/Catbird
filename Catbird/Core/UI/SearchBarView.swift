@@ -30,13 +30,13 @@ struct SearchBarView: View {
       // Enhanced search icon with glass treatment
       Image(systemName: "magnifyingglass")
         .foregroundColor(.secondary)
-        .font(.system(size: 16, weight: .medium))
+        .appFont(size: 16)
         .solariumText(intensity: intensity)
 
       // Enhanced text field
       TextField(placeholder, text: $searchText)
         .focused($isTextFieldFocused)
-        .font(.system(size: 16, weight: .regular))
+        .appFont(size: 16)
         .foregroundColor(.primary)
         .solariumText(intensity: intensity)
         .scrollDismissesKeyboard(.interactively)
@@ -61,7 +61,7 @@ struct SearchBarView: View {
         } label: {
           Image(systemName: "xmark.circle.fill")
             .foregroundColor(.secondary)
-            .font(.system(size: 16, weight: .medium))
+            .appFont(size: 16)
             .solariumText(intensity: intensity)
         }
         .motionAwareTransition(.scale.combined(with: .opacity), appSettings: appState.appSettings)

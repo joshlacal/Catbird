@@ -22,12 +22,12 @@ struct ErrorStateView: View {
     VStack(spacing: 16) {
       // Error icon
       Image(systemName: "exclamationmark.triangle.fill")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundColor(.orange)
       
       // Error title
       Text("Something went wrong")
-        .font(.title2)
+        .appFont(AppTextRole.title2)
         .fontWeight(.semibold)
         .multilineTextAlignment(.center)
       
@@ -35,13 +35,13 @@ struct ErrorStateView: View {
       VStack(spacing: 8) {
         if !context.isEmpty {
           Text(context)
-            .font(.body)
+                            .appFont(AppTextRole.body)
             .foregroundColor(.secondary)
             .multilineTextAlignment(.center)
         }
         
         Text(errorDescription)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
           .padding(.horizontal)
@@ -90,7 +90,7 @@ struct NetworkStateIndicator: View {
           .foregroundColor(.red)
         
         Text("No internet connection")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundColor(.primary)
         
         Spacer()
@@ -151,18 +151,18 @@ struct ContentUnavailableStateView: View {
     VStack(spacing: 20) {
       // Icon
       Image(systemName: systemImage)
-        .font(.system(size: 64))
+        .appFont(size: 64)
         .foregroundColor(.secondary)
       
       // Text content
       VStack(spacing: 8) {
         Text(title)
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
           .multilineTextAlignment(.center)
         
         Text(description)
-          .font(.body)
+                          .appFont(AppTextRole.body)
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
           .lineLimit(nil)
@@ -207,7 +207,7 @@ struct LoadingStateView: View {
       }
       
       Text(message)
-        .font(.body)
+                        .appFont(AppTextRole.body)
         .foregroundColor(.secondary)
         .multilineTextAlignment(.center)
     }

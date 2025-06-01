@@ -10,11 +10,11 @@ struct HelpSettingsView: View {
             // Header with information
             VStack(alignment: .leading, spacing: 8) {
                 Text("Bluesky Help Center")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .padding(.top)
                 
                 Text("Find answers to common questions and learn how to use Bluesky's features.")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -42,7 +42,7 @@ struct HelpSettingsView: View {
                 Divider()
                 
                 Text("Need more help?")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .padding(.top, 4)
                 
                 Link(destination: URL(string: "https://blueskyweb.zendesk.com/hc/en-us")!) {

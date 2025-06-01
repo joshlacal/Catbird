@@ -4,30 +4,12 @@ import Petrel
 struct ContentMediaSettingsView: View {
     @Environment(AppState.self) private var appState
     
-    // Local state for AppSettings
-    @State private var autoplayVideos: Bool
-    @State private var useInAppBrowser: Bool
-    @State private var showTrendingTopics: Bool
-    @State private var showTrendingVideos: Bool
-    
-    // External media preferences
-    @State private var allowYouTube: Bool
-    @State private var allowYouTubeShorts: Bool
-    @State private var allowVimeo: Bool
-    @State private var allowTwitch: Bool
-    @State private var allowGiphy: Bool
-    @State private var allowSpotify: Bool
-    @State private var allowAppleMusic: Bool
-    @State private var allowSoundCloud: Bool
-    @State private var allowFlickr: Bool
-    
-    // Local state for thread preferences
+    // Local state for thread preferences (server-synced)
     @State private var isLoadingThreadPrefs = true
-    @State private var threadSortOrder: String
-    @State private var prioritizeFollowedUsers: Bool
-    @State private var threadedReplies: Bool
+    @State private var threadSortOrder: String = "hot"
+    @State private var prioritizeFollowedUsers: Bool = true
     
-    // Feed preferences
+    // Feed preferences (server-synced)
     @State private var isLoadingFeedPrefs = true
     @State private var hideReplies: Bool = false
     @State private var hideRepliesByUnfollowed: Bool = false
@@ -36,59 +18,36 @@ struct ContentMediaSettingsView: View {
     
     @State private var errorMessage: String?
     
-    // Initialize with current settings
-    init() {
-        let appSettings = AppSettings()
-        
-        // Media playback
-        _autoplayVideos = State(initialValue: appSettings.autoplayVideos)
-        _useInAppBrowser = State(initialValue: appSettings.useInAppBrowser)
-        _showTrendingTopics = State(initialValue: appSettings.showTrendingTopics)
-        _showTrendingVideos = State(initialValue: appSettings.showTrendingVideos)
-        
-        // External media
-        _allowYouTube = State(initialValue: appSettings.allowYouTube)
-        _allowYouTubeShorts = State(initialValue: appSettings.allowYouTubeShorts)
-        _allowVimeo = State(initialValue: appSettings.allowVimeo)
-        _allowTwitch = State(initialValue: appSettings.allowTwitch)
-        _allowGiphy = State(initialValue: appSettings.allowGiphy)
-        _allowSpotify = State(initialValue: appSettings.allowSpotify)
-        _allowAppleMusic = State(initialValue: appSettings.allowAppleMusic)
-        _allowSoundCloud = State(initialValue: appSettings.allowSoundCloud)
-        _allowFlickr = State(initialValue: appSettings.allowFlickr)
-        
-        // Thread prefs
-        _threadSortOrder = State(initialValue: appSettings.threadSortOrder)
-        _prioritizeFollowedUsers = State(initialValue: appSettings.prioritizeFollowedUsers)
-        _threadedReplies = State(initialValue: appSettings.threadedReplies)
-    }
-    
     var body: some View {
         Form {
             // Media Playback Settings
             Section("Media Playback") {
-                Toggle("Autoplay Videos", isOn: $autoplayVideos)
-                    .onChange(of: autoplayVideos) {
-                        appState.appSettings.autoplayVideos = autoplayVideos
-                    }
+                Toggle("Autoplay Videos", isOn: Binding(
+                    get: { appState.appSettings.autoplayVideos },
+                    set: { appState.appSettings.autoplayVideos = $0 }
+                ))
+                .tint(.blue)
                 
-                Toggle("Open Links In-App", isOn: $useInAppBrowser)
-                    .onChange(of: useInAppBrowser) {
-                        appState.appSettings.useInAppBrowser = useInAppBrowser
-                    }
+                Toggle("Open Links In-App", isOn: Binding(
+                    get: { appState.appSettings.useInAppBrowser },
+                    set: { appState.appSettings.useInAppBrowser = $0 }
+                ))
+                .tint(.blue)
             }
             
             // Feed Content Settings
             Section("Feed Content") {
-                Toggle("Show Trending Topics", isOn: $showTrendingTopics)
-                    .onChange(of: showTrendingTopics) {
-                        appState.appSettings.showTrendingTopics = showTrendingTopics
-                    }
+                Toggle("Show Trending Topics", isOn: Binding(
+                    get: { appState.appSettings.showTrendingTopics },
+                    set: { appState.appSettings.showTrendingTopics = $0 }
+                ))
+                .tint(.blue)
                 
-                Toggle("Show Trending Videos", isOn: $showTrendingVideos)
-                    .onChange(of: showTrendingVideos) {
-                        appState.appSettings.showTrendingVideos = showTrendingVideos
-                    }
+                Toggle("Show Trending Videos", isOn: Binding(
+                    get: { appState.appSettings.showTrendingVideos },
+                    set: { appState.appSettings.showTrendingVideos = $0 }
+                ))
+                .tint(.blue)
             }
             
             // Feed View Preferences - synced with server
@@ -124,10 +83,10 @@ struct ContentMediaSettingsView: View {
                     ProgressView()
                 } else {
                     Picker("Thread Sort Order", selection: $threadSortOrder) {
-                        Text("Algorithmic").tag("ranked")
-                        Text("Latest First").tag("newest")
-                        Text("Oldest First").tag("oldest")
-                        Text("Most Likes").tag("most-likes")
+                        Text("Hot").tag("hot")
+                        Text("Top").tag("top")
+                        Text("Latest").tag("newest")
+                        Text("Oldest").tag("oldest")
                     }
                     .onChange(of: threadSortOrder) {
                         updateThreadViewPreference()
@@ -139,58 +98,84 @@ struct ContentMediaSettingsView: View {
                             updateThreadViewPreference()
                             appState.appSettings.prioritizeFollowedUsers = prioritizeFollowedUsers
                         }
+                        .tint(.blue)
                     
-                    Toggle("Threaded Replies View", isOn: $threadedReplies)
-                        .onChange(of: threadedReplies) {
-                            appState.appSettings.threadedReplies = threadedReplies
-                        }
+                    Toggle("Threaded Replies View", isOn: Binding(
+                        get: { appState.appSettings.threadedReplies },
+                        set: { appState.appSettings.threadedReplies = $0 }
+                    ))
+                    .tint(.blue)
                 }
             }
             
             // External Media Embeds
-            Section("External Media Embeds") {
-                ExternalMediaToggle(service: "YouTube", icon: "video.fill", isOn: $allowYouTube) {
-                    appState.appSettings.allowYouTube = allowYouTube
-                }
+            Section {
+                Toggle("YouTube", isOn: Binding(
+                    get: { appState.appSettings.allowYouTube },
+                    set: { appState.appSettings.allowYouTube = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "YouTube Shorts", icon: "video.fill", isOn: $allowYouTubeShorts) {
-                    appState.appSettings.allowYouTubeShorts = allowYouTubeShorts
-                }
+                Toggle("YouTube Shorts", isOn: Binding(
+                    get: { appState.appSettings.allowYouTubeShorts },
+                    set: { appState.appSettings.allowYouTubeShorts = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "Vimeo", icon: "video.fill", isOn: $allowVimeo) {
-                    appState.appSettings.allowVimeo = allowVimeo
-                }
+                Toggle("Vimeo", isOn: Binding(
+                    get: { appState.appSettings.allowVimeo },
+                    set: { appState.appSettings.allowVimeo = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "Twitch", icon: "gamecontroller.fill", isOn: $allowTwitch) {
-                    appState.appSettings.allowTwitch = allowTwitch
-                }
+                Toggle("Twitch", isOn: Binding(
+                    get: { appState.appSettings.allowTwitch },
+                    set: { appState.appSettings.allowTwitch = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "GIPHY", icon: "photo.on.rectangle.angled", isOn: $allowGiphy) {
-                    appState.appSettings.allowGiphy = allowGiphy
-                }
+                Toggle("GIPHY", isOn: Binding(
+                    get: { appState.appSettings.allowGiphy },
+                    set: { appState.appSettings.allowGiphy = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "Spotify", icon: "music.note", isOn: $allowSpotify) {
-                    appState.appSettings.allowSpotify = allowSpotify
-                }
+                Toggle("Spotify", isOn: Binding(
+                    get: { appState.appSettings.allowSpotify },
+                    set: { appState.appSettings.allowSpotify = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "Apple Music", icon: "music.note", isOn: $allowAppleMusic) {
-                    appState.appSettings.allowAppleMusic = allowAppleMusic
-                }
+                Toggle("Apple Music", isOn: Binding(
+                    get: { appState.appSettings.allowAppleMusic },
+                    set: { appState.appSettings.allowAppleMusic = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "SoundCloud", icon: "music.note", isOn: $allowSoundCloud) {
-                    appState.appSettings.allowSoundCloud = allowSoundCloud
-                }
+                Toggle("SoundCloud", isOn: Binding(
+                    get: { appState.appSettings.allowSoundCloud },
+                    set: { appState.appSettings.allowSoundCloud = $0 }
+                ))
+                .tint(.blue)
                 
-                ExternalMediaToggle(service: "Flickr", icon: "photo.fill", isOn: $allowFlickr) {
-                    appState.appSettings.allowFlickr = allowFlickr
-                }
+                Toggle("Flickr", isOn: Binding(
+                    get: { appState.appSettings.allowFlickr },
+                    set: { appState.appSettings.allowFlickr = $0 }
+                ))
+                .tint(.blue)
+            } header: {
+                Text("External Media Embeds")
+            } footer: {
+                Text("Control which external media services are allowed to display embedded content in posts.")
+                    .appFont(AppTextRole.footnote)
+                    .foregroundStyle(.secondary)
             }
             
             if let error = errorMessage {
                 Section {
                     Text(error)
                         .foregroundStyle(.red)
-                        .font(.callout)
+                        .appFont(AppTextRole.callout)
                 }
             }
             
@@ -206,6 +191,11 @@ struct ContentMediaSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadServerPreferences()
+        }
+        .onAppear {
+            // Initialize local state from current app settings
+            threadSortOrder = appState.appSettings.threadSortOrder
+            prioritizeFollowedUsers = appState.appSettings.prioritizeFollowedUsers
         }
     }
     
@@ -276,78 +266,39 @@ struct ContentMediaSettingsView: View {
     }
     
     private func resetToDefaults() {
-        // Reset media playback
-        autoplayVideos = true
-        useInAppBrowser = true
-        showTrendingTopics = true
-        showTrendingVideos = true
+        // Reset media playback settings
+        appState.appSettings.autoplayVideos = true
+        appState.appSettings.useInAppBrowser = true
+        appState.appSettings.showTrendingTopics = true
+        appState.appSettings.showTrendingVideos = true
         
-        // Reset external media
-        allowYouTube = true
-        allowYouTubeShorts = true
-        allowVimeo = true
-        allowTwitch = true
-        allowGiphy = true
-        allowSpotify = true
-        allowAppleMusic = true
-        allowSoundCloud = true
-        allowFlickr = true
+        // Reset external media settings
+        appState.appSettings.allowYouTube = true
+        appState.appSettings.allowYouTubeShorts = true
+        appState.appSettings.allowVimeo = true
+        appState.appSettings.allowTwitch = true
+        appState.appSettings.allowGiphy = true
+        appState.appSettings.allowSpotify = true
+        appState.appSettings.allowAppleMusic = true
+        appState.appSettings.allowSoundCloud = true
+        appState.appSettings.allowFlickr = true
         
-        // Reset thread prefs - sync with server first, then with AppSettings
-        threadSortOrder = "ranked"
+        // Reset thread preferences
+        threadSortOrder = "hot"
         prioritizeFollowedUsers = true
-        threadedReplies = false
+        appState.appSettings.threadSortOrder = threadSortOrder
+        appState.appSettings.prioritizeFollowedUsers = prioritizeFollowedUsers
+        appState.appSettings.threadedReplies = false
         
-        // Reset feed prefs
+        // Reset feed preferences
         hideReplies = false
         hideRepliesByUnfollowed = false
         hideReposts = false
         hideQuotePosts = false
         
-        // Update app settings
-        appState.appSettings.autoplayVideos = autoplayVideos
-        appState.appSettings.useInAppBrowser = useInAppBrowser
-        appState.appSettings.showTrendingTopics = showTrendingTopics
-        appState.appSettings.showTrendingVideos = showTrendingVideos
-        
-        appState.appSettings.allowYouTube = allowYouTube
-        appState.appSettings.allowYouTubeShorts = allowYouTubeShorts
-        appState.appSettings.allowVimeo = allowVimeo
-        appState.appSettings.allowTwitch = allowTwitch
-        appState.appSettings.allowGiphy = allowGiphy
-        appState.appSettings.allowSpotify = allowSpotify
-        appState.appSettings.allowAppleMusic = allowAppleMusic
-        appState.appSettings.allowSoundCloud = allowSoundCloud
-        appState.appSettings.allowFlickr = allowFlickr
-        
-        appState.appSettings.threadSortOrder = threadSortOrder
-        appState.appSettings.prioritizeFollowedUsers = prioritizeFollowedUsers
-        appState.appSettings.threadedReplies = threadedReplies
-        
         // Update server preferences
         updateThreadViewPreference()
         updateFeedViewPreference()
-    }
-}
-
-struct ExternalMediaToggle: View {
-    let service: String
-    let icon: String
-    @Binding var isOn: Bool
-    let onToggle: () -> Void
-    
-    var body: some View {
-        Toggle(isOn: $isOn) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.blue)
-                    .frame(width: 24)
-                Text(service)
-            }
-        }
-        .onChange(of: isOn) { _ in
-            onToggle()
-        }
     }
 }
 

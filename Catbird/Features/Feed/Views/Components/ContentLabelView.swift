@@ -59,7 +59,7 @@ struct ContentLabelBadge: View {
     
     var body: some View {
         Text(label.val)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -83,7 +83,7 @@ struct ContentLabelView: View {
                         .foregroundStyle(.orange)
                     
                     Text("Content Warning")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
                     
@@ -95,7 +95,7 @@ struct ContentLabelView: View {
                         }
                     } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -161,13 +161,13 @@ struct ContentLabelManager: View {
                     // Warning overlay with reveal button
                     VStack {
                         Text("Sensitive \(contentType.capitalized)")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .fontWeight(.medium)
                             .foregroundStyle(.white)
                             .padding(.bottom, 4)
                         
                         Text("This content may not be appropriate for all audiences")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .multilineTextAlignment(.center)
                             .foregroundStyle(.white.opacity(0.8))
                             .padding(.bottom, 12)
@@ -178,7 +178,7 @@ struct ContentLabelManager: View {
                             }
                         } label: {
                             Text("Show Content")
-                                .font(.footnote)
+                                .appFont(AppTextRole.footnote)
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
@@ -210,7 +210,7 @@ struct ContentLabelManager: View {
                                 }
                             } label: {
                                 Image(systemName: "eye.slash")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .padding(6)
                                     .background(Circle().fill(Color.black.opacity(0.6)))
                                     .foregroundStyle(.white)

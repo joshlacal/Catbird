@@ -15,87 +15,9 @@ struct TextStylingExamples: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
-                // Section: Basic Typography
-                sectionHeader("Basic Typography")
-                Group {
-                    // SF Pro Text styles for smaller sizes
-                    Text("SF Pro Text")
-                        .font(.sfProText(size: 17, weight: .medium))
-                    
-                    // SF Pro Display for headlines
-                    Text("SF Pro Display Headline")
-                        .font(.sfProDisplay(size: 28, weight: .bold))
-                    
-                    // SF Pro Rounded
-                    Text("SF Pro Rounded")
-                        .font(.sfProRounded(size: 17, weight: .medium))
-                }
-                .padding(.horizontal)
-                
-                // Section: Advanced Typography
-                sectionHeader("Advanced Typography")
-                Group {
-                    // Gradient Text
-                    Text("Gradient Text Effect")
-                        .font(.system(size: 26, weight: .bold))
-                        .gradientText(colors: [.blue, .purple, .pink])
-                    
-                    // Text with 3D effect
-                    Text("3D Depth Effect")
-                        .font(.system(size: 24, weight: .black))
-                        .textDepth(radius: 0.8, y: 1.0, opacity: 0.5)
-                    
-                    // Text with glow effect
-                    Text("Glow Effect")
-                        .font(.system(size: 22, weight: .bold))
-                        .textGlow(color: .blue.opacity(0.7), radius: 5)
-                    
-                    // Variable width text
-                    Text("Variable Width Typography")
-                        .customScaledFont(size: 20, weight: .bold, width: 62)
-                    
-                    // Custom letter spacing
-                    Text("EXPANDED LETTER SPACING")
-                        .font(.system(size: 16, weight: .medium))
-                        .tracking(0.8)
-                        .textCase(.uppercase)
-                    
-                    // Condensed letter spacing
-                    Text("Condensed spacing")
-                        .font(.system(size: 18, weight: .semibold))
-                        .tracking(-0.5)
-                }
-                .padding(.horizontal)
-                
-                // Section: Animated Typography
-                sectionHeader("Interactive Typography")
-                Group {
-                    // Animated text scale
-                    Text("Tap to Animate")
-                        .font(.system(size: animateText ? 22 : 18, weight: .bold, design: .rounded))
-                        .foregroundColor(animateText ? .blue : .primary)
-                        .scaleEffect(animateText ? 1.1 : 1.0)
-                        .animation(.spring(response: 0.4, dampingFraction: 0.6), value: animateText)
-                        .onTapGesture {
-                            animateText.toggle()
-                        }
-                    
-                    // Text with multiple styles inline
-                    Text("Mix ") + 
-                    Text("and ").italic() + 
-                    Text("match ").bold() + 
-                    Text("styles").foregroundColor(.blue)
-                    
-                    // Text with background highlight
-                    Text("Highlighted Important Text")
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.yellow.opacity(0.3))
-                        )
-                }
-                .padding(.horizontal)
+                basicTypographySection
+                advancedTypographySection  
+                interactiveTypographySection
                 
                 // Section: Custom Text Modifiers
                 sectionHeader("Custom Text Modifiers")
@@ -119,15 +41,15 @@ struct TextStylingExamples: View {
                 Group {
                     // Note: Some of these features require custom font implementation
                     Text("Stylistic Alternates")
-                        .font(.system(size: 20, weight: .medium))
+                        .appFont(size: 20, weight: .medium)
                         .textCase(.uppercase)
                         .tracking(0.5)
                     
                     Text("Oldstyle Numerals: 1234567890")
-                        .font(.system(size: 18, weight: .regular, design: .serif))
+                        .appFont(size: 18, weight: .regular)
                     
                     Text("Fractions: 1/2 3/4 7/8")
-                        .font(.system(size: 18, weight: .regular))
+                        .appFont(size: 18, weight: .regular)
                 }
                 .padding(.horizontal)
                 
@@ -138,7 +60,7 @@ struct TextStylingExamples: View {
                         .customScaledFont(relativeTo: .headline)
                     
                     Text("High Legibility Weight")
-                        .font(.system(size: 18, weight: .regular))
+                        .appFont(size: 18, weight: .regular)
                         .environment(\.legibilityWeight, .bold)
                 }
                 .padding(.horizontal)
@@ -147,6 +69,96 @@ struct TextStylingExamples: View {
         }
         .navigationTitle("Typography Examples")
         .background(Color(.systemGroupedBackground))
+    }
+    
+    // MARK: - Section Views
+    
+    @ViewBuilder
+    private var basicTypographySection: some View {
+        sectionHeader("Basic Typography")
+        Group {
+            // SF Pro Text styles for smaller sizes
+            Text("SF Pro Text")
+                .appFont(Font.sfProText(size: 17, weight: .medium))
+            
+            // SF Pro Display for headlines
+            Text("SF Pro Display Headline")
+                .appFont(Font.sfProDisplay(size: 28, weight: .bold))
+            
+            // SF Pro Rounded
+            Text("SF Pro Rounded")
+                .appFont(Font.sfProRounded(size: 17, weight: .medium))
+        }
+        .padding(.horizontal)
+    }
+    
+    @ViewBuilder
+    private var advancedTypographySection: some View {
+        sectionHeader("Advanced Typography")
+        Group {
+            // Gradient Text
+            Text("Gradient Text Effect")
+                .appFont(size: 26, weight: .bold)
+                .gradientText(colors: [.blue, .purple, .pink])
+            
+            // Text with 3D effect
+            Text("3D Depth Effect")
+                .appFont(size: 24, weight: .black)
+                .textDepth(radius: 0.8, y: 1.0, opacity: 0.5)
+            
+            // Text with glow effect
+            Text("Glow Effect")
+                .appFont(size: 22, weight: .bold)
+                .textGlow(color: .blue.opacity(0.7), radius: 5)
+            
+            // Variable width text
+            Text("Variable Width Typography")
+                .customScaledFont(size: 20, weight: .bold, width: 62)
+            
+            // Custom letter spacing
+            Text("EXPANDED LETTER SPACING")
+                .appFont(size: 16, weight: .medium)
+                .tracking(0.8)
+                .textCase(.uppercase)
+            
+            // Condensed letter spacing
+            Text("Condensed spacing")
+                .appFont(size: 18, weight: .semibold)
+                .tracking(-0.5)
+        }
+        .padding(.horizontal)
+    }
+    
+    @ViewBuilder
+    private var interactiveTypographySection: some View {
+        sectionHeader("Interactive Typography")
+        Group {
+            // Animated text scale
+            Text("Tap to Animate")
+                .appFont(size: animateText ? 22 : 18, weight: .bold)
+                .foregroundColor(animateText ? .blue : .primary)
+                .scaleEffect(animateText ? 1.1 : 1.0)
+                .animation(.spring(response: 0.4, dampingFraction: 0.6), value: animateText)
+                .onTapGesture {
+                    animateText.toggle()
+                }
+            
+            // Text with multiple styles inline
+            Text("Mix ") + 
+            Text("and ").italic() + 
+            Text("match ").bold() + 
+            Text("styles").foregroundColor(.blue)
+            
+            // Text with background highlight
+            Text("Highlighted Important Text")
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.yellow.opacity(0.3))
+                )
+        }
+        .padding(.horizontal)
     }
     
     @ViewBuilder
@@ -170,7 +182,7 @@ struct AnimatedLettersView: View {
         HStack(spacing: 0) {
             ForEach(Array(text.enumerated()), id: \.offset) { index, character in
                 Text(String(character))
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .appFont(size: 24, weight: .bold)
                     .foregroundColor(animatingIndices.contains(index) ? .blue : .primary)
                     .scaleEffect(animatingIndices.contains(index) ? 1.5 : 1.0)
                     .animation(.spring(response: 0.3, dampingFraction: 0.6), value: animatingIndices.contains(index))

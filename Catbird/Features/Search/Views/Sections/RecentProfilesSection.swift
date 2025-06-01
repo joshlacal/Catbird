@@ -19,12 +19,12 @@ struct RecentProfilesSection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Recently Viewed")
-                    .font(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+                    .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
 
                 Spacer()
                 
                 Button("Clear", action: onClear)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.accentColor)
             }
             .padding(.horizontal)
@@ -46,7 +46,7 @@ struct RecentProfilesSection: View {
                                 
                                 // Display name or handle
                                 Text(profile.displayName ?? "@\(profile.handle)")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .multilineTextAlignment(.center)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)

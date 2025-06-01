@@ -41,11 +41,11 @@ struct AltTextEditorView: View {
                 // Alt text guidance
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Add a description for people who can't see this content")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .foregroundStyle(.primary)
                     
                     Text("Good descriptions are concise, accurate, and focus on what's important in the image or video.")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -69,7 +69,7 @@ struct AltTextEditorView: View {
                     
                     // Character count
                     Text("\(remainingChars) characters remaining")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(remainingChars < 50 ? .orange : .secondary)
                         .padding(.trailing, 4)
                 }

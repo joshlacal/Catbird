@@ -1482,6 +1482,11 @@ final class PostComposerViewModel {
     mentionSuggestions = []
   }
 
+  func insertEmoji(_ emoji: String) {
+    postText += emoji
+    updatePostContent()
+  }
+
   func toggleLanguage(_ lang: LanguageCodeContainer) {
     if let index = selectedLanguages.firstIndex(of: lang) {
       selectedLanguages.remove(at: index)

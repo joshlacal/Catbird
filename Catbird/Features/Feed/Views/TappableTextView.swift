@@ -64,7 +64,7 @@ struct TappableTextView: View {
             if containsOnlyEmojis {
                 // If the string contains only emojis, use a larger font size
                 Text(attributedString)
-                    .font(.system(size: effectiveTextSize ?? 27, weight: textWeight, design: textDesign))
+                    .appFont(size: effectiveTextSize ?? 27, weight: textWeight, relativeTo: textStyle)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .tracking(letterSpacing)
@@ -75,13 +75,14 @@ struct TappableTextView: View {
             } else {
                 // Regular text handling
                 Text(attributedString)
-                    .customScaledFont(
-                        size: effectiveTextSize,
-                        weight: textWeight,
-                        width: fontWidth,
-                        relativeTo: textStyle,
-                        design: textDesign
-                    )
+                    .appFont(size: effectiveTextSize ?? 27, weight: textWeight, relativeTo: textStyle)
+//                    .customScaledFont(
+//                        size: effectiveTextSize,
+//                        weight: textWeight,
+//                        width: fontWidth,
+//                        relativeTo: textStyle,
+//                        design: textDesign
+//                    )
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .tracking(letterSpacing)

@@ -38,17 +38,17 @@ struct StarterPackRowView: View {
                 
                 if case .knownType(let obj) = pack.record, let starterPack = obj as? AppBskyGraphStarterpack {
                     Text(starterPack.name)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .lineLimit(1)
                 } else {
                     Text("Starter Pack")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .lineLimit(1)
 
                 }
                 
                 Text("By @\(pack.creator.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 
                 if 
@@ -56,7 +56,7 @@ struct StarterPackRowView: View {
                    let starterPack = obj as? AppBskyGraphStarterpack,
                    let description = starterPack.description, !description.isEmpty {
                     Text(description)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                         .padding(.top, 2)
@@ -65,7 +65,7 @@ struct StarterPackRowView: View {
                 // Pack stats
                 HStack(spacing: 12) {
                     Label("\(pack.listItemCount ?? 0) profiles", systemImage: "person.2")
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                 }
                 .padding(.top, 2)
@@ -74,7 +74,7 @@ struct StarterPackRowView: View {
             Spacer()
             
             Image(systemName: "chevron.right")
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundColor(.secondary)
         }
         .padding(.vertical, 12)

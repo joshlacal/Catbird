@@ -250,7 +250,7 @@ struct CaptionModifier: ViewModifier {
     
     func body(content: Content) -> some View {
         content
-            .font(.sfProText(size: Typography.Size.caption, weight: .medium))
+            .font(.sfProText(size: Typography.Size.caption, weight: Typography.Weight.medium))
             .tracking(Typography.LetterSpacing.wide)
             .foregroundColor(color)
             .textCase(.uppercase)
@@ -326,43 +326,47 @@ extension View {
     /// Quick helpers for common text roles using the app font system
     /// These automatically respect user font size, style, and accessibility preferences
     func appHeadline() -> some View {
-        self.appFont(.headline)
+        self.appFont(AppTextRole.headline)
     }
     
     func appTitle() -> some View {
-        self.appFont(.title1)
+        self.appFont(AppTextRole.title1)
     }
     
     func appBody() -> some View {
-        self.appFont(.body)
+        self.appFont(AppTextRole.body)
     }
     
     func appCaption() -> some View {
-        self.appFont(.caption)
+        self.appFont(AppTextRole.caption)
     }
     
     func appSubheadline() -> some View {
-        self.appFont(.subheadline)
+        self.appFont(AppTextRole.subheadline)
     }
     
     func appLargeTitle() -> some View {
-        self.appFont(.largeTitle)
+        self.appFont(AppTextRole.largeTitle)
     }
     
     func appTitle2() -> some View {
-        self.appFont(.title2)
+        self.appFont(AppTextRole.title2)
     }
     
     func appTitle3() -> some View {
-        self.appFont(.title3)
+        self.appFont(AppTextRole.title3)
     }
     
     func appCallout() -> some View {
-        self.appFont(.callout)
+        self.appFont(AppTextRole.callout)
     }
     
     func appFootnote() -> some View {
-        self.appFont(.footnote)
+        self.appFont(AppTextRole.footnote)
+    }
+    
+    func appCaption2() -> some View {
+        self.appFont(AppTextRole.caption2)
     }
     
     /// Apply app text style with custom parameters
@@ -492,14 +496,15 @@ extension Font {
             // Traditional Typography Examples
             Group {
                 Text("Traditional Typography Examples")
-                    .font(.title2.bold())
+                    .appTitle2()
+                    .fontWeight(.bold)
                     .padding(.bottom, 8)
                 
                 Text("Standard SF Pro Headline")
                     .headlineStyle()
                 
                 Text("Custom SF Pro Display")
-                    .font(.sfProDisplay(size: 24, weight: .bold))
+                    .font(.sfProDisplay(size: 24, weight: Typography.Weight.bold))
                     .tracking(Typography.LetterSpacing.tight)
                 
                 Text("SF Pro Rounded Style")
@@ -520,7 +525,8 @@ extension Font {
             // New App Font System Examples
             Group {
                 Text("App Font System (Accessibility-Aware)")
-                    .font(.title2.bold())
+                    .appTitle2()
+                    .fontWeight(.bold)
                     .padding(.bottom, 8)
                 
                 VStack(alignment: .leading, spacing: 8) {
@@ -560,7 +566,7 @@ extension Font {
                         .appText(size: 20, weight: .medium)
                     
                     Text("Accessibility-optimized text that respects user preferences")
-                        .appFont(.body)
+                        .appFont(AppTextRole.body)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -573,7 +579,8 @@ extension Font {
             // Effects Examples
             Group {
                 Text("Text Effects")
-                    .font(.title2.bold())
+                    .appTitle2()
+                    .fontWeight(.bold)
                     .padding(.bottom, 8)
                 
                 Text("Gradient Text Effect")

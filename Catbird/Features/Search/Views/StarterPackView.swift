@@ -45,14 +45,14 @@ struct StarterPackView: View {
     private func errorView(_ error: Error) -> some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48))
+                .appFont(size: 48)
                 .foregroundColor(.orange)
             
             Text("Error loading starter pack")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Text(error.localizedDescription)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
@@ -79,14 +79,14 @@ struct StarterPackView: View {
     private var notFoundView: some View {
         VStack(spacing: 16) {
             Image(systemName: "questionmark.circle")
-                .font(.system(size: 48))
+                .appFont(size: 48)
                 .foregroundColor(.secondary)
             
             Text("Starter Pack Not Found")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Text("This starter pack might have been deleted or is unavailable.")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
@@ -117,7 +117,7 @@ struct StarterPackView: View {
                    let starterpack = recordValue as? AppBskyGraphStarterpack,
                    let description = starterpack.description {
                     Text(description)
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .padding(.horizontal)
                 }
                 
@@ -157,17 +157,17 @@ struct StarterPackView: View {
                 if case .knownType(let recordValue) = pack.record,
                    let starterpack = recordValue as? AppBskyGraphStarterpack {
                     Text(starterpack.name)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                         .fontWeight(.bold)
                 } else {
                     Text("Starter Pack")
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                         .fontWeight(.bold)
                 }
                 
                 // Creator
                 Text("Created by @\(pack.creator.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
             }
             
@@ -181,20 +181,20 @@ struct StarterPackView: View {
             // Profile count
             VStack {
                 Text("\(pack.listItemsSample?.count ?? 0)")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Text("Profiles")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             
             // Feeds count
             VStack {
                 Text("\(pack.feeds?.count ?? 0)")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Text("Feeds")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             
@@ -202,10 +202,10 @@ struct StarterPackView: View {
             if let joinedWeekCount = pack.joinedWeekCount {
                 VStack {
                     Text("\(joinedWeekCount)")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Text("Joined this week")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -214,10 +214,10 @@ struct StarterPackView: View {
             if let joinedAllTimeCount = pack.joinedAllTimeCount {
                 VStack {
                     Text("\(joinedAllTimeCount)")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Text("All-time joins")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -233,7 +233,7 @@ struct StarterPackView: View {
     private func profilesSection(_ profiles: [AppBskyGraphDefs.ListItemView]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Suggested Profiles")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .padding(.horizontal)
             
             VStack(spacing: 0) {
@@ -248,16 +248,16 @@ struct StarterPackView: View {
                             
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(subject.displayName ?? "@\(subject.handle)")
-                                    .font(.headline)
+                                    .appFont(AppTextRole.headline)
                                     .foregroundColor(.primary)
                                 
                                 Text("@\(subject.handle)")
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .foregroundColor(.secondary)
                                 
                                 if let description = subject.description, !description.isEmpty {
                                     Text(description)
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
                                 }
@@ -266,7 +266,7 @@ struct StarterPackView: View {
                             Spacer()
                             
                             Image(systemName: "chevron.right")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.secondary)
                         }
                         .padding()
@@ -290,7 +290,7 @@ struct StarterPackView: View {
     private func feedsSection(_ feeds: [AppBskyFeedDefs.GeneratorView]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Suggested Feeds")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .padding(.horizontal)
             
             VStack(spacing: 0) {
@@ -322,16 +322,16 @@ struct StarterPackView: View {
                             
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(feed.displayName)
-                                    .font(.headline)
+                                    .appFont(AppTextRole.headline)
                                     .foregroundColor(.primary)
                                 
                                 Text("By @\(feed.creator.handle)")
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .foregroundColor(.secondary)
                                 
                                 if let description = feed.description, !description.isEmpty {
                                     Text(description)
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
                                 }
@@ -340,7 +340,7 @@ struct StarterPackView: View {
                             Spacer()
                             
                             Image(systemName: "chevron.right")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.secondary)
                         }
                         .padding()

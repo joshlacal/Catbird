@@ -190,11 +190,11 @@ struct ChatDataExportView: View {
     NavigationView {
       VStack(spacing: 20) {
         Image(systemName: "square.and.arrow.up.circle")
-          .font(.system(size: 64))
+          .appFont(size: 64)
           .foregroundColor(.blue)
         
         Text("Chat Data Exported")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
         
         Text("Your chat data has been exported successfully. You can share or save this file.")
@@ -204,7 +204,7 @@ struct ChatDataExportView: View {
         if let data = exportedData {
           VStack(spacing: 12) {
             Text("File Size: \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
             
             Button {

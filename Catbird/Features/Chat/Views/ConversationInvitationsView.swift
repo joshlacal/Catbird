@@ -107,7 +107,7 @@ struct ConversationInvitationRow: View {
                 .frame(width: 32, height: 32)
               
               Text("+\(otherMembers.count - 3)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.medium)
             }
           }
@@ -117,7 +117,7 @@ struct ConversationInvitationRow: View {
         
 //        // Timestamp
 //          Text(conversation.createdAt.date.formatted(date: .abbreviated, time: .shortened))
-//          .font(.caption)
+//          .appFont(AppTextRole.caption)
 //          .foregroundColor(.secondary)
       }
       
@@ -125,23 +125,23 @@ struct ConversationInvitationRow: View {
       VStack(alignment: .leading, spacing: 4) {
         if otherMembers.count == 1 {
           Text("@\(otherMembers.first?.handle.description ?? "unknown") wants to start a conversation")
-            .font(.body)
+                            .appFont(AppTextRole.body)
             .fontWeight(.medium)
           
           if let displayName = otherMembers.first?.displayName {
             Text(displayName)
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
           }
         } else {
           Text("\(otherMembers.count) people want to start a group conversation")
-            .font(.body)
+                            .appFont(AppTextRole.body)
             .fontWeight(.medium)
           
           let names = otherMembers.prefix(2).compactMap { $0.displayName ?? "@\(otherMembers.first?.handle.description ?? "unknown")" }
           if !names.isEmpty {
             Text(names.joined(separator: ", ") + (otherMembers.count > 2 ? " and others" : ""))
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
           }
         }

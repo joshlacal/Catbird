@@ -1,6 +1,7 @@
 import Foundation
 import Petrel
 import OSLog
+import OrderedCollections
 
 // MARK: - Feed Slice Data Structures
 
@@ -93,10 +94,10 @@ final class FeedTuner {
     seenKeys.removeAll()
     seenUris.removeAll()
     
-    // Performance optimization: reduce logging in hot path
-    // Group posts by root URI for more efficient thread consolidation
-    var rootGroups: [String: [AppBskyFeedDefs.FeedViewPost]] = [:]
+    // Use OrderedDictionary to preserve feed order and prevent randomization
+    var rootGroups: OrderedDictionary<String, [AppBskyFeedDefs.FeedViewPost]> = [:]
     
+    // Group posts by root URI while preserving order
     for post in rawPosts {
       let rootUri: String
       if case .appBskyFeedDefsPostView(let rootPost) = post.reply?.root {
@@ -113,38 +114,56 @@ final class FeedTuner {
     
     logger.debug("🧵 Grouped \(rawPosts.count) posts into \(rootGroups.count) root threads")
     
-    // Process each group to create optimized slices
+    // Process each group to create ONE slice per thread (prevents duplicates)
     var allSlices: [FeedSlice] = []
     
     for (rootUri, postsInGroup) in rootGroups {
-      // Sort posts in group by creation time for proper thread ordering
-      let sortedPosts = postsInGroup.sorted { post1, post2 in
-        guard case .knownType(let record1) = post1.post.record,
-              let feedPost1 = record1 as? AppBskyFeedPost,
-              case .knownType(let record2) = post2.post.record,
-              let feedPost2 = record2 as? AppBskyFeedPost else {
-          return false
-        }
-        return feedPost1.createdAt < feedPost2.createdAt
+      // Create only ONE slice per thread group to prevent duplicates
+      if let threadSlice = createThreadSlice(from: postsInGroup, rootUri: rootUri) {
+        allSlices.append(threadSlice)
       }
-      
-      // Create slices for each post in the sorted group
-      let groupSlices = sortedPosts.compactMap { post in
-        return createSlice(from: post)
-      }
-      
-      allSlices.append(contentsOf: groupSlices)
     }
     
-    // Apply deduplication with improved algorithm
+    // Apply deduplication as final safety net
     let dedupedSlices = deduplicateSlicesOptimized(allSlices)
     
-    logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(dedupedSlices.count) slices (optimized)")
+    logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(dedupedSlices.count) slices (fixed duplicates & order)")
     
     return dedupedSlices
   }
   
-  // MARK: - Slice Creation
+  // MARK: - Thread Slice Creation
+  
+  /// Creates a single slice from a group of related posts (prevents duplicates)
+  private func createThreadSlice(from posts: [AppBskyFeedDefs.FeedViewPost], rootUri: String) -> FeedSlice? {
+    guard !posts.isEmpty else { return nil }
+    
+    // Sort posts by creation time for proper thread ordering
+    let sortedPosts = posts.sorted { post1, post2 in
+      guard case .knownType(let record1) = post1.post.record,
+            let feedPost1 = record1 as? AppBskyFeedPost,
+            case .knownType(let record2) = post2.post.record,
+            let feedPost2 = record2 as? AppBskyFeedPost else {
+        return false
+      }
+      return feedPost1.createdAt < feedPost2.createdAt
+    }
+    
+    // Select the primary post for this thread:
+    // 1. If root post is in the feed, use it
+    // 2. Otherwise, use the most recent post in the group
+    let primaryPost: AppBskyFeedDefs.FeedViewPost
+    if let rootPost = sortedPosts.first(where: { $0.post.uri.uriString() == rootUri }) {
+      primaryPost = rootPost
+    } else {
+      primaryPost = sortedPosts.last! // Most recent post
+    }
+    
+    // Create slice from the primary post
+    return createSlice(from: primaryPost)
+  }
+  
+  // MARK: - Single Slice Creation
   
   /// Creates a slice from a single FeedViewPost by extracting embedded thread context
   private func createSlice(from feedPost: AppBskyFeedDefs.FeedViewPost) -> FeedSlice? {

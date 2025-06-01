@@ -54,9 +54,9 @@ struct ReplyThreadView: View {
                             // Author info
                             HStack {
                                 Text(parent.author.displayName ?? parent.author.handle.description)
-                                    .font(.subheadline.weight(.medium))
+                                    .appFont(AppTextRole.subheadline.weight(.medium))
                                 Text("@\(parent.author.handle)")
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .foregroundStyle(.secondary)
                             }
                             
@@ -64,7 +64,7 @@ struct ReplyThreadView: View {
                             if case let .knownType(record) = parent.record,
                                let parentPost = record as? AppBskyFeedPost {
                                 Text(parentPost.text)
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
@@ -82,7 +82,7 @@ struct ReplyThreadView: View {
             }
         } else if isParentBlocked {
             Text("Content from blocked user")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
                 .padding()
         }

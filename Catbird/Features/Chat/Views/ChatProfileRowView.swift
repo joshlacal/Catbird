@@ -22,18 +22,18 @@ struct ChatProfileRowView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.displayName ?? "")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .lineLimit(1)
 
                     HStack(spacing: 4) {
                         Text("@\(profile.handle.description)")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
 
                         if !isMessageable {
                             Text("• Chat Restricted")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.red)
                                 .lineLimit(1)
                         }
@@ -51,7 +51,7 @@ struct ChatProfileRowView: View {
                 } else if !isMessageable {
                     Image(systemName: "lock.fill")
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
             }
             .contentShape(Rectangle())

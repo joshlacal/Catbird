@@ -24,7 +24,7 @@ struct NotificationSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label {
                         Text("Push Notifications")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                     } icon: {
                         Image(systemName: "bell.badge.fill")
                             .foregroundStyle(.blue)
@@ -32,7 +32,7 @@ struct NotificationSettingsView: View {
                     
                     Text("Receive notifications about activity on your account")
                         .foregroundStyle(.secondary)
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                 }
                 .padding(.vertical, 4)
                 

@@ -190,7 +190,7 @@ struct MessageRequestRow: View {
           // Name and handle
           HStack {
             Text(primaryMember?.displayName ?? "Unknown User")
-              .font(.headline)
+              .appFont(AppTextRole.headline)
               .fontWeight(.semibold)
             
             if request.unreadCount > 0 {
@@ -201,13 +201,13 @@ struct MessageRequestRow: View {
           }
           
           Text("@\(primaryMember?.handle.description ?? "unknown")")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundColor(.secondary)
           
           // Additional members for group chats
           if otherMembers.count > 1 {
             Text("and \(otherMembers.count - 1) other\(otherMembers.count > 2 ? "s" : "")")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
           }
         }
@@ -217,12 +217,12 @@ struct MessageRequestRow: View {
         // Timestamp
         VStack(alignment: .trailing, spacing: 4) {
           Text("Rev: \(request.rev)")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
           
           if request.unreadCount > 0 {
             Text("\(request.unreadCount)")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .fontWeight(.bold)
               .foregroundColor(.white)
               .padding(.horizontal, 6)
@@ -305,11 +305,11 @@ struct MessagePreviewView: View {
       case .chatBskyConvoDefsMessageView(let messageView):
         VStack(alignment: .leading, spacing: 4) {
           Text("Message:")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
           
           Text(messageView.text)
-            .font(.body)
+                            .appFont(AppTextRole.body)
             .lineLimit(3)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -322,14 +322,14 @@ struct MessagePreviewView: View {
           Image(systemName: "trash")
             .foregroundColor(.secondary)
           Text("Message was deleted")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
             .italic()
         }
         
       case .unexpected:
         Text("Unsupported message type")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
           .italic()
       }
@@ -438,7 +438,7 @@ struct MessageRequestPreviewView: View {
                     .frame(width: 60, height: 60)
                   
                   Text("+\(otherMembers.count - 3)")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .fontWeight(.medium)
                 }
                 .overlay(
@@ -449,7 +449,7 @@ struct MessageRequestPreviewView: View {
             }
             
             Text("Message Request")
-              .font(.title2)
+              .appFont(AppTextRole.title2)
               .fontWeight(.semibold)
             
             if otherMembers.count == 1 {
@@ -466,7 +466,7 @@ struct MessageRequestPreviewView: View {
           // Members list
           VStack(alignment: .leading, spacing: 12) {
             Text("Participants")
-              .font(.headline)
+              .appFont(AppTextRole.headline)
             
             ForEach(otherMembers, id: \.did) { member in
               HStack {
@@ -474,10 +474,10 @@ struct MessageRequestPreviewView: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                   Text(member.displayName ?? "Unknown")
-                    .font(.body)
+                                    .appFont(AppTextRole.body)
                     .fontWeight(.medium)
                   Text("@\(member.handle.description)")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 }
                 
@@ -485,7 +485,7 @@ struct MessageRequestPreviewView: View {
                 
                 if member.chatDisabled == true {
                   Text("Chat Disabled")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.red.opacity(0.2))
@@ -503,7 +503,7 @@ struct MessageRequestPreviewView: View {
           if let lastMessage = request.lastMessage {
             VStack(alignment: .leading, spacing: 12) {
               Text("Last Message")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
               
               MessagePreviewView(lastMessage: lastMessage)
             }

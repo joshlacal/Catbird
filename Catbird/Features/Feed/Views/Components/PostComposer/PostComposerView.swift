@@ -82,6 +82,7 @@ struct PostComposerView: View {
     // Thread UI state
     @State private var showThreadOptions: Bool = false
     @State private var isSubmitting = false
+    @State private var showingEmojiPicker = false
     
     init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
         self._viewModel = State(
@@ -146,7 +147,7 @@ struct PostComposerView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: createPost) {
                         Text(getPostButtonText())
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundColor(.white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
@@ -254,6 +255,9 @@ struct PostComposerView: View {
                     await viewModel.loadSelectedImage()
                 }
             }
+            .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
+                viewModel.insertEmoji(emoji)
+            }
         }
     }
     
@@ -266,7 +270,7 @@ struct PostComposerView: View {
                 viewModel.quotedPost = nil
             }) {
                 Text("Remove Quote")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.accentColor)
             }
 
@@ -302,11 +306,11 @@ struct PostComposerView: View {
     private var threadIndicatorView: some View {
         HStack(spacing: 4) {
             Text("Thread")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
             
             Text("\(viewModel.currentThreadEntryIndex + 1)/\(viewModel.threadEntries.count)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
                 .background(Color.accentColor.opacity(0.2))
@@ -501,7 +505,7 @@ struct PostComposerView: View {
                     viewModel.selectedImage = nil
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title)
+                        .appFont(AppTextRole.title1)
                         .foregroundStyle(.white, Color(.systemGray3))
                         .background(
                             Circle()
@@ -550,13 +554,13 @@ struct PostComposerView: View {
                                         forLanguageCode: lang.lang.languageCode?.identifier ?? "")
                                     ?? lang.lang.minimalIdentifier
                                 )
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 
                                 Button(action: {
                                     viewModel.toggleLanguage(lang)
                                 }) {
                                     Image(systemName: "xmark.circle.fill")
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                 }
                             }
                             .padding(.vertical, 4)
@@ -577,7 +581,7 @@ struct PostComposerView: View {
                         "Add \(Locale.current.localizedString(forLanguageCode: suggestedLang.lang.languageCode?.identifier ?? "") ?? suggestedLang.lang.minimalIdentifier)",
                         systemImage: "plus.circle"
                     )
-                    .font(.footnote)
+                    .appFont(AppTextRole.footnote)
                 }
                 .padding(.vertical, 4)
             }
@@ -600,7 +604,7 @@ struct PostComposerView: View {
                         systemName: viewModel.isThreadMode
                         ? "x.circle.fill" : "plus.circle"
                     )
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
                     .foregroundStyle(.primary)
                 }
             }
@@ -611,7 +615,7 @@ struct PostComposerView: View {
                     viewModel.showThreadgateOptions = true
                 }) {
                     Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
-                        .font(.system(size: 20))
+                        .appFont(size: 20)
                         .foregroundStyle(.primary)
                 }
             }
@@ -635,7 +639,7 @@ struct PostComposerView: View {
                 }
             } label: {
                 Image(systemName: "globe")
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
                     .foregroundStyle(.primary)
             }
             
@@ -644,7 +648,16 @@ struct PostComposerView: View {
                 viewModel.showLabelSelector = true
             }) {
                 Image(systemName: "tag")
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
+                    .foregroundStyle(.primary)
+            }
+            
+            // Emoji button
+            Button(action: {
+                showingEmojiPicker = true
+            }) {
+                Image(systemName: "face.smiling")
+                    .appFont(size: 20)
                     .foregroundStyle(.primary)
             }
             
@@ -655,7 +668,7 @@ struct PostComposerView: View {
                 }
             }) {
                 Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
                     .foregroundStyle(viewModel.hasClipboardMedia() ? Color.accentColor : Color.primary)
             }
             .disabled(!viewModel.hasClipboardMedia())
@@ -665,7 +678,7 @@ struct PostComposerView: View {
                 videoPickerVisible = true
             }) {
                 Image(systemName: "video")
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
                     .foregroundStyle(.primary)
             }
             
@@ -674,7 +687,7 @@ struct PostComposerView: View {
                 photoPickerVisible = true
             }) {
                 Image(systemName: "photo")
-                    .font(.system(size: 20))
+                    .appFont(size: 20)
                     .foregroundStyle(.primary)
             }
             
@@ -682,7 +695,7 @@ struct PostComposerView: View {
 
             // Character count
             Text("\(viewModel.characterCount)/\(viewModel.maxCharacterCount)")
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundColor(viewModel.isOverCharacterLimit ? .red : .secondary)
         }
         .padding()
@@ -742,7 +755,7 @@ struct ReplyingToView: View {
         .fontWeight(.semibold)
         Spacer()
     }
-    .font(.subheadline)
+    .appFont(AppTextRole.subheadline)
     .padding(.vertical, 8)
     .padding(.horizontal, 12)
 //    .background(Color(.systemGray5))
@@ -844,7 +857,7 @@ struct ComposeURLCardView: View {
         // Add featured badge if this will be used as embed
         if willBeUsedAsEmbed {
           Text("Featured")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Color.accentColor.opacity(0.2))
@@ -854,7 +867,7 @@ struct ComposeURLCardView: View {
 
         Button(action: onRemove) {
           Image(systemName: "xmark.circle.fill")
-            .font(.title3)
+            .appFont(AppTextRole.title3)
             .foregroundStyle(.white, Color(.systemGray3))
             .background(
               Circle()

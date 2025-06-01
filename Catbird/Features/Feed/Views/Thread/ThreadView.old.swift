@@ -199,19 +199,19 @@
 //
 //    case .appBskyFeedDefsNotFoundPost(let notFoundPost):
 //      Text("Parent post not found \(notFoundPost.uri)")
-//        .font(.subheadline)
+//        .appFont(AppTextRole.subheadline)
 //        .foregroundColor(.red)
 //        .padding(.horizontal, 3)
 //
 //    case .appBskyFeedDefsBlockedPost(let blockedPost):
 //      BlockedPostView(blockedPost: blockedPost, path: $path)
-//        .font(.subheadline)
+//        .appFont(AppTextRole.subheadline)
 //        .foregroundColor(.gray)
 //        .padding(.horizontal, 3)
 //
 //    case .unexpected(let unexpected):
 //      Text("Unexpected parent post type: \(unexpected.textRepresentation)")
-//        .font(.subheadline)
+//        .appFont(AppTextRole.subheadline)
 //        .foregroundColor(.orange)
 //        .padding(.horizontal, 3)
 //    case .pending:
@@ -571,10 +571,10 @@
 //        }) {
 //          HStack {
 //            Text("Continue thread")
-//              .font(.subheadline)
+//              .appFont(AppTextRole.subheadline)
 //              .foregroundColor(.accentColor)
 //            Image(systemName: "chevron.right")
-//              .font(.subheadline)
+//              .appFont(AppTextRole.subheadline)
 //              .foregroundColor(.accentColor)
 //          }
 //          .padding(.vertical, 8)

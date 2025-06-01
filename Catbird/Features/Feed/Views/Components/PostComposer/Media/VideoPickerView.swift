@@ -36,7 +36,7 @@ struct VideoPickerView: View {
                                 
                                 // Play icon overlay
                                 Image(systemName: "play.circle.fill")
-                                    .font(.system(size: 44))
+                                    .appFont(size: 44)
                                     .foregroundStyle(.white)
                                     .opacity(0.8)
                             }
@@ -44,7 +44,7 @@ struct VideoPickerView: View {
                             // Alt text status
                             HStack {
                                 Text(videoItem.altText.isEmpty ? "Add description" : videoItem.altText)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(videoItem.altText.isEmpty ? .gray : .primary)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
@@ -52,7 +52,7 @@ struct VideoPickerView: View {
                                 Spacer()
                                 
                                 Image(systemName: "pencil")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -69,7 +69,7 @@ struct VideoPickerView: View {
                         self.videoItem = nil
                     }) {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.title)
+                            .appFont(AppTextRole.title1)
                             .foregroundStyle(.white, Color(.systemGray3))
                             .background(
                                 Circle()
@@ -87,30 +87,30 @@ struct VideoPickerView: View {
                         case .uploading(let progress):
                             ProgressView(value: progress) {
                                 Text("Uploading video: \(Int(progress * 100))%")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                             }
                             .progressViewStyle(.linear)
                         case .processing(let progress):
                             ProgressView(value: progress) {
                                 Text("Processing video: \(Int(progress * 100))%")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                             }
                             .progressViewStyle(.linear)
                         case .complete:
                             Text("Video ready to post")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.green)
                         case .failed(let error):
                             HStack {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.red)
                                 Text("Error: \(error)")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.red)
                             }
                         case .notStarted:
                             Text("Ready to upload")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }

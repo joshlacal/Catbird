@@ -100,11 +100,11 @@ struct FontSettingsTestView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Large Title Example")
-                        .appFont(.largeTitle)
+                        .appFont(AppTextRole.largeTitle)
                         .lineLimit(1)
                     
                     Text("Title 1 Example")
-                        .appFont(.title1)
+                        .appFont(AppTextRole.title1)
                         .lineLimit(1)
                     
                     Text("Headline Example")
@@ -144,7 +144,7 @@ struct FontSettingsTestView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("John Doe")
-                                    .appFont(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .fontWeight(.semibold)
                                 
                                 Text("@johndoe")
@@ -215,7 +215,7 @@ struct FontSettingsTestView: View {
                                 // FontManager will be updated automatically via notification
                             }
                             .buttonStyle(.bordered)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                         }
                     }
                     

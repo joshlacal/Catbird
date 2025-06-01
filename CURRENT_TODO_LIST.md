@@ -1,50 +1,59 @@
 # Catbird Current Todo List
 
-## Status: Active Development Tasks
-*Last Updated: January 29, 2025*
+## Status: PRE-RELEASE BUG FIXES
+*Last Updated: January 30, 2025*
 
-## 🔴 HIGH PRIORITY (State Management Foundation)
+## 🔴 CRITICAL RELEASE BLOCKERS (Must Fix Immediately)
 
-### Phase 1: Foundation Work
-1. **State Architecture Foundation** - Audit AppState, FeedModel, PostShadowManager usage
-2. **Implement StateInvalidationBus** for centralized event coordination  
-3. **Set up comprehensive logging infrastructure** with OSLog categories
+### Week 1: Critical Functionality
+1. **Fix emoji picker functionality** - Currently broken in chat interface
+2. **Fix recurring 'Chat Error cancelled' alert** - Blocking user interaction  
+3. **Fix inconsistent tab bar translucency** - Visual inconsistency across screens
 
-### Critical Bug Fixes
-4. **Fix post creation → timeline refresh issue**
-5. **Fix thread replies not showing immediately**
-6. **Fix account switching** - feeds/chat don't refresh properly
+### Week 2: Core UX Issues  
+4. **Implement notifications header compacting** when scrolling
+5. **Implement missing font settings** - style, size, line spacing, accessibility, display scale, contrast, bold text
 
-## 🟡 MEDIUM PRIORITY (UX Improvements)
+## 🟡 HIGH PRIORITY (Feature Completion)
 
-### Debug & Monitoring
-7. **Create DebugStateView** for runtime state inspection
-8. **Resolve over-eager feed refresh** and scroll position loss
-9. **Implement proper error states** instead of blank content
+### Week 3: Functional Settings
+6. **Fix non-functional Content & Media settings** - toggles don't affect behavior
+7. **Implement server-provided video thumbnails** for non-auto played videos
+8. **Allow external media embeds** for approved services (YouTube, Vimeo, etc.)
 
-### Feature Improvements  
-10. **Add feed headers** for unsubscribed feeds (icon, name, description, subscribe button)
-11. **Make search history per-account** instead of global
-12. **Add notification badges** to messages tab
-13. **Implement local polling** for chat messages
+### Week 4: Polish & Testing
+9. **Fix Account settings screen layout** and functionality issues
+10. **Comprehensive integration testing** and release preparation
 
-## 🟢 LOW PRIORITY (Polish & Features)
+## 🟢 DEFERRED (Post-Release)
 
-### Design & Features
-14. **Standardize spacing** throughout the app for design consistency
-15. **Implement post embeddings** support
-16. **Clean up and expand Settings** with more comprehensive options
+### Future Improvements
+11. **Add feed headers** for unsubscribed feeds (icon, name, description, subscribe button)
+12. **Make search history per-account** instead of global  
+13. **Add notification badges** to messages tab
+14. **Implement local polling** for chat messages
+15. **Standardize spacing** throughout the app for design consistency
 
 ---
 
-## Implementation Notes
+## Implementation Strategy
 
-This list follows the 4-phase bug fix plan documented in `BUG_FIX_PLAN.md`:
+**RELEASE-FOCUSED APPROACH**: All development now prioritized around getting a stable, polished release ready.
 
-- **Phase 1 (Week 1-2)**: Foundation - Tasks 1-3
-- **Phase 2 (Week 2-3)**: Core Refresh Fixes - Tasks 4-6  
-- **Phase 3 (Week 3-4)**: Error Handling & UX - Tasks 7-13
-- **Phase 4 (Week 4-5)**: UI Polish & Features - Tasks 14-16
+### Phase 1 Foundation ✅ COMPLETED
+- StateInvalidationBus integration complete
+- Theme system optimizations complete  
+- Authentication improvements complete
+
+### Phase 2: Release Blockers (Current Focus)
+See detailed implementation in `RELEASE_IMPLEMENTATION_GUIDE.md`
+
+### Success Criteria for Release
+✅ Zero critical bugs in user testing
+✅ All core features working as expected
+✅ Consistent visual design across app
+✅ Font accessibility properly implemented  
+✅ Chat functionality stable and reliable
 
 ## Next Actions
-Start with Phase 1 foundation work to establish proper state management infrastructure before tackling the specific refresh bugs.
+Follow the detailed implementation plan in `RELEASE_IMPLEMENTATION_GUIDE.md` to address all release-blocking issues in priority order.

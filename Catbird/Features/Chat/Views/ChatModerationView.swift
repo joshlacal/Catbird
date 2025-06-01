@@ -183,7 +183,7 @@ struct MessageContextView: View {
                   .italic()
                 Spacer()
                 Text(deletedView.sentAt.date.formatted(date: .abbreviated, time: .shortened))
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundColor(.secondary)
               }
             case .unexpected:
@@ -336,13 +336,13 @@ struct MessageContextRow: View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         Text("@\(senderHandle.isEmpty ? messageView.sender.did.didString() : senderHandle)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .foregroundColor(isTargetMessage ? .white : .primary)
         
         if isTargetMessage {
           Text("TARGET")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Color.red)
@@ -353,12 +353,12 @@ struct MessageContextRow: View {
         Spacer()
         
         Text(messageView.sentAt.date.formatted(date: .abbreviated, time: .shortened))
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(isTargetMessage ? .white : .secondary)
       }
       
       Text(messageView.text)
-        .font(.body)
+                        .appFont(AppTextRole.body)
         .foregroundColor(isTargetMessage ? .white : .primary)
     }
     .padding()

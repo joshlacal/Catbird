@@ -68,7 +68,7 @@ struct AddFeedSheet: View {
                     } else if let error = loadingError {
                         VStack {
                             Image(systemName: "exclamationmark.triangle")
-                                .font(.largeTitle)
+                                .appFont(AppTextRole.largeTitle)
                                 .foregroundColor(.red)
                                 .padding()
                             
@@ -95,7 +95,7 @@ struct AddFeedSheet: View {
                             if searchResults.isEmpty {
                                 VStack {
                                     Image(systemName: "magnifyingglass")
-                                        .font(.largeTitle)
+                                        .appFont(AppTextRole.largeTitle)
                                         .foregroundColor(.secondary)
                                         .padding()
                                     
@@ -107,7 +107,7 @@ struct AddFeedSheet: View {
                             } else {
                                 VStack(alignment: .leading) {
                                     Text("Search Results")
-                                        .font(.headline)
+                                        .appFont(AppTextRole.headline)
                                         .padding(.horizontal)
                                         .padding(.top)
                                     
@@ -119,7 +119,7 @@ struct AddFeedSheet: View {
                             if popularFeeds.isEmpty {
                                 VStack {
                                     Image(systemName: "star")
-                                        .font(.largeTitle)
+                                        .appFont(AppTextRole.largeTitle)
                                         .foregroundColor(.secondary)
                                         .padding()
                                     
@@ -130,7 +130,7 @@ struct AddFeedSheet: View {
                             } else {
                                 VStack(alignment: .leading) {
                                     Text("Popular Feeds")
-                                        .font(.headline)
+                                        .appFont(AppTextRole.headline)
                                         .padding(.horizontal)
                                         .padding(.top)
                                     
@@ -220,14 +220,14 @@ struct AddFeedSheet: View {
             
             // Feed name
             Text(feed.displayName)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
                 .lineLimit(1)
                 .padding(.top, 4)
             
             // Creator handle
             Text("@\(feed.creator.handle)")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             
@@ -235,9 +235,9 @@ struct AddFeedSheet: View {
             if let likeCount = feed.likeCount {
                 HStack(spacing: 2) {
                     Image(systemName: "heart")
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                     Text("\(likeCount)")
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                 }
                 .foregroundColor(.secondary)
                 .padding(.top, 2)
@@ -279,18 +279,18 @@ struct AddFeedSheet: View {
                 
                 // Feed name
                 Text(feed.displayName)
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                 
                 // Creator
                 Text("by @\(feed.creator.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 
                 // Description
                 if let description = feed.description, !description.isEmpty {
                     Text(description)
-                        .font(.body)
+                                        .appFont(AppTextRole.body)
                         .foregroundColor(.primary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
@@ -305,7 +305,7 @@ struct AddFeedSheet: View {
                     .padding(.horizontal)
                 
                 Text("Pinned feeds appear at the top of your feeds list")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .padding(.horizontal)
                 
@@ -345,7 +345,7 @@ struct AddFeedSheet: View {
             
             // First letter of feed name
             Text(title.prefix(1).uppercased())
-                .font(.system(.headline, design: .rounded, weight: .bold))
+                .appFont(AppTextRole.from(.headline))
                 .foregroundColor(.white)
         }
     }

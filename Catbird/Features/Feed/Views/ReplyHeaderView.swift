@@ -22,14 +22,14 @@ struct ReplyHeaderView: View {
             HStack(spacing: spacing) {
                 // DisplayName with potential truncation
                 Text(displayName)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
 
                 // Handle with conditional visibility and truncation
                 Text("@\(handle)")
-                    .font(.body)
+                                    .appFont(AppTextRole.body)
                     .foregroundColor(.gray)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -42,7 +42,7 @@ struct ReplyHeaderView: View {
                 Text("·")
                     .foregroundStyle(.gray)
                 Text(timeAgo)
-                    .font(.body)
+                                    .appFont(AppTextRole.body)
                     .foregroundStyle(.gray)
             }
             .layoutPriority(1)

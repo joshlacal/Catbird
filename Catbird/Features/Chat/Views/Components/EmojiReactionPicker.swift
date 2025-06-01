@@ -81,11 +81,6 @@ struct EmojiReactionPicker: View {
   }
 }
 
-struct EmojiCategory {
-  let name: String
-  let emojis: [String]
-}
-
 struct EmojiReactionPicker_Previews: PreviewProvider {
   static var previews: some View {
     EmojiReactionPicker(isPresented: .constant(true)) { emoji in

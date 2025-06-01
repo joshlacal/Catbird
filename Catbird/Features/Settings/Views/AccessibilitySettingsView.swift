@@ -45,7 +45,7 @@ struct AccessibilitySettingsView: View {
                 Text("Motion Settings")
             } footer: {
                 Text("Reduce Motion disables animations throughout the app. Cross-fade transitions replace sliding animations when Reduce Motion is on.")
-                    .font(.footnote)
+                    .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
             
@@ -93,7 +93,102 @@ struct AccessibilitySettingsView: View {
                 Text("Display Settings")
             } footer: {
                 Text("These settings affect how content is displayed throughout the app.")
-                    .font(.footnote)
+                    .appFont(AppTextRole.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            
+            // Font & Typography Section
+            Section {
+                Picker("Font Style", selection: Binding(
+                    get: { appState.appSettings.fontStyle },
+                    set: { appState.appSettings.fontStyle = $0 }
+                )) {
+                    Text("System").tag("system")
+                    Text("Serif").tag("serif")
+                    Text("Rounded").tag("rounded")
+                    Text("Monospace").tag("monospaced")
+                }
+                
+                Picker("Font Size", selection: Binding(
+                    get: { appState.appSettings.fontSize },
+                    set: { appState.appSettings.fontSize = $0 }
+                )) {
+                    Text("Small").tag("small")
+                    Text("Default").tag("default")
+                    Text("Large").tag("large")
+                    Text("Extra Large").tag("extraLarge")
+                }
+                
+                Picker("Line Spacing", selection: Binding(
+                    get: { appState.appSettings.lineSpacing },
+                    set: { appState.appSettings.lineSpacing = $0 }
+                )) {
+                    Text("Tight").tag("tight")
+                    Text("Normal").tag("normal")
+                    Text("Relaxed").tag("relaxed")
+                }
+                
+                Toggle("Dynamic Type", isOn: Binding(
+                    get: { appState.appSettings.dynamicTypeEnabled },
+                    set: { appState.appSettings.dynamicTypeEnabled = $0 }
+                ))
+                .tint(.blue)
+                
+                if appState.appSettings.dynamicTypeEnabled {
+                    Picker("Max Dynamic Type Size", selection: Binding(
+                        get: { appState.appSettings.maxDynamicTypeSize },
+                        set: { appState.appSettings.maxDynamicTypeSize = $0 }
+                    )) {
+                        Text("XXL").tag("xxLarge")
+                        Text("XXXL").tag("xxxLarge")
+                        Text("Accessibility 1").tag("accessibility1")
+                        Text("Accessibility 2").tag("accessibility2")
+                        Text("Accessibility 3").tag("accessibility3")
+                        Text("Accessibility 4").tag("accessibility4")
+                        Text("Accessibility 5").tag("accessibility5")
+                    }
+                }
+                
+                // Typography preview showing both custom preview and actual app fonts
+                VStack(alignment: .leading, spacing: 8) {
+                    TypographyPreviewView(
+                        fontStyle: appState.appSettings.fontStyle,
+                        fontSize: appState.appSettings.fontSize,
+                        lineSpacing: appState.appSettings.lineSpacing,
+                        dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled
+                    )
+                    
+                    // Live app font preview
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Live App Font Preview")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        Text("App Title Example")
+                            .appTitle()
+                        
+                        Text("App headline text that updates with your settings")
+                            .appHeadline()
+                        
+                        Text("App body text that automatically reflects your typography preferences including font style, size, and spacing settings.")
+                            .appBody()
+                        
+                        Text("App caption text")
+                            .appCaption()
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.systemGray6))
+                    )
+                }
+                .padding(.vertical, 8)
+            } header: {
+                Text("Font & Typography")
+            } footer: {
+                Text("Font settings affect text readability throughout the app. Dynamic Type allows the app to scale with your system accessibility settings.")
+                    .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
             
@@ -131,7 +226,7 @@ struct AccessibilitySettingsView: View {
                 Text("Reading Settings")
             } footer: {
                 Text("Reading time estimates appear on longer posts. Link highlighting makes links easier to identify.")
-                    .font(.footnote)
+                    .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
             
@@ -171,7 +266,7 @@ struct AccessibilitySettingsView: View {
                 Text("Interaction Settings")
             } footer: {
                 Text("Confirm Before Actions shows alerts for destructive actions like deleting posts. Long press duration affects context menus.")
-                    .font(.footnote)
+                    .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
             
@@ -188,11 +283,11 @@ struct AccessibilitySettingsView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Accessibility settings help make the app more usable for everyone.")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                         .foregroundStyle(.secondary)
                     
                     Text("Content settings like adult content filtering can be found in the Content & Media section.")
-                        .font(.footnote)
+                        .appFont(AppTextRole.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
                 }
@@ -215,7 +310,7 @@ private struct DisplayPreviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Display Preview")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             
             VStack(alignment: .leading, spacing: 4) {
@@ -244,6 +339,76 @@ private struct DisplayPreviewView: View {
     }
 }
 
+private struct TypographyPreviewView: View {
+    let fontStyle: String
+    let fontSize: String
+    let lineSpacing: String
+    let dynamicTypeEnabled: Bool
+    
+    @Environment(AppState.self) private var appState
+    
+    var fontDesign: Font.Design {
+        switch fontStyle {
+        case "serif": return .serif
+        case "rounded": return .rounded
+        case "monospaced": return .monospaced
+        default: return .default
+        }
+    }
+    
+    var sizeScale: CGFloat {
+        switch fontSize {
+        case "small": return 0.85
+        case "large": return 1.15
+        case "extraLarge": return 1.3
+        default: return 1.0
+        }
+    }
+    
+    var spacingMultiplier: CGFloat {
+        switch lineSpacing {
+        case "tight": return 0.8
+        case "relaxed": return 1.3
+        default: return 1.0
+        }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Typography Preview")
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Sample Headline")
+                    .font(dynamicTypeEnabled ? 
+                          Font.system(.headline, design: fontDesign) : 
+                          .system(size: 17 * sizeScale, weight: .semibold, design: fontDesign))
+                    .lineSpacing(17 * sizeScale * (spacingMultiplier - 1.0))
+                
+                Text("This is how your text will appear with the current typography settings. The font style, size, and spacing all contribute to readability.")
+                    .font(dynamicTypeEnabled ? 
+                          Font.system(.body, design: fontDesign) : 
+                          .system(size: 16 * sizeScale, design: fontDesign))
+                    .lineSpacing(16 * sizeScale * (spacingMultiplier - 1.0))
+                    .foregroundStyle(.secondary)
+                
+                Text("Caption text example")
+                    .font(dynamicTypeEnabled ? 
+                          Font.system(.caption, design: fontDesign) : 
+                          .system(size: 12 * sizeScale, design: fontDesign))
+                    .lineSpacing(12 * sizeScale * (spacingMultiplier - 1.0))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.systemGray6))
+            )
+        }
+    }
+}
+
 private struct LinkPreviewView: View {
     let highlightLinks: Bool
     let linkStyle: String
@@ -251,14 +416,13 @@ private struct LinkPreviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Link Preview")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             
-            Text("Check out this ")
-                .font(.subheadline) +
-            linkText("example link") +
-            Text(" in a post.")
-                .font(.subheadline)
+            (Text("Check out this ") +
+            linkTextConcatenated("example link") +
+            Text(" in a post."))
+                .appFont(AppTextRole.subheadline)
         }
         .padding(12)
         .background(
@@ -267,9 +431,28 @@ private struct LinkPreviewView: View {
         )
     }
     
-    private func linkText(_ text: String) -> Text {
+    private func linkText(_ text: String) -> some View {
+        let result = Text(text)
+            .appFont(AppTextRole.subheadline)
+        
+        if highlightLinks {
+            switch linkStyle {
+            case "underline":
+                return AnyView(result.underline())
+            case "color":
+                return AnyView(result.foregroundStyle(.blue))
+            case "both":
+                return AnyView(result.foregroundStyle(.blue).underline())
+            default:
+                return AnyView(result.foregroundStyle(.blue))
+            }
+        }
+        
+        return AnyView(result)
+    }
+    
+    private func linkTextConcatenated(_ text: String) -> Text {
         var result = Text(text)
-            .font(.subheadline)
         
         if highlightLinks {
             switch linkStyle {

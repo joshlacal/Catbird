@@ -20,7 +20,7 @@ struct DebugStateView: View {
       // Header with toggle
       HStack {
         Text("🔧 Debug State Monitor")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
           .foregroundColor(.primary)
         
         Spacer()
@@ -78,13 +78,13 @@ struct DebugStateView: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text("State Invalidation Events")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .fontWeight(.semibold)
         
         Spacer()
         
         Text("\(subscriberCount) subscribers")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
       }
       
@@ -121,7 +121,7 @@ struct DebugStateView: View {
   private var stateTab: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text("App State Overview")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .fontWeight(.semibold)
       
       ScrollView {
@@ -134,7 +134,7 @@ struct DebugStateView: View {
           Divider()
           
           Text("Component Status")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .fontWeight(.semibold)
             .foregroundColor(.secondary)
           
@@ -153,7 +153,7 @@ struct DebugStateView: View {
   private var performanceTab: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text("Performance Metrics")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .fontWeight(.semibold)
       
       ScrollView {
@@ -165,7 +165,7 @@ struct DebugStateView: View {
           Divider()
           
           Text("State Bus Performance")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .fontWeight(.semibold)
             .foregroundColor(.secondary)
           
@@ -184,17 +184,17 @@ struct DebugStateView: View {
   private func eventRow(event: StateInvalidationEvent, index: Int) -> some View {
     HStack {
       Text("\(index)")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .frame(width: 30, alignment: .trailing)
       
       VStack(alignment: .leading, spacing: 2) {
         Text(eventDescription(event))
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .monospaced()
         
         Text(eventTimestamp)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundColor(.secondary)
       }
       
@@ -208,13 +208,13 @@ struct DebugStateView: View {
   private func stateItem(_ title: String, _ value: String) -> some View {
     HStack {
       Text(title)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
       
       Spacer()
       
       Text(value)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .monospaced()
     }
   }
@@ -222,13 +222,13 @@ struct DebugStateView: View {
   private func performanceItem(_ title: String, _ value: String) -> some View {
     HStack {
       Text(title)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
       
       Spacer()
       
       Text(value)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .monospaced()
     }
   }
@@ -317,7 +317,7 @@ struct DebugStateView: View {
     
     return Image(systemName: icon)
       .foregroundColor(color)
-      .font(.caption)
+      .appFont(AppTextRole.caption)
   }
   
   // MARK: - Computed Properties

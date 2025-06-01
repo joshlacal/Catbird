@@ -90,7 +90,7 @@ struct PostStatsView: View {
                 .padding(.top, Self.baseUnit * 2)
                 .padding(.horizontal, Self.baseUnit * 2)
                 .padding(.vertical, Self.baseUnit * 3)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 
                 // Keep existing sheet modifiers
                 .sheet(isPresented: $showingLikes) {

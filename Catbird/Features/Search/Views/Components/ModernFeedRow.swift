@@ -13,15 +13,15 @@ struct ModernFeedRow: View {
             // Feed info
             VStack(alignment: .leading, spacing: 4) {
                 Text(feed.displayName)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Text("by @\(feed.creator.handle)")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 
                 if let description = feed.description, !description.isEmpty {
                     Text(description)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                         .padding(.top, 2)
@@ -37,7 +37,7 @@ struct ModernFeedRow: View {
     // Placeholder for preview
     VStack {
         Text("Feed Row Preview")
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .padding()
     }
 }

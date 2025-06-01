@@ -271,7 +271,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error loading conversations: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
     }
 
     loadingConversations = false
@@ -381,7 +381,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error loading messages for \(convoId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
     }
 
     loadingMessages[convoId] = false
@@ -422,7 +422,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error leaving conversation \(convoId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
     }
   }
 
@@ -460,7 +460,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error muting conversation \(convoId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
     }
   }
 
@@ -492,7 +492,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error unmuting conversation \(convoId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
     }
   }
 
@@ -523,7 +523,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error accepting conversation \(convoId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return false
     }
   }
@@ -559,7 +559,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error getting conversation \(convoId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return nil
     }
   }
@@ -597,7 +597,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error checking conversation availability: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return (false, nil)
     }
   }
@@ -727,7 +727,7 @@ final class ChatManager: StateInvalidationSubscriber {
       messageDeliveryStatus[tempId] = .failed(error)
       pendingMessages.removeValue(forKey: tempId)
       
-      errorState = .generalError(error)
+      setErrorState(error)
       return false
     }
   }
@@ -856,7 +856,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error sending message batch: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return Array(repeating: nil, count: items.count)
     }
   }
@@ -897,7 +897,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error deleting message \(messageId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return false
     }
   }
@@ -933,7 +933,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error marking all conversations as read: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return false
     }
   }
@@ -969,7 +969,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error getting conversation log: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return (nil, nil)
     }
   }
@@ -1368,7 +1368,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error exporting chat account data: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return nil
     }
   }
@@ -1416,7 +1416,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error deleting chat account: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return (false, nil)
     }
   }
@@ -1451,7 +1451,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error getting actor metadata for \(actor): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return nil
     }
   }
@@ -1486,7 +1486,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error getting message context for \(messageId): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return nil
     }
   }
@@ -1521,7 +1521,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error updating actor access for \(actor): \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
       return false
     }
   }
@@ -1591,7 +1591,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error loading message requests: \(error.localizedDescription)")
-      errorState = .generalError(error)
+      setErrorState(error)
     }
 
     loadingConversations = false
@@ -1876,6 +1876,33 @@ final class ChatManager: StateInvalidationSubscriber {
       default:
         return false
       }
+    }
+  }
+  
+  // MARK: - Error Handling Helpers
+  
+  /// Helper method to determine if an error should be shown to the user
+  private func shouldShowError(_ error: Error) -> Bool {
+    // Don't show cancellation errors to users - these are expected during normal operation
+    if error is CancellationError {
+      logger.debug("Ignoring cancellation error: \(error.localizedDescription)")
+      return false
+    }
+    
+    // Check if the error description contains "cancelled" (case insensitive)
+    let errorDescription = error.localizedDescription.lowercased()
+    if errorDescription.contains("cancelled") || errorDescription.contains("canceled") {
+      logger.debug("Ignoring cancellation-related error: \(error.localizedDescription)")
+      return false
+    }
+    
+    return true
+  }
+  
+  /// Helper method to safely set error state, filtering out cancellation errors
+  private func setErrorState(_ error: Error) {
+    if shouldShowError(error) {
+      errorState = .generalError(error)
     }
   }
 }

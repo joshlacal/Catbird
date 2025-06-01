@@ -42,7 +42,6 @@ struct RefinedSearchView: View {
         NavigationStack(path: navigationPath) {
             mainContentContainer
         }
-        .toolbarBackgroundVisibility(.visible, for: .tabBar)
         .onChange(of: lastTappedTab) { _, newValue in
             handleTabTap(newValue)
         }
@@ -215,7 +214,7 @@ struct RefinedSearchView: View {
                 if !viewModel.typeaheadProfiles.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Profiles")
-                            .font(.headline)
+                            .appHeadline()
                             .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             .padding(.horizontal)
                             .padding(.top, 8)
@@ -239,7 +238,7 @@ struct RefinedSearchView: View {
                 if !viewModel.typeaheadFeeds.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Feeds")
-                            .font(.headline)
+                            .appHeadline()
                             .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             .padding(.horizontal)
                             .padding(.top, 8)
@@ -263,7 +262,7 @@ struct RefinedSearchView: View {
                 if !viewModel.typeaheadSuggestions.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Suggestions")
-                            .font(.headline)
+                            .appHeadline()
                             .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             .padding(.horizontal)
                             .padding(.top, 8)
@@ -332,9 +331,9 @@ struct RefinedSearchView: View {
             AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile.displayName ?? "@\(profile.handle)")
-                    .font(.headline)
+                    .appHeadline()
                 Text("@\(profile.handle)")
-                    .font(.subheadline)
+                    .appSubheadline()
                     .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
             }
             Spacer()
@@ -345,7 +344,7 @@ struct RefinedSearchView: View {
         HStack(spacing: 12) {
             AsyncProfileImage(url: URL(string: feed.avatar?.uriString() ?? ""), size: 36)
             Text(feed.displayName)
-                .font(.headline)
+                .appHeadline()
             Spacer()
         }
     }

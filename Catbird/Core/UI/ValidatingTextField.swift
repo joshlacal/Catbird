@@ -48,7 +48,7 @@ struct ValidatingTextField: View {
             
             if let error = validationError {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 4)
             }

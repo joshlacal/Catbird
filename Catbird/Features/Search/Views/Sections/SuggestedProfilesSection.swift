@@ -22,7 +22,7 @@ struct SuggestedProfilesSection: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Suggested Profiles")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Spacer()
                 
@@ -52,7 +52,7 @@ struct SuggestedProfilesSection: View {
                     .padding(.bottom, 4)
                 
                 Text("Finding profiles for you...")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.vertical, 12)
@@ -78,18 +78,18 @@ struct SuggestedProfilesSection: View {
 //                        
 //                        VStack(alignment: .leading, spacing: 2) {
 //                            Text(profile.displayName ?? "@\(profile.handle)")
-//                                .font(.headline)
+//                                .appFont(AppTextRole.headline)
 //                                .foregroundColor(.primary)
 //                                .lineLimit(1)
 //                            
 //                            Text("@\(profile.handle)")
-//                                .font(.subheadline)
+//                                .appFont(AppTextRole.subheadline)
 //                                .foregroundColor(.secondary)
 //                                .lineLimit(1)
 //                            
 //                            if let description = profile.description, !description.isEmpty {
 //                                Text(description)
-//                                    .font(.caption)
+//                                    .appFont(AppTextRole.caption)
 //                                    .foregroundColor(.secondary)
 //                                    .lineLimit(1)
 //                                    .padding(.top, 2)
@@ -103,7 +103,7 @@ struct SuggestedProfilesSection: View {
 //                            EnhancedFollowButton(profile: profile)
 //                        } else {
 //                            Text("Following")
-//                                .font(.caption)
+//                                .appFont(AppTextRole.caption)
 //                                .fontWeight(.medium)
 //                                .foregroundColor(.secondary)
 //                                .padding(.vertical, 5)

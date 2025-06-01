@@ -136,11 +136,11 @@ struct AccountSwitcherView: View {
             Section {
               VStack(alignment: .leading, spacing: 8) {
                 Text("Error")
-                  .font(.headline)
+                  .appFont(AppTextRole.headline)
                   .foregroundStyle(.red)
 
                 Text(errorMessage)
-                  .font(.callout)
+                  .appFont(AppTextRole.callout)
                   .foregroundStyle(.secondary)
 
                 Button("Dismiss") {
@@ -166,11 +166,11 @@ struct AccountSwitcherView: View {
       // Account info
       VStack(alignment: .leading, spacing: 2) {
         Text(account.displayName ?? "@" + account.handle)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
           .lineLimit(1)
 
         Text("@\(account.handle)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
@@ -179,7 +179,7 @@ struct AccountSwitcherView: View {
 
       if account.isActive {
         Text("Active")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .padding(6)
           .background(.tint.opacity(0.1))
           .foregroundStyle(.tint)
@@ -216,15 +216,15 @@ struct AccountSwitcherView: View {
         // Header
         VStack(spacing: 16) {
           Image(systemName: "person.crop.circle.badge.plus")
-            .font(.system(size: 50))
+            .appFont(size: 50)
             .foregroundStyle(.tint)
             .padding()
 
           Text("Add Bluesky Account")
-            .font(.title2.bold())
+            .appFont(AppTextRole.title2)
 
           Text("Enter your Bluesky handle to sign in to another account.")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal)
@@ -253,7 +253,7 @@ struct AccountSwitcherView: View {
                 .controlSize(.small)
 
               Text("Authenticating with Bluesky...")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
@@ -281,7 +281,7 @@ struct AccountSwitcherView: View {
             Image(systemName: "xmark.circle.fill")
               .foregroundStyle(.secondary)
             Text("Authentication cancelled")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           }
           .padding(.horizontal, 12)
@@ -535,13 +535,13 @@ struct ProfileAvatarView: View {
               .clipShape(Circle())
           } else {
             Text(fallbackText)
-              .font(.system(size: size * 0.5, weight: .bold))
+              .appFont(size: size * 0.5)
               .foregroundColor(.white)
           }
         }
       } else {
         Text(fallbackText)
-          .font(.system(size: size * 0.5, weight: .bold))
+          .appFont(size: size * 0.5)
           .foregroundColor(.white)
       }
     }

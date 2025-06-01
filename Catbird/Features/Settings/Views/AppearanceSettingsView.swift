@@ -227,7 +227,7 @@ struct FontPreviewRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Font Preview")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             
             GroupBox {
@@ -307,7 +307,7 @@ struct ColorSchemePreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Preview")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             
             ZStack {
@@ -338,7 +338,7 @@ struct ColorSchemePreview: View {
                                         .foregroundStyle(textColor)
                                     
                                     Text("This is how your timeline will look with these settings")
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .foregroundStyle(isDarkMode ? .gray : .secondary)
                                 }
                                 .padding(.leading, 10)
@@ -348,15 +348,15 @@ struct ColorSchemePreview: View {
                     
                     HStack(spacing: 20) {
                         Label("12", systemImage: "bubble.left")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(isDarkMode ? .gray : .secondary)
                         
                         Label("43", systemImage: "arrow.2.squarepath")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(isDarkMode ? .gray : .secondary)
                         
                         Label("128", systemImage: "heart")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(isDarkMode ? .gray : .secondary)
                         
                         Spacer()
@@ -366,7 +366,7 @@ struct ColorSchemePreview: View {
             }
             
             Text("Current Theme: \(isDarkMode ? (isBlackMode ? "True Black" : "Dark (Dim)") : "Light")")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 8)
@@ -379,7 +379,7 @@ struct AccessibilityQuickActionsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Quick Actions")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             
             HStack(spacing: 12) {
@@ -389,7 +389,7 @@ struct AccessibilityQuickActionsRow: View {
                     appState.appSettings.dynamicTypeEnabled = true
                 }
                 .buttonStyle(.bordered)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 
                 Button("Maximum Accessibility") {
                     appState.appSettings.fontSize = "large"
@@ -398,7 +398,7 @@ struct AccessibilityQuickActionsRow: View {
                     appState.appSettings.maxDynamicTypeSize = "accessibility3"
                 }
                 .buttonStyle(.bordered)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
             }
         }
         .padding(.vertical, 8)

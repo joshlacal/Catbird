@@ -8,10 +8,10 @@ struct NetworkStatusIndicator: View {
             HStack(spacing: 8) {
                 Image(systemName: "wifi.slash")
                     .foregroundColor(.white)
-                    .font(.system(size: 14, weight: .medium))
+                    .appFont(size: 14)
                 
                 Text("No Internet Connection")
-                    .font(.system(size: 14, weight: .medium))
+                    .appFont(size: 14)
                     .foregroundColor(.white)
                 
                 Spacer()
@@ -47,13 +47,13 @@ struct NetworkStatusBar: View {
                     .foregroundColor(.orange)
                 
                 Text("Offline")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 Spacer()
                 
                 Text(appState.networkMonitor.connectionType.displayName)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)

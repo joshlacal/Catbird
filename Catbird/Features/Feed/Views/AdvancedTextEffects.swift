@@ -27,7 +27,7 @@ struct AdvancedTextEffects: View {
                 
                 // 3. 3D Rotated Text
                 Text("3D PERSPECTIVE")
-                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .appFont(size: 32, weight: .black)
                     .rotation3DEffect(
                         .degrees(showScaledText ? 0 : 15),
                         axis: (x: 1.0, y: 0.0, z: 0.0),
@@ -43,17 +43,17 @@ struct AdvancedTextEffects: View {
                 
                 // 4. Outlined Text
                 Text("OUTLINED TEXT")
-                    .font(.system(size: 36, weight: .black))
+                    .appFont(size: 36, weight: .black)
                     .foregroundColor(.clear)
                     .overlay(
                         Text("OUTLINED TEXT")
-                            .font(.system(size: 36, weight: .black))
+                            .appFont(size: 36, weight: .black)
                             .foregroundColor(colorCycle ? .blue : .purple)
                             .opacity(0.8)
                     )
                     .background(
                         Text("OUTLINED TEXT")
-                            .font(.system(size: 36, weight: .black))
+                            .appFont(size: 36, weight: .black)
                             .foregroundColor(.primary)
                             .offset(x: 2, y: 2)
                             .opacity(0.3)
@@ -66,7 +66,7 @@ struct AdvancedTextEffects: View {
                 
                 // 5. Dynamic Blur Text
                 Text("Blurred Text")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .appFont(size: 32, weight: .bold)
                     .foregroundColor(.primary.opacity(0.8))
                     .blur(radius: animateBlur ? 0 : 5)
                     .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: animateBlur)
@@ -76,7 +76,7 @@ struct AdvancedTextEffects: View {
                 
                 // 6. Masked Text with Image
                 Text("IMAGE MASKED TEXT")
-                    .font(.system(size: 38, weight: .bold))
+                    .appFont(size: 38, weight: .bold)
                     .foregroundStyle(
                         .linearGradient(
                             colors: [.blue, .purple, .pink],
@@ -106,7 +106,7 @@ struct AdvancedTextEffects: View {
         HStack(spacing: 0) {
             ForEach(Array(text.enumerated()), id: \.offset) { index, character in
                 Text(String(character))
-                    .font(.system(.largeTitle, design: .rounded, weight: .black))
+                    .appFont(AppTextRole.from(.largeTitle))
                     .foregroundColor(.primary)
                     .offset(y: animateWave ? -10 : 10)
                     .animation(
@@ -127,7 +127,7 @@ struct AdvancedTextEffects: View {
         HStack(spacing: 0) {
             ForEach(Array(text.enumerated()), id: \.offset) { index, character in
                 Text(String(character))
-                    .font(.system(.title2, design: .serif, weight: .medium))
+                    .appFont(AppTextRole.from(.title2))
                     .foregroundColor(.primary)
                     .opacity(showScaledText ? 1 : 0)
                     .animation(
@@ -146,11 +146,10 @@ struct AdvancedTextEffects: View {
         HStack(spacing: 0) {
             ForEach(Array(text.enumerated()), id: \.offset) { index, character in
                 Text(String(character))
-                    .font(.system(
+                    .appFont(
                         size: 32,
-                        weight: showScaledText ? .black : .ultraLight,
-                        design: .default
-                    ))
+                        weight: showScaledText ? .black : .ultraLight
+                    )
                     .animation(
                         Animation.easeInOut(duration: 2)
                             .repeatForever(autoreverses: true)
@@ -167,7 +166,7 @@ struct AdvancedTextEffects: View {
     @ViewBuilder
     private func characterHighlight(text: String, highlightColor: Color) -> some View {
         Text(text)
-            .font(.system(.title3, design: .rounded, weight: .medium))
+            .appFont(AppTextRole.from(.title3))
             .lineLimit(2)
             .multilineTextAlignment(.center)
             .onTapGesture {

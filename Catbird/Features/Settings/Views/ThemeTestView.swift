@@ -52,7 +52,7 @@ struct ThemeStatusCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Current Theme Status")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(alignment: .leading, spacing: 8) {
@@ -92,7 +92,7 @@ struct ThemeStatusCard: View {
                         .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 }
             }
-            .font(.body)
+                            .appFont(AppTextRole.body)
         }
         .padding()
         .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
@@ -116,14 +116,14 @@ struct ThemeComparisonView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Theme Comparison")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             HStack(spacing: 16) {
                 // Dim mode preview
                 VStack {
                     Text("Dim Mode")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     
                     MockThemePreview(isDarkMode: true, isBlackMode: false)
@@ -133,7 +133,7 @@ struct ThemeComparisonView: View {
                 // True black preview
                 VStack {
                     Text("True Black")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     
                     MockThemePreview(isDarkMode: true, isBlackMode: true)
@@ -156,7 +156,7 @@ struct MockThemePreview: View {
             // Mock navigation bar
             HStack {
                 Text("Title")
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .foregroundColor(textColor(.primary))
                 Spacer()
             }
@@ -195,7 +195,7 @@ struct MockThemePreview: View {
             HStack {
                 ForEach(0..<4) { _ in
                     Image(systemName: "square.fill")
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(textColor(.secondary))
                         .frame(maxWidth: .infinity)
                 }
@@ -287,7 +287,7 @@ struct BackgroundHierarchyTest: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Background Hierarchy Test")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
@@ -373,12 +373,12 @@ struct BackgroundTestRow<Background: View>: View {
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .fontWeight(.medium)
                     .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 
                 Text(description)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             }
             
@@ -393,7 +393,7 @@ struct GlassEffectsTest: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Glass Effects Test")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
@@ -463,7 +463,7 @@ struct InteractiveElementsTest: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Interactive Elements Test")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
@@ -489,7 +489,7 @@ struct InteractiveElementsTest: View {
                 // Slider
                 VStack(alignment: .leading) {
                     Text("Slider: \(Int(sliderValue * 100))%")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                     
                     Slider(value: $sliderValue)
@@ -517,7 +517,7 @@ struct ListComponentsTest: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("List Components Test")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             // Simulated list rows
@@ -551,7 +551,7 @@ struct AccessibilityTest: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Accessibility Test")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(alignment: .leading, spacing: 8) {
@@ -592,7 +592,7 @@ struct ThemeControlsTest: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Theme Controls")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
             
             VStack(spacing: 12) {
@@ -684,23 +684,23 @@ private struct ThemeTestListItemRow: View {
     var body: some View {
         HStack {
             Image(systemName: "person.circle.fill")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             
             VStack(alignment: .leading, spacing: 4) {
                 Text("List Item \(index + 1)")
-                    .font(.body)
+                                    .appFont(AppTextRole.body)
                     .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                 
                 Text("Subtitle text here")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             }
             
             Spacer()
             
             Image(systemName: "chevron.right")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .themedText(appState.themeManager, style: .tertiary, appSettings: appState.appSettings)
         }
         .padding()

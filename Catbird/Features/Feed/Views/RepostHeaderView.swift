@@ -16,10 +16,10 @@ struct RepostHeaderView: View {
         HStack(alignment: .center, spacing: 4) {
             Image(systemName: "arrow.2.squarepath")
                 .foregroundColor(.secondary)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
             
             Text("reposted by \(reposter.displayName ?? reposter.handle.description)")
-                .font(.body)
+                                .appFont(AppTextRole.body)
                 .textScale(.secondary)
                 .foregroundColor(.secondary)
                 .lineLimit(2)

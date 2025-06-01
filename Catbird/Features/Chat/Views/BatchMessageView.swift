@@ -39,7 +39,7 @@ struct BatchMessageView: View {
         // Message input
         VStack(alignment: .leading, spacing: 8) {
           Text("Message")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
           
           TextEditor(text: $messageText)
@@ -56,14 +56,14 @@ struct BatchMessageView: View {
         VStack(alignment: .leading, spacing: 8) {
           HStack {
             Text("Recipients")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
             
             Spacer()
             
             if !selectedConversations.isEmpty {
               Text("\(selectedConversations.count) selected")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.blue)
             }
           }
@@ -198,7 +198,7 @@ struct ConversationSelectionRow: View {
         // Checkbox
         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
           .foregroundColor(isSelected ? .blue : .gray)
-          .font(.title3)
+          .appFont(AppTextRole.title3)
         
         // Avatar
         ChatProfileAvatarView(profile: otherMember, size: 40)
@@ -206,11 +206,11 @@ struct ConversationSelectionRow: View {
         // Name and handle
         VStack(alignment: .leading, spacing: 2) {
           Text(otherMember?.displayName ?? "Unknown")
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .foregroundColor(.primary)
           
           Text("@\(otherMember?.handle.description ?? "unknown")")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
         }
         

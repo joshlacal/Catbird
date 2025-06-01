@@ -28,11 +28,11 @@ struct LabelerView: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(labeler.creator.displayName ?? labeler.creator.handle.description)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
                     
                     Text("@\(labeler.creator.handle)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 
@@ -45,7 +45,7 @@ struct LabelerView: View {
             if let labels = labeler.labels, !labels.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Labels")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.medium)
                     
                     labelsView(labels: labels)
@@ -71,7 +71,7 @@ struct LabelerView: View {
     
     private var dateView: some View {
         Text(formattedDate)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
     }
     
@@ -86,7 +86,7 @@ struct LabelerView: View {
             HStack(spacing: 8) {
                 ForEach(labels, id: \.self) { label in
                     Text(label.val)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -153,11 +153,11 @@ struct LabelerDetailedView: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(labeler.creator.displayName ?? labeler.creator.handle.description)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
                     
                     Text("@\(labeler.creator.handle)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 
@@ -169,7 +169,7 @@ struct LabelerDetailedView: View {
             // Policies section
             VStack(alignment: .leading, spacing: 8) {
                 Text("Policies")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .fontWeight(.medium)
                 
                 policiesView(policies: labeler.policies)
@@ -179,7 +179,7 @@ struct LabelerDetailedView: View {
             if let labels = labeler.labels, !labels.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Labels")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.medium)
                     
                     labelsView(labels: labels)
@@ -190,7 +190,7 @@ struct LabelerDetailedView: View {
             if let reasonTypes = labeler.reasonTypes, !reasonTypes.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Reason Types")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.medium)
                     
                     reasonTypesView(reasonTypes: reasonTypes)
@@ -215,7 +215,7 @@ struct LabelerDetailedView: View {
     
     private var dateView: some View {
         Text(formattedDate)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
     }
     
@@ -230,7 +230,7 @@ struct LabelerDetailedView: View {
             HStack(spacing: 8) {
                 ForEach(policies.labelValues, id: \.self) { value in
                     Text(value.rawValue)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -249,7 +249,7 @@ struct LabelerDetailedView: View {
             HStack(spacing: 8) {
                 ForEach(labels, id: \.self) { label in
                     Text(label.val)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -268,7 +268,7 @@ struct LabelerDetailedView: View {
             HStack(spacing: 8) {
                 ForEach(reasonTypes, id: \.self) { reason in
                     Text(String(describing: reason))
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)

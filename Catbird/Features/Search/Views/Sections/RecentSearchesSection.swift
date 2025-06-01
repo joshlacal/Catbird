@@ -17,12 +17,12 @@ struct RecentSearchesSection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Recent Searches")
-                    .font(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+                    .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
 
                 Spacer()
                 
                 Button("Clear", action: onClear)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.accentColor)
             }
             .padding(.horizontal)
@@ -35,10 +35,10 @@ struct RecentSearchesSection: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "magnifyingglass")
-                                    .font(.caption2)
+                                    .appFont(AppTextRole.caption2)
                                 
                                 Text(search)
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .lineLimit(1)
                             }
                             .padding(.vertical, 8)

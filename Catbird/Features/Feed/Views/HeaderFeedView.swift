@@ -184,14 +184,14 @@ struct HeaderFeedView<Header: View>: View {
                 
             VStack(spacing: 20) {
                 Image(systemName: "text.bubble")
-                    .font(.system(size: 60))
+                    .appFont(size: 60)
                     .foregroundColor(.secondary)
                 
                 Text("No posts to show")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 
                 Text("Pull down to refresh or check back later.")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
@@ -220,7 +220,7 @@ struct HeaderFeedView<Header: View>: View {
             }
         }) {
             Image(systemName: "arrow.up")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .foregroundColor(.white)
                 .padding()
                 .background(Circle().fill(Color.accentColor))

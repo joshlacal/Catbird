@@ -15,11 +15,11 @@ struct SectionHeaderView: View {
             Spacer()
             if title == "Pinned" {
                 Image(systemName: "pin.fill")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             } else if title == "Saved" {
                 Image(systemName: "bookmark.fill")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
         }

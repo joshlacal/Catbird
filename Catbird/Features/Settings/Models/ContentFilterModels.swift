@@ -117,17 +117,17 @@ struct ContentVisibilitySelector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             Text(description)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             
             Picker("Content Visibility", selection: $selection) {
                 ForEach(ContentVisibility.allCases, id: \.id) { option in
                     Image(systemName: option.iconName)
                         .foregroundStyle(option.color)
-                        .font(.system(size: 20))
+                        .appFont(size: 20)
                         .tag(option)
                         .help(option.rawValue) // Accessibility label
                 }
@@ -141,9 +141,9 @@ struct ContentVisibilitySelector: View {
                     HStack(spacing: 4) {
                         Image(systemName: option.iconName)
                             .foregroundStyle(option.color)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                         Text(option.rawValue)
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }

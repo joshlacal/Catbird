@@ -57,7 +57,7 @@ struct MuteWordsSettingsView: View {
         Text(
           "Posts containing these words will be hidden from your feeds. Changes take effect immediately and sync across all your devices."
         )
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
       }
     }

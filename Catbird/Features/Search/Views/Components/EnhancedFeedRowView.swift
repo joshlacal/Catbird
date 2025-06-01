@@ -35,16 +35,16 @@ struct EnhancedFeedRowView: View {
             // Feed info
             VStack(alignment: .leading, spacing: 4) {
                 Text(feed.displayName)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .lineLimit(1)
                 
                     Text("By @\(feed.creator.handle)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                 
                 if let description = feed.description, !description.isEmpty {
                     Text(description)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                         .padding(.top, 2)
@@ -54,7 +54,7 @@ struct EnhancedFeedRowView: View {
                 if let likeCount = feed.likeCount {
                     HStack(spacing: 12) {
                         Label("\(formatCount(likeCount)) likes", systemImage: "heart")
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundColor(.secondary)
                     }
                     .padding(.top, 2)
@@ -64,7 +64,7 @@ struct EnhancedFeedRowView: View {
             Spacer()
             
             Image(systemName: "chevron.right")
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundColor(.secondary)
         }
         .padding(.vertical, 12)

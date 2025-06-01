@@ -254,22 +254,22 @@ var id: String {
     HStack(alignment: .center, spacing: PostView.baseUnit) {
       Image(systemName: "arrow.up.forward.circle")
         .foregroundStyle(.secondary)
-        .font(.body)
+        .appBody()
 
       HStack(spacing: 0) {
         Text("in reply to ")
-          .font(.body)
+          .appBody()
           .offset(y: -1)
           .foregroundStyle(.secondary)
 
           if isToYou {
             Text("you")
-                  .font(.body)
+                  .appBody()
                   .offset(y: -1)
                   .foregroundStyle(.secondary)
           } else if let grandparentAuthor = grandparentAuthor {
               Text("@\(grandparentAuthor.handle)")
-                  .font(.body)
+                  .appBody()
                   .offset(y: -1)
                   .foregroundStyle(Color.accentColor)
                   .onTapGesture {

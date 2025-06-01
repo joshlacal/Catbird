@@ -74,10 +74,10 @@ struct ThreadSeparatorView: View {
         }) {
             HStack {
                 Text("View full thread")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.accentColor)
                 Image(systemName: "chevron.right")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundColor(.accentColor)
             }
             .padding(.vertical, 8)
@@ -89,22 +89,22 @@ struct ThreadSeparatorView: View {
       /*
        HStack(spacing: 0) {
 //      Image(systemName: "bubble.left.and.bubble.right")
-//        .font(.subheadline)
+//        .appFont(AppTextRole.subheadline)
 //        .foregroundColor(.accentColor)
       
       VStack(alignment: .leading, spacing: 0) {
           HStack {
               
               Text("View full thread")
-                  .font(.subheadline)
+                  .appFont(AppTextRole.subheadline)
                   .foregroundColor(.accentColor)
               Image(systemName: "chevron.right")
-                  .font(.subheadline)
+                  .appFont(AppTextRole.subheadline)
                   .foregroundColor(.accentColor)
           }
         if hiddenPostCount > 0 {
           Text("\(hiddenPostCount) more \(hiddenPostCount == 1 ? "reply" : "replies")")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
         }
       }
@@ -112,7 +112,7 @@ struct ThreadSeparatorView: View {
 //      Spacer()
 //      
 //      Image(systemName: "chevron.right")
-//        .font(.caption)
+//        .appFont(AppTextRole.caption)
 //        .foregroundStyle(.tertiary)
     }
                 .padding(.vertical, 8)

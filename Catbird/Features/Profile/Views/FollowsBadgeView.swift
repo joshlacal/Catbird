@@ -11,7 +11,7 @@ struct FollowsBadgeView: View {
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         Text("Follows you")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

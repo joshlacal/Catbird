@@ -23,7 +23,7 @@ struct MoreView: View {
                 } label: {
                     HStack {
                         Text(tab.title)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .padding(.vertical, 16)
                             .foregroundStyle(.primary)
 

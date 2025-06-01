@@ -11,7 +11,7 @@ struct LoadingView: View {
                 .padding()
             
             Text(message)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
