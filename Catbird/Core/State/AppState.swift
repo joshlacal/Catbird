@@ -21,16 +21,16 @@ final class AppState {
   #endif
 
   // Logger
-  private let logger = Logger(subsystem: "blue.catbird", category: "AppState")
+  @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "AppState")
 
   // Authentication manager - handles all auth operations
-  let authManager = AuthenticationManager()  // Instance of the AuthenticationManager class defined in AuthManager.swift
+  @ObservationIgnored let authManager = AuthenticationManager()  // Instance of the AuthenticationManager class defined in AuthManager.swift
 
   // Graph manager - handles social graph operations
-  var graphManager: GraphManager
+  @ObservationIgnored var graphManager: GraphManager
 
   // URL handling for deep links
-  let urlHandler: URLHandler
+  @ObservationIgnored let urlHandler: URLHandler
 
   // User preference settings
   var isAdultContentEnabled: Bool = false
@@ -44,41 +44,41 @@ final class AppState {
   // MARK: - Component Managers
 
   /// Central event bus for coordinating state invalidation
-  let stateInvalidationBus = StateInvalidationBus()
+  @ObservationIgnored let stateInvalidationBus = StateInvalidationBus()
 
   /// Post shadow manager for handling interaction state (likes, reposts)
-  let postShadowManager = PostShadowManager.shared
+  @ObservationIgnored let postShadowManager = PostShadowManager.shared
 
   /// Post manager for handling post creation and management
-  let postManager: PostManager
+  @ObservationIgnored let postManager: PostManager
 
   /// Preferences manager for handling user preferences
-  let preferencesManager = PreferencesManager()
+  @ObservationIgnored let preferencesManager = PreferencesManager()
 
   /// App-specific settings that aren't synced with the server
-  let appSettings = AppSettings()
+  let appSettings = AppSettings()  // Keep observed for settings changes
   
   /// Theme manager for handling app-wide theme changes
-  let themeManager = ThemeManager()
+  let themeManager = ThemeManager()  // Keep observed for theme changes
   
   /// Font manager for handling typography and font settings
-  let fontManager = FontManager()
+  let fontManager = FontManager()  // Keep observed for font changes
 
   /// Navigation manager for handling navigation
-  let navigationManager = AppNavigationManager()
+  @ObservationIgnored let navigationManager = AppNavigationManager()
 
   /// Feed filter settings manager
-  let feedFilterSettings = FeedFilterSettings()
+  @ObservationIgnored let feedFilterSettings = FeedFilterSettings()
 
   /// Notification manager for handling push notifications
-  let notificationManager = NotificationManager()
+  @ObservationIgnored let notificationManager = NotificationManager()
 
   /// Chat manager for handling Bluesky chat operations
-    let chatManager: ChatManager
+  @ObservationIgnored let chatManager: ChatManager
   
   
   /// Network monitor for tracking connectivity status
-  let networkMonitor = NetworkMonitor()
+  @ObservationIgnored let networkMonitor = NetworkMonitor()
 
   // MARK: - Feed State
 
@@ -87,7 +87,7 @@ final class AppState {
     [FetchType: (posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?)] = [:]
 
   // Flag to track if AuthManager initialization is complete
-  private var isAuthManagerInitialized = false
+  @ObservationIgnored private var isAuthManagerInitialized = false
 
   // For task cancellation when needed
   @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?

@@ -603,22 +603,6 @@ import SwiftUI
     }
   }
   
-  /// Check if ProfileViewModel is interested in a specific state invalidation event
-  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
-    switch event {
-    case .postCreated(let post):
-      // Only interested if the post was created by this profile
-      return post.author.did.didString() == userDID
-    case .profileUpdated(let did):
-      // Only interested if this specific profile was updated
-      return did == userDID
-    case .accountSwitched:
-      return true
-    default:
-      return false
-    }
-  }
-  
   /// Handle state invalidation events
   @MainActor
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {

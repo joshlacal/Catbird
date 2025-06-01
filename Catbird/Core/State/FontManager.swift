@@ -123,7 +123,7 @@ import OSLog
         }
         
         logger.info("Applying font settings - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
-        logger.debug("Previous settings - style: \(currentFontStyle), size: \(currentFontSize), spacing: \(currentLineSpacing), dynamic: \(currentDynamicTypeEnabled), maxSize: \(currentMaxDynamicTypeSize)")
+        logger.debug("Previous settings - style: \(self.currentFontStyle), size: \(self.currentFontSize), spacing: \(self.currentLineSpacing), dynamic: \(self.currentDynamicTypeEnabled), maxSize: \(self.currentMaxDynamicTypeSize)")
         
         // Update cache FIRST to prevent re-entrance
         currentFontStyle = fontStyle
