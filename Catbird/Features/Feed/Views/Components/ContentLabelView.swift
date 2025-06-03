@@ -124,100 +124,329 @@ struct ContentLabelManager: View {
     let labels: [ComAtprotoLabelDefs.Label]?
     let contentType: String
     @State private var isBlurred: Bool
+    @State private var contentVisibility: ContentVisibility
     @Environment(AppState.self) private var appState
     let content: () -> AnyView
     
     init(labels: [ComAtprotoLabelDefs.Label]?, contentType: String = "content", @ViewBuilder content: @escaping () -> some View) {
         self.labels = labels
         self.contentType = contentType
-        self._isBlurred = State(initialValue: ContentLabelManager.shouldInitiallyBlur(labels: labels))
+        let initialVisibility = ContentLabelManager.getContentVisibility(labels: labels)
+        self._contentVisibility = State(initialValue: initialVisibility)
+        self._isBlurred = State(initialValue: initialVisibility == .warn)
         self.content = { AnyView(content()) }
     }
     
-    static func shouldInitiallyBlur(labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
-        // Default implementation - should be replaced with app preference-based logic
-        guard let labels = labels, !labels.isEmpty else { return false }
+    static func getContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
+        guard let labels = labels, !labels.isEmpty else { return .show }
         
-        return labels.contains { label in
-            let lowercasedValue = label.val.lowercased()
-            return ["nsfw", "porn", "nudity", "sexual", "gore", "violence"].contains(lowercasedValue)
+        // Check for the most restrictive content type first
+        let labelValues = labels.map { $0.val.lowercased() }
+        
+        // For now, return warn for any sensitive content labels
+        // This will be enhanced to check actual user preferences from server
+        if labelValues.contains(where: { ["nsfw", "porn", "nudity", "sexual", "gore", "violence", "graphic", "suggestive"].contains($0) }) {
+            return .warn
         }
+        
+        return .show
+    }
+    
+    static func shouldInitiallyBlur(labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
+        return getContentVisibility(labels: labels) == .warn
+    }
+    
+    private var strongBlurOverlay: some View {
+        let blurredContent = content()
+            .blur(radius: 50)
+            .scaleEffect(1.2)
+            .clipped()
+        
+        return Rectangle()
+            .fill(Color.clear)
+            .background(blurredContent)
+            .overlay(Color.black.opacity(0.4))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                VStack {
+                    Image(systemName: "eye.slash.fill")
+                        .appFont(AppTextRole.title2)
+                        .foregroundStyle(.white)
+                        .padding(.bottom, 4)
+                    
+                    Text("Sensitive \(contentType.capitalized)")
+                        .appFont(AppTextRole.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                        .padding(.bottom, 4)
+                    
+                    Text("This content may not be appropriate for all audiences")
+                        .appFont(AppTextRole.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.bottom, 12)
+                    
+                    Button {
+                        withAnimation {
+                            isBlurred = false
+                        }
+                    } label: {
+                        Text("Show Content")
+                            .appFont(AppTextRole.footnote)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.gray.opacity(0.6))
+                            .cornerRadius(18)
+                    }
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.black.opacity(0.8))
+                )
+                .padding(20)
+            )
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Show labels if there are any
-            if let labels = labels, !labels.isEmpty {
-                ContentLabelView(labels: labels)
-                    .padding(.bottom, 6)
-            }
-            
-            // Content with conditional blur
-            if isBlurred {
-                ZStack {
-                    content()
-                        .blur(radius: 30)
+        Group {
+            switch contentVisibility {
+            case .hide:
+                // Completely hide content - show a minimal placeholder
+                hiddenContentPlaceholder
+                
+            case .warn:
+                VStack(spacing: 0) {
+                    // Show labels for embeds since PostView won't show them
+                    if let labels = labels, !labels.isEmpty {
+                        ContentLabelView(labels: labels)
+                            .padding(.bottom, 6)
+                    }
                     
-                    // Warning overlay with reveal button
-                    VStack {
-                        Text("Sensitive \(contentType.capitalized)")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.white)
-                            .padding(.bottom, 4)
-                        
-                        Text("This content may not be appropriate for all audiences")
-                            .appFont(AppTextRole.caption)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white.opacity(0.8))
-                            .padding(.bottom, 12)
-                        
-                        Button {
+                    // Content with conditional blur
+                    if isBlurred {
+                        ZStack {
+                            content()
+                            
+                            // Strong blur overlay that completely obscures content
+                            strongBlurOverlay
+                        }
+                        .onTapGesture {
+                            // Double tap anywhere to reveal
                             withAnimation {
                                 isBlurred = false
                             }
-                        } label: {
-                            Text("Show Content")
-                                .appFont(AppTextRole.footnote)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(Color.gray.opacity(0.5))
-                                .cornerRadius(18)
                         }
-                    }
-                    .padding(16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.black.opacity(0.7))
-                    )
-                    .padding(20)
-                }
-                .onTapGesture {
-                    // Double tap anywhere to reveal
-                    withAnimation {
-                        isBlurred = false
-                    }
-                }
-            } else {
-                content()
-                    .overlay(alignment: .topTrailing) {
-                        if labels != nil && !labels!.isEmpty {
-                            // Reblur button
-                            Button {
-                                withAnimation {
-                                    isBlurred = true
+                    } else {
+                        content()
+                            .overlay(alignment: .topTrailing) {
+                                if labels != nil && !labels!.isEmpty {
+                                    // Reblur button
+                                    Button {
+                                        withAnimation {
+                                            isBlurred = true
+                                        }
+                                    } label: {
+                                        Image(systemName: "eye.slash")
+                                            .appFont(AppTextRole.caption)
+                                            .padding(6)
+                                            .background(Circle().fill(Color.black.opacity(0.6)))
+                                            .foregroundStyle(.white)
+                                    }
+                                    .padding(12)
                                 }
-                            } label: {
-                                Image(systemName: "eye.slash")
-                                    .appFont(AppTextRole.caption)
-                                    .padding(6)
-                                    .background(Circle().fill(Color.black.opacity(0.6)))
-                                    .foregroundStyle(.white)
                             }
-                            .padding(12)
-                        }
                     }
+                }
+                
+            case .show:
+                // Show content normally with labels for embeds
+                VStack(spacing: 0) {
+                    if let labels = labels, !labels.isEmpty {
+                        ContentLabelView(labels: labels)
+                            .padding(.bottom, 6)
+                    }
+                    content()
+                }
+            }
+        }
+        .task {
+            await updateContentVisibility()
+        }
+    }
+    
+    /// Check if the current user is a minor (under 18) based on their birthdate
+    private func isMinorAccount() async -> Bool {
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            guard let birthDate = preferences.birthDate else {
+                // If no birthdate is set, err on the side of caution for adult content
+                return false
+            }
+            
+            let calendar = Calendar.current
+            let now = Date()
+            let ageComponents = calendar.dateComponents([.year], from: birthDate, to: now)
+            
+            guard let age = ageComponents.year else {
+                return false
+            }
+            
+            return age < 18
+        } catch {
+            // If we can't determine age, don't apply minor restrictions
+            return false
+        }
+    }
+    
+    private var hiddenContentPlaceholder: some View {
+        VStack(spacing: 8) {
+            // Show labels at the top so users know why content was hidden
+            if let labels = labels, !labels.isEmpty {
+                ContentLabelView(labels: labels)
+                    .padding(.bottom, 8)
+            }
+            
+            Image(systemName: "eye.slash.fill")
+                .appFont(AppTextRole.title2)
+                .foregroundStyle(.secondary)
+            
+            Text("Content Hidden")
+                .appFont(AppTextRole.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+            
+            // Use a @State variable to track if user is minor for UI updates
+            MinorAccountText(contentType: contentType, appState: appState)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 140)
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+    
+    private func updateContentVisibility() async {
+        guard let labels = labels, !labels.isEmpty else { return }
+        
+        let visibility = await getEffectiveContentVisibility(for: labels)
+        await MainActor.run {
+            self.contentVisibility = visibility
+            self.isBlurred = (visibility == .warn)
+        }
+    }
+    
+    private func getEffectiveContentVisibility(for labels: [ComAtprotoLabelDefs.Label]) async -> ContentVisibility {
+        // Check each label and find the most restrictive setting
+        var mostRestrictive: ContentVisibility = .show
+        
+        for label in labels {
+            let labelValue = label.val.lowercased()
+            let visibility = await getVisibilityForLabel(labelValue)
+            
+            // Hide is most restrictive, then warn, then show
+            switch (mostRestrictive, visibility) {
+            case (_, .hide):
+                mostRestrictive = .hide
+            case (.show, .warn):
+                mostRestrictive = .warn
+            default:
+                break
+            }
+        }
+        
+        return mostRestrictive
+    }
+    
+    private func getVisibilityForLabel(_ labelValue: String) async -> ContentVisibility {
+        // For minor accounts (under 18), always hide adult content completely
+        if await isMinorAccount() {
+            let adultLabels = ["nsfw", "porn", "sexual", "nudity", "suggestive"]
+            if adultLabels.contains(labelValue) {
+                return .hide
+            }
+        }
+        
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            
+            // Map label values to preference keys
+            let preferenceKey: String
+            switch labelValue {
+            case "nsfw", "porn", "sexual":
+                preferenceKey = "nsfw"
+            case "nudity":
+                preferenceKey = "nudity"
+            case "gore", "violence", "graphic":
+                preferenceKey = "graphic"
+            case "suggestive":
+                preferenceKey = "suggestive"
+            default:
+                preferenceKey = labelValue
+            }
+            
+            // If adult content is disabled, force hide NSFW content
+            if preferenceKey == "nsfw" && !appState.isAdultContentEnabled {
+                return .hide
+            }
+            
+            // Get the specific preference for this label
+            let visibility = ContentFilterManager.getVisibilityForLabel(
+                label: preferenceKey, 
+                preferences: preferences.contentLabelPrefs
+            )
+            
+            return visibility
+        } catch {
+            // If we can't get preferences, use safe defaults
+            if !appState.isAdultContentEnabled && ["nsfw", "porn", "sexual"].contains(labelValue) {
+                return .hide
+            }
+            return .warn
+        }
+    }
+}
+
+/// Helper view to show appropriate text based on whether user is a minor
+struct MinorAccountText: View {
+    let contentType: String
+    let appState: AppState
+    @State private var isMinor = false
+    
+    var body: some View {
+        Text(isMinor ? "This \(contentType) was hidden for safety" : "This \(contentType) was hidden based on your content preferences")
+            .appFont(AppTextRole.caption2)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+            .task {
+                await checkIfMinor()
+            }
+    }
+    
+    private func checkIfMinor() async {
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            guard let birthDate = preferences.birthDate else {
+                isMinor = false
+                return
+            }
+            
+            let calendar = Calendar.current
+            let now = Date()
+            let ageComponents = calendar.dateComponents([.year], from: birthDate, to: now)
+            
+            guard let age = ageComponents.year else {
+                isMinor = false
+                return
+            }
+            
+            await MainActor.run {
+                isMinor = age < 18
+            }
+        } catch {
+            await MainActor.run {
+                isMinor = false
             }
         }
     }

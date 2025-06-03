@@ -18,6 +18,9 @@ struct FeedsStartPage: View {
   @State private var viewModel: FeedsStartPageViewModel
   @Binding var selectedFeed: FetchType
   @Binding var currentFeedName: String
+  
+  // State invalidation subscription
+  @State private var stateInvalidationSubscriber: FeedsStartPageStateSubscriber?
 
   // UI State
   @State private var searchText = ""
@@ -889,6 +892,22 @@ struct FeedsStartPage: View {
           if appState.isAuthenticated {
             await loadUserProfile()
           }
+          
+          // Set up state invalidation subscription
+          if stateInvalidationSubscriber == nil {
+            stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
+              viewModel: viewModel,
+              updateFilteredFeeds: updateFilteredFeeds
+            )
+            appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
+          }
+        }
+      }
+      .onDisappear {
+        // Clean up state invalidation subscription
+        if let subscriber = stateInvalidationSubscriber {
+          appState.stateInvalidationBus.unsubscribe(subscriber)
+          stateInvalidationSubscriber = nil
         }
       }
       .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
@@ -940,5 +959,41 @@ struct FeedsStartPage: View {
 extension Optional where Wrapped == String {
   var isNilOrEmpty: Bool {
     self == nil || self?.isEmpty == true
+  }
+}
+
+// MARK: - State Invalidation Subscriber
+@MainActor
+final class FeedsStartPageStateSubscriber: StateInvalidationSubscriber {
+  weak var viewModel: FeedsStartPageViewModel?
+  var updateFilteredFeeds: (() async -> Void)?
+  private let logger = Logger(subsystem: "blue.catbird", category: "FeedsStartPageStateSubscriber")
+  
+  init(viewModel: FeedsStartPageViewModel, updateFilteredFeeds: @escaping () async -> Void) {
+    self.viewModel = viewModel
+    self.updateFilteredFeeds = updateFilteredFeeds
+  }
+  
+  func handleStateInvalidation(_ event: StateInvalidationEvent) async {
+    switch event {
+    case .feedListChanged:
+      logger.debug("Feed list changed event received - refreshing feeds")
+      // Refresh the feed generators and update caches
+      await viewModel?.fetchFeedGenerators()
+      await viewModel?.updateCaches()
+      // Update the filtered feeds to refresh the UI
+      await updateFilteredFeeds?()
+    default:
+      break
+    }
+  }
+  
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    switch event {
+    case .feedListChanged:
+      return true
+    default:
+      return false
+    }
   }
 }

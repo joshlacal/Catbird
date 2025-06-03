@@ -141,7 +141,8 @@ final class CachedFeedViewPost: Identifiable {
             post: mainItem.post,
             reply: Self.createReplyRefFromSlice(slice),
             reason: slice.reason,
-            feedContext: slice.feedContext
+            feedContext: slice.feedContext,
+            reqId: nil
         )
         
         self.id = "\(mainItem.post.uri.uriString())-\(mainItem.post.cid)"

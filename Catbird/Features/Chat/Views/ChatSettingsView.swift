@@ -255,5 +255,5 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 #Preview {
   ChatSettingsView()
-    .environment(AppState())
+    .environment(AppState.shared)
 }

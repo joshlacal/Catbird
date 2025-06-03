@@ -18,6 +18,7 @@ final class AppSettingsModel {
     var fontStyle: String = "system"  // system, serif, rounded, monospaced
     var fontSize: String = "default"  // small, default, large, extraLarge
     var lineSpacing: String = "normal"  // tight, normal, relaxed
+    var letterSpacing: String = "normal"  // tight, normal, loose
     var dynamicTypeEnabled: Bool = true
     var maxDynamicTypeSize: String = "accessibility1"  // xxLarge, xxxLarge, accessibility1, accessibility2, accessibility3, accessibility4, accessibility5
     
@@ -45,6 +46,9 @@ final class AppSettingsModel {
     var longPressDuration: Double = 0.5
     var shakeToUndo: Bool = true
     
+    // Attribution Settings
+    var enableViaAttribution: Bool = true
+    
     // Content and Media
     var autoplayVideos: Bool = true
     var useInAppBrowser: Bool = true
@@ -65,6 +69,7 @@ final class AppSettingsModel {
     var allowVimeo: Bool = true
     var allowTwitch: Bool = true
     var allowGiphy: Bool = true
+    var allowTenor: Bool = true
     var allowSpotify: Bool = true
     var allowAppleMusic: Bool = true
     var allowSoundCloud: Bool = true
@@ -84,6 +89,10 @@ final class AppSettingsModel {
             _contentLanguagesString = newValue.joined(separator: ",")
         }
     }
+    
+    // Language Filtering Options
+    var hideNonPreferredLanguages: Bool = false
+    var showLanguageIndicators: Bool = true
     
     // Privacy
     var loggedOutVisibility: Bool = true
@@ -139,6 +148,12 @@ final class AppSettingsModel {
         if longPressDuration == 0 { longPressDuration = 0.5 }
         shakeToUndo = defaults.bool(forKey: "shakeToUndo")
         
+        // Attribution Settings
+        enableViaAttribution = defaults.bool(forKey: "enableViaAttribution")
+        if enableViaAttribution == false && defaults.object(forKey: "enableViaAttribution") == nil {
+            enableViaAttribution = true // Default to true if not set
+        }
+        
         // Content and Media
         autoplayVideos = defaults.bool(forKey: "autoplayVideos")
         useInAppBrowser = defaults.bool(forKey: "useInAppBrowser")
@@ -159,6 +174,10 @@ final class AppSettingsModel {
         allowVimeo = defaults.bool(forKey: "allowVimeo")
         allowTwitch = defaults.bool(forKey: "allowTwitch")
         allowGiphy = defaults.bool(forKey: "allowGiphy")
+        allowTenor = defaults.bool(forKey: "allowTenor")
+        if allowTenor == false && defaults.object(forKey: "allowTenor") == nil {
+            allowTenor = true // Default to true if not set
+        }
         allowSpotify = defaults.bool(forKey: "allowSpotify")
         allowAppleMusic = defaults.bool(forKey: "allowAppleMusic")
         allowSoundCloud = defaults.bool(forKey: "allowSoundCloud")
@@ -169,6 +188,13 @@ final class AppSettingsModel {
         if let value = defaults.string(forKey: "primaryLanguage") { primaryLanguage = value }
         if let value = defaults.stringArray(forKey: "contentLanguages") {
             contentLanguages = value
+        }
+        
+        // Language Filtering Options
+        hideNonPreferredLanguages = defaults.bool(forKey: "hideNonPreferredLanguages")
+        showLanguageIndicators = defaults.bool(forKey: "showLanguageIndicators")
+        if showLanguageIndicators == false && defaults.object(forKey: "showLanguageIndicators") == nil {
+            showLanguageIndicators = true // Default to true if not set
         }
         
         // Privacy
@@ -220,6 +246,9 @@ final class AppSettingsModel {
         longPressDuration = 0.5
         shakeToUndo = true
         
+        // Attribution Settings
+        enableViaAttribution = true
+        
         // Content and Media
         autoplayVideos = true
         useInAppBrowser = true
@@ -240,6 +269,7 @@ final class AppSettingsModel {
         allowVimeo = true
         allowTwitch = true
         allowGiphy = true
+        allowTenor = true
         allowSpotify = true
         allowAppleMusic = true
         allowSoundCloud = true
@@ -249,6 +279,10 @@ final class AppSettingsModel {
         appLanguage = "system"
         primaryLanguage = "en"
         contentLanguages = ["en"]
+        
+        // Language Filtering Options
+        hideNonPreferredLanguages = false
+        showLanguageIndicators = true
         
         // Privacy
         loggedOutVisibility = true

@@ -198,8 +198,13 @@ final class PostViewModel {
     }
     
     /// Toggle the like status of the post
+    /// - Parameter via: Optional reference to the repost that led to discovering this content.
+    ///   When set, creates a "like-via-repost" notification for the author of the referenced repost.
+    ///   Only set this when the user discovered this post through someone else's repost.
+    ///   Example: Alice posts → Bob reposts → Carol likes via Bob's repost → `via` = Bob's repost record
+    ///   Note: Attribution is controlled by the enableViaAttribution setting
     @discardableResult
-    func toggleLike() async throws -> Bool {
+    func toggleLike(via: ComAtprotoRepoStrongRef? = nil) async throws -> Bool {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient // Throw error instead of returning false
         }
@@ -230,9 +235,14 @@ final class PostViewModel {
                     uri: try ATProtocolURI(uriString: postId),
                     cid: postCid
                 )
+                // Check if via attribution is enabled in settings
+                let enableAttribution = appState.appSettings.enableViaAttribution
+                let viaReference = enableAttribution ? via : nil
+                
                 let likeRecord = AppBskyFeedLike(
                     subject: postRef,
-                    createdAt: .init(date: Date())
+                    createdAt: .init(date: Date()),
+                    via: viaReference
                 )
                 
                 let did = try await client.getDid()
@@ -309,8 +319,13 @@ final class PostViewModel {
     }
     
     /// Toggle the repost status of the post
+    /// - Parameter via: Optional reference to the repost that led to discovering this content.
+    ///   When set, creates a "repost-via-repost" notification for the author of the referenced repost.
+    ///   Only set this when the user discovered this post through someone else's repost.
+    ///   Example: Alice posts → Bob reposts → Carol reposts via Bob's repost → `via` = Bob's repost record
+    ///   Note: Attribution is controlled by the enableViaAttribution setting
     @discardableResult
-    func toggleRepost() async throws -> Bool {
+    func toggleRepost(via: ComAtprotoRepoStrongRef? = nil) async throws -> Bool {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
@@ -340,9 +355,14 @@ final class PostViewModel {
                     uri: try ATProtocolURI(uriString: postId),
                     cid: postCid
                 )
+                // Check if via attribution is enabled in settings
+                let enableAttribution = appState.appSettings.enableViaAttribution
+                let viaReference = enableAttribution ? via : nil
+                
                 let repostRecord = AppBskyFeedRepost(
                     subject: postRef,
-                    createdAt: .init(date: Date())
+                    createdAt: .init(date: Date()),
+                    via: viaReference
                 )
                 let did = try await client.getDid()
                 let input = ComAtprotoRepoCreateRecord.Input(

@@ -310,6 +310,35 @@ class ThemeColorCache {
     }
 }
 
+// MARK: - Accessibility Color Extensions
+
+extension Color {
+    /// Adaptive background color that respects contrast settings
+    static func adaptiveBackground(appState: AppState?, defaultColor: Color) -> Color {
+        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        return increaseContrast ? defaultColor.opacity(0.95) : defaultColor
+    }
+    
+    /// Adaptive foreground color that respects contrast settings
+    static func adaptiveForeground(appState: AppState?, defaultColor: Color) -> Color {
+        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        return increaseContrast ? .primary : defaultColor
+    }
+    
+    /// Adaptive border color that respects contrast settings
+    static func adaptiveBorder(appState: AppState?) -> Color {
+        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        return increaseContrast ? .primary.opacity(0.3) : .gray.opacity(0.2)
+    }
+    
+    /// Adaptive separator color that respects contrast settings
+    static func adaptiveSeparator(appState: AppState?, themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
+        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let baseColor = dynamicSeparator(themeManager, currentScheme: currentScheme)
+        return increaseContrast ? baseColor.opacity(0.8) : baseColor
+    }
+}
+
 // MARK: - UIColor Extensions (for UIKit components)
 
 extension UIColor {

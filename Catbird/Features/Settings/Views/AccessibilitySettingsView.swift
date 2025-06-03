@@ -76,10 +76,20 @@ struct AccessibilitySettingsView: View {
                             get: { appState.appSettings.displayScale },
                             set: { appState.appSettings.displayScale = $0 }
                         ),
-                        in: 0.85...1.15,
+                        in: 0.85...1.3,
                         step: 0.05
                     )
                     .tint(.blue)
+                    
+                    HStack {
+                        Text("85%")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("130%")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 
                 // Preview component
@@ -262,10 +272,16 @@ struct AccessibilitySettingsView: View {
                     set: { appState.appSettings.shakeToUndo = $0 }
                 ))
                 .tint(.blue)
+                
+                Toggle("Attribution Tracking", isOn: Binding(
+                    get: { appState.appSettings.enableViaAttribution },
+                    set: { appState.appSettings.enableViaAttribution = $0 }
+                ))
+                .tint(.blue)
             } header: {
                 Text("Interaction Settings")
             } footer: {
-                Text("Confirm Before Actions shows alerts for destructive actions like deleting posts. Long press duration affects context menus.")
+                Text("Confirm Before Actions shows alerts for destructive actions like deleting posts. Long press duration affects context menus. Attribution Tracking credits users when you like/repost content you discovered through their reposts.")
                     .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -307,34 +323,62 @@ private struct DisplayPreviewView: View {
     let boldText: Bool
     let scale: Double
     
+    @Environment(AppState.self) private var appState
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Display Preview")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Preview")
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Sample Post")
-                    .font(boldText ? .headline.bold() : .headline)
-                    .scaleEffect(scale)
-                
-                Text("This is how your posts will appear with current display settings.")
-                    .font(boldText ? .subheadline.bold() : .subheadline)
-                    .foregroundStyle(increaseContrast ? .primary : .secondary)
-                    .scaleEffect(scale)
+            VStack(alignment: .leading, spacing: 12) {
+                // Sample post with accessibility settings applied
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 40, height: 40)
+                            .appDisplayScale(appState: appState)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Sample User")
+                                .appFont(AppTextRole.headline)
+                                .accessibleText(appState: appState)
+                            Text("@sampleuser")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibleText(appState: appState)
+                        }
+                        
+                        Spacer()
+                    }
+                    
+                    Text("This is how text will appear with your current accessibility settings. You can adjust the display scale, contrast, and bold text options above.")
+                        .appFont(AppTextRole.body)
+                        .accessibleText(appState: appState)
+                    
+                    HStack(spacing: 20) {
+                        Button {} label: {
+                            Label("Like", systemImage: "heart")
+                                .appFont(AppTextRole.caption)
+                        }
+                        .buttonStyle(AccessibleButtonStyle(appState: appState))
+                        
+                        Button {} label: {
+                            Label("Reply", systemImage: "bubble.left")
+                                .appFont(AppTextRole.caption)
+                        }
+                        .buttonStyle(AccessibleButtonStyle(appState: appState))
+                    }
+                }
+                .padding()
+                .contrastAwareBackground(appState: appState, defaultColor: Color(.systemGray6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.adaptiveBorder(appState: appState), lineWidth: appState.appSettings.increaseContrast ? 2 : 1)
+                )
+                .appDisplayScale(appState: appState)
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(
-                                increaseContrast ? Color(.label) : Color(.systemGray4),
-                                lineWidth: increaseContrast ? 2 : 1
-                            )
-                    )
-            )
         }
     }
 }
@@ -474,6 +518,6 @@ private struct LinkPreviewView: View {
 #Preview {
     NavigationStack {
         AccessibilitySettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

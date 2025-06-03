@@ -50,7 +50,8 @@ struct ModernVideoPlayerView18: View {
             id: "\(postID)-\(bskyVideo.playlist.uriString())-\(bskyVideo.cid)",
             url: playlistURL,
             type: .hlsStream(bskyVideo),
-            aspectRatio: aspectRatio
+            aspectRatio: aspectRatio,
+            thumbnailURL: bskyVideo.thumbnail?.url
         )
         
         self.postID = postID
@@ -68,7 +69,8 @@ struct ModernVideoPlayerView18: View {
             id: "\(postID)-tenor-\(gifId)",
             url: tenorURL,
             type: .tenorGif(uri),
-            aspectRatio: aspectRatio ?? 1
+            aspectRatio: aspectRatio ?? 1,
+            thumbnailURL: nil  // GIFs don't need thumbnails as they play automatically
         )
         self.postID = postID
     }
@@ -79,27 +81,43 @@ struct ModernVideoPlayerView18: View {
             ZStack(alignment: .bottomTrailing) {
                 // Video Player Layer
                 if let player = player {
-                    PlayerLayerView(
-                        player: player,
-                        gravity: model.type.isGif ? .resizeAspectFill : .resizeAspect,
-                        size: CGSize(
-                            width: geometry.size.width,
-                            height: geometry.size.width / model.aspectRatio
-                        ),
-                        shouldLoop: true
-                    )
-                    .matchedTransitionSource(id: model.id, in: videoTransitionNamespace) { source in
-                      source
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    ZStack {
+                        PlayerLayerView(
+                            player: player,
+                            gravity: model.type.isGif ? .resizeAspectFill : .resizeAspect,
+                            size: CGSize(
+                                width: geometry.size.width,
+                                height: geometry.size.width / model.aspectRatio
+                            ),
+                            shouldLoop: true
+                        )
+                        .matchedTransitionSource(id: model.id, in: videoTransitionNamespace) { source in
+                          source
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: geometry.size.width / model.aspectRatio)
+                        
+                        // Show thumbnail overlay if video is not playing and autoplay is disabled
+                        if !model.isPlaying && !appState.appSettings.autoplayVideos,
+                           let thumbnailURL = model.thumbnailURL,
+                           case .hlsStream = model.type {
+                            VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: geometry.size.width / model.aspectRatio)
                     .contentShape(Rectangle())
                     .onTapGesture { location in
                         // Check if tap is not on the mute button
-                        if !muteButtonFrame.contains(location), case .hlsStream = model.type {
-                            // Full-screen video should only be available for HLS videos
-                            showFullscreen = true
+                        if !muteButtonFrame.contains(location) {
+                            if case .hlsStream = model.type {
+                                if !model.isPlaying && !appState.appSettings.autoplayVideos {
+                                    // Start playing if thumbnail is shown
+                                    VideoCoordinator.shared.forcePlayVideo(model.id)
+                                } else {
+                                    // Full-screen video should only be available for HLS videos
+                                    showFullscreen = true
+                                }
+                            }
                         }
                     }
                 } else {
@@ -291,7 +309,8 @@ struct ModernVideoPlayerView17: View {
             id: "\(postID)-\(bskyVideo.playlist.uriString())-\(bskyVideo.cid)",
             url: playlistURL,
             type: .hlsStream(bskyVideo),
-            aspectRatio: aspectRatio
+            aspectRatio: aspectRatio,
+            thumbnailURL: bskyVideo.thumbnail?.url
         )
         
         self.postID = postID
@@ -309,7 +328,8 @@ struct ModernVideoPlayerView17: View {
             id: "\(postID)-tenor-\(gifId)",
             url: tenorURL,
             type: .tenorGif(uri),
-            aspectRatio: aspectRatio ?? 1
+            aspectRatio: aspectRatio ?? 1,
+            thumbnailURL: nil  // GIFs don't need thumbnails as they play automatically
         )
         self.postID = postID
     }
@@ -320,33 +340,49 @@ struct ModernVideoPlayerView17: View {
             ZStack(alignment: .bottomTrailing) {
                 // Video Player Layer
                 if let player = player {
-                    PlayerLayerView(
-                        player: player,
-                        gravity: model.type.isGif ? .resizeAspectFill : .resizeAspect,
-                        size: CGSize(
-                            width: geometry.size.width,
-                            height: geometry.size.width / model.aspectRatio
-                        ),
-                        shouldLoop: true
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: geometry.size.width / model.aspectRatio)
+                    ZStack {
+                        PlayerLayerView(
+                            player: player,
+                            gravity: model.type.isGif ? .resizeAspectFill : .resizeAspect,
+                            size: CGSize(
+                                width: geometry.size.width,
+                                height: geometry.size.width / model.aspectRatio
+                            ),
+                            shouldLoop: true
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: geometry.size.width / model.aspectRatio)
+                        
+                        // Show thumbnail overlay if video is not playing and autoplay is disabled
+                        if !model.isPlaying && !appState.appSettings.autoplayVideos,
+                           let thumbnailURL = model.thumbnailURL,
+                           case .hlsStream = model.type {
+                            VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
+                        }
+                    }
                     .contentShape(Rectangle())
                     .scaleEffect(playerScale)
                     .animation(.spring(), value: playerScale)
                     .onTapGesture { location in
                         // Check if tap is not on the mute button
-                        if !muteButtonFrame.contains(location), case .hlsStream = model.type {
-                            // Animate scale before showing fullscreen
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                playerScale = 0.95
-                            }
-                            
-                            // Reset scale and show fullscreen
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                playerScale = 1.0
-                                showFullscreen = true
+                        if !muteButtonFrame.contains(location) {
+                            if case .hlsStream = model.type {
+                                if !model.isPlaying && !appState.appSettings.autoplayVideos {
+                                    // Start playing if thumbnail is shown
+                                    VideoCoordinator.shared.forcePlayVideo(model.id)
+                                } else {
+                                    // Animate scale before showing fullscreen
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        playerScale = 0.95
+                                    }
+                                    
+                                    // Reset scale and show fullscreen
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                        playerScale = 1.0
+                                        showFullscreen = true
+                                    }
+                                }
                             }
                         }
                     }
@@ -543,5 +579,44 @@ struct MuteButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.9 : 1.0)
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
             .allowsHitTesting(true)
+    }
+}
+
+// MARK: - Video Thumbnail View
+
+/// Shows video thumbnail when autoplay is disabled
+struct VideoThumbnailView: View {
+    let thumbnailURL: URL
+    let aspectRatio: CGFloat
+    
+    var body: some View {
+        ZStack {
+            AsyncImage(url: thumbnailURL) { image in
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } placeholder: {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            
+            // Play button overlay
+            Button(action: {}) {
+                ZStack {
+                    Circle()
+                        .fill(Color.black.opacity(0.6))
+                        .frame(width: 60, height: 60)
+                    
+                    Image(systemName: "play.fill")
+                        .foregroundStyle(.white)
+                        .font(.title2)
+                        .offset(x: 2) // Slight offset to center play icon visually
+                }
+            }
+            .disabled(true) // Button is just visual, tap handling is done by parent
+        }
     }
 }

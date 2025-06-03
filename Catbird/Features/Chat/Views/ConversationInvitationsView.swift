@@ -185,6 +185,6 @@ struct ConversationInvitationRow: View {
 #Preview {
   NavigationView {
     ConversationInvitationsView()
-      .environment(AppState())
+      .environment(AppState.shared)
   }
 }

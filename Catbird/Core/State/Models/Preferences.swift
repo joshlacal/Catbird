@@ -41,6 +41,10 @@ final class Preferences {
   var adultContentEnabled: Bool = false
   var birthDate: Date?
   var activeProgressGuide: String?
+  
+  // Language preferences
+  var primaryLanguage: String = "en"
+  private var contentLanguagesData: String = "[\"en\"]"
 
   // Computed properties for accessing as arrays
   var pinnedFeeds: [String] {
@@ -172,6 +176,17 @@ final class Preferences {
       }
     }
   }
+  
+  var contentLanguages: [String] {
+    get {
+      return (try? JSONDecoder().decode([String].self, from: Data(contentLanguagesData.utf8))) ?? ["en"]
+    }
+    set {
+      if let data = try? JSONEncoder().encode(newValue) {
+        contentLanguagesData = String(data: data, encoding: .utf8) ?? "[\"en\"]"
+      }
+    }
+  }
 
   // Initialize with all the preferences
   init(
@@ -188,7 +203,9 @@ final class Preferences {
     activeProgressGuide: String? = nil,
     queuedNudges: [String] = [],
     nuxStates: [NuxState] = [],
-    interests: [String] = []
+    interests: [String] = [],
+    primaryLanguage: String = "en",
+    contentLanguages: [String] = ["en"]
   ) {
     // Initialize with empty JSON data
     self.savedFeedsData = "[]"
@@ -226,7 +243,8 @@ final class Preferences {
     self.queuedNudges = queuedNudges
     self.nuxStates = nuxStates
     self.interests = interests
-    self.queuedNudges = queuedNudges
+    self.primaryLanguage = primaryLanguage
+    self.contentLanguages = contentLanguages
 
     // Ensure timeline feed is present
     //    ensureTimelineFeed()

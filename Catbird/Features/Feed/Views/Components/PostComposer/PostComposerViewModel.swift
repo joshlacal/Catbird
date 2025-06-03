@@ -6,6 +6,48 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Tenor API Models (shared with GifPickerView)
+
+struct TenorGif: Codable, Identifiable {
+    let id: String
+    let title: String
+    let content_description: String
+    let itemurl: String
+    let url: String
+    let tags: [String]
+    let media_formats: TenorMediaFormats
+    let created: Double
+    let flags: [String]
+    let hasaudio: Bool
+    let content_description_source: String
+}
+
+struct TenorMediaFormats: Codable {
+    let gif: TenorMediaItem?
+    let mediumgif: TenorMediaItem?
+    let tinygif: TenorMediaItem?
+    let nanogif: TenorMediaItem?
+    let mp4: TenorMediaItem?
+    let loopedmp4: TenorMediaItem?
+    let tinymp4: TenorMediaItem?
+    let nanomp4: TenorMediaItem?
+    let webm: TenorMediaItem?
+    let tinywebm: TenorMediaItem?
+    let nanowebm: TenorMediaItem?
+    let webp: TenorMediaItem?
+    let gifpreview: TenorMediaItem?
+    let tinygifpreview: TenorMediaItem?
+    let nanogifpreview: TenorMediaItem?
+}
+
+struct TenorMediaItem: Codable {
+    let url: String
+    let dims: [Int]
+    let duration: Double?
+    let preview: String
+    let size: Int?
+}
+
 #if os(iOS)
   import UIKit
 #elseif os(macOS)
@@ -77,10 +119,18 @@ final class PostComposerViewModel {
   var characterCount: Int { postText.count }
   var isOverCharacterLimit: Bool { characterCount > maxCharacterCount }
   var isPostButtonDisabled: Bool {
-    // Only disable if: no content at all OR over character limit OR currently uploading
-    (postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && videoItem == nil
-      && mediaItems.isEmpty && selectedImageItem == nil && detectedURLs.isEmpty)
-      || isOverCharacterLimit || isVideoUploading
+    // Only disable if: no content at all OR over character limit OR currently uploading OR missing required alt text
+    let hasNoContent = postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && videoItem == nil
+      && mediaItems.isEmpty && selectedImageItem == nil && selectedGif == nil && detectedURLs.isEmpty
+    
+    // Check if alt text is required and missing
+    let requiresAltText = appState.appSettings.requireAltText
+    let missingAltText = requiresAltText && (
+      mediaItems.contains { $0.altText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ||
+      (videoItem?.altText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true)
+    )
+    
+    return hasNoContent || isOverCharacterLimit || isVideoUploading || missingAltText
   }
     
     // Threadgate properties
@@ -790,7 +840,7 @@ final class PostComposerViewModel {
     suggestedLanguage = detectLanguage()
 
     // Parse the text content to get URLs and update mentions
-    let (_, _, facets, urls) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+    let (_, _, facets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
 
     // Update attributed text with highlighting using existing RichText implementation
     updateAttributedText(facets: facets)
@@ -1424,12 +1474,61 @@ final class PostComposerViewModel {
   #endif
 
   private func detectLanguage() -> LanguageCodeContainer? {
+    // Skip detection for very short text
+    guard postText.trimmingCharacters(in: .whitespacesAndNewlines).count >= 10 else {
+      return getUserPrimaryLanguage()
+    }
+    
     let recognizer = NLLanguageRecognizer()
     recognizer.processString(postText)
-    if let detectedNLLang = recognizer.dominantLanguage {
-      let detectedLang = localeLanguage(from: detectedNLLang)
+    
+    // Get confidence scores for multiple languages
+    let languageHypotheses = recognizer.languageHypotheses(withMaximum: 3)
+    
+    // Find the best language that's also in user's preferred languages
+    let userLanguages = appState.appSettings.contentLanguages ?? []
+    
+    for (nlLanguage, confidence) in languageHypotheses {
+      // Only consider languages with reasonable confidence (>0.3)
+      guard confidence > 0.3 else { continue }
+      
+      let detectedLangCode = nlLanguage.rawValue
+      
+      // Prefer detected languages that match user's preferences
+      if userLanguages.contains(detectedLangCode) {
+        let detectedLang = localeLanguage(from: nlLanguage)
+        return LanguageCodeContainer(lang: detectedLang)
+      }
+    }
+    
+    // If no preferred language detected with good confidence, use the top detection
+    if let (topLanguage, confidence) = languageHypotheses.first, confidence > 0.5 {
+      let detectedLang = localeLanguage(from: topLanguage)
       return LanguageCodeContainer(lang: detectedLang)
     }
+    
+    // Fallback to user's primary language
+    return getUserPrimaryLanguage()
+  }
+  
+  private func getUserPrimaryLanguage() -> LanguageCodeContainer? {
+    // appState is always available (not optional)
+    
+    // Use user's primary language from settings
+    let primaryLangCode = appState.appSettings.primaryLanguage
+    
+    // Convert to LanguageCodeContainer
+    if let language = Locale.Language(identifier: primaryLangCode) as? Locale.Language {
+      return LanguageCodeContainer(lang: language)
+    }
+    
+    // Fallback to system language
+    if let systemLang = Locale.current.language.languageCode?.identifier {
+      if let language = Locale.Language(identifier: systemLang) as? Locale.Language {
+        return LanguageCodeContainer(lang: language)
+      }
+    }
+    
     return nil
   }
 
@@ -1571,11 +1670,11 @@ final class PostComposerViewModel {
         let useThreadgate = !threadgateSettings.allowEverybody
         
         try await appState.createNewPost(
-            parsedContent.text,
+            parsedContent.0,
             languages: selectedLanguages,
             metadata: [:],
-            hashtags: parsedContent.hashtags,
-            facets: parsedContent.facets,
+            hashtags: parsedContent.1,
+            facets: parsedContent.2,
             parentPost: parentPost,
             selfLabels: selfLabels,
             embed: embed,
@@ -1860,7 +1959,12 @@ final class PostComposerViewModel {
 
     }
 
-    // Check for video first (highest priority)
+    // Check for GIF first (highest priority for rich media)
+    if selectedGif != nil {
+      return try await createGifEmbed()
+    }
+
+    // Check for video (second priority)
     if videoItem != nil {
       return try await createVideoEmbed()
     }
@@ -1886,13 +1990,118 @@ final class PostComposerViewModel {
 
   // Add method to check if a URL will be used as embed
   func willBeUsedAsEmbed(for url: String) -> Bool {
-    // If there's a video or image selected, no URL will be used as embed
-    if videoItem != nil || !mediaItems.isEmpty || selectedImageItem != nil {
+    // If there's a GIF, video or image selected, no URL will be used as embed
+    if selectedGif != nil || videoItem != nil || !mediaItems.isEmpty || selectedImageItem != nil {
       return false
     }
 
     // Otherwise, only the first URL with a card will be used as embed
     return url == detectedURLs.first && urlCards[url] != nil
+  }
+
+  // MARK: - GIF Support
+  var selectedGif: TenorGif?
+  var showingGifPicker = false
+  
+  func selectGif(_ gif: TenorGif) {
+    selectedGif = gif
+    showingGifPicker = false
+  }
+  
+  func removeSelectedGif() {
+    selectedGif = nil
+  }
+  
+  func createGifEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+    guard let gif = selectedGif else { return nil }
+    
+    // Create external embed like Bluesky does - prioritize GIF format for proper animation
+    let gifURL: String
+    let description = gif.content_description.isEmpty ? "Animated GIF" : gif.content_description
+    
+    // Use GIF format with sizing parameters like Bluesky does
+    // Priority: gif > mediumgif > tinygif (avoid MP4 for external embeds)
+    if let gifFormat = gif.media_formats.gif {
+      // Add sizing parameters if available from dims
+      var url = gifFormat.url
+      if gifFormat.dims.count >= 2 {
+        let width = gifFormat.dims[0]
+        let height = gifFormat.dims[1]
+        // Add Bluesky-style sizing parameters
+        if url.contains("?") {
+          url += "&hh=\(height)&ww=\(width)"
+        } else {
+          url += "?hh=\(height)&ww=\(width)"
+        }
+      }
+      gifURL = url
+    } else if let mediumgif = gif.media_formats.mediumgif {
+      var url = mediumgif.url
+      if mediumgif.dims.count >= 2 {
+        let width = mediumgif.dims[0]
+        let height = mediumgif.dims[1]
+        if url.contains("?") {
+          url += "&hh=\(height)&ww=\(width)"
+        } else {
+          url += "?hh=\(height)&ww=\(width)"
+        }
+      }
+      gifURL = url
+    } else if let tinygif = gif.media_formats.tinygif {
+      var url = tinygif.url
+      if tinygif.dims.count >= 2 {
+        let width = tinygif.dims[0]
+        let height = tinygif.dims[1]
+        if url.contains("?") {
+          url += "&hh=\(height)&ww=\(width)"
+        } else {
+          url += "?hh=\(height)&ww=\(width)"
+        }
+      }
+      gifURL = url
+    } else {
+      throw NSError(domain: "GifEmbedError", code: 0, userInfo: [NSLocalizedDescriptionKey: "No suitable GIF format found"])
+    }
+    
+    guard let uri = URI(gifURL) else {
+      throw NSError(domain: "GifEmbedError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid GIF URL"])
+    }
+    
+    // Try to get a thumbnail for the external embed
+    var thumb: Blob?
+    if let previewFormat = gif.media_formats.gifpreview ?? gif.media_formats.tinygifpreview {
+      do {
+        guard let client = appState.atProtoClient,
+              let thumbURL = URL(string: previewFormat.url) else {
+          throw NSError(domain: "ThumbError", code: 0, userInfo: nil)
+        }
+        
+        let (thumbData, _) = try await URLSession.shared.data(from: thumbURL)
+        
+        let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
+          data: thumbData,
+          mimeType: "image/jpeg",
+          stripMetadata: true
+        )
+        
+        if responseCode == 200, let blob = blobOutput?.blob {
+          thumb = blob
+        }
+      } catch {
+        logger.debug("Failed to upload GIF thumbnail: \(error)")
+        // Continue without thumbnail
+      }
+    }
+    
+    // Create external embed like Bluesky does
+    let external = AppBskyEmbedExternal.External(
+      uri: uri,
+      title: gif.title.isEmpty ? "GIF" : gif.title,
+      description: description,
+      thumb: thumb
+    )
+    
+    return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
   }
 
   // MARK: - Legacy Properties (keeping for compatibility)
@@ -1998,8 +2207,8 @@ extension PostComposerViewModel {
     threadEntries[currentThreadEntryIndex].videoItem = videoItem
     threadEntries[currentThreadEntryIndex].detectedURLs = detectedURLs
     threadEntries[currentThreadEntryIndex].urlCards = urlCards
-    threadEntries[currentThreadEntryIndex].facets = parsedContent.facets
-    threadEntries[currentThreadEntryIndex].hashtags = parsedContent.hashtags
+    threadEntries[currentThreadEntryIndex].facets = parsedContent.2
+    threadEntries[currentThreadEntryIndex].hashtags = parsedContent.1
   }
 
   // Load state from current thread entry into UI
@@ -2014,6 +2223,17 @@ extension PostComposerViewModel {
 
     // Update any UI that depends on the text
     updatePostContent()
+  }
+
+  // MARK: - Helper Methods for PostComposerView
+  
+  // Alias methods for PostComposerView compatibility
+  func updateCurrentThreadEntry() {
+    saveCurrentEntryState()
+  }
+  
+  func addNewThreadEntry() {
+    addThreadEntry()
   }
 
   // Create and publish a thread
@@ -2039,7 +2259,7 @@ extension PostComposerViewModel {
       } else {
         let parsedContent = PostParser.parsePostContent(
           entry.text, resolvedProfiles: resolvedProfiles)
-        facets.append(parsedContent.facets)
+        facets.append(parsedContent.2)
       }
 
       // Add hashtags

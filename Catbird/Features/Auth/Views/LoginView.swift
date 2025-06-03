@@ -860,7 +860,7 @@ struct LoginView: View {
 
 #Preview {
     // Preview provider for LoginView
-    @Previewable @State var appState = AppState()
+    @Previewable @State var appState = AppState.shared
     
     LoginView()
         .environment(appState)

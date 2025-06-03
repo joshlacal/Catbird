@@ -189,6 +189,9 @@ final class ChatManager: StateInvalidationSubscriber {
     case .postLiked(_), .postUnliked(_), .postReposted(_), .postUnreposted(_):
       // These don't affect chat content
       break
+    case .feedListChanged:
+      // Feed list changes don't affect chat content
+      break
     }
   }
   
@@ -242,10 +245,8 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       logger.debug("Loading conversations with cursor: \(cursorToUse ?? "nil")")
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
-      await client.clearProxyHeader()
-
+         let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error loading conversations: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -317,11 +318,9 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       logger.debug("Loading messages for \(convoId) with cursor: \(cursorToUse ?? "nil")")
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-
+   
       let (responseCode, response) = try await client.chat.bsky.convo.getMessages(input: params)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error loading messages for \(convoId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -411,11 +410,9 @@ final class ChatManager: StateInvalidationSubscriber {
     // 3. Check responseCode
     // 4. If success, remove conversation from local state
     let leaveInput = ChatBskyConvoLeaveConvo.Input(convoId: convoId)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, _) = try await client.chat.bsky.convo.leaveConvo(input: leaveInput)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error leaving conversation \(convoId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -450,11 +447,9 @@ final class ChatManager: StateInvalidationSubscriber {
     // 3. Check responseCode
     // 4. If success, update local state (e.g., mark conversation as muted)
     let muteInput = ChatBskyConvoMuteConvo.Input(convoId: convoId)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error muting conversation \(convoId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -483,11 +478,9 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     let unmuteInput = ChatBskyConvoUnmuteConvo.Input(convoId: convoId)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error unmuting conversation \(convoId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -515,11 +508,9 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     let acceptInput = ChatBskyConvoAcceptConvo.Input(convoId: convoId)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.convo.acceptConvo(input: acceptInput)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error accepting conversation \(convoId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -547,11 +538,9 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     let params = ChatBskyConvoGetConvo.Parameters(convoId: convoId)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.convo.getConvo(input: params)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error getting conversation \(convoId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -585,11 +574,9 @@ final class ChatManager: StateInvalidationSubscriber {
     do {
       let memberDIDs = try members.map { try DID(didString: $0) }
       let params = ChatBskyConvoGetConvoAvailability.Parameters(members: memberDIDs)
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      
+         
       let (responseCode, response) = try await client.chat.bsky.convo.getConvoAvailability(input: params)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error checking conversation availability: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -670,12 +657,10 @@ final class ChatManager: StateInvalidationSubscriber {
 
       logger.debug("Sending message to conversation \(convoId)")
 
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-
+   
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
 
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error sending message to \(convoId): HTTP \(responseCode)")
         
@@ -760,12 +745,10 @@ final class ChatManager: StateInvalidationSubscriber {
     do {
       let input = ChatBskyConvoUpdateRead.Input(convoId: convoId, messageId: nil)  // messageId is optional
       logger.debug("Marking conversation \(convoId) as read")
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-
+   
       let (responseCode, response) = try await client.chat.bsky.convo.updateRead(input: input)
 
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error marking conversation \(convoId) as read: HTTP \(responseCode)")
         // Don't update local state if API call failed
@@ -821,10 +804,8 @@ final class ChatManager: StateInvalidationSubscriber {
 
       let input = ChatBskyConvoSendMessageBatch.Input(items: batchItems)
 
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      let (responseCode, response) = try await client.chat.bsky.convo.sendMessageBatch(input: input)
-      await client.clearProxyHeader()
-
+         let (responseCode, response) = try await client.chat.bsky.convo.sendMessageBatch(input: input)
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error sending message batch: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -880,11 +861,9 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     let input = ChatBskyConvoDeleteMessageForSelf.Input(convoId: convoId, messageId: messageId)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.convo.deleteMessageForSelf(input: input)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error deleting message \(messageId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -920,11 +899,9 @@ final class ChatManager: StateInvalidationSubscriber {
       return false
     }
 
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
         let (responseCode, _) = try await client.chat.bsky.convo.updateAllRead(input: .init())
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error marking all conversations as read: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -957,11 +934,9 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     let params = ChatBskyConvoGetLog.Parameters(cursor: cursor)
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.convo.getLog(input: params)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error getting conversation log: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -1027,10 +1002,8 @@ final class ChatManager: StateInvalidationSubscriber {
     do {
       let input = ChatBskyConvoAddReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      let (responseCode, response) = try await client.chat.bsky.convo.addReaction(input: input)
-      await client.clearProxyHeader()
-      guard responseCode >= 200 && responseCode < 300, let updated = response?.message else {
+         let (responseCode, response) = try await client.chat.bsky.convo.addReaction(input: input)
+       guard responseCode >= 200 && responseCode < 300, let updated = response?.message else {
         return false
       }
       await updateMessageInLocalState(updated)
@@ -1051,10 +1024,8 @@ final class ChatManager: StateInvalidationSubscriber {
     do {
       let input = ChatBskyConvoRemoveReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      let (responseCode, response) = try await client.chat.bsky.convo.removeReaction(input: input)
-      await client.clearProxyHeader()
-      guard responseCode >= 200 && responseCode < 300, let updated = response?.message else {
+         let (responseCode, response) = try await client.chat.bsky.convo.removeReaction(input: input)
+       guard responseCode >= 200 && responseCode < 300, let updated = response?.message else {
         return false
       }
       await updateMessageInLocalState(updated)
@@ -1381,11 +1352,9 @@ final class ChatManager: StateInvalidationSubscriber {
       return nil
     }
 
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, output) = try await client.chat.bsky.actor.exportAccountData()
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error exporting chat account data: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -1414,11 +1383,9 @@ final class ChatManager: StateInvalidationSubscriber {
       return (false, nil)
     }
 
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, output) = try await client.chat.bsky.actor.deleteAccount()
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error deleting chat account: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -1468,11 +1435,9 @@ final class ChatManager: StateInvalidationSubscriber {
       let params = ChatBskyModerationGetActorMetadata.Parameters(
         actor: try DID(didString: actor)
       )
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      
+         
       let (responseCode, response) = try await client.chat.bsky.moderation.getActorMetadata(input: params)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error getting actor metadata for \(actor): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -1503,11 +1468,9 @@ final class ChatManager: StateInvalidationSubscriber {
       before: before,
       after: after
     )
-    await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-    do {
+     do {
       let (responseCode, response) = try await client.chat.bsky.moderation.getMessageContext(input: params)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error getting message context for \(messageId): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -1538,11 +1501,9 @@ final class ChatManager: StateInvalidationSubscriber {
         allowAccess: allowAccess,
         ref: ref
       )
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      
+         
       let responseCode = try await client.chat.bsky.moderation.updateActorAccess(input: input)
-      await client.clearProxyHeader()
-
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error updating actor access for \(actor): HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)
@@ -1593,10 +1554,8 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       logger.debug("Loading message requests with cursor: \(cursorToUse ?? "nil")")
-      await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-      let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
-      await client.clearProxyHeader()
-
+         let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
+ 
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error loading message requests: HTTP \(responseCode)")
         errorState = .networkError(code: responseCode)

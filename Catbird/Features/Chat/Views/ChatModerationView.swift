@@ -387,6 +387,6 @@ struct MessageContextRow: View {
 #Preview {
   NavigationView {
     ChatModerationView()
-      .environment(AppState())
+      .environment(AppState.shared)
   }
 }

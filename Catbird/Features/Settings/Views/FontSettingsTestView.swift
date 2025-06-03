@@ -245,5 +245,5 @@ struct FontSettingsTestView: View {
 
 #Preview {
     FontSettingsTestView()
-        .environment(AppState())
+        .environment(AppState.shared)
 }

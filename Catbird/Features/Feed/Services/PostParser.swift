@@ -30,7 +30,7 @@ struct URLCardResponse: Codable, Identifiable {
 struct PostParser {
   static func parsePostContent(
     _ content: String, resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic]
-  ) -> (text: String, hashtags: [String], facets: [AppBskyRichtextFacet], urls: [String]) {
+  ) -> (text: String, hashtags: [String], facets: [AppBskyRichtextFacet], urls: [String], detectedLanguage: String?) {
     var hashtags: [String] = []
     var facets: [AppBskyRichtextFacet] = []
     var urls: [String] = []
@@ -149,7 +149,10 @@ struct PostParser {
       }
     }
 
-    return (content, hashtags, facets, urls)
+    // Detect language
+    let detectedLanguage = LanguageDetector.shared.detectLanguage(for: content)
+
+    return (content, hashtags, facets, urls, detectedLanguage)
   }
 }
 

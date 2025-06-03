@@ -217,6 +217,36 @@ extension View {
     func adaptiveContrast(_ themeManager: ThemeManager) -> some View {
         self.modifier(AdaptiveContrastModifier(themeManager: themeManager))
     }
+    
+    /// Apply contrast-aware background with app state
+    func contrastAwareBackground(appState: AppState?, defaultColor: Color = .clear) -> some View {
+        self.modifier(ContrastAwareBackgroundModifier(appState: appState, defaultColor: defaultColor))
+    }
+}
+
+struct ContrastAwareBackgroundModifier: ViewModifier {
+    let appState: AppState?
+    let defaultColor: Color
+    
+    func body(content: Content) -> some View {
+        content.background(Color.adaptiveBackground(appState: appState, defaultColor: defaultColor))
+    }
+}
+
+struct AccessibleButtonStyle: ButtonStyle {
+    let appState: AppState?
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Color.adaptiveForeground(appState: appState, defaultColor: .accentColor))
+            .background(Color.adaptiveBackground(appState: appState, defaultColor: .accentColor.opacity(0.1)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.adaptiveBorder(appState: appState), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .accessibleAnimation(.easeInOut(duration: 0.2), value: configuration.isPressed, appState: appState)
+    }
 }
 
 struct AdaptiveContrastModifier: ViewModifier {
@@ -272,14 +302,18 @@ struct ThemedNavigationBarModifier: ViewModifier {
             .onChange(of: themeManager.colorSchemeOverride) {
                 applyNavigationBarTheme()
             }
-            // Apply toolbar background based on theme
+            // Apply toolbar background based on theme using SwiftUI approach
             .toolbarBackground(
-                isDarkMode ? (isBlackMode ? Color.black : Color(red: 0.18, green: 0.18, blue: 0.20)) : Color.clear,
+                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
                 for: .navigationBar
             )
-            // Remove tabBar override to let ThemeManager's global UITabBar.appearance() settings work
-            // .toolbarBackground is removed for .tabBar to prevent conflicts with global theme
+            .toolbarBackground(
+                themeManager.tabBarBackgroundColor,
+                for: .tabBar
+            )
             .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
+            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .tabBar)
+            .preferredColorScheme(themeManager.effectiveColorScheme(for: colorScheme))
     }
     
     private func applyNavigationBarTheme() {

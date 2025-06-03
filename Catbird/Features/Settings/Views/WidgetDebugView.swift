@@ -87,5 +87,5 @@ struct WidgetDebugView: View {
 // Add for preview
 #Preview {
   WidgetDebugView()
-    .environment(AppState())
+    .environment(AppState.shared)
 }

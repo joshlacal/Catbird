@@ -293,6 +293,6 @@ struct SystemLogView: View {
 #Preview {
     NavigationStack {
         AboutSettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

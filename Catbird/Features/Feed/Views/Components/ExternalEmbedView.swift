@@ -7,6 +7,7 @@ struct ExternalEmbedView: View {
     let shouldBlur: Bool
     let postID: String
     @State private var isBlurred: Bool
+    @State private var userOverrideBlock = false
     @Environment(AppState.self) private var appState
     @State private var videoModel: VideoModel?
     
@@ -18,28 +19,51 @@ struct ExternalEmbedView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            content
-                .frame(maxWidth: .infinity)
-        }
-        .onTapGesture {
-            if let url = URL(string: external.uri.uriString()) {
-                _ = appState.urlHandler.handle(url)
+        if shouldShowExternalEmbed(for: external.uri) || userOverrideBlock {
+            VStack(alignment: .leading, spacing: 0) {
+                content
+                    .frame(maxWidth: .infinity)
             }
+            .onTapGesture {
+                if let url = URL(string: external.uri.uriString()) {
+                    _ = appState.urlHandler.handle(url)
+                }
+            }
+            .onAppear {
+                setupVideoIfNeeded()
+            }
+            // Fixed sizing to prevent layout jumps
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            blockedExternalMediaView
         }
-        .onAppear {
-            setupVideoIfNeeded()
-        }
-        // Fixed sizing to prevent layout jumps
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
     private var content: some View {
         Group {
             if let videoModel = videoModel {
-                // Video player with blur toggle
-                ZStack(alignment: .topTrailing) {
+                // Video player - no blur handling when shouldBlur is false (ContentLabelManager handles it)
+                if shouldBlur {
+                    ZStack(alignment: .topTrailing) {
+                        ModernVideoPlayerView18(
+                            model: videoModel,
+                            postID: postID
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
+                        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .blur(radius: isBlurred ? 60 : 0)
+                        
+                        blurToggleButton
+                        
+                        if isBlurred {
+                            sensitiveContentOverlay
+                        }
+                    }
+                } else {
+                    // Simple video display when ContentLabelManager handles filtering
                     ModernVideoPlayerView18(
                         model: videoModel,
                         postID: postID
@@ -48,42 +72,45 @@ struct ExternalEmbedView: View {
                     .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
                     .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
-                    .blur(radius: isBlurred ? 30 : 0)
-                    
-                    if shouldBlur {
-                        blurToggleButton
-                    }
-                    
-                    if isBlurred {
-                        sensitiveContentOverlay
-                    }
                 }
             } else {
-                // Link card with blur toggle
-                VStack(alignment: .leading, spacing: 3) {
-                    ZStack(alignment: .topTrailing) {
-                        thumbnailImageContent
-                            .blur(radius: isBlurred ? 30 : 0)
-                        
-                        if shouldBlur {
+                // Link card - no blur handling when shouldBlur is false
+                if shouldBlur {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ZStack(alignment: .topTrailing) {
+                            thumbnailImageContent
+                                .blur(radius: isBlurred ? 60 : 0)
+                            
                             blurToggleButton
+                            
+                            if isBlurred {
+                                sensitiveContentOverlay
+                            }
                         }
                         
-                        if isBlurred {
-                            sensitiveContentOverlay
-                        }
+                        linkDetails
                     }
-                    
-                    linkDetails
+                    .padding(6)
+                    .background(Color.gray.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    )
+                } else {
+                    // Simple link display when ContentLabelManager handles filtering
+                    VStack(alignment: .leading, spacing: 3) {
+                        thumbnailImageContent
+                        linkDetails
+                    }
+                    .padding(6)
+                    .background(Color.gray.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    )
                 }
-                .padding(6)
-                .background(Color.gray.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                )
-
             }
         }
     }
@@ -251,7 +278,7 @@ struct ExternalEmbedView: View {
                                     .scaledToFill()
                                     .frame(maxWidth: .infinity)
                                     .clipped()
-                                    .blur(radius: isBlurred ? 30 : 0)
+                                    .blur(radius: isBlurred ? 60 : 0)
                             } else if state.isLoading {
                                 ProgressView()
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -320,6 +347,105 @@ struct ExternalEmbedView: View {
         } else if let url = URL(string: external.uri.uriString()) {
             // Handle URL tap when content is visible
             _ = appState.urlHandler.handle(url)
+        }
+    }
+    
+    // MARK: - External Media Filtering
+    
+    /// Check if external media should be shown based on user settings
+    private func shouldShowExternalEmbed(for uri: URI) -> Bool {
+        guard let host = URL(string: uri.uriString())?.host?.lowercased() else { return true }
+        
+        switch host {
+        case let h where h.contains("youtube.com") || h.contains("youtu.be"):
+            // Check for YouTube Shorts specifically
+            if uri.uriString().contains("/shorts/") {
+                return appState.appSettings.allowYouTubeShorts
+            }
+            return appState.appSettings.allowYouTube
+        case let h where h.contains("vimeo.com"):
+            return appState.appSettings.allowVimeo
+        case let h where h.contains("twitch.tv"):
+            return appState.appSettings.allowTwitch
+        case let h where h.contains("giphy.com") || h.contains("tenor.com"):
+            return appState.appSettings.allowGiphy
+        case let h where h.contains("spotify.com"):
+            return appState.appSettings.allowSpotify
+        case let h where h.contains("music.apple.com"):
+            return appState.appSettings.allowAppleMusic
+        case let h where h.contains("soundcloud.com"):
+            return appState.appSettings.allowSoundCloud
+        case let h where h.contains("flickr.com"):
+            return appState.appSettings.allowFlickr
+        default:
+            return true // Allow unknown external sites by default
+        }
+    }
+    
+    /// View shown when external media is blocked
+    @ViewBuilder
+    private var blockedExternalMediaView: some View {
+        VStack(spacing: 8) {
+            blockedMediaHeader
+            blockedMediaButtons
+        }
+        .padding(12)
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
+    }
+    
+    @ViewBuilder
+    private var blockedMediaHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "link.badge.plus")
+                .foregroundStyle(.secondary)
+                .imageScale(.medium)
+            
+            blockedMediaText
+            
+            Spacer()
+        }
+    }
+    
+    @ViewBuilder
+    private var blockedMediaText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("External media blocked")
+                .appFont(AppTextRole.subheadline)
+                .foregroundStyle(.secondary)
+            
+            blockedMediaHostText
+        }
+    }
+    
+    @ViewBuilder
+    private var blockedMediaHostText: some View {
+        if let host = external.uri.url?.host {
+            Text("Content from \(host)")
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+    
+    @ViewBuilder
+    private var blockedMediaButtons: some View {
+        HStack(spacing: 12) {
+            Button("Show Anyway") {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    userOverrideBlock = true
+                }
+            }
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.blue)
+            
+            Spacer()
+            
+            // Note: Settings access is handled through the main profile tab
+            // Users can access Content & Media settings from there
         }
     }
 }

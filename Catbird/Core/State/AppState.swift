@@ -5,10 +5,16 @@ import Petrel
 import SwiftData
 import SwiftUI
 import UserNotifications
+import AVKit
 
 /// Central state container for the Catbird app
 @Observable
 final class AppState {
+  // MARK: - Singleton Pattern
+  
+  /// Shared instance to prevent multiple AppState creation
+  static let shared = AppState()
+  
   // MARK: - Core Properties
   
   // Static tracking to prevent multiple instances
@@ -36,15 +42,19 @@ final class AppState {
   var isAdultContentEnabled: Bool = false
 
   // Used to track which tab was tapped twice to trigger scroll to top
-  var tabTappedAgain: Int?
+  @ObservationIgnored var tabTappedAgain: Int?
   
   // Current user's profile data for optimistic updates
-  var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
+  @ObservationIgnored var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
 
   // MARK: - Component Managers
 
   /// Central event bus for coordinating state invalidation
   @ObservationIgnored let stateInvalidationBus = StateInvalidationBus()
+  
+  // Settings change tracking to prevent loops
+  @ObservationIgnored private var lastSettingsHash: Int = 0
+  @ObservationIgnored private var settingsUpdateDebounceTimer: Timer?
 
   /// Post shadow manager for handling interaction state (likes, reposts)
   @ObservationIgnored let postShadowManager = PostShadowManager.shared
@@ -56,13 +66,27 @@ final class AppState {
   @ObservationIgnored let preferencesManager = PreferencesManager()
 
   /// App-specific settings that aren't synced with the server
-  let appSettings = AppSettings()  // Keep observed for settings changes
+  @ObservationIgnored let appSettings = AppSettings()
   
-  /// Theme manager for handling app-wide theme changes
-  let themeManager = ThemeManager()  // Keep observed for theme changes
+  /// Theme manager for handling app-wide theme changes - observes via themeDidChange
+  @ObservationIgnored private let _themeManager = ThemeManager()
   
-  /// Font manager for handling typography and font settings
-  let fontManager = FontManager()  // Keep observed for font changes
+  /// Font manager for handling typography and font settings - observes via fontDidChange
+  @ObservationIgnored private let _fontManager = FontManager()
+  
+  // MARK: - Observable Theme/Font State
+  
+  /// Observable theme state that triggers SwiftUI updates
+  var themeDidChange: Int = 0
+  
+  /// Observable font state that triggers SwiftUI updates  
+  var fontDidChange: Int = 0
+  
+  /// Public access to theme manager
+  var themeManager: ThemeManager { _themeManager }
+  
+  /// Public access to font manager
+  var fontManager: FontManager { _fontManager }
 
   /// Navigation manager for handling navigation
   @ObservationIgnored let navigationManager = AppNavigationManager()
@@ -94,7 +118,7 @@ final class AppState {
 
   // MARK: - Initialization
 
-  init() {
+  private init() {
     AppState.initializationCount += 1
     logger.debug("AppState initializing (instance #\(AppState.initializationCount))")
     
@@ -188,11 +212,15 @@ final class AppState {
     
     // Apply initial theme settings immediately from UserDefaults
     // This ensures proper theme is applied even before SwiftData is fully initialized
-    appSettings.applyInitialThemeSettings(to: themeManager)
+    appSettings.applyInitialThemeSettings(to: _themeManager)
     
     // Apply initial font settings immediately from UserDefaults
-    appSettings.applyInitialFontSettings(to: fontManager)
+    appSettings.applyInitialFontSettings(to: _fontManager)
     
+    // Set up theme/font change observation on main actor
+    Task { @MainActor in
+      setupThemeAndFontObservation()
+    }      
     // NOTE: Settings observation is set up later in initializePreferencesManager
     // to avoid duplicate observers
     
@@ -242,7 +270,7 @@ final class AppState {
     setupNotifications()
     
     // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
-    themeManager.applyTheme(
+    _themeManager.applyTheme(
       theme: appSettings.theme,
       darkThemeMode: appSettings.darkThemeMode
     )
@@ -263,6 +291,9 @@ final class AppState {
         }
       }
     }
+    
+    // Connect VideoCoordinator to app settings for real-time autoplay updates
+    VideoCoordinator.shared.appSettings = appSettings
 
     logger.info("🏁 AppState.initialize() completed")
   }
@@ -498,14 +529,15 @@ final class AppState {
     logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
     
     // Apply theme settings (now that SwiftData is available, this will use the persisted values)
-    themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)
+    _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)
     logger.info("Theme reapplied after SwiftData initialization: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode)")
     
     // Apply initial font settings
-    fontManager.applyFontSettings(
+    _fontManager.applyFontSettings(
       fontStyle: self.appSettings.fontStyle,
       fontSize: self.appSettings.fontSize,
       lineSpacing: self.appSettings.lineSpacing,
+      letterSpacing: self.appSettings.letterSpacing,
       dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
       maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
     )
@@ -514,9 +546,41 @@ final class AppState {
     setupSettingsObservation()
   }
 
+  // MARK: - Theme and Font Observation
+  
+  /// Set up observation for theme and font manager changes
+  @MainActor
+  private func setupThemeAndFontObservation() {
+    // Set up theme change observer that triggers SwiftUI updates
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("ThemeChanged"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+      // Trigger SwiftUI update for theme changes
+      self.themeDidChange += 1
+      logger.debug("Theme change triggered SwiftUI update")
+    }
+    
+    // Set up font change observer that triggers SwiftUI updates
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("FontChanged"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+      // Trigger SwiftUI update for font changes
+      self.fontDidChange += 1
+      logger.debug("Font change triggered SwiftUI update")
+    }
+    
+    logger.debug("Theme and font observation configured")
+  }
+  
   // MARK: - Settings Observation
   
-  /// Set up reactive observation for settings changes
+  /// Set up reactive observation for settings changes with change tracking
   @MainActor
   private func setupSettingsObservation() {
     // Remove any existing observers to prevent duplicates
@@ -530,28 +594,81 @@ final class AppState {
     ) { [weak self] _ in
       guard let self = self else { return }
       
-      // Apply theme when settings change
-      self.themeManager.applyTheme(
-        theme: self.appSettings.theme,
-        darkThemeMode: self.appSettings.darkThemeMode
-      )
+      // Create a hash of current settings to detect actual changes
+      let currentSettingsHash = self.createSettingsHash()
       
-      // Apply font settings when they change
-      self.fontManager.applyFontSettings(
-        fontStyle: self.appSettings.fontStyle,
-        fontSize: self.appSettings.fontSize,
-        lineSpacing: self.appSettings.lineSpacing,
-        dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
-        maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
-      )
+      // Only process if settings actually changed
+      guard currentSettingsHash != self.lastSettingsHash else {
+        self.logger.debug("Settings notification received but no actual changes detected")
+        return
+      }
       
-      // Update URL handler with new browser preference
-      self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
+      self.lastSettingsHash = currentSettingsHash
+      self.logger.debug("Processing actual settings change (hash: \(currentSettingsHash))")
       
-      logger.debug("Applied settings changes - theme: \(self.appSettings.theme), font: \(self.appSettings.fontStyle)")
+      // Debounce rapid setting changes
+      self.settingsUpdateDebounceTimer?.invalidate()
+      self.settingsUpdateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+        guard let self = self else { return }
+        
+        self.logger.debug("Applying debounced settings change")
+        
+        // Apply theme when settings change
+        self._themeManager.applyTheme(
+          theme: self.appSettings.theme,
+          darkThemeMode: self.appSettings.darkThemeMode
+        )
+        
+        // Apply font settings when they change
+        self._fontManager.applyFontSettings(
+          fontStyle: self.appSettings.fontStyle,
+          fontSize: self.appSettings.fontSize,
+          lineSpacing: self.appSettings.lineSpacing,
+          letterSpacing: self.appSettings.letterSpacing,
+          dynamicTypeEnabled: self.appSettings.dynamicTypeEnabled,
+          maxDynamicTypeSize: self.appSettings.maxDynamicTypeSize
+        )
+        
+        // Trigger SwiftUI updates
+        self.themeDidChange += 1
+        self.fontDidChange += 1
+        
+        // Update URL handler with new browser preference
+        self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
+        
+        // Update VideoCoordinator with new autoplay preference
+        VideoCoordinator.shared.appSettings = self.appSettings
+        
+        self.logger.debug("Applied debounced settings changes - theme: \(self.appSettings.theme), font: \(self.appSettings.fontStyle)")
+      }
     }
     
-    logger.debug("Settings observation configured")
+    logger.debug("Settings observation configured with change tracking")
+  }
+  
+  /// Create a hash of current settings to detect actual changes
+  private func createSettingsHash() -> Int {
+    var hasher = Hasher()
+    hasher.combine(appSettings.theme)
+    hasher.combine(appSettings.darkThemeMode)
+    hasher.combine(appSettings.fontStyle)
+    hasher.combine(appSettings.fontSize)
+    hasher.combine(appSettings.lineSpacing)
+    hasher.combine(appSettings.letterSpacing)
+    hasher.combine(appSettings.dynamicTypeEnabled)
+    hasher.combine(appSettings.maxDynamicTypeSize)
+    hasher.combine(appSettings.useInAppBrowser)
+    hasher.combine(appSettings.autoplayVideos)
+    hasher.combine(appSettings.allowTenor)
+    hasher.combine(appSettings.requireAltText)
+    hasher.combine(appSettings.reduceMotion)
+    hasher.combine(appSettings.increaseContrast)
+    hasher.combine(appSettings.boldText)
+    hasher.combine(appSettings.displayScale)
+    hasher.combine(appSettings.prefersCrossfade)
+    hasher.combine(appSettings.largerAltTextBadges)
+    hasher.combine(appSettings.disableHaptics)
+    return hasher.finalize()
   }
 
   // MARK: - Post Creation Method (for backward compatibility)

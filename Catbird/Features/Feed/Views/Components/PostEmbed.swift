@@ -62,8 +62,8 @@ struct PostEmbed: View {
                 viewImages: imagesView.images,
                 shouldBlur: false // We're handling blur at the ContentLabelManager level now
             )
-            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         }
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
 
     @ViewBuilder
@@ -103,8 +103,8 @@ struct PostEmbed: View {
                         viewImages: imagesView.images,
                         shouldBlur: false // We're handling blur at the ContentLabelManager level now
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
                 }
+                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
 
             case .appBskyEmbedExternalView(let externalView):
                 ContentLabelManager(
@@ -119,33 +119,16 @@ struct PostEmbed: View {
                 }
 
             case .appBskyEmbedVideoView(let videoView):
-                // For videos with adult content, use ContentLabelManager with specific handling
-                if hasAdultContentLabel(labels) {
-                    ContentLabelManager(
-                        labels: labels,
-                        contentType: "video"
-                    ) {
-                        if let playerView = ModernVideoPlayerView18(
-                            bskyVideo: videoView,
-                            postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
-                        ) {
-                            playerView
-                                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Unable to load video")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } else {
-                    // No adult content, show video as normal
+                // Always use ContentLabelManager for videos - it will handle show/warn/hide based on user preferences
+                ContentLabelManager(
+                    labels: labels,
+                    contentType: "video"
+                ) {
                     if let playerView = ModernVideoPlayerView18(
                         bskyVideo: videoView,
                         postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
                     ) {
                         playerView
-                            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
                             .frame(maxWidth: .infinity)
                     } else {
                         Text("Unable to load video")
@@ -153,6 +136,7 @@ struct PostEmbed: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
 
             case .unexpected:
                 EmptyView()
@@ -169,33 +153,16 @@ struct PostEmbed: View {
 
     @ViewBuilder
     private func videoEmbed(_ videoView: AppBskyEmbedVideo.View) -> some View {
-        // For videos with adult content, use ContentLabelManager with specific handling
-        if hasAdultContentLabel(labels) {
-            ContentLabelManager(
-                labels: labels,
-                contentType: "video"
-            ) {
-                if let playerView = ModernVideoPlayerView18(
-                    bskyVideo: videoView,
-                    postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
-                ) {
-                    playerView
-                        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Unable to load video")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        } else {
-            // No adult content, show video as normal
+        // Always use ContentLabelManager for videos - it will handle show/warn/hide based on user preferences
+        ContentLabelManager(
+            labels: labels,
+            contentType: "video"
+        ) {
             if let playerView = ModernVideoPlayerView18(
                 bskyVideo: videoView,
                 postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
             ) {
                 playerView
-                    .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
                     .frame(maxWidth: .infinity)
             } else {
                 Text("Unable to load video")
@@ -203,12 +170,14 @@ struct PostEmbed: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
     
     // MARK: - Helper Methods
     
-    /// Determines if the post has adult content labels.
+    /// This method is deprecated - ContentLabelManager now handles all visibility logic
     private func hasAdultContentLabel(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
+        // Kept for backward compatibility, but ContentLabelManager should be used instead
         guard !appState.isAdultContentEnabled else { return false }
         return labels?.contains { label in
             let lowercasedValue = label.val.lowercased()

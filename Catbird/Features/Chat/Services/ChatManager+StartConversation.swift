@@ -61,12 +61,10 @@ extension ChatManager {
             let params = ChatBskyConvoGetConvoForMembers.Parameters(members: members)
             
             logger.debug("Getting or creating conversation with user: \(userDID.didString())")
-            await client.setProxyHeader(did: "did:web:api.bsky.chat", service: "bsky_chat")
-            
+                     
             let (responseCode, response) = try await client.chat.bsky.convo.getConvoForMembers(input: params)
             
-            await client.clearProxyHeader()
-            
+                   
             guard responseCode >= 200 && responseCode < 300 else {
                 logger.error("Error getting conversation: HTTP \(responseCode)")
                 errorState = .networkError(code: responseCode)

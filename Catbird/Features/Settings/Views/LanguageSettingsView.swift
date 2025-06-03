@@ -366,6 +366,8 @@ struct LanguageSettingsView: View {
         }
         .navigationTitle("Languages")
         .navigationBarTitleDisplayMode(.inline)
+        .appDisplayScale(appState: appState)
+        .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
         .onAppear {
             // Initialize language manager with proper preferences manager
             if languageManager == nil {
@@ -742,6 +744,6 @@ struct ContentLanguageRow: View {
 #Preview {
     NavigationStack {
         LanguageSettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

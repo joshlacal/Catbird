@@ -237,9 +237,9 @@ final class MediaUploadManager {
       logger.debug("DEBUG: Video duration: \(durationInSeconds) seconds")
       
       // Check duration limits if needed
-      if durationInSeconds > 300 { // 5 minutes max
-        logger.error("ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 300 seconds)")
-        throw VideoUploadError.processingFailed("Video exceeds maximum duration of 5 minutes")
+      if durationInSeconds > 180 { // 3 minutes max (updated March 2025)
+        logger.error("ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 180 seconds)")
+        throw VideoUploadError.processingFailed("Video exceeds maximum duration of 3 minutes")
       }
     } catch let assetError where !(assetError is VideoUploadError) {
       logger.error("ERROR: Failed to validate video asset: \(assetError)")

@@ -4,35 +4,70 @@ struct AppearanceSettingsView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     
-    // Local state for AppSettings - initialize with defaults
-    @State private var theme: String = "system"
-    @State private var darkThemeMode: String = "dim"
-    @State private var fontStyle: String = "system"
-    @State private var fontSize: String = "default"
-    @State private var lineSpacing: String = "normal"
-    @State private var dynamicTypeEnabled: Bool = true
-    @State private var maxDynamicTypeSize: String = "accessibility1"
+    // Direct binding to AppSettings - no local state needed
+    private var theme: Binding<String> {
+        Binding(
+            get: { appState.appSettings.theme },
+            set: { appState.appSettings.theme = $0 }
+        )
+    }
+    
+    private var darkThemeMode: Binding<String> {
+        Binding(
+            get: { appState.appSettings.darkThemeMode },
+            set: { appState.appSettings.darkThemeMode = $0 }
+        )
+    }
+    
+    private var fontStyle: Binding<String> {
+        Binding(
+            get: { appState.appSettings.fontStyle },
+            set: { appState.appSettings.fontStyle = $0 }
+        )
+    }
+    
+    private var fontSize: Binding<String> {
+        Binding(
+            get: { appState.appSettings.fontSize },
+            set: { appState.appSettings.fontSize = $0 }
+        )
+    }
+    
+    private var lineSpacing: Binding<String> {
+        Binding(
+            get: { appState.appSettings.lineSpacing },
+            set: { appState.appSettings.lineSpacing = $0 }
+        )
+    }
+    
+    private var dynamicTypeEnabled: Binding<Bool> {
+        Binding(
+            get: { appState.appSettings.dynamicTypeEnabled },
+            set: { appState.appSettings.dynamicTypeEnabled = $0 }
+        )
+    }
+    
+    private var maxDynamicTypeSize: Binding<String> {
+        Binding(
+            get: { appState.appSettings.maxDynamicTypeSize },
+            set: { appState.appSettings.maxDynamicTypeSize = $0 }
+        )
+    }
     
     var body: some View {
         Form {
             // Theme Section
             Section("Theme") {
-                Picker("App Theme", selection: $theme) {
+                Picker("App Theme", selection: theme) {
                     Text("System").tag("system")
                     Text("Light").tag("light")
                     Text("Dark").tag("dark")
                 }
-                .onChange(of: theme) {
-                    appState.appSettings.theme = theme
-                }
                 
-                if theme == "dark" || (theme == "system" && colorScheme == .dark) {
-                    Picker("Dark Mode Style", selection: $darkThemeMode) {
+                if theme.wrappedValue == "dark" || (theme.wrappedValue == "system" && colorScheme == .dark) {
+                    Picker("Dark Mode Style", selection: darkThemeMode) {
                         Text("Dim").tag("dim")
                         Text("True Black").tag("black")
-                    }
-                    .onChange(of: darkThemeMode) {
-                        appState.appSettings.darkThemeMode = darkThemeMode
                     }
                 }
             }
@@ -40,56 +75,40 @@ struct AppearanceSettingsView: View {
             
             // Typography Section
             Section("Typography") {
-                Picker("Font Style", selection: $fontStyle) {
+                Picker("Font Style", selection: fontStyle) {
                     Text("System").tag("system")
                     Text("Serif").tag("serif")
                     Text("Rounded").tag("rounded")
                     Text("Monospaced").tag("monospaced")
                 }
-                .onChange(of: fontStyle) {
-                    appState.appSettings.fontStyle = fontStyle
-                    // FontManager will be updated automatically via AppSettings notification
-                }
                 
-                Picker("Font Size", selection: $fontSize) {
+                Picker("Font Size", selection: fontSize) {
                     Text("Small").tag("small")
                     Text("Default").tag("default")
                     Text("Large").tag("large")
                     Text("Extra Large").tag("extraLarge")
                 }
-                .onChange(of: fontSize) {
-                    appState.appSettings.fontSize = fontSize
-                    // FontManager will be updated automatically via AppSettings notification
-                }
                 
-                Picker("Line Spacing", selection: $lineSpacing) {
+                Picker("Line Spacing", selection: lineSpacing) {
                     Text("Tight").tag("tight")
                     Text("Normal").tag("normal")
                     Text("Relaxed").tag("relaxed")
                 }
-                .onChange(of: lineSpacing) {
-                    appState.appSettings.lineSpacing = lineSpacing
-                    // FontManager will be updated automatically via AppSettings notification
-                }
                 
                 FontPreviewRow(
-                    fontStyle: fontStyle,
-                    fontSize: fontSize,
-                    lineSpacing: lineSpacing,
-                    dynamicTypeEnabled: dynamicTypeEnabled
+                    fontStyle: fontStyle.wrappedValue,
+                    fontSize: fontSize.wrappedValue,
+                    lineSpacing: lineSpacing.wrappedValue,
+                    dynamicTypeEnabled: dynamicTypeEnabled.wrappedValue
                 )
             }
             
             // Accessibility Section
             Section("Accessibility") {
-                Toggle("Dynamic Type", isOn: $dynamicTypeEnabled)
-                    .onChange(of: dynamicTypeEnabled) {
-                        appState.appSettings.dynamicTypeEnabled = dynamicTypeEnabled
-                        // FontManager will be updated automatically via AppSettings notification
-                    }
+                Toggle("Dynamic Type", isOn: dynamicTypeEnabled)
                 
-                if dynamicTypeEnabled {
-                    Picker("Maximum Text Size", selection: $maxDynamicTypeSize) {
+                if dynamicTypeEnabled.wrappedValue {
+                    Picker("Maximum Text Size", selection: maxDynamicTypeSize) {
                         Text("Extra Extra Large").tag("xxLarge")
                         Text("Extra Extra Extra Large").tag("xxxLarge")
                         Text("Accessibility Medium").tag("accessibility1")
@@ -97,10 +116,6 @@ struct AppearanceSettingsView: View {
                         Text("Accessibility Extra Large").tag("accessibility3")
                         Text("Accessibility Extra Extra Large").tag("accessibility4")
                         Text("Accessibility Extra Extra Extra Large").tag("accessibility5")
-                    }
-                    .onChange(of: maxDynamicTypeSize) {
-                        appState.appSettings.maxDynamicTypeSize = maxDynamicTypeSize
-                        // FontManager will be updated automatically via AppSettings notification
                     }
                 }
                 
@@ -111,8 +126,8 @@ struct AppearanceSettingsView: View {
             // Colors Section
             Section("App Appearance") {
                 ColorSchemePreview(
-                    theme: theme,
-                    darkThemeMode: darkThemeMode,
+                    theme: theme.wrappedValue,
+                    darkThemeMode: darkThemeMode.wrappedValue,
                     systemIsDark: colorScheme == .dark
                 )
             }
@@ -120,54 +135,17 @@ struct AppearanceSettingsView: View {
             // Reset Section
             Section {
                 Button("Reset to Defaults") {
-                    // Reset to default values
-                    theme = "system"
-                    darkThemeMode = "dim"
-                    fontStyle = "system"
-                    fontSize = "default"
-                    lineSpacing = "normal"
-                    dynamicTypeEnabled = true
-                    maxDynamicTypeSize = "accessibility1"
-                    
-                    // Update app settings
-                    appState.appSettings.theme = theme
-                    appState.appSettings.darkThemeMode = darkThemeMode
-                    appState.appSettings.fontStyle = fontStyle
-                    appState.appSettings.fontSize = fontSize
-                    appState.appSettings.lineSpacing = lineSpacing
-                    appState.appSettings.dynamicTypeEnabled = dynamicTypeEnabled
-                    appState.appSettings.maxDynamicTypeSize = maxDynamicTypeSize
-                    // FontManager will be updated automatically via AppSettings notification
+                    // Reset all settings to defaults
+                    appState.appSettings.resetToDefaults()
                 }
                 .foregroundStyle(.red)
             }
         }
         .navigationTitle("Appearance")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            // Sync local state with AppSettings safely with retry mechanism
-            syncSettings()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AppSettingsChanged"))) { _ in
-            // Update local state when app settings change
-            syncSettings()
-        }
-    }
-    
-    // MARK: - Helper Methods
-    
-    private func syncSettings() {
-        // Use async dispatch to avoid blocking and ensure we're on main thread
-        DispatchQueue.main.async {
-            // Safely read settings with fallback values
-            self.theme = self.appState.appSettings.theme
-            self.darkThemeMode = self.appState.appSettings.darkThemeMode
-            self.fontStyle = self.appState.appSettings.fontStyle
-            self.fontSize = self.appState.appSettings.fontSize
-            self.lineSpacing = self.appState.appSettings.lineSpacing
-            self.dynamicTypeEnabled = self.appState.appSettings.dynamicTypeEnabled
-            self.maxDynamicTypeSize = self.appState.appSettings.maxDynamicTypeSize
-        }
+        .appDisplayScale(appState: appState)
+        .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+        // No manual sync needed - direct binding to AppSettings
     }
 }
 
@@ -410,6 +388,6 @@ struct AccessibilityQuickActionsRow: View {
 #Preview {
     NavigationStack {
         AppearanceSettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

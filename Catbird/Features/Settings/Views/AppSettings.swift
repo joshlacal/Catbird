@@ -17,6 +17,10 @@ import OSLog
     // Flag to prevent notification loops during initialization
     private var isInitializing = true
     
+    // Debouncing to prevent notification loops
+    private var pendingChanges = false
+    private var notificationDebounceTimer: Timer?
+    
     // MARK: - Initialization
     
     init() {
@@ -74,28 +78,37 @@ import OSLog
             return
         }
         
-        guard let modelContext = modelContext else { 
-            logger.debug("No modelContext available, using UserDefaults fallback")
-            // Save to UserDefaults as fallback
-            saveThemeSettingsToUserDefaults()
-            NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
-            return 
+        // Debounce notifications to prevent loops
+        notificationDebounceTimer?.invalidate()
+        notificationDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // Only notify if there are actual pending changes
+            if self.pendingChanges {
+                self.pendingChanges = false
+                
+                // Save to storage
+                if let modelContext = self.modelContext {
+                    do {
+                        try modelContext.save()
+                        self.logger.debug("AppSettings saved to SwiftData")
+                    } catch {
+                        self.logger.error("Error saving to SwiftData: \(error.localizedDescription)")
+                    }
+                } else {
+                    self.logger.debug("No modelContext available, using UserDefaults fallback")
+                }
+                
+                // Always save to UserDefaults as backup
+                self.saveThemeSettingsToUserDefaults()
+                
+                // Post notification after successful save
+                NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
+                self.logger.debug("Posted debounced AppSettingsChanged notification")
+            }
         }
         
-        do {
-            try modelContext.save()
-            
-            // Also save critical theme settings to UserDefaults for reliability
-            saveThemeSettingsToUserDefaults()
-            
-            // Post notification that settings have changed
-            NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
-        } catch {
-            logger.error("Error saving app settings: \(error.localizedDescription)")
-            // Fall back to UserDefaults if SwiftData save fails
-            saveThemeSettingsToUserDefaults()
-            NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
-        }
+        pendingChanges = true
     }
     
     /// Save critical theme settings to UserDefaults as backup
@@ -110,6 +123,7 @@ import OSLog
         defaults.set(fontStyle, forKey: "fontStyle")
         defaults.set(fontSize, forKey: "fontSize")
         defaults.set(lineSpacing, forKey: "lineSpacing")
+        defaults.set(letterSpacing, forKey: "letterSpacing")
         defaults.set(dynamicTypeEnabled, forKey: "dynamicTypeEnabled")
         defaults.set(maxDynamicTypeSize, forKey: "maxDynamicTypeSize")
         
@@ -118,7 +132,7 @@ import OSLog
         groupDefaults?.set(theme, forKey: "theme")
         groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
         
-        logger.debug("Theme and font settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), fontStyle=\(self.fontStyle), fontSize=\(self.fontSize)")
+        logger.debug("Theme and font settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), fontStyle=\(self.fontStyle), fontSize=\(self.fontSize), letterSpacing=\(self.letterSpacing)")
     }
     
     /// Load theme settings from UserDefaults if SwiftData is not available
@@ -132,12 +146,13 @@ import OSLog
     }
     
     /// Load font settings from UserDefaults if SwiftData is not available
-    private func loadFontSettingsFromUserDefaults() -> (fontStyle: String, fontSize: String, lineSpacing: String, dynamicTypeEnabled: Bool, maxDynamicTypeSize: String) {
+    private func loadFontSettingsFromUserDefaults() -> (fontStyle: String, fontSize: String, lineSpacing: String, letterSpacing: String, dynamicTypeEnabled: Bool, maxDynamicTypeSize: String) {
         let defaults = UserDefaults.standard
         
         let savedFontStyle = defaults.string(forKey: "fontStyle") ?? "system"
         let savedFontSize = defaults.string(forKey: "fontSize") ?? "default"
         let savedLineSpacing = defaults.string(forKey: "lineSpacing") ?? "normal"
+        let savedLetterSpacing = defaults.string(forKey: "letterSpacing") ?? "normal"
         let savedDynamicTypeEnabled = defaults.object(forKey: "dynamicTypeEnabled") != nil ? defaults.bool(forKey: "dynamicTypeEnabled") : true
         let savedMaxDynamicTypeSize = defaults.string(forKey: "maxDynamicTypeSize") ?? "accessibility1"
         
@@ -145,6 +160,7 @@ import OSLog
             fontStyle: savedFontStyle,
             fontSize: savedFontSize,
             lineSpacing: savedLineSpacing,
+            letterSpacing: savedLetterSpacing,
             dynamicTypeEnabled: savedDynamicTypeEnabled,
             maxDynamicTypeSize: savedMaxDynamicTypeSize
         )
@@ -221,6 +237,21 @@ import OSLog
         set {
             if let settingsModel = settingsModel {
                 settingsModel.lineSpacing = newValue
+            }
+            saveChanges()
+        }
+    }
+    
+    var letterSpacing: String {
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.letterSpacing
+            }
+            return loadFontSettingsFromUserDefaults().letterSpacing
+        }
+        set {
+            if let settingsModel = settingsModel {
+                settingsModel.letterSpacing = newValue
             }
             saveChanges()
         }
@@ -373,6 +404,15 @@ import OSLog
         }
     }
     
+    // Attribution Settings
+    var enableViaAttribution: Bool {
+        get { settingsModel?.enableViaAttribution ?? defaults.enableViaAttribution }
+        set {
+            settingsModel?.enableViaAttribution = newValue
+            saveChanges()
+        }
+    }
+    
     // Content and Media
     var autoplayVideos: Bool {
         get { settingsModel?.autoplayVideos ?? defaults.autoplayVideos }
@@ -512,7 +552,15 @@ import OSLog
             saveChanges()
         }
     }
-    
+
+    var allowTenor: Bool {
+        get { settingsModel?.allowTenor ?? defaults.allowTenor }
+        set {
+            settingsModel?.allowTenor = newValue
+            saveChanges()
+        }
+    }
+
     // Languages
     var appLanguage: String {
         get { settingsModel?.appLanguage ?? defaults.appLanguage }
@@ -534,6 +582,22 @@ import OSLog
         get { settingsModel?.contentLanguages ?? defaults.contentLanguages }
         set {
             settingsModel?.contentLanguages = newValue
+            saveChanges()
+        }
+    }
+    
+    var hideNonPreferredLanguages: Bool {
+        get { settingsModel?.hideNonPreferredLanguages ?? defaults.hideNonPreferredLanguages }
+        set {
+            settingsModel?.hideNonPreferredLanguages = newValue
+            saveChanges()
+        }
+    }
+    
+    var showLanguageIndicators: Bool {
+        get { settingsModel?.showLanguageIndicators ?? defaults.showLanguageIndicators }
+        set {
+            settingsModel?.showLanguageIndicators = newValue
             saveChanges()
         }
     }
@@ -581,17 +645,30 @@ import OSLog
         isInitializing = true
         defer { isInitializing = wasInitializing }
         
-        let fontSettings = loadFontSettingsFromUserDefaults()
+        // Create a temporary AppSettingsModel to get all current settings
+        let currentSettings = AppSettingsModel()
         
-        logger.info("Applying initial font settings from UserDefaults: style=\(fontSettings.fontStyle), size=\(fontSettings.fontSize), spacing=\(fontSettings.lineSpacing), dynamic=\(fontSettings.dynamicTypeEnabled)")
+        // Load settings from UserDefaults if SwiftData isn't available yet
+        if settingsModel == nil {
+            currentSettings.migrateFromUserDefaults()
+        } else {
+            // Copy from existing settings model
+            if let model = settingsModel {
+                currentSettings.fontStyle = model.fontStyle
+                currentSettings.fontSize = model.fontSize
+                currentSettings.lineSpacing = model.lineSpacing
+                currentSettings.letterSpacing = model.letterSpacing
+                currentSettings.dynamicTypeEnabled = model.dynamicTypeEnabled
+                currentSettings.maxDynamicTypeSize = model.maxDynamicTypeSize
+                currentSettings.boldText = model.boldText
+                currentSettings.increaseContrast = model.increaseContrast
+                currentSettings.displayScale = model.displayScale
+            }
+        }
         
-        fontManager.applyFontSettings(
-            fontStyle: fontSettings.fontStyle,
-            fontSize: fontSettings.fontSize,
-            lineSpacing: fontSettings.lineSpacing,
-            dynamicTypeEnabled: fontSettings.dynamicTypeEnabled,
-            maxDynamicTypeSize: fontSettings.maxDynamicTypeSize
-        )
+        logger.info("Applying initial font and accessibility settings: style=\(currentSettings.fontStyle), size=\(currentSettings.fontSize), spacing=\(currentSettings.lineSpacing), bold=\(currentSettings.boldText), contrast=\(currentSettings.increaseContrast), scale=\(currentSettings.displayScale)")
+        
+        fontManager.applyAllFontSettings(from: currentSettings)
     }
 }
 

@@ -397,5 +397,5 @@ struct ConversationInvitationView: View {
   )
   
   ConversationManagementView(conversation: mockConversation)
-    .environment(AppState())
+    .environment(AppState.shared)
 }

@@ -78,6 +78,6 @@ struct TypingIndicatorView: View {
 struct TypingIndicatorView_Previews: PreviewProvider {
   static var previews: some View {
     TypingIndicatorView(convoId: "test-convo")
-      .environment(AppState())
+      .environment(AppState.shared)
   }
 }

@@ -200,8 +200,7 @@ import OSLog
         // Yield control briefly to prevent blocking
         await Task.yield()
         
-        // Apply other component themes
-        await applyToTabBar()
+        // Apply other component themes (tab bars now handled by SwiftUI)
         await applyToToolbar()
         
         await Task.yield()
@@ -417,92 +416,42 @@ import OSLog
         }
     }
     
-    /// Apply theme to tab bars
-    @MainActor
-    private func applyToTabBar() async {
-        let appearance = UITabBarAppearance()
-        let isDarkMode = await getCurrentEffectiveDarkMode()
+    // MARK: - SwiftUI Theme Colors
+    
+    /// Get the tab bar background color for current theme
+    func tabBarBackgroundColor(for colorScheme: ColorScheme) -> Color {
+        let effectiveScheme = effectiveColorScheme(for: colorScheme)
         
-        if isDarkMode {
-            if darkThemeMode == .black {
-                // Black mode
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = .clear
-                
-                // Configure item appearance
-                appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                    .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                ]
-                
-                appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-                appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                    .foregroundColor: UIColor.systemBlue
-                ]
-            } else {
-                // Dim mode
-                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = dimBackground
-                appearance.shadowColor = .clear
-                
-                // Configure item appearance for dim mode
-                appearance.stackedLayoutAppearance.normal.iconColor = UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                    .foregroundColor: UIColor(Color.dynamicText(self, style: .secondary, currentScheme: .dark))
-                ]
-                
-                appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-                appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                    .foregroundColor: UIColor.systemBlue
-                ]
-            }
-        } else {
-            // Light mode - use proper light appearance
-            appearance.configureWithOpaqueBackground()
-            appearance.backgroundColor = UIColor.systemBackground
-            appearance.shadowColor = UIColor.opaqueSeparator
-            
-            // Configure item appearance for light mode  
-            appearance.stackedLayoutAppearance.normal.iconColor = UIColor.secondaryLabel
-            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-                .foregroundColor: UIColor.secondaryLabel
-            ]
-            
-            appearance.stackedLayoutAppearance.selected.iconColor = UIColor.systemBlue
-            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-                .foregroundColor: UIColor.systemBlue
-            ]
+        switch (effectiveScheme, darkThemeMode) {
+        case (.dark, .black):
+            return Color.black
+        case (.dark, .dim):
+            return Color(red: 0.18, green: 0.18, blue: 0.20)
+        case (.light, _):
+            return Color(.systemBackground)
+        default:
+            return Color(.systemBackground)
         }
-        
-        UITabBar.appearance().standardAppearance = appearance
-        UITabBar.appearance().scrollEdgeAppearance = appearance
-        
-        // Force refresh all existing tab bars immediately
-        for scene in UIApplication.shared.connectedScenes {
-            if let windowScene = scene as? UIWindowScene {
-                for window in windowScene.windows {
-                    // Find tab bars in the view hierarchy
-                    func findAndUpdateTabBars(in view: UIView) {
-                        if let tabBar = view as? UITabBar {
-                            tabBar.standardAppearance = appearance
-                            tabBar.scrollEdgeAppearance = appearance
-                            tabBar.setNeedsLayout()
-                            tabBar.layoutIfNeeded()
-                        }
-                        view.subviews.forEach(findAndUpdateTabBars)
-                    }
-                    
-                    if let rootView = window.rootViewController?.view {
-                        findAndUpdateTabBars(in: rootView)
-                    }
-                }
-            }
-        }
-        
-        logger.info("Applied tab bar theme - isDark: \(isDarkMode), darkMode: \(darkThemeMode), background: \(appearance.backgroundColor?.description ?? "nil")")
     }
+    
+    /// Get the tab bar background color for current theme (convenience property)
+    var tabBarBackgroundColor: Color {
+        // Default to current system color scheme if no override
+        let scheme: ColorScheme = colorSchemeOverride ?? .light
+        return tabBarBackgroundColor(for: scheme)
+    }
+    
+    /// Get the current effective color scheme based on override
+    var effectiveColorScheme: ColorScheme {
+        colorSchemeOverride ?? .light // Default to light if no override
+    }
+    
+    /// Get the dim background color
+    var dimBackgroundColor: Color {
+        Color(red: 0.18, green: 0.18, blue: 0.20)
+    }
+    
+    // Tab bar theming now handled by SwiftUI modifiers - removed complex UITabBar.appearance() approach
     
     /// Apply theme to toolbars
     private func applyToToolbar() async {

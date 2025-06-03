@@ -714,6 +714,11 @@ enum SearchState {
                     results = rankSearchResults(results, query: searchQuery)
                 }
                 
+                // Apply language filtering if enabled and user has preferred languages
+                if appState.appSettings.hideNonPreferredLanguages && !appState.appSettings.contentLanguages.isEmpty {
+                    results = applyLanguageFiltering(to: results)
+                }
+                
                 postResults = results
                 postCursor = postsResponse.cursor
             }
@@ -937,6 +942,43 @@ enum SearchState {
         formatter.formatOptions = [.withInternetDateTime]
         
         return formatter.string(from: date)
+    }
+    
+    /// Apply language filtering to search results
+    private func applyLanguageFiltering(to posts: [AppBskyFeedDefs.PostView]) -> [AppBskyFeedDefs.PostView] {
+        let preferredLanguages = appState.appSettings.contentLanguages
+        var filteredPosts: [AppBskyFeedDefs.PostView] = []
+        
+        for post in posts {
+            // Extract post record to check languages
+            guard case .knownType(let record) = post.record,
+                  let feedPost = record as? AppBskyFeedPost else {
+                // If we can't decode the post, allow it through
+                filteredPosts.append(post)
+                continue
+            }
+            
+            // If post has no language tags, allow it through
+            guard let postLanguages = feedPost.langs, !postLanguages.isEmpty else {
+                filteredPosts.append(post)
+                continue
+            }
+            
+            // Check if any of the post's languages match user's preferred languages
+            let hasPreferredLanguage = postLanguages.contains { postLangContainer in
+                preferredLanguages.contains { prefLang in
+                    // Compare language codes (e.g., "en" == "en")
+                    let postLangCode = postLangContainer.lang.languageCode?.identifier ?? postLangContainer.lang.minimalIdentifier
+                    return postLangCode == prefLang
+                }
+            }
+            
+            if hasPreferredLanguage {
+                filteredPosts.append(post)
+            }
+        }
+        
+        return filteredPosts
     }
     
     // MARK: - StateInvalidationSubscriber

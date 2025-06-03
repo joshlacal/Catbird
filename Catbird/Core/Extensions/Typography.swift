@@ -54,9 +54,9 @@ import UIKit
 /// 
 /// The FontManager provides the bridge between user settings and font application.
 enum Typography {
-    // Font sizes for different text roles
+    // Font sizes for different text roles (normalized with 17pt body)
     enum Size {
-        static let micro: CGFloat = 10
+        static let micro: CGFloat = 11
         static let caption: CGFloat = 12
         static let footnote: CGFloat = 13
         static let subheadline: CGFloat = 15
@@ -99,12 +99,13 @@ enum Typography {
         }
     }
     
-    // Line heights (as multipliers)
+    // Line heights (as multipliers) - generous spacing for excellent readability
     enum LineHeight {
-        static let tight: CGFloat = 1.1
-        static let normal: CGFloat = 1.2
-        static let relaxed: CGFloat = 1.4
-        static let loose: CGFloat = 1.6
+        static let tight: CGFloat = 1.3   // For headlines
+        static let snug: CGFloat = 1.4    // For subheadings  
+        static let normal: CGFloat = 1.5  // For UI text
+        static let relaxed: CGFloat = 1.7 // For body reading
+        static let loose: CGFloat = 1.9   // For long-form reading
     }
     
     // Letter spacing
@@ -257,7 +258,7 @@ struct CaptionModifier: ViewModifier {
     }
 }
 
-/// Custom font modifier that supports width variants and optical sizing
+/// Custom font modifier that supports width variants and optical sizing (legacy)
 struct CustomFontModifier: ViewModifier {
     let size: CGFloat?
     let weight: Font.Weight
@@ -295,6 +296,62 @@ struct CustomFontModifier: ViewModifier {
     }
 }
 
+/// FontManager-integrated custom font modifier that supports width variants and accessibility scaling
+struct FontManagerCustomFontModifier: ViewModifier {
+    @Environment(\.fontManager) private var fontManager
+    
+    let size: CGFloat?
+    let weight: Font.Weight
+    let design: Font.Design
+    let width: CGFloat?
+    let relativeTo: Font.TextStyle?
+    
+    init(
+        size: CGFloat? = nil,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        width: CGFloat? = nil,
+        relativeTo: Font.TextStyle? = nil
+    ) {
+        self.size = size
+        self.weight = weight
+        self.design = design
+        self.width = width
+        self.relativeTo = relativeTo
+    }
+    
+    func body(content: Content) -> some View {
+        content
+            .font(createFont())
+            .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
+    }
+    
+    private var effectiveSize: CGFloat {
+        return size ?? Typography.Size.body
+    }
+    
+    private func createFont() -> Font {
+        let baseSize = effectiveSize
+        
+        if let width = width {
+            // Use FontManager's scaledCustomFont which handles width variants
+            return fontManager.scaledCustomFont(
+                size: baseSize,
+                weight: weight,
+                width: width,
+                relativeTo: relativeTo
+            )
+        } else {
+            // Use FontManager's regular scaledFont
+            return fontManager.scaledFont(
+                size: baseSize,
+                weight: weight,
+                relativeTo: relativeTo
+            )
+        }
+    }
+}
+
 // MARK: - Extension helpers for the modifiers
 
 extension View {
@@ -307,11 +364,11 @@ extension View {
         self.modifier(HeadlineModifier(size: size, weight: weight, color: color))
     }
     
-    /// Applies the body text modifier with default values
+    /// Applies the body text modifier with default values - optimized for readability
     func bodyStyle(
         size: CGFloat = Typography.Size.body,
         weight: Font.Weight = Typography.Weight.regular,
-        lineHeight: CGFloat = Typography.LineHeight.normal
+        lineHeight: CGFloat = Typography.LineHeight.relaxed  // Better for reading
     ) -> some View {
         self.modifier(BodyTextModifier(size: size, weight: weight, lineHeight: lineHeight))
     }
@@ -381,6 +438,7 @@ extension View {
     }
     
     /// Applies a custom font with optical scaling and width variants
+    /// This version integrates with FontManager for proper accessibility scaling
     func customScaledFont(
         size: CGFloat? = nil,
         weight: Font.Weight = .regular,
@@ -388,7 +446,7 @@ extension View {
         relativeTo: Font.TextStyle? = nil,
         design: Font.Design = .default
     ) -> some View {
-        self.modifier(CustomFontModifier(
+        self.modifier(FontManagerCustomFontModifier(
             size: size,
             weight: weight,
             design: design,
@@ -396,9 +454,123 @@ extension View {
             relativeTo: relativeTo
         ))
     }
+    
+    // MARK: - Design Tokens Integration with FontManager
+    
+    /// Enhanced app body that uses design tokens for consistent typography
+    /// while preserving FontManager scaling and accessibility features
+    func enhancedAppBody() -> some View {
+        self.modifier(AppFontModifier(role: AppTextRole.body))
+            .tracking(Typography.LetterSpacing.normal)
+    }
+    
+    /// Enhanced app headline with design token typography principles
+    func enhancedAppHeadline() -> some View {
+        self.modifier(AppFontModifier(role: AppTextRole.headline))
+            .tracking(Typography.LetterSpacing.tight)
+    }
+    
+    /// Enhanced app subheadline with consistent letter spacing
+    func enhancedAppSubheadline() -> some View {
+        self.modifier(AppFontModifier(role: AppTextRole.subheadline))
+            .tracking(Typography.LetterSpacing.normal)
+    }
+    
+    /// Enhanced app caption with proper letter spacing
+    func enhancedAppCaption() -> some View {
+        self.modifier(AppFontModifier(role: AppTextRole.caption))
+            .tracking(Typography.LetterSpacing.wide)
+    }
+    
+    // MARK: - Legacy Token Helpers (for non-accessibility critical areas)
+    
+    /// Quick typography using design tokens - USE SPARINGLY
+    /// Only for decorative text that doesn't need accessibility scaling
+    func tokenText(
+        size: CGFloat,
+        weight: Font.Weight = .regular,
+        lineHeight: CGFloat = Typography.LineHeight.normal,
+        letterSpacing: CGFloat = Typography.LetterSpacing.normal
+    ) -> some View {
+        self
+            .font(.system(size: size, weight: weight))
+            .lineSpacing((lineHeight - 1.0) * size)
+            .tracking(letterSpacing)
+    }
+    
+    /// Fixed body text - USE ONLY for decorative elements
+    func tokenBody() -> some View {
+        self.tokenText(
+            size: Typography.Size.body,
+            weight: .regular,
+            lineHeight: Typography.LineHeight.relaxed
+        )
+    }
 }
 
 extension Font {
+    /// Creates a dynamic font that hijacks iOS Dynamic Type to use app-specific base sizes
+    /// This allows us to combine user's app font size preference with Dynamic Type scaling
+    static func customDynamicFont(
+        baseSize: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        relativeTo textStyle: Font.TextStyle
+    ) -> Font {
+        // Map SwiftUI text style to UIFont text style
+        let uiTextStyle: UIFont.TextStyle
+        switch textStyle {
+        case .largeTitle: uiTextStyle = .largeTitle
+        case .title: uiTextStyle = .title1
+        case .title2: uiTextStyle = .title2
+        case .title3: uiTextStyle = .title3
+        case .headline: uiTextStyle = .headline
+        case .subheadline: uiTextStyle = .subheadline
+        case .body: uiTextStyle = .body
+        case .callout: uiTextStyle = .callout
+        case .footnote: uiTextStyle = .footnote
+        case .caption: uiTextStyle = .caption1
+        case .caption2: uiTextStyle = .caption2
+        @unknown default: uiTextStyle = .body
+        }
+        
+        // Convert SwiftUI weight to UIFont weight
+        let uiWeight: UIFont.Weight
+        switch weight {
+        case .ultraLight: uiWeight = .ultraLight
+        case .thin: uiWeight = .thin
+        case .light: uiWeight = .light
+        case .regular: uiWeight = .regular
+        case .medium: uiWeight = .medium
+        case .semibold: uiWeight = .semibold
+        case .bold: uiWeight = .bold
+        case .heavy: uiWeight = .heavy
+        case .black: uiWeight = .black
+        default: uiWeight = .regular
+        }
+        
+        // Convert SwiftUI design to UIFont design
+        let uiDesign: UIFontDescriptor.SystemDesign
+        switch design {
+        case .default: uiDesign = .default
+        case .serif: uiDesign = .serif
+        case .rounded: uiDesign = .rounded
+        case .monospaced: uiDesign = .monospaced
+        @unknown default: uiDesign = .default
+        }
+        
+        // Create base font with our custom size
+        let baseFont = UIFont.systemFont(ofSize: baseSize, weight: uiWeight)
+        let descriptor = baseFont.fontDescriptor.withDesign(uiDesign) ?? baseFont.fontDescriptor
+        let customBaseFont = UIFont(descriptor: descriptor, size: baseSize)
+        
+        // Use UIFontMetrics to scale our custom base font with Dynamic Type
+        let metrics = UIFontMetrics(forTextStyle: uiTextStyle)
+        let scaledFont = metrics.scaledFont(for: customBaseFont)
+        
+        return Font(scaledFont)
+    }
+    
     /// Creates a custom system font that supports width variants and dynamic type scaling.
     /// - Parameters:
     ///   - size: The base font size.
@@ -485,6 +657,64 @@ extension Font {
             // Fallback to no scaling
             return Font(customUIFont)
         }
+    }
+}
+
+// MARK: - Accessibility-Aware Text Modifiers
+
+extension View {
+    /// Apply accessibility-aware text styling that respects contrast and bold text settings
+    func accessibleText(appState: AppState?) -> some View {
+        self.modifier(AccessibleTextModifier(appState: appState))
+    }
+    
+    /// Apply comprehensive accessibility styling including font, contrast, and scaling
+    func accessibilityStyledText(appState: AppState?) -> some View {
+        self.modifier(ComprehensiveAccessibilityModifier(appState: appState))
+    }
+}
+
+/// A view modifier that applies accessibility text settings
+struct AccessibleTextModifier: ViewModifier {
+    let appState: AppState?
+    
+    func body(content: Content) -> some View {
+        let settings = appState?.appSettings
+        let shouldIncreaseContrast = settings?.increaseContrast ?? false
+        let shouldUseBoldText = settings?.boldText ?? false
+        let displayScale = CGFloat(settings?.displayScale ?? 1.0)
+        
+        content
+            .fontWeight(adjustedFontWeight(shouldUseBoldText: shouldUseBoldText))
+            .foregroundStyle(shouldIncreaseContrast ? Color.adaptiveForeground(appState: appState, defaultColor: .primary) : Color.primary)
+            .scaleEffect(displayScale)
+            .contrastAwareBackground(appState: appState, defaultColor: .clear)
+    }
+    
+    private func adjustedFontWeight(shouldUseBoldText: Bool) -> Font.Weight {
+        guard shouldUseBoldText else { return .regular }
+        
+        // Apply appropriate bold weight adjustment
+        // Use semibold to avoid making text too heavy
+        return .semibold
+    }
+}
+
+/// A comprehensive view modifier that applies all accessibility settings
+struct ComprehensiveAccessibilityModifier: ViewModifier {
+    let appState: AppState?
+    
+    func body(content: Content) -> some View {
+        let settings = appState?.appSettings
+        let shouldIncreaseContrast = settings?.increaseContrast ?? false
+        let shouldUseBoldText = settings?.boldText ?? false
+        let displayScale = CGFloat(settings?.displayScale ?? 1.0)
+        
+        content
+            .fontWeight(shouldUseBoldText ? .semibold : .regular)
+            .foregroundStyle(shouldIncreaseContrast ? Color.adaptiveForeground(appState: appState, defaultColor: .primary) : Color.primary)
+            .scaleEffect(displayScale)
+            .contrastAwareBackground(appState: appState, defaultColor: .clear)
     }
 }
 
@@ -609,7 +839,7 @@ extension Font {
         .padding(.vertical)
         .background(Color(.systemGroupedBackground))
     }
-    .fontManager(FontManager()) // Provide default FontManager for preview
+    .environment(\.fontManager, FontManager()) // Provide default FontManager for preview
 }
 /*
 extension Font {

@@ -17,11 +17,56 @@ import OSLog
     /// Current line spacing setting
     var lineSpacing: String = "normal"
     
+    /// Current letter spacing setting
+    var letterSpacing: String = "normal"
+    
     /// Whether Dynamic Type is enabled
     var dynamicTypeEnabled: Bool = true
     
     /// Maximum Dynamic Type size to allow
     var maxDynamicTypeSize: String = "accessibility1"
+    
+    /// Current system content size category
+    private(set) var currentContentSizeCategory: UIContentSizeCategory = UIApplication.shared.preferredContentSizeCategory
+    
+    // MARK: - Initialization
+    
+    init() {
+        setupDynamicTypeObserver()
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    // MARK: - Dynamic Type Observer
+    
+    /// Setup observer for Dynamic Type changes
+    private func setupDynamicTypeObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(contentSizeCategoryDidChange),
+            name: UIContentSizeCategory.didChangeNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func contentSizeCategoryDidChange(_ notification: Notification) {
+        if Thread.isMainThread {
+            currentContentSizeCategory = UIApplication.shared.preferredContentSizeCategory
+        } else {
+            Task { @MainActor in
+                self.currentContentSizeCategory = UIApplication.shared.preferredContentSizeCategory
+            }
+        }
+        
+        logger.info("Dynamic Type size changed to: \(String(describing: UIApplication.shared.preferredContentSizeCategory))")
+        
+        // Post notification for UI updates if Dynamic Type is enabled
+        if dynamicTypeEnabled {
+            NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
+        }
+    }
     
     // MARK: - Caching Properties
     
@@ -29,6 +74,7 @@ import OSLog
     private var currentFontStyle: String = ""
     private var currentFontSize: String = ""
     private var currentLineSpacing: String = ""
+    private var currentLetterSpacing: String = ""
     private var currentDynamicTypeEnabled: Bool = true
     private var currentMaxDynamicTypeSize: String = ""
     
@@ -38,13 +84,13 @@ import OSLog
     var sizeScale: CGFloat {
         switch fontSize {
         case "small":
-            return 0.85
+            return 0.9
         case "default":
             return 1.0
         case "large":
-            return 1.15
+            return 1.1
         case "extraLarge":
-            return 1.3
+            return 1.2
         default:
             return 1.0
         }
@@ -80,6 +126,20 @@ import OSLog
         }
     }
     
+    /// Letter spacing (tracking) value based on preference
+    var letterSpacingValue: CGFloat {
+        switch letterSpacing {
+        case "tight":
+            return -0.3
+        case "normal":
+            return 0.1
+        case "loose":
+            return 0.4
+        default:
+            return 0.1
+        }
+    }
+    
     /// Maximum allowed content size category
     var maxContentSizeCategory: UIContentSizeCategory {
         switch maxDynamicTypeSize {
@@ -109,6 +169,7 @@ import OSLog
         fontStyle: String,
         fontSize: String,
         lineSpacing: String,
+        letterSpacing: String,
         dynamicTypeEnabled: Bool,
         maxDynamicTypeSize: String
     ) {
@@ -116,19 +177,21 @@ import OSLog
         if fontStyle == currentFontStyle &&
            fontSize == currentFontSize &&
            lineSpacing == currentLineSpacing &&
+           letterSpacing == currentLetterSpacing &&
            dynamicTypeEnabled == currentDynamicTypeEnabled &&
            maxDynamicTypeSize == currentMaxDynamicTypeSize {
             logger.debug("Font settings unchanged, skipping update")
             return
         }
         
-        logger.info("Applying font settings - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
-        logger.debug("Previous settings - style: \(self.currentFontStyle), size: \(self.currentFontSize), spacing: \(self.currentLineSpacing), dynamic: \(self.currentDynamicTypeEnabled), maxSize: \(self.currentMaxDynamicTypeSize)")
+        logger.info("Applying font settings - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), tracking: \(letterSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
+        logger.debug("Previous settings - style: \(self.currentFontStyle), size: \(self.currentFontSize), spacing: \(self.currentLineSpacing), tracking: \(self.currentLetterSpacing), dynamic: \(self.currentDynamicTypeEnabled), maxSize: \(self.currentMaxDynamicTypeSize)")
         
         // Update cache FIRST to prevent re-entrance
         currentFontStyle = fontStyle
         currentFontSize = fontSize
         currentLineSpacing = lineSpacing
+        currentLetterSpacing = letterSpacing
         currentDynamicTypeEnabled = dynamicTypeEnabled
         currentMaxDynamicTypeSize = maxDynamicTypeSize
         
@@ -138,6 +201,7 @@ import OSLog
             self.fontStyle = fontStyle
             self.fontSize = fontSize
             self.lineSpacing = lineSpacing
+            self.letterSpacing = letterSpacing
             self.dynamicTypeEnabled = dynamicTypeEnabled
             self.maxDynamicTypeSize = maxDynamicTypeSize
         } else {
@@ -145,6 +209,7 @@ import OSLog
                 self.fontStyle = fontStyle
                 self.fontSize = fontSize
                 self.lineSpacing = lineSpacing
+                self.letterSpacing = letterSpacing
                 self.dynamicTypeEnabled = dynamicTypeEnabled
                 self.maxDynamicTypeSize = maxDynamicTypeSize
             }
@@ -157,14 +222,26 @@ import OSLog
         
         // Post notification for any components that need manual updates
         if Thread.isMainThread {
-            NotificationCenter.default.post(name: NSNotification.Name("FontSettingsChanged"), object: nil)
-            logger.debug("Posted FontSettingsChanged notification synchronously")
+            NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
+            logger.debug("Posted FontChanged notification synchronously")
         } else {
             DispatchQueue.main.async {
-                NotificationCenter.default.post(name: NSNotification.Name("FontSettingsChanged"), object: nil)
-                self.logger.debug("Posted FontSettingsChanged notification asynchronously")
+                NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
+                self.logger.debug("Posted FontChanged notification asynchronously")
             }
         }
+    }
+    
+    /// Apply font settings from AppSettings with accessibility features
+    func applyAllFontSettings(from appSettings: AppSettingsModel) {
+        applyFontSettings(
+            fontStyle: appSettings.fontStyle,
+            fontSize: appSettings.fontSize,
+            lineSpacing: appSettings.lineSpacing,
+            letterSpacing: appSettings.letterSpacing,
+            dynamicTypeEnabled: appSettings.dynamicTypeEnabled,
+            maxDynamicTypeSize: appSettings.maxDynamicTypeSize
+        )
     }
     
     /// Apply Dynamic Type size constraints
@@ -182,7 +259,7 @@ import OSLog
     /// Create a scaled system font
     /// 
     /// This method combines two scaling mechanisms:
-    /// 1. User font size preference (85% to 130% scale factor)
+    /// 1. User font size preference (90% to 120% scale factor)
     /// 2. iOS Dynamic Type (accessibility scaling)
     /// 
     /// When Dynamic Type is enabled, the font will scale with both:
@@ -198,9 +275,14 @@ import OSLog
         let scaledSize = self.scaledSize(size)
         
         if dynamicTypeEnabled, let textStyle = textStyle {
-            // Use dynamic type scaling WITH our size preference
-            // The system will apply Dynamic Type scaling on top of our base size
-            return Font.system(textStyle, design: fontDesign).weight(weight)
+            // Use Dynamic Type scaling WITH our size preference
+            // This properly combines app scaling with system Dynamic Type
+            return Font.customDynamicFont(
+                baseSize: scaledSize,
+                weight: weight,
+                design: fontDesign,
+                relativeTo: textStyle
+            )
         } else {
             // Use only our fixed size with user's size preference
             return Font.system(size: scaledSize, weight: weight, design: fontDesign)
@@ -231,26 +313,30 @@ import OSLog
     
     /// Create a font that respects accessibility settings
     /// 
-    /// This is the primary method used by app font helpers like .appBody(), .appTitle(), etc.
-    /// It ensures text is accessible by:
-    /// 1. Using Dynamic Type scaling when enabled (recommended for accessibility)
-    /// 2. Applying user's font size preference
-    /// 3. Using user's chosen font design (serif, rounded, etc.)
-    /// 4. Respecting maximum Dynamic Type size limits
+    /// This hijacks the system by creating a custom UIFont that combines:
+    /// 1. Dynamic Type scaling (for accessibility)
+    /// 2. User's app-specific font size preference
+    /// 3. User's chosen font design (serif, rounded, etc.)
     func accessibleFont(
         size: CGFloat,
         weight: Font.Weight = .regular,
         relativeTo textStyle: Font.TextStyle
     ) -> Font {
+        // Apply user's font size preference to the base size
+        let scaledBaseSize = self.scaledSize(size)
+        
         if dynamicTypeEnabled {
-            // RECOMMENDED: Use system font with dynamic type
-            // This allows iOS to scale the font based on user's accessibility needs
-            // while still applying our font design preference
-            return Font.system(textStyle, design: fontDesign).weight(weight)
+            // HIJACK APPROACH: Create a custom UIFont that scales with Dynamic Type
+            // but starts from our user-preferred base size instead of system default
+            return Font.customDynamicFont(
+                baseSize: scaledBaseSize,
+                weight: weight,
+                design: fontDesign,
+                relativeTo: textStyle
+            )
         } else {
-            // Fallback: Use only our app's font size preference
-            // Dynamic Type is disabled, so use fixed scaling only
-            return scaledFont(size: size, weight: weight)
+            // Use only our app's font size preference (no Dynamic Type)
+            return Font.system(size: scaledBaseSize, weight: weight, design: fontDesign)
         }
     }
     
@@ -343,7 +429,8 @@ struct AppFontModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .font(fontManager.fontForTextRole(role))
-            .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body))
+            .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
+            .tracking(fontManager.letterSpacingValue)
     }
 }
 
@@ -356,8 +443,13 @@ struct CustomAppFontModifier: ViewModifier {
     
     func body(content: Content) -> some View {
         content
-            .font(fontManager.scaledFont(size: size, weight: weight, relativeTo: textStyle))
+            .font(fontManager.scaledFont(
+                size: size,
+                weight: weight,
+                relativeTo: textStyle ?? .body  // Always provide a textStyle for Dynamic Type
+            ))
             .lineSpacing(fontManager.getLineSpacing(for: size))
+            .tracking(fontManager.letterSpacingValue)
     }
 }
 
@@ -590,6 +682,7 @@ extension FontManager {
             fontStyle: fontStyle, // Keep current style
             fontSize: recommended.fontSize,
             lineSpacing: recommended.lineSpacing,
+            letterSpacing: letterSpacing, // Keep current letter spacing
             dynamicTypeEnabled: recommended.dynamicTypeEnabled,
             maxDynamicTypeSize: "accessibility3" // Allow higher accessibility sizes
         )

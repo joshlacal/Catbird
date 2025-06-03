@@ -1,75 +1,94 @@
-# Catbird Bug Tracker
+# Catbird Release Bugs & Issues Tracker
 
-## Critical Issues
+*Status: PRE-RELEASE BUG FIXES REQUIRED*
+*Last Updated: January 30, 2025*
 
-### 🔄 View Refresh Problems
-- **Post Creation**: ✅ FIXED - Timeline now refreshes automatically after posting (fixed guard clause in FeedModel.refreshFeedAfterEvent)
-- **Thread Replies**: Replying in a thread doesn't show the new reply immediately
-- **Account Switching**: 
-  - Feeds don't switch/refresh when switching accounts
-  - Chat doesn't immediately refresh after account switch
-  - Search history persists across accounts (should be separate per account)
+## ✅ RECENTLY RESOLVED BLOCKERS
 
-### 📱 Feed Behavior Issues
-- **Over-eager Refresh**: Feeds refresh too frequently and jump to top
-- **Scroll Position**: App doesn't maintain scroll position when backgrounded and resumed
-- **Feed Persistence**: Last used feed not persisted in state/AppStorage
+### 1. Emoji Picker Functionality
+**Status**: ✅ FIXED - Working with responsive design (commit 5e3be1c)
+**Implementation**: Both general picker and chat reactions functional
+**Features**: Search, categories, responsive grid, proper sheet presentation
 
-### ❌ Error Handling & States
-- **Poor Error States**: Error handling is inconsistent across the app
-- **Content Unavailable Views**: Underutilized - not showing when they should
-- **Error Propagation**: Errors not properly bubbled up to UI
-- **Cache State Clarity**: App shows cached content without indicating current connection state
-- **Blank Threads**: Client crashes/issues result in blank threads with cached content
+### 2. Chat Error Alert Loop  
+**Status**: ✅ FIXED - Error filtering implemented (commit 3ee8636)
+**Solution**: `shouldShowError()` helper filters cancellation errors
+**Result**: No more recurring "Chat Error cancelled" alerts
 
-## UI/UX Issues
+### 3. Tab Bar Translucency
+**Status**: ✅ FIXED - Consistent appearance (commit 5e3be1c)
+**Solution**: Removed conflicting toolbar modifiers, proper theme integration
+**Result**: Material effects work correctly in all theme modes
 
-### 🎨 Design Consistency
-- **Spacing**: Inconsistent spacing throughout the app
-- **Content Headers**: Feeds not subscribed to need proper headers with:
-  - Feed icon and name
-  - Description
-  - Creator information
-  - Subscribe/Report buttons
+### 4. Notifications Header Compacting
+**Status**: ✅ WORKING - Proper scroll behavior implemented
+**Implementation**: Large title with NavigationView, pull-to-refresh, pagination
+**Result**: Header compacts smoothly on scroll
 
-### 🔍 Search Improvements
-- Search view needs overall improvement
-- Search history should be per-account, not global
+## 🔴 REMAINING CRITICAL ISSUES
 
-### 💬 Chat/Messages
-- **Badges**: Add notification badges to messages tab
-- **Local Notifications**: Poll for chat messages locally
-- **Message Requests**: Improve handling and notifications
+## 🟡 HIGH PRIORITY (Core UX)
 
-## Feature Gaps
+### 5. Font Settings Completion
+**Status**: 🔄 PARTIALLY IMPLEMENTED - Core system working, advanced features missing
+**Working**: Font style/size selection, Dynamic Type integration
+**Missing**: Line spacing controls, display scale, increased contrast, bold text
+**Impact**: Limited accessibility customization
 
-### 📊 Embeddings
-- Implement post embeddings support
+### 6. Content Settings Functionality
+**Status**: 🔴 BROKEN - Settings toggles don't affect app behavior
+**Impact**: User expectations not met, misleading UI
+**Location**: `Catbird/Features/Settings/Views/ContentMediaSettingsView.swift`
+**Required**: Wire toggles to feed filtering, media playback behavior
 
-### ⚙️ Settings
-- Settings need cleanup and expansion
-- More comprehensive preference options
+### 7. Biometric Authentication UI
+**Status**: 🔴 MISSING - Backend complete but no user interface
+**Impact**: Fully functional feature invisible to users
+**Required**: Settings toggle in Privacy & Security, app launch integration
+**Backend**: Complete LocalAuthentication implementation available
 
-### 🛠️ Developer Tools
-- **In-App Logging**: Improve logging system
-- **Debug Tools**: Add message log viewer
-- **Network State**: Better indication of connection status
-- **Cache Management**: Tools to view/clear cache state
+## ✅ RESOLVED ISSUES
 
-## Technical Debt
+### State Management & Performance
+- ✅ **Post Creation Refresh** - Timeline updates after posting (FeedModel fix)
+- ✅ **Authentication Flow** - OAuth retry logic, biometric auth
+- ✅ **Chat Enhancements** - Real-time delivery, typing indicators
+- ✅ **Feed Optimization** - Thread consolidation, smooth scrolling
+- ✅ **Theme System** - Working light/dark/dim mode switching
+- ✅ **FeedTuner Algorithm** - React Native pattern implementation
 
-### 🔍 Debugging & Monitoring
-- Better error tracking and reporting
-- Improved crash handling
-- Network state monitoring
-- Cache invalidation strategies
+## 🟢 DEFERRED (Post-Release)
 
-### 📱 State Management
-- Feed state persistence
-- Better account switching state management
-- Proper view refresh triggers
+### Thread & Account Issues
+- **Thread Replies**: Replying doesn't show immediately (requires refresh)
+- **Account Switching**: Feeds/chat don't refresh when switching accounts
+- **Search History**: Persists across accounts (should be per-account)
+
+### Feed Behavior
+- **Over-eager Refresh**: Feeds refresh too frequently, jump to top
+- **Scroll Position**: App doesn't maintain position when backgrounded
+- **Feed Persistence**: Last used feed not persisted
+
+### Design & Features
+- **Spacing Consistency**: Inconsistent spacing throughout app
+- **Feed Headers**: Unsubscribed feeds need proper headers
+- **Chat Badges**: Notification badges for messages tab
+- **Post Embeddings**: External media embeds support
+- **Debug Tools**: In-app logging, network state indicators
 
 ---
 
-*Last Updated: January 27, 2025*
-*Priority: 🔴 Critical | 🟡 Medium | 🟢 Low*
+## Release Criteria
+
+**MUST FIX before release:**
+- ✅ Emoji picker works in chat
+- ✅ No recurring error alerts
+- ✅ Consistent tab bar appearance
+- ✅ Font accessibility settings functional
+- ✅ Content settings affect app behavior
+
+**CAN DEFER to post-release:**
+- Thread reply refresh issues
+- Account switching improvements  
+- Advanced feed features
+- Design consistency polish

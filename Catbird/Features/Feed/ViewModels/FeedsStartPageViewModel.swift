@@ -333,6 +333,9 @@ final class FeedsStartPageViewModel {
 
       // Update caches after change
       await updateCaches()
+      
+      // Notify state invalidation bus that feeds have changed
+      await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
       errorMessage = "Failed to remove feed: \(error.localizedDescription)"
       logger.error("Error removing feed: \(error.localizedDescription)")
@@ -461,6 +464,9 @@ final class FeedsStartPageViewModel {
 
       // 5. Update local caches
       await updateCaches()
+      
+      // 6. Notify state invalidation bus that feeds have changed
+      await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
       errorMessage = "Failed to add feed: \(error.localizedDescription)"

@@ -1,59 +1,98 @@
-# Catbird Current Todo List
+# Catbird Release Todo List
 
-## Status: PRE-RELEASE BUG FIXES
+## Status: PRE-RELEASE BUG FIXES REQUIRED
 *Last Updated: January 30, 2025*
 
-## 🔴 CRITICAL RELEASE BLOCKERS (Must Fix Immediately)
+## ✅ RECENTLY RESOLVED (Commits 5e3be1c, 3ee8636)
 
-### Week 1: Critical Functionality
-1. **Fix emoji picker functionality** - Currently broken in chat interface
-2. **Fix recurring 'Chat Error cancelled' alert** - Blocking user interaction  
-3. **Fix inconsistent tab bar translucency** - Visual inconsistency across screens
+### 1. Emoji Picker Functionality ✅
+- **Status**: WORKING - Fully functional with responsive design
+- **Fixed**: Both general emoji picker and chat reactions
+- **Features**: Search, categories, responsive grid layout
 
-### Week 2: Core UX Issues  
-4. **Implement notifications header compacting** when scrolling
-5. **Implement missing font settings** - style, size, line spacing, accessibility, display scale, contrast, bold text
+### 2. Chat Error Alert Loop ✅
+- **Status**: RESOLVED - No more recurring "Chat Error cancelled" alerts
+- **Fixed**: Proper error filtering, Task cancellation handling
+- **Implementation**: `shouldShowError()` helper filters cancellation errors
 
-## 🟡 HIGH PRIORITY (Feature Completion)
+### 3. Tab Bar Translucency ✅
+- **Status**: FIXED - Consistent appearance across all screens
+- **Fixed**: Removed conflicting toolbar modifiers, proper theme integration
+- **Result**: Proper material effects in light/dark/dim modes
 
-### Week 3: Functional Settings
-6. **Fix non-functional Content & Media settings** - toggles don't affect behavior
-7. **Implement server-provided video thumbnails** for non-auto played videos
-8. **Allow external media embeds** for approved services (YouTube, Vimeo, etc.)
+### 4. Notifications Header ✅
+- **Status**: WORKING - Header compacts properly on scroll
+- **Implementation**: Large title with proper scroll behavior
+- **Features**: Pull-to-refresh, pagination, filter integration
 
-### Week 4: Polish & Testing
-9. **Fix Account settings screen layout** and functionality issues
-10. **Comprehensive integration testing** and release preparation
+## 🔴 REMAINING CRITICAL ISSUES
+
+### 5. Font Settings 🔄
+- **Issue**: Font system partially implemented, missing advanced accessibility options
+- **Working**: Basic font style/size selection, Dynamic Type integration
+- **Missing**: Line spacing controls, display scale, increased contrast, bold text
+- **Status**: Core system working, needs completion
+
+### 6. Content Settings 🚫
+- **Issue**: Toggles don't affect app behavior
+- **Impact**: Broken user expectations
+- **File**: `ContentMediaSettingsView.swift`
+- **Status**: Needs feed filtering integration
+
+### 7. Biometric Authentication Settings 🚫
+- **Issue**: Backend fully implemented but no UI settings
+- **Impact**: Feature invisible to users
+- **Missing**: Settings toggle in Privacy & Security
+- **Status**: Needs UI implementation only
+
+## ✅ COMPLETED
+
+### Core Infrastructure
+- ✅ **Authentication System** - OAuth retry, biometric auth, error handling
+- ✅ **Feed Performance** - Thread consolidation, smooth scrolling, prefetching
+- ✅ **Chat Enhancements** - Real-time delivery, typing indicators, reactions
+- ✅ **Theme System** - Working light/dark/dim switching
+- ✅ **StateInvalidationBus** - Central event coordination
+- ✅ **FeedTuner Algorithm** - React Native pattern implementation
 
 ## 🟢 DEFERRED (Post-Release)
 
-### Future Improvements
-11. **Add feed headers** for unsubscribed feeds (icon, name, description, subscribe button)
-12. **Make search history per-account** instead of global  
-13. **Add notification badges** to messages tab
-14. **Implement local polling** for chat messages
-15. **Standardize spacing** throughout the app for design consistency
+### Thread & Account Management
+- Thread replies don't show immediately (needs refresh)
+- Account switching doesn't refresh feeds/chat
+- Search history persists across accounts
+
+### Polish & Enhancement
+- Feed headers for unsubscribed feeds
+- Notification badges for messages tab
+- Local polling for chat messages
+- Spacing consistency throughout app
+- Video thumbnails for non-autoplay
+- External media embeds (YouTube, Vimeo)
 
 ---
 
-## Implementation Strategy
+## Release Success Criteria
 
-**RELEASE-FOCUSED APPROACH**: All development now prioritized around getting a stable, polished release ready.
+**Required for Release:**
+- ✅ Emoji picker works in chat
+- ✅ No recurring error alerts
+- ✅ Tab bar appearance consistent
+- ✅ Notifications header compacts properly
+- ✅ Font settings functional and accessible
+- ✅ Content settings affect app behavior
 
-### Phase 1 Foundation ✅ COMPLETED
-- StateInvalidationBus integration complete
-- Theme system optimizations complete  
-- Authentication improvements complete
+**Post-Release Improvements:**
+- Enhanced thread management
+- Better account switching UX
+- Advanced feed features
+- Design consistency polish
 
-### Phase 2: Release Blockers (Current Focus)
-See detailed implementation in `RELEASE_IMPLEMENTATION_GUIDE.md`
+## Implementation Order
 
-### Success Criteria for Release
-✅ Zero critical bugs in user testing
-✅ All core features working as expected
-✅ Consistent visual design across app
-✅ Font accessibility properly implemented  
-✅ Chat functionality stable and reliable
+**Week 1**: Critical fixes (emoji, chat errors, tab bar)
+**Week 2**: UX improvements (notifications header, font settings)  
+**Week 3**: Functional settings (content filters)
+**Week 4**: Testing & release preparation
 
-## Next Actions
-Follow the detailed implementation plan in `RELEASE_IMPLEMENTATION_GUIDE.md` to address all release-blocking issues in priority order.
+*See `RELEASE_IMPLEMENTATION_GUIDE.md` for detailed implementation steps.*

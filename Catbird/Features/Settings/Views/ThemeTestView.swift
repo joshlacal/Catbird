@@ -151,6 +151,9 @@ struct MockThemePreview: View {
     let isDarkMode: Bool
     let isBlackMode: Bool
     
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var currentColorScheme
+    
     var body: some View {
         VStack(spacing: 8) {
             // Mock navigation bar
@@ -212,72 +215,18 @@ struct MockThemePreview: View {
     }
     
     private func backgroundColor(_ elevation: ColorElevation) -> Color {
-        if !isDarkMode {
-            switch elevation {
-            case .base: return Color(UIColor.systemBackground)
-            case .low: return Color(UIColor.secondarySystemBackground)
-            default: return Color(UIColor.tertiarySystemBackground)
-            }
-        }
-        
-        if isBlackMode {
-            switch elevation {
-            case .base: return Color(white: 0.0)
-            case .low: return Color(white: 0.02)
-            case .medium: return Color(white: 0.04)
-            case .high: return Color(white: 0.06)
-            case .modal: return Color(white: 0.08)
-            case .popover: return Color(white: 0.10)
-            }
-        } else {
-            switch elevation {
-            case .base: return Color(red: 0.11, green: 0.11, blue: 0.118)
-            case .low: return Color(red: 0.14, green: 0.14, blue: 0.153)
-            case .medium: return Color(red: 0.157, green: 0.157, blue: 0.169)
-            case .high: return Color(red: 0.18, green: 0.18, blue: 0.19)
-            case .modal: return Color(red: 0.212, green: 0.212, blue: 0.224)
-            case .popover: return Color(red: 0.24, green: 0.24, blue: 0.25)
-            }
-        }
+        // Use theme-aware colors instead of raw system colors
+        return Color.elevatedBackground(appState.themeManager, elevation: elevation, currentScheme: currentColorScheme)
     }
     
     private func textColor(_ style: TextStyle) -> Color {
-        if !isDarkMode {
-            switch style {
-            case .primary: return .primary
-            case .secondary: return .secondary
-            case .tertiary: return Color(.tertiaryLabel)
-            case .disabled: return Color(.quaternaryLabel)
-            }
-        }
-        
-        if isBlackMode {
-            switch style {
-            case .primary: return Color(white: 0.95)
-            case .secondary: return Color(white: 0.70)
-            case .tertiary: return Color(white: 0.50)
-            case .disabled: return Color(white: 0.35)
-            }
-        } else {
-            switch style {
-            case .primary: return Color(white: 0.92)
-            case .secondary: return Color(white: 0.65)
-            case .tertiary: return Color(white: 0.45)
-            case .disabled: return Color(white: 0.30)
-            }
-        }
+        // Use theme-aware text colors instead of raw system colors
+        return Color.dynamicText(appState.themeManager, style: style, currentScheme: currentColorScheme)
     }
     
     private func borderColor() -> Color {
-        if !isDarkMode {
-            return Color(.systemGray5)
-        }
-        
-        if isBlackMode {
-            return Color(white: 0.20, opacity: 0.3)
-        } else {
-            return Color(white: 0.25, opacity: 0.3)
-        }
+        // Use theme-aware border colors instead of raw system colors
+        return Color.dynamicBorder(appState.themeManager, currentScheme: currentColorScheme)
     }
 }
 
@@ -716,5 +665,5 @@ private struct ThemeTestListItemRow: View {
 
 #Preview {
     ThemeTestView()
-        .environment(AppState())
+        .environment(AppState.shared)
 }

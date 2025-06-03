@@ -1,0 +1,3 @@
+[Tue Jun  3 05:17:29 EDT 2025] Starting v with i
+API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"system: Invalid model name"}}
+[Tue Jun  3 05:17:41 EDT 2025] ❌ v failed

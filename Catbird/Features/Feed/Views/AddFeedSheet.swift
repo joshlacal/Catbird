@@ -24,6 +24,8 @@ struct AddFeedSheet: View {
     @State private var showPinToggleSheet = false
     @State private var pinSelected = true
     @State private var viewModel: FeedsStartPageViewModel?
+    @State private var subscriptionStatus: [String: Bool] = [:]
+    @State private var showSwipeableCards = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "AddFeedSheet")
     
@@ -129,10 +131,29 @@ struct AddFeedSheet: View {
                                 .padding(.top, 40)
                             } else {
                                 VStack(alignment: .leading) {
-                                    Text("Popular Feeds")
-                                        .appFont(AppTextRole.headline)
-                                        .padding(.horizontal)
-                                        .padding(.top)
+                                    HStack {
+                                        Text("Popular Feeds")
+                                            .appFont(AppTextRole.headline)
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            showSwipeableCards = true
+                                        }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "rectangle.stack")
+                                                Text("Card View")
+                                            }
+                                            .appFont(AppTextRole.caption)
+                                            .foregroundColor(.accentColor)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Color.accentColor.opacity(0.1))
+                                            .cornerRadius(6)
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                    .padding(.top)
                                     
                                     feedsGrid(feeds: popularFeeds)
                                 }
@@ -149,11 +170,24 @@ struct AddFeedSheet: View {
                 }
             }
             .navigationTitle("Discover Feeds")
-            .navigationBarItems(
-                trailing: Button("Done") {
-                    dismiss()
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
                 }
-            )
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        showSwipeableCards = true
+                    }) {
+                        Image(systemName: "rectangle.stack")
+                            .font(.title3)
+                    }
+                    .accessibilityLabel("Card view")
+                    .accessibilityHint("Switch to swipeable card interface")
+                }
+            }
             .onAppear {
                 initViewModel()
                 loadPopularFeeds()
@@ -166,6 +200,9 @@ struct AddFeedSheet: View {
             .sheet(item: $selectedFeedForPinning) { feed in
                 pinConfirmationSheet(feed: feed)
             }
+            .fullScreenCover(isPresented: $showSwipeableCards) {
+                FeedDiscoveryCardsView()
+            }
         }
     }
     
@@ -177,15 +214,19 @@ struct AddFeedSheet: View {
     
     // Grid of feeds
     private func feedsGrid(feeds: [AppBskyFeedDefs.GeneratorView]) -> some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2),
-            spacing: 16
-        ) {
+        LazyVStack(spacing: 16) {
             ForEach(feeds, id: \.uri) { feed in
-                feedCard(feed: feed)
-                    .onTapGesture {
-                        selectedFeedForPinning = feed
+                FeedDiscoveryHeaderView(
+                    feed: feed,
+                    isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                    onSubscriptionToggle: {
+                        await toggleFeedSubscription(feed)
+                        await updateSubscriptionStatus(for: feed.uri)
                     }
+                )
+                .task {
+                    await updateSubscriptionStatus(for: feed.uri)
+                }
             }
         }
         .padding()
@@ -413,6 +454,56 @@ struct AddFeedSheet: View {
                     isLoading = false
                 }
             }
+        }
+    }
+    
+    // Check if user is subscribed to a feed
+    private func isSubscribedToFeed(_ feedURI: ATProtocolURI) async -> Bool {
+        let feedURIString = feedURI.uriString()
+        
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            let pinnedFeeds = preferences.pinnedFeeds
+            let savedFeeds = preferences.savedFeeds
+            return pinnedFeeds.contains(feedURIString) || savedFeeds.contains(feedURIString)
+        } catch {
+            return false
+        }
+    }
+    
+    // Toggle feed subscription
+    private func toggleFeedSubscription(_ feed: AppBskyFeedDefs.GeneratorView) async {
+        let feedURIString = feed.uri.uriString()
+        
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            
+            if await isSubscribedToFeed(feed.uri) {
+                // Remove from feeds
+                await MainActor.run {
+                    preferences.removeFeed(feedURIString)
+                }
+                try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            } else {
+                // Add to saved feeds
+                await MainActor.run {
+                    preferences.addFeed(feedURIString, pinned: false)
+                }
+                try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            }
+            
+            // Notify state invalidation bus that feeds have changed
+            await appState.stateInvalidationBus.notify(.feedListChanged)
+        } catch {
+            logger.error("Failed to toggle feed subscription: \(error.localizedDescription)")
+        }
+    }
+    
+    // Update subscription status for a specific feed
+    private func updateSubscriptionStatus(for feedURI: ATProtocolURI) async {
+        let status = await isSubscribedToFeed(feedURI)
+        await MainActor.run {
+            subscriptionStatus[feedURI.uriString()] = status
         }
     }
     

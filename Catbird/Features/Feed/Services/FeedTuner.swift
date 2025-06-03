@@ -3,6 +3,25 @@ import Petrel
 import OSLog
 import OrderedCollections
 
+/// Feed filtering preferences for FeedTuner
+struct FeedTunerSettings {
+    let hideReplies: Bool
+    let hideRepliesByUnfollowed: Bool 
+    let hideReposts: Bool
+    let hideQuotePosts: Bool
+    let hideNonPreferredLanguages: Bool
+    let preferredLanguages: [String]
+    
+    static let `default` = FeedTunerSettings(
+        hideReplies: false,
+        hideRepliesByUnfollowed: false,
+        hideReposts: false,
+        hideQuotePosts: false,
+        hideNonPreferredLanguages: false,
+        preferredLanguages: []
+    )
+}
+
 // MARK: - Feed Slice Data Structures
 
 /// Swift translation of Bluesky React Native TypeScript's FeedViewPost Slice
@@ -87,8 +106,12 @@ final class FeedTuner {
   private var seenUris: Set<String> = []
   
   /// Main processing method - converts raw posts to slices
-  func tune(_ rawPosts: [AppBskyFeedDefs.FeedViewPost]) -> [FeedSlice] {
+  func tune(_ rawPosts: [AppBskyFeedDefs.FeedViewPost], filterSettings: FeedTunerSettings = .default) -> [FeedSlice] {
     logger.debug("🧵 FeedTuner.tune() called with \(rawPosts.count) raw posts")
+    
+    // Apply content filtering first
+    let filteredPosts = applyContentFiltering(rawPosts, settings: filterSettings)
+    logger.debug("🧵 Filtered \(rawPosts.count) posts to \(filteredPosts.count) posts")
     
     // Reset seen tracking for new batch
     seenKeys.removeAll()
@@ -98,7 +121,7 @@ final class FeedTuner {
     var rootGroups: OrderedDictionary<String, [AppBskyFeedDefs.FeedViewPost]> = [:]
     
     // Group posts by root URI while preserving order
-    for post in rawPosts {
+    for post in filteredPosts {
       let rootUri: String
       if case .appBskyFeedDefsPostView(let rootPost) = post.reply?.root {
         rootUri = rootPost.uri.uriString()
@@ -112,7 +135,7 @@ final class FeedTuner {
       rootGroups[rootUri]?.append(post)
     }
     
-    logger.debug("🧵 Grouped \(rawPosts.count) posts into \(rootGroups.count) root threads")
+    logger.debug("🧵 Grouped \(filteredPosts.count) posts into \(rootGroups.count) root threads")
     
     // Process each group to create ONE slice per thread (prevents duplicates)
     var allSlices: [FeedSlice] = []
@@ -127,7 +150,7 @@ final class FeedTuner {
     // Apply deduplication as final safety net
     let dedupedSlices = deduplicateSlicesOptimized(allSlices)
     
-    logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(dedupedSlices.count) slices (fixed duplicates & order)")
+    logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(filteredPosts.count) filtered → \(dedupedSlices.count) slices (fixed duplicates & order)")
     
     return dedupedSlices
   }
@@ -373,5 +396,116 @@ final class FeedTuner {
     seenUris = newSeenUris
     
     return results
+  }
+  
+  // MARK: - Content Filtering
+  
+  /// Apply content filtering based on user preferences
+  private func applyContentFiltering(_ posts: [AppBskyFeedDefs.FeedViewPost], settings: FeedTunerSettings) -> [AppBskyFeedDefs.FeedViewPost] {
+    var filteredPosts: [AppBskyFeedDefs.FeedViewPost] = []
+    
+    for post in posts {
+      // Check if this is a reply
+      let isReply = post.reply != nil
+      if settings.hideReplies && isReply {
+        logger.debug("Filtering out reply post: \(post.post.uri.uriString())")
+        continue
+      }
+      
+      // Check if this is a repost (has reason)
+      let isRepost = post.reason != nil
+      if settings.hideReposts && isRepost {
+        logger.debug("Filtering out repost: \(post.post.uri.uriString())")
+        continue
+      }
+      
+      // Apply language filtering if enabled
+      if settings.hideNonPreferredLanguages && !settings.preferredLanguages.isEmpty {
+        // Extract post record to check languages
+        if case .knownType(let record) = post.post.record,
+           let feedPost = record as? AppBskyFeedPost {
+          
+          var hasPreferredLanguage = false
+          
+          // First check if post has language metadata
+          if let postLanguages = feedPost.langs, !postLanguages.isEmpty {
+            // Check if any of the post's languages match user's preferred languages
+            hasPreferredLanguage = postLanguages.contains { postLangContainer in
+              settings.preferredLanguages.contains { prefLang in
+                // Compare language codes (e.g., "en" == "en")
+                let postLangCode = postLangContainer.lang.languageCode?.identifier ?? postLangContainer.lang.minimalIdentifier
+                return postLangCode == prefLang
+              }
+            }
+          } else {
+            // No language metadata - use language detection
+            let postText = feedPost.text
+            if !postText.isEmpty {
+              let detectedLanguage = LanguageDetector.shared.detectLanguage(for: postText)
+              if let detectedLang = detectedLanguage {
+                hasPreferredLanguage = settings.preferredLanguages.contains(detectedLang)
+                logger.debug("Detected language '\(detectedLang)' for post without language metadata")
+              } else {
+                // Could not detect language - allow it through
+                hasPreferredLanguage = true
+              }
+            } else {
+              // No text content - allow it through (might be image-only post)
+              hasPreferredLanguage = true
+            }
+          }
+          
+          if !hasPreferredLanguage {
+            logger.debug("Filtering out post with non-preferred language")
+            continue
+          }
+        }
+        // If we can't decode the post, allow it through
+      }
+      
+      // Check if this is a quote post
+      // Quote posts have embedded records that are posts
+      let isQuotePost: Bool = {
+        guard case .knownType(let record) = post.post.record,
+              let feedPost = record as? AppBskyFeedPost else {
+          return false
+        }
+        
+        if let embed = feedPost.embed {
+          switch embed {
+          case .appBskyEmbedRecord(let recordEmbed):
+            // This indicates a quote post (embedded record)
+            return true
+          case .appBskyEmbedRecordWithMedia(let recordWithMedia):
+            // This indicates a quote post with media
+            return true
+          default:
+            break
+          }
+        }
+        return false
+      }()
+      
+      if settings.hideQuotePosts && isQuotePost {
+        logger.debug("Filtering out quote post: \(post.post.uri.uriString())")
+        continue
+      }
+      
+      // Check if this is a reply from someone we don't follow
+      if settings.hideRepliesByUnfollowed && isReply {
+        // Check if the post author is followed by the current user
+        let isFollowing = post.post.author.viewer?.following != nil
+        
+        if !isFollowing {
+          logger.debug("Filtering out reply from unfollowed user: \(post.post.author.handle)")
+          continue
+        }
+      }
+      
+      // If we reach here, the post passed all filters
+      filteredPosts.append(post)
+    }
+    
+    return filteredPosts
   }
 }

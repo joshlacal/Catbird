@@ -282,6 +282,8 @@ struct DebugStateView: View {
       return "Post Reposted"
     case .postUnreposted(_):
       return "Post Unreposted"
+    case .feedListChanged:
+      return "Feed List Changed"
     }
   }
   
@@ -312,6 +314,8 @@ struct DebugStateView: View {
         return ("repeat", .green)
       case .postUnreposted(_):
         return ("repeat", .gray)
+      case .feedListChanged:
+        return ("list.dash", .blue)
       }
     }()
     
@@ -417,6 +421,6 @@ private func mach_task_basic_info() -> mach_task_basic_info_data_t {
 
 #Preview {
   DebugStateView()
-    .environment(AppState())
+    .environment(AppState.shared)
     .padding()
 }

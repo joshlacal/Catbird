@@ -15,6 +15,7 @@ struct ResultsView: View {
     @Binding var path: NavigationPath
     @Binding var selectedContentType: ContentType
     @Environment(AppState.self) private var appState
+    @State private var subscriptionStatus: [String: Bool] = [:]
     
     var body: some View {
         ScrollView {
@@ -174,17 +175,43 @@ struct ResultsView: View {
                         icon: "rectangle.on.rectangle.angled",
                         count: viewModel.feedResults.count
                     ) {
-                        VStack(spacing: 0) {
+                        VStack(spacing: 12) {
                             ForEach(viewModel.feedResults.prefix(3), id: \.uri) { feed in
-                                Button {
-                                    path.append(NavigationDestination.feed(feed.uri))
-                                } label: {
-                                    EnhancedFeedRowView(feed: feed)
+                                VStack(spacing: 8) {
+                                    FeedDiscoveryHeaderView(
+                                        feed: feed,
+                                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                                        onSubscriptionToggle: {
+                                            await toggleFeedSubscription(feed)
+                                            await updateSubscriptionStatus(for: feed.uri)
+                                        }
+                                    )
+                                    .task {
+                                        await updateSubscriptionStatus(for: feed.uri)
+                                    }
+                                    
+                                    Button {
+                                        path.append(NavigationDestination.feed(feed.uri))
+                                    } label: {
+                                        HStack {
+                                            Text("Preview Feed")
+                                                .appFont(AppTextRole.caption)
+                                                .foregroundColor(.accentColor)
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .appFont(AppTextRole.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.vertical, 8)
+                                        .padding(.horizontal, 16)
+                                        .background(Color(.tertiarySystemBackground))
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                                 
                                 if feed != viewModel.feedResults.prefix(3).last {
-                                    EnhancedDivider()
+                                    Divider()
                                 }
                             }
                             
@@ -298,17 +325,43 @@ struct ResultsView: View {
     
     // Feeds-only results view
     private var feedResultsView: some View {
-        LazyVStack(spacing: 0) {
+        LazyVStack(spacing: 12) {
             ForEach(viewModel.feedResults, id: \.uri) { feed in
-                Button {
-                    path.append(NavigationDestination.feed(feed.uri))
-                } label: {
-                    EnhancedFeedRowView(feed: feed)
+                VStack(spacing: 0) {
+                    // Show discovery header for feeds that might not be subscribed
+                    FeedDiscoveryHeaderView(
+                        feed: feed,
+                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                        onSubscriptionToggle: {
+                            await toggleFeedSubscription(feed)
+                            await updateSubscriptionStatus(for: feed.uri)
+                        }
+                    )
+                    .task {
+                        await updateSubscriptionStatus(for: feed.uri)
+                    }
+                    
+                    Button {
+                        path.append(NavigationDestination.feed(feed.uri))
+                    } label: {
+                        HStack {
+                            Text("Preview Feed")
+                                .appFont(AppTextRole.subheadline)
+                                .foregroundColor(.accentColor)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .appFont(AppTextRole.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                        .background(Color(.tertiarySystemBackground))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
                 
                 if feed != viewModel.feedResults.last {
-                    EnhancedDivider()
+                    Divider()
+                        .padding(.vertical, 8)
                 }
             }
             
@@ -317,6 +370,7 @@ struct ResultsView: View {
                     .padding()
             }
         }
+        .padding(.horizontal)
         .background(Color(.systemBackground))
     }
     
@@ -382,6 +436,54 @@ struct ResultsView: View {
         }
     
     // MARK: - Helper Methods
+    
+    /// Check if user is subscribed to a feed
+    private func isSubscribedToFeed(_ feedURI: ATProtocolURI) async -> Bool {
+        // Check if feed is in user's saved or pinned feeds
+        let feedURIString = feedURI.uriString()
+        
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            let pinnedFeeds = preferences.pinnedFeeds
+            let savedFeeds = preferences.savedFeeds
+            return pinnedFeeds.contains(feedURIString) || savedFeeds.contains(feedURIString)
+        } catch {
+            return false
+        }
+    }
+    
+    /// Toggle feed subscription
+    private func toggleFeedSubscription(_ feed: AppBskyFeedDefs.GeneratorView) async {
+        let feedURIString = feed.uri.uriString()
+        
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            
+            if await isSubscribedToFeed(feed.uri) {
+                // Remove from feeds
+                await MainActor.run {
+                    preferences.removeFeed(feedURIString)
+                }
+                try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            } else {
+                // Add to saved feeds
+                await MainActor.run {
+                    preferences.addFeed(feedURIString, pinned: false)
+                }
+                try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            }
+        } catch {
+            // Handle error silently or show user feedback
+        }
+    }
+    
+    /// Update subscription status for a specific feed
+    private func updateSubscriptionStatus(for feedURI: ATProtocolURI) async {
+        let status = await isSubscribedToFeed(feedURI)
+        await MainActor.run {
+            subscriptionStatus[feedURI.uriString()] = status
+        }
+    }
     
     /// Retry the search after an error
     private func retrySearch() async {

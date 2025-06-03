@@ -584,5 +584,5 @@ struct MessageRequestPreviewView: View {
 
 #Preview {
   MessageRequestsView()
-    .environment(AppState())
+    .environment(AppState.shared)
 }

@@ -275,11 +275,12 @@ struct ConversationListView: View {
   
   @ViewBuilder
   private var emptyStateDescription: some View {
-    VStack(spacing: 8) {
+    VStack(spacing: DesignTokens.Spacing.sm) {
       Text("You haven't started any chats yet.")
+        .enhancedAppBody()
       if appState.chatManager.messageRequestsCount > 0 {
         Text("Check your message requests above to see if anyone wants to chat with you.")
-          .appFont(AppTextRole.caption)
+          .enhancedAppCaption()
           .foregroundColor(.secondary)
       }
     }
@@ -311,7 +312,7 @@ struct ConversationListView: View {
       }
     }
     .buttonStyle(.plain)
-    .padding(.vertical, 4)
+    .spacingSM(.vertical)
   }
   
   private func conversationRowView(for convo: ChatBskyConvoDefs.ConvoView, showMuteOption: Bool) -> some View {
@@ -379,12 +380,12 @@ struct ConversationRow: View {
   }
 
   var body: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: DesignTokens.Spacing.base) {
       ChatProfileAvatarView(profile: otherMember, size: 50)
 
       VStack(alignment: .leading, spacing: 4) {
         Text(displayName.isEmpty ? handle : displayName)  // Show handle if display name is empty
-          .appHeadline()
+          .enhancedAppHeadline()
           .lineLimit(1)
 
         // Last message preview
@@ -413,8 +414,8 @@ struct ConversationRow: View {
             .appCaption()
             .fontWeight(.bold)
             .foregroundColor(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .spacingSM(.horizontal)
+            .spacingSM(.vertical)
             .background(Color.blue)
             .clipShape(Capsule())
         } else {
@@ -423,7 +424,7 @@ struct ConversationRow: View {
         }
       }
     }
-    .padding(.vertical, 8)
+    .spacingMD(.vertical)
     .onAppear {
       // Load profile details when the row appears
       loadProfileDetails()
@@ -594,6 +595,10 @@ struct ConversationView: View {
   @State private var messageToReport: Message?
   @State private var showingDeleteAlert = false
   @State private var messageToDelete: Message?
+  
+  // Post embed cache to avoid repeated fetches
+  @State private var postEmbedCache: [String: AppBskyEmbedRecord.ViewRecordUnion] = [:]
+  @State private var postEmbedLoadingStates: [String: Bool] = [:]
 
   // Access the specific ChatManager instance
   private var chatManager: ChatManager {
@@ -602,8 +607,8 @@ struct ConversationView: View {
 
   var body: some View {
     ZStack {  // Use ZStack to overlay loading indicator
-      VStack(spacing: 0) {  // Use VStack to prevent content overlap
-        VStack(spacing: 0) {
+      VStack(spacing: DesignTokens.Spacing.none) {  // Use VStack to prevent content overlap
+        VStack(spacing: DesignTokens.Spacing.none) {
           ChatView<AnyView, EmptyView, CustomMessageMenuAction>(
             messages: messages,
             chatType: .conversation,
@@ -727,9 +732,156 @@ struct ConversationView: View {
       return nil
     }
 
-    // Helper: Looks up the post record in your app state or cache
+    // Helper: Looks up the post record in cache or fetches it
     private func getPostRecord(for uri: String) -> AppBskyEmbedRecord.ViewRecordUnion? {
-      // TODO: Implement lookup logic, e.g. from a cache or by fetching if needed
+      let logger = Logger(subsystem: "blue.catbird", category: "ChatUI.PostEmbed")
+      
+      // Check cache first
+      if let cachedRecord = postEmbedCache[uri] {
+        return cachedRecord
+      }
+      
+      // Check if we're already loading this URI
+      if postEmbedLoadingStates[uri] == true {
+        return nil // Will update when loaded
+      }
+      
+      // Mark as loading
+      postEmbedLoadingStates[uri] = true
+      
+      // Fetch the post record asynchronously
+      Task {
+        guard let client = appState.atProtoClient else {
+          logger.error("Failed to fetch post record: AT Protocol client not available")
+          postEmbedLoadingStates[uri] = false
+          return
+        }
+        
+        do {
+          // Extract the AT URI components
+          let atUri = try ATProtocolURI(uriString: uri)
+          let did = atUri.authority
+          
+          guard let collection = atUri.collection,
+                let rkey = atUri.recordKey else {
+            logger.error("Invalid AT URI format - missing collection or record key: \(uri)")
+            postEmbedLoadingStates[uri] = false
+            return
+          }
+          
+          // Fetch the post record from the repository
+          let input = ComAtprotoRepoGetRecord.Parameters(
+            repo: try ATIdentifier(string: did),
+            collection: try NSID(nsidString: collection),
+            rkey: try RecordKey(keyString: rkey),
+            cid: nil
+          )
+          
+          let (responseCode, response) = try await client.com.atproto.repo.getRecord(input: input)
+          
+          if responseCode == 200, let record = response?.value {
+            // Also fetch the author profile for better display
+            let (authorCode, authorData) = try await client.app.bsky.actor.getProfile(
+              input: .init(actor: ATIdentifier(string: did))
+            )
+            
+            if case .knownType(let recordValue) = record,
+               let post = recordValue as? AppBskyFeedPost {
+              // Create author with fetched profile data if available
+              let author: AppBskyActorDefs.ProfileViewBasic
+              if authorCode == 200, let profile = authorData {
+                author = AppBskyActorDefs.ProfileViewBasic(
+                  did: profile.did,
+                  handle: profile.handle,
+                  displayName: profile.displayName,
+                  avatar: profile.avatar,
+                  associated: profile.associated,
+                  viewer: profile.viewer,
+                  labels: profile.labels,
+                  createdAt: profile.createdAt,
+                  verification: profile.verification,
+                  status: profile.status
+                )
+              } else {
+                // Fallback author info
+                author = AppBskyActorDefs.ProfileViewBasic(
+                  did: try DID(didString: did),
+                  handle: try Handle(handleString: ""), 
+                  displayName: nil,
+                  avatar: nil,
+                  associated: nil,
+                  viewer: nil,
+                  labels: nil,
+                  createdAt: post.createdAt,
+                  verification: nil,
+                  status: nil
+                )
+              }
+              
+              // Use the CID from the response, or create one from the post data
+              let postCid: CID
+              if let responseCid = response?.cid {
+                postCid = responseCid
+              } else {
+                // Fallback: generate CID from the post data
+                let postData = try post.encodedDAGCBOR()
+                postCid = CID.fromDAGCBOR(postData)
+              }
+              
+              let postView = AppBskyFeedDefs.PostView(
+                uri: atUri,
+                cid: postCid,
+                author: author,
+                record: ATProtocolValueContainer.knownType(post),
+                embed: nil,  // Post embeds need to be converted to PostViewEmbedUnion
+                replyCount: 0,
+                repostCount: 0,
+                likeCount: 0,
+                quoteCount: 0,
+                indexedAt: ATProtocolDate(date: Date()),
+                viewer: nil,
+                labels: [],  // Labels need to be converted from post labels
+                threadgate: nil
+              )
+              
+              // Create a ViewRecord from the PostView
+              let viewRecord = AppBskyEmbedRecord.ViewRecord(
+                uri: postView.uri,
+                cid: postView.cid,
+                author: postView.author,
+                value: postView.record,
+                labels: postView.labels,
+                replyCount: postView.replyCount,
+                repostCount: postView.repostCount,
+                likeCount: postView.likeCount,
+                quoteCount: postView.quoteCount,
+                embeds: nil,
+                indexedAt: postView.indexedAt
+              )
+              
+              let viewRecordUnion = AppBskyEmbedRecord.ViewRecordUnion.appBskyEmbedRecordViewRecord(viewRecord)
+              
+              // Cache the result
+              await MainActor.run {
+                postEmbedCache[uri] = viewRecordUnion
+                postEmbedLoadingStates[uri] = false
+              }
+              
+              return
+            } else {
+              logger.warning("Unsupported record type for embed: \(String(describing: record))")
+              postEmbedLoadingStates[uri] = false
+            }
+          } else {
+            logger.error("Failed to fetch post record: HTTP \(responseCode)")
+            postEmbedLoadingStates[uri] = false
+          }
+        } catch {
+          logger.error("Failed to fetch post record: \(error.localizedDescription), URI: \(uri)")
+          postEmbedLoadingStates[uri] = false
+        }
+      }
+      
       return nil
     }
     

@@ -109,7 +109,7 @@ struct ThreadViewMainPostView: View {
             .frame(height: 60, alignment: .center)
             .padding(.bottom, 3)
               
-              Post(post: feedPost, isSelectable: true, path: $path, textSize: 20, textStyle: .title3, textDesign: .default, textWeight: .regular, fontWidth: 100)
+              Post(post: feedPost, isSelectable: true, path: $path, textSize: 28, textStyle: .title, textDesign: .default, textWeight: .regular, fontWidth: 100)
                   .lineLimit(nil)
                   .fixedSize(horizontal: false, vertical: true)
                   .padding(.vertical, 6)

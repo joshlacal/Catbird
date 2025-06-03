@@ -8,6 +8,7 @@ import SwiftUI
 //
 
 struct PostHeaderView: View {
+    @Environment(AppState.self) private var appState
     let displayName: String
     let handle: String
     let timeAgo: Date
@@ -48,15 +49,20 @@ struct PostHeaderView: View {
                     .appBody()
                     .foregroundStyle(.gray)
                     .accessibilityLabel(formatTimeAgo(from: timeAgo, forAccessibility: true))
-
+                
             }
             .layoutPriority(1)
             
         }
     }
+    
 }
 
 #Preview {
-    PostHeaderView(displayName: "Josh", handle: "josh.uno", timeAgo: Date())
-        
+    PostHeaderView(
+        displayName: "Josh", 
+        handle: "josh.uno", 
+        timeAgo: Date()
+    )
+    .environment(AppState.shared)
 }

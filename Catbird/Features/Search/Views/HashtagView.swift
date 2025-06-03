@@ -467,6 +467,6 @@ struct HashtagFilterView: View {
 #Preview {
     NavigationStack {
         HashtagView(tag: "bluesky", path: .constant(NavigationPath()))
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

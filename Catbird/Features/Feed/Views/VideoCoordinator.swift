@@ -24,7 +24,14 @@ final class VideoCoordinator {
     private var statusObservers: [String: Task<Void, Never>] = [:]
     
     // App settings for autoplay preference
-    weak var appSettings: AppSettings?
+    weak var appSettings: AppSettings? {
+        didSet {
+            // When app settings change, update playback states to respect new autoplay setting
+            if appSettings !== oldValue {
+                updatePlaybackStates()
+            }
+        }
+    }
     
     // Cache for video positions with automatic eviction
     private let positionCache: NSCache<NSString, NSNumber> = {
@@ -45,8 +52,8 @@ final class VideoCoordinator {
     
     /// Check if videos should autoplay based on user settings
     private func shouldAutoplayVideos() -> Bool {
-        // Default to true if settings are not available (fallback behavior)
-        return appSettings?.autoplayVideos ?? true
+        // Default to false if settings are not available (safer fallback)
+        return appSettings?.autoplayVideos ?? false
     }
     
     // MARK: - Video Management
@@ -114,6 +121,28 @@ final class VideoCoordinator {
         }
         
         statusObservers[modelId] = task
+    }
+    
+    /// Force play a video (used when user taps on thumbnail)
+    func forcePlayVideo(_ modelId: String) {
+        guard let (model, player, lastPlaybackTime) = activeVideos[modelId] else { return }
+        
+        // Pause any currently playing video
+        if let currentlyPlaying = currentlyPlayingVideoId,
+           currentlyPlaying != modelId {
+            pauseVideo(currentlyPlaying)
+        }
+        
+        // Start playing the requested video
+        player.seek(to: lastPlaybackTime)
+        player.play()
+        
+        // Update states
+        activeVideos[modelId]?.model.isPlaying = true
+        currentlyPlayingVideoId = modelId
+        
+        // Ensure video is marked as visible
+        visibleVideoIDs.insert(modelId)
     }
     
     // MARK: - Private Methods

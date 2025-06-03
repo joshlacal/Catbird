@@ -36,5 +36,5 @@ struct FeedFilterSettingsView: View {
 
 #Preview {
     FeedFilterSettingsView()
-      .environment(AppState())
+      .environment(AppState.shared)
 }

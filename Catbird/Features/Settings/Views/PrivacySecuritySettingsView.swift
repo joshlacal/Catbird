@@ -1,5 +1,17 @@
 import SwiftUI
 import Petrel
+import LocalAuthentication
+import OSLog
+
+// MARK: - Protocols
+
+protocol ProfileBasicInfo {
+    var id: String { get }
+    var did: String { get }
+    var handle: String { get }
+    var displayName: String? { get }
+    var avatar: URL? { get }
+}
 
 struct PrivacySecuritySettingsView: View {
     @Environment(AppState.self) private var appState
@@ -19,16 +31,68 @@ struct PrivacySecuritySettingsView: View {
     
     // Privacy settings
     @State private var loggedOutVisibility: Bool
+    @State private var biometricAuthEnabled: Bool = false
+    
+    // Biometric error handling
+    @State private var showBiometricError = false
+    @State private var biometricErrorMessage = ""
+    @State private var isEnablingBiometric = false
+    
+    // Logger
+    private let logger = Logger(subsystem: "blue.catbird", category: "PrivacySecuritySettings")
     
     init() {
-        _loggedOutVisibility = State(initialValue: AppState().appSettings.loggedOutVisibility)
+        _loggedOutVisibility = State(initialValue: AppState.shared.appSettings.loggedOutVisibility)
+    }
+    
+    /// Display name for the current biometric type
+    private var biometricDisplayName: String {
+        switch appState.authManager.biometricType {
+        case .faceID:
+            return "Face ID"
+        case .touchID:
+            return "Touch ID"
+        case .opticID:
+            return "Optic ID"
+        default:
+            return "Biometric Authentication"
+        }
     }
     
     var body: some View {
         Form {
+            // Biometric Authentication Section
+            if appState.authManager.biometricType != .none {
+                Section("App Security") {
+                    Toggle(biometricDisplayName, isOn: $biometricAuthEnabled)
+                        .tint(.blue)
+                        .onChange(of: biometricAuthEnabled) {
+                            Task {
+                                await handleBiometricToggle(biometricAuthEnabled)
+                            }
+                        }
+                        .disabled(isEnablingBiometric)
+                    
+                    if isEnablingBiometric {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Setting up \(biometricDisplayName)...")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Use \(biometricDisplayName.lowercased()) to unlock Catbird and authenticate sensitive actions.")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            
             Section("App Passwords") {
                 NavigationLink {
-                    AppPasswordsView(appState: appState)
+                    AppPasswordsView()
+                        .environment(appState)
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -138,6 +202,17 @@ struct PrivacySecuritySettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadData()
+            // Initialize biometric state
+            await MainActor.run {
+                biometricAuthEnabled = appState.authManager.biometricAuthEnabled
+            }
+        }
+        .alert("Biometric Authentication", isPresented: $showBiometricError) {
+            Button("OK", role: .cancel) {
+                showBiometricError = false
+            }
+        } message: {
+            Text(biometricErrorMessage)
         }
     }
     
@@ -148,6 +223,48 @@ struct PrivacySecuritySettingsView: View {
         // Load blocks and mutes counts
         await loadBlocksCount()
         await loadMutesCount()
+    }
+    
+    private func handleBiometricToggle(_ enabled: Bool) async {
+        await MainActor.run {
+            isEnablingBiometric = true
+        }
+        
+        // Call the AuthManager to set biometric auth
+        await appState.authManager.setBiometricAuthEnabled(enabled)
+        
+        // Update local state to match AuthManager state
+        await MainActor.run {
+            isEnablingBiometric = false
+            biometricAuthEnabled = appState.authManager.biometricAuthEnabled
+            
+            // Check if the operation failed
+            if biometricAuthEnabled != enabled && enabled {
+                // The toggle didn't work as expected, show an error
+                if let error = appState.authManager.lastBiometricError {
+                    switch error.code {
+                    case .userCancel:
+                        // User cancelled, no need to show error
+                        break
+                    case .biometryNotEnrolled:
+                        biometricErrorMessage = "No \(biometricDisplayName) credentials are set up. Please configure \(biometricDisplayName) in Settings and try again."
+                        showBiometricError = true
+                    case .biometryLockout:
+                        biometricErrorMessage = "\(biometricDisplayName) is temporarily locked. Please try again later or use your device passcode."
+                        showBiometricError = true
+                    case .biometryNotAvailable:
+                        biometricErrorMessage = "\(biometricDisplayName) is not available on this device."
+                        showBiometricError = true
+                    default:
+                        biometricErrorMessage = "Failed to enable \(biometricDisplayName). Please try again."
+                        showBiometricError = true
+                    }
+                } else {
+                    biometricErrorMessage = "Failed to enable \(biometricDisplayName). Please ensure \(biometricDisplayName) is set up in your device settings and try again."
+                    showBiometricError = true
+                }
+            }
+        }
     }
     
     private func loadAppPasswords() async {
@@ -213,266 +330,361 @@ struct PrivacySecuritySettingsView: View {
 
 // MARK: - App Passwords View
 
-// struct AppPasswordsView: View {
-//    private var appState: AppState
-//    @Environment(\.dismiss) private var dismiss
-//    
-//    init(appState: AppState) {
-//        self.appState = appState
-//    }
-//    
-//    @State private var appPasswords: [AppPassword] = []
-//    @State private var isShowingCreateSheet = false
-//    @State private var isShowingDeleteAlert = false
-//    @State private var passwordToDelete: AppPassword?
-//    @State private var isLoading = false
-//    @State private var errorMessage: String?
-//    
-//    var body: some View {
-//        List {
-//            if let errorMessage = errorMessage {
-//                Section {
-//                    Text(errorMessage)
-//                        .foregroundStyle(.red)
-//                }
-//            }
-//            
-//            Section {
-//                Button {
-//                    isShowingCreateSheet = true
-//                } label: {
-//                    Label("Create New App Password", systemImage: "plus.circle.fill")
-//                        .foregroundStyle(.blue)
-//                }
-//            }
-//            
-//            Section("Your App Passwords") {
-//                if isLoading {
-//                    HStack {
-//                        Spacer()
-//                        ProgressView()
-//                        Spacer()
-//                    }
-//                    .padding()
-//                } else if appPasswords.isEmpty {
-//                    Text("You haven't created any app passwords yet.")
-//                        .foregroundStyle(.secondary)
-//                        .italic()
-//                } else {
-//                    ForEach(appPasswords) { password in
-//                        HStack {
-//                            VStack(alignment: .leading, spacing: 4) {
-//                                Text(password.name)
-//                                    .fontWeight(.medium)
-//                                
-//                                Text("Created \(formattedDate(password.createdAt))")
-//                                    .appFont(AppTextRole.caption)
-//                                    .foregroundStyle(.secondary)
-//                                
-//                                if let lastUsed = password.lastUsed {
-//                                    Text("Last used \(formattedDate(lastUsed))")
-//                                        .appFont(AppTextRole.caption)
-//                                        .foregroundStyle(.secondary)
-//                                }
-//                                
-//                                if password.isPrivileged {
-//                                    Text("Privileged")
-//                                        .appFont(AppTextRole.caption)
-//                                        .padding(.horizontal, 6)
-//                                        .padding(.vertical, 2)
-//                                        .background(Color.blue.opacity(0.2))
-//                                        .foregroundStyle(.blue)
-//                                        .cornerRadius(4)
-//                                }
-//                            }
-//                            
-//                            Spacer()
-//                            
-//                            Button {
-//                                passwordToDelete = password
-//                                isShowingDeleteAlert = true
-//                            } label: {
-//                                Image(systemName: "trash")
-//                                    .foregroundStyle(.red)
-//                            }
-//                            .buttonStyle(.plain)
-//                        }
-//                    }
-//                }
-//            }
-//            
-//            Section("About App Passwords") {
-//                Text("App passwords are used with third-party apps that don't support Bluesky's secure sign-in flow. Each app password provides limited access to your account.")
-//                    .appFont(AppTextRole.caption)
-//                    .foregroundStyle(.secondary)
-//                
-//                Text("Never share your main account password with third-party apps. Use app passwords instead.")
-//                    .appFont(AppTextRole.caption)
-//                    .foregroundStyle(.secondary)
-//                    .padding(.top, 4)
-//            }
-//        }
-//        .navigationTitle("App Passwords")
-//        .navigationBarTitleDisplayMode(.inline)
-//        .refreshable {
-//            await loadAppPasswords()
-//        }
-//        .sheet(isPresented: $isShowingCreateSheet) {
-//            CreateAppPasswordView(appState: appState) { name, isPrivileged in
-//                Task {
-//                    if !name?.isEmpty {
-//                        await createAppPassword(name: name, isPrivileged: isPrivileged)
-//                    } else {
-//                        errorMessage = "App password name cannot be empty."
-//                    }
-//                }
-//            }
-//        }
-//        .alert("Delete App Password", isPresented: $isShowingDeleteAlert) {
-//            Button("Cancel", role: .cancel) {
-//                passwordToDelete = nil
-//            }
-//            
-//            Button("Delete", role: .destructive) {
-//                if let password = passwordToDelete {
-//                    Task {
-//                        await deleteAppPassword(name: password.name)
-//                    }
-//                }
-//                passwordToDelete = nil
-//            }
-//        } message: {
-//            if let password = passwordToDelete {
-//                Text("Are you sure you want to delete the app password '\(password.name)'? Any apps using this password will no longer be able to access your account.")
-//            } else {
-//                Text("Are you sure you want to delete this app password?")
-//            }
-//        }
-//        .task {
-//            await loadAppPasswords()
-//        }
-//    }
-//    
-//    private func loadAppPasswords() async {
-//        guard let client = appState.atProtoClient else { return }
-//        
-//        isLoading = true
-//        errorMessage = nil
-//        
-//        do {
-//            let (responseCode, response) = try await client.com.atproto.server.listAppPasswords()
-//            
-//            if responseCode == 200, let passwords = response?.passwords {
-//                let mappedPasswords = passwords.map { password in
-//                    AppPassword(
-//                        id: password.name,
-//                        name: password.name,
-//                        createdAt: password.createdAt.date,
-//                        lastUsed: nil,
-//                        isPrivileged: password.privileged ?? false
-//                    )
-//                }
-//                await MainActor.run {
-//                    self.appPasswords = mappedPasswords
-//                    self.isLoading = false
-//                }
-//            } else {
-//                await MainActor.run {
-//                    self.errorMessage = "Failed to load app passwords (Status: \(responseCode))"
-//                    self.isLoading = false
-//                }
-//            }
-//        } catch {
-//            await MainActor.run {
-//                self.errorMessage = "Error: \(error.localizedDescription)"
-//                self.isLoading = false
-//            }
-//        }
-//    }
-//    
-//    private func createAppPassword(name: String, isPrivileged: Bool) async {
-//        guard let client = appState.atProtoClient else { return }
-//        
-//        await MainActor.run {
-//            isLoading = true
-//            errorMessage = nil
-//        }
-//        
-//        do {
-//            let input = ComAtprotoServerCreateAppPassword.Input(
-//                name: name,
-//                privileged: isPrivileged
-//            )
-//            
-//            let (responseCode, response) = try await client.com.atproto.server.createAppPassword(input: input)
-//            
-//            if responseCode == 200, let newPassword = response {
-//                // Add to the local list
-//                let appPassword = AppPassword(
-//                    id: newPassword.name,
-//                    name: newPassword.name,
-//                    createdAt: newPassword.createdAt.date,
-//                    lastUsed: nil,
-//                    isPrivileged: newPassword.privileged ?? false
-//                )
-//                
-//                await MainActor.run {
-//                    self.appPasswords.append(appPassword)
-//                    self.isLoading = false
-//                    self.isShowingCreateSheet = false
-//                }
-//            } else {
-//                await MainActor.run {
-//                    self.errorMessage = "Failed to create app password (Status: \(responseCode))"
-//                    self.isLoading = false
-//                }
-//            }
-//        } catch {
-//            await MainActor.run {
-//                self.errorMessage = "Error: \(error.localizedDescription)"
-//                self.isLoading = false
-//            }
-//        }
-//    }
-//    
-//    private func deleteAppPassword(name: String) async {
-//        guard let client = appState.atProtoClient else { return }
-//        
-//        await MainActor.run {
-//            isLoading = true
-//            errorMessage = nil
-//        }
-//        
-//        do {
-//            let input = ComAtprotoServerRevokeAppPassword.Input(name: name)
-//            
-//            let responseCode = try await client.com.atproto.server.revokeAppPassword(input: input)
-//            
-//            if responseCode >= 200 && responseCode < 300 {
-//                await MainActor.run {
-//                    self.appPasswords.removeAll { $0.name == name }
-//                    self.isLoading = false
-//                }
-//            } else {
-//                await MainActor.run {
-//                    self.errorMessage = "Failed to delete app password (Status: \(responseCode))"
-//                    self.isLoading = false
-//                }
-//            }
-//        } catch {
-//            await MainActor.run {
-//                self.errorMessage = "Error: \(error.localizedDescription)"
-//                self.isLoading = false
-//            }
-//        }
-//    }
-//    
-//    private func formattedDate(_ date: Date) -> String {
-//        let formatter = RelativeDateTimeFormatter()
-//        formatter.unitsStyle = .short
-//        return formatter.localizedString(for: date, relativeTo: Date())
-//    }
-// }
+struct AppPasswordsView: View {
+    @Environment(AppState.self) private var appState
+    
+    @State private var appPasswords: [AppPassword] = []
+    @State private var isShowingCreateSheet = false
+    @State private var isShowingDeleteAlert = false
+    @State private var passwordToDelete: AppPassword?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    
+    var body: some View {
+        List {
+            if let errorMessage = errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .foregroundStyle(.red)
+                }
+            }
+            
+            Section {
+                Button {
+                    isShowingCreateSheet = true
+                } label: {
+                    Label("Create New App Password", systemImage: "plus.circle.fill")
+                        .foregroundStyle(.blue)
+                }
+            }
+            
+            Section("Your App Passwords") {
+                if isLoading {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .padding()
+                } else if appPasswords.isEmpty {
+                    Text("You haven't created any app passwords yet.")
+                        .foregroundStyle(.secondary)
+                        .italic()
+                } else {
+                    ForEach(appPasswords) { password in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(password.name)
+                                    .fontWeight(.medium)
+                                
+                                Text("Created \(formattedDate(password.createdAt))")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundStyle(.secondary)
+                                
+                                if let lastUsed = password.lastUsed {
+                                    Text("Last used \(formattedDate(lastUsed))")
+                                        .appFont(AppTextRole.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                
+                                if password.isPrivileged {
+                                    Text("Privileged")
+                                        .appFont(AppTextRole.caption)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.blue.opacity(0.2))
+                                        .foregroundStyle(.blue)
+                                        .cornerRadius(4)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            Button {
+                                passwordToDelete = password
+                                isShowingDeleteAlert = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            
+            Section("About App Passwords") {
+                Text("App passwords are used with third-party apps that don't support Bluesky's secure sign-in flow. Each app password provides limited access to your account.")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+                
+                Text("Never share your main account password with third-party apps. Use app passwords instead.")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            }
+        }
+        .navigationTitle("App Passwords")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await loadAppPasswords()
+        }
+        .sheet(isPresented: $isShowingCreateSheet) {
+            CreateAppPasswordView(appState: appState) { name, isPrivileged in
+                return await createAppPassword(name: name, isPrivileged: isPrivileged)
+            }
+        }
+        .alert("Delete App Password", isPresented: $isShowingDeleteAlert) {
+            Button("Cancel", role: .cancel) {
+                passwordToDelete = nil
+            }
+            
+            Button("Delete", role: .destructive) {
+                if let password = passwordToDelete {
+                    Task {
+                        await deleteAppPassword(name: password.name)
+                    }
+                }
+                passwordToDelete = nil
+            }
+        } message: {
+            if let password = passwordToDelete {
+                Text("Are you sure you want to delete the app password '\(password.name)'? Any apps using this password will no longer be able to access your account.")
+            } else {
+                Text("Are you sure you want to delete this app password?")
+            }
+        }
+        .task {
+            await loadAppPasswords()
+        }
+    }
+    
+    private func loadAppPasswords() async {
+        guard let client = appState.atProtoClient else { return }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            let (responseCode, response) = try await client.com.atproto.server.listAppPasswords()
+            
+            if responseCode == 200, let passwords = response?.passwords {
+                let mappedPasswords = passwords.map { password in
+                    AppPassword(
+                        id: password.name,
+                        name: password.name,
+                        createdAt: password.createdAt.date,
+                        lastUsed: nil,
+                        isPrivileged: password.privileged ?? false
+                    )
+                }
+                await MainActor.run {
+                    self.appPasswords = mappedPasswords
+                    self.isLoading = false
+                }
+            } else {
+                await MainActor.run {
+                    self.errorMessage = "Failed to load app passwords (Status: \(responseCode))"
+                    self.isLoading = false
+                }
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Error: \(error.localizedDescription)"
+                self.isLoading = false
+            }
+        }
+    }
+    
+    private func createAppPassword(name: String, isPrivileged: Bool) async -> String? {
+        guard let client = appState.atProtoClient else { return nil }
+        
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
+        }
+        
+        do {
+            let input = ComAtprotoServerCreateAppPassword.Input(
+                name: name,
+                privileged: isPrivileged
+            )
+            
+            let (responseCode, response) = try await client.com.atproto.server.createAppPassword(input: input)
+            
+            if responseCode == 200, let newPassword = response {
+                // Add to the local list
+                let appPassword = AppPassword(
+                    id: newPassword.name,
+                    name: newPassword.name,
+                    createdAt: newPassword.createdAt.date,
+                    lastUsed: nil,
+                    isPrivileged: newPassword.privileged ?? false
+                )
+                
+                await MainActor.run {
+                    self.appPasswords.append(appPassword)
+                    self.isLoading = false
+                }
+                return newPassword.password
+            } else {
+                await MainActor.run {
+                    self.errorMessage = "Failed to create app password (Status: \(responseCode))"
+                    self.isLoading = false
+                }
+                return nil
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Error: \(error.localizedDescription)"
+                self.isLoading = false
+            }
+            return nil
+        }
+    }
+    
+    private func deleteAppPassword(name: String) async {
+        guard let client = appState.atProtoClient else { return }
+        
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
+        }
+        
+        do {
+            let input = ComAtprotoServerRevokeAppPassword.Input(name: name)
+            
+            let responseCode = try await client.com.atproto.server.revokeAppPassword(input: input)
+            
+            if responseCode >= 200 && responseCode < 300 {
+                await MainActor.run {
+                    self.appPasswords.removeAll { $0.name == name }
+                    self.isLoading = false
+                }
+            } else {
+                await MainActor.run {
+                    self.errorMessage = "Failed to delete app password (Status: \(responseCode))"
+                    self.isLoading = false
+                }
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = "Error: \(error.localizedDescription)"
+                self.isLoading = false
+            }
+        }
+    }
+    
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Create App Password View
+
+struct CreateAppPasswordView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var passwordName = ""
+    @State private var isPrivileged = false
+    @State private var isCreating = false
+    @State private var generatedPassword: String?
+    @State private var showGeneratedPassword = false
+    
+    let appState: AppState
+    let onCreate: (String, Bool) async -> String?
+    
+    init(appState: AppState, onCreate: @escaping (String, Bool) async -> String?) {
+        self.appState = appState
+        self.onCreate = onCreate
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("App Password Details") {
+                    TextField("Name (e.g., Third-party App)", text: $passwordName)
+                        .autocorrectionDisabled()
+                    
+                    Toggle("Privileged Access", isOn: $isPrivileged)
+                        .tint(.blue)
+                }
+                
+                Section("About Privileged Access") {
+                    Text("Privileged app passwords have additional permissions for advanced features. Only enable this for apps you fully trust.")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                if let generatedPassword = generatedPassword {
+                    Section("Your New App Password") {
+                        HStack {
+                            Text(generatedPassword)
+                                .appFont(AppTextRole.footnote)
+                                .fontDesign(.monospaced)
+                                .textSelection(.enabled)
+                            
+                            Spacer()
+                            
+                            Button {
+                                UIPasteboard.general.string = generatedPassword
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                        }
+                        
+                        Text("Copy this password now - you won't be able to see it again. Store it safely in your password manager.")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.red)
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+            .navigationTitle("Create App Password")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        Task {
+                            await createPassword()
+                        }
+                    }
+                    .disabled(passwordName.isEmpty || isCreating)
+                }
+            }
+        }
+        .alert("App Password Created", isPresented: $showGeneratedPassword) {
+            Button("Done") {
+                dismiss()
+            }
+        } message: {
+            Text("Your app password has been created successfully. Make sure to copy it from above - you won't be able to see it again.")
+        }
+    }
+    
+    private func createPassword() async {
+        isCreating = true
+        
+        if let password = await onCreate(passwordName, isPrivileged) {
+            await MainActor.run {
+                generatedPassword = password
+                showGeneratedPassword = true
+                isCreating = false
+            }
+        } else {
+            await MainActor.run {
+                isCreating = false
+            }
+        }
+    }
+}
 
 // MARK: - Blocked Accounts View
 
@@ -854,6 +1066,6 @@ struct AppPassword: Identifiable {
 #Preview {
     NavigationStack {
         PrivacySecuritySettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

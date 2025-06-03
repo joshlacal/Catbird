@@ -247,6 +247,8 @@ struct InteractionButton: View {
   let color: Color
   let isBig: Bool
   let action: () -> Void
+  
+  @Environment(AppState.self) private var appState
 
   // Pre-calculated widths for efficiency
   private static let smallWidths: [Bool: CGFloat] = [true: 46, false: 36]  // true: has count > 0, false: no count or count == 0
@@ -286,8 +288,8 @@ struct InteractionButton: View {
     }
     .buttonStyle(.plain)
     // Apply scale effect animation only when animateScale is true
-    .scaleEffect(isActive ? 1.05 : 1.0)
+    .accessibleScaleEffect(isActive ? 1.05 : 1.0, appState: appState)
     // Conditionally apply animation based on animateScale flag
-    .animation(animateScale ? .snappy(duration: 0.2) : nil, value: isActive)
+    .accessibleAnimation(animateScale ? .snappy(duration: 0.2) : nil, value: isActive, appState: appState)
   }
 }

@@ -64,21 +64,22 @@ struct FeedView: View {
               }
             }
           )
-          .transition(.opacity)
+          .accessibleTransition(.opacity, appState: appState)
         } else if isInitialLoad && feedModel!.posts.isEmpty {
           loadingView
-            .transition(.opacity)
+            .accessibleTransition(.opacity, appState: appState)
         } else if !isInitialLoad && feedModel!.posts.isEmpty {
           emptyStateView
-            .transition(.opacity)
+            .accessibleTransition(.opacity, appState: appState)
         } else {
           contentView(model: feedModel!)
             .id(fetch.identifier)
-            .transition(.opacity)
+            .accessibleTransition(.opacity, appState: appState)
         }
       }
-      .animation(.easeInOut(duration: 0.3), value: isInitialLoad)
-      .animation(.easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty)
+      .accessibleAnimation(.easeInOut(duration: 0.3), value: isInitialLoad, appState: appState)
+      .accessibleAnimation(.easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty, appState: appState)
+      .appDisplayScale(appState: appState)
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
 
       if showScrollToTop {
@@ -86,7 +87,7 @@ struct FeedView: View {
           Spacer()
           scrollToTopButton
             .padding(.bottom, 20)
-            .transition(.scale.combined(with: .opacity))
+            .accessibleTransition(.scale.combined(with: .opacity), appState: appState)
         }
       }
     }
@@ -203,19 +204,19 @@ struct FeedView: View {
 
   /// Empty state when no posts are available
   private var emptyStateView: some View {
-    VStack(spacing: 20) {
+    VStack(spacing: DesignTokens.Spacing.sectionLarge) {
       Image(systemName: "text.bubble")
         .appFont(size: 60)
         .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
 
       Text("No posts to show")
-        .appFont(AppTextRole.headline)
+        .enhancedAppHeadline()
 
       Text("Pull down to refresh or check back later.")
-        .appFont(AppTextRole.subheadline)
+        .enhancedAppSubheadline()
         .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
         .multilineTextAlignment(.center)
-        .padding(.horizontal)
+        .spacingBase(.horizontal)
 
       Button("Refresh") {
         Task {
@@ -223,9 +224,9 @@ struct FeedView: View {
         }
       }
       .buttonStyle(.borderedProminent)
-      .padding(.top)
+      .spacingBase(.top)
     }
-    .padding()
+    .spacingBase()
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
@@ -240,7 +241,7 @@ struct FeedView: View {
       Image(systemName: "arrow.up")
         .appFont(AppTextRole.headline)
         .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: .light))
-        .padding()
+        .spacingBase()
         .background(Circle().fill(Color.accentColor))
         .shadow(radius: 4)
     }
@@ -263,7 +264,7 @@ struct FeedView: View {
     }
 
     if let cachedFeed = await appState.getPrefetchedFeed(fetch) {
-      model.setCachedFeed(cachedFeed.posts, cursor: cachedFeed.cursor)
+      await model.setCachedFeed(cachedFeed.posts, cursor: cachedFeed.cursor)
       isInitialLoad = false
     }
 

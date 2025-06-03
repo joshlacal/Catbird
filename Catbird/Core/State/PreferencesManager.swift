@@ -1391,13 +1391,13 @@ final class PreferencesManager {
     try await saveAndSyncPreferences(preferences)
   }
   
-  /// Updates language preferences (stored locally only for now)
+  /// Updates language preferences and syncs with server
   @MainActor
   func updateLanguagePreferences(appLanguage: String?, primaryLanguage: String, contentLanguages: [String]) async throws {
-    // Store in UserDefaults for persistence
+    // Store in UserDefaults for immediate persistence
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
     
-    // Save app language
+    // Save app language (local only)
     if let appLang = appLanguage {
       defaults?.set(appLang, forKey: "appLanguage")
     } else {
@@ -1412,6 +1412,30 @@ final class PreferencesManager {
     
     // Also save preferred languages for post composer
     defaults?.set(contentLanguages, forKey: "userPreferredLanguages")
+    
+    // Sync language preferences with server if client is available
+    if let client = client {
+      do {
+        // Get current preferences
+        let preferences = try await getPreferences()
+        
+        // Update language-related preferences
+        // In AT Protocol, language preferences are stored as content filters
+        // We'll create a custom preference type for language preferences
+        preferences.primaryLanguage = primaryLanguage
+        preferences.contentLanguages = contentLanguages
+        
+        // Save and sync to server
+        try await saveAndSyncPreferences(preferences)
+        
+        logger.info("Language preferences synced to server - Primary: \(primaryLanguage), Content: \(contentLanguages.joined(separator: ", "))")
+      } catch {
+        logger.error("Failed to sync language preferences to server: \(error.localizedDescription)")
+        // Don't throw the error, as local storage succeeded
+      }
+    } else {
+      logger.warning("No client available - language preferences stored locally only")
+    }
     
     logger.info("Language preferences updated - App: \(appLanguage ?? "system"), Primary: \(primaryLanguage), Content: \(contentLanguages.joined(separator: ", "))")
     

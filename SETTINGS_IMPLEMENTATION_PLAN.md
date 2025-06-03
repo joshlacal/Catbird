@@ -2,41 +2,48 @@
 
 ## Executive Summary
 
-**The Problem**: Catbird currently has beautiful, professional-looking settings UI that doesn't actually work. Users can toggle switches, change selections, and adjust sliders, but these changes don't affect the app's behavior. This creates a frustrating user experience and undermines trust in the application.
+**Status**: PARTIALLY IMPLEMENTED - Theme and basic font settings are working, but content/media settings remain non-functional.
 
-**The Solution**: Implement a phased approach to make settings actually functional, starting with the most visible features (theme, font) and gradually expanding. Hide non-functional settings until they're properly implemented to maintain user trust.
+**The Problem**: Several settings screens have beautiful UI that doesn't affect app behavior. Content filtering, media playback, and some accessibility settings need to be connected to actual functionality.
 
-## Current State Assessment (Brutal Honesty)
+**The Solution**: Focus on the remaining non-functional settings while maintaining the working theme and font systems.
 
-### ❌ COMPLETELY NON-FUNCTIONAL
-**Account Settings**:
-- ❌ Email editing (OAuth limitation - impossible)
-- ❌ Handle editing (AT Protocol capability unknown)
-- ❌ Password changes (possible but not implemented)
-- ❌ App passwords (possible but not implemented)
+## Current State Assessment (Updated)
 
+### ✅ WORKING (Implemented)
 **Appearance Settings**:
-- ❌ Theme switching (ThemeManager exists but doesn't work)
-- ❌ Font scaling (FontScaleManager exists but text doesn't use it)
-- ❌ Font style switching (no views use the font design)
+- ✅ Theme switching (ThemeManager working - light/dark/dim)
+- ✅ Basic font scaling (FontManager integrated with Dynamic Type)
+- ✅ Font style switching (system, serif, rounded, mono)
 
+**Core Infrastructure**:
+- ✅ Settings persistence (AppSettings saves to SwiftData)
+- ✅ Server preference sync (PreferencesManager works)
+- ✅ Settings UI navigation (professional, accessible)
+
+### ❌ NEEDS IMPLEMENTATION
 **Content & Media Settings**:
 - ❌ Autoplay videos (video players ignore setting)
-- ❌ Open links in-app (URLHandler ignores setting)
-- ❌ Show trending topics/videos (not connected to discovery)
-- ❌ Hide replies/reposts (not connected to feed display)
+- ❌ Open links in-app (URLHandler ignores setting) 
+- ❌ Hide replies/reposts (not connected to feed filtering)
 - ❌ Thread sort order (not connected to thread rendering)
+- ❌ Show trending topics (not connected to discovery)
+
+**Advanced Font Settings**:
+- ❌ Line spacing controls (partially implemented)
+- ❌ Display scale options (beyond Dynamic Type)
+- ❌ Increased contrast toggle
+- ❌ Bold text preference
 
 **Accessibility Settings**:
 - ❌ Motion reduction (animations unchanged)
-- ❌ Auto-play videos (duplicate setting, not working)
-- ❌ Display settings (no UI changes)
 - ❌ Alt text requirements (composer ignores setting)
+- ❌ Display accessibility enhancements
 
-### ✅ PARTIALLY FUNCTIONAL
-- ✅ Settings persistence (AppSettings saves to SwiftData)
-- ✅ Server preference sync (PreferencesManager works for server settings)
-- ✅ Settings UI navigation (looks professional)
+**Account Settings**:
+- ❌ Password changes (OAuth limitation)
+- ❌ App passwords (not implemented)
+- ❌ Handle editing (AT Protocol limitation)
 
 ## Immediate Actions (This Week)
 

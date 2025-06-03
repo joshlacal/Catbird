@@ -174,9 +174,8 @@ struct ViewImageGridView: View {
             .resizable()
             .aspectRatio(contentMode: .fill)
             .frame(width: width, height: height)
-            .blur(radius: isBlurred ? 30 : 0)
-            .modifier(BlurOverlayModifier(isBlurred: isBlurred))
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
               source
@@ -239,9 +238,8 @@ struct ViewImageGridView: View {
               .aspectRatio(contentMode: .fill)
               .frame(maxWidth: .infinity)
               .frame(height: height)
-              .blur(radius: isBlurred ? 30 : 0)
-              .modifier(BlurOverlayModifier(isBlurred: isBlurred))
               .clipShape(RoundedRectangle(cornerRadius: 10))
+              .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: 10))
               .contentShape(Rectangle())
               .matchedTransitionSource(id: viewImage.id, in: imageTransition) { source in
                 source
@@ -1029,6 +1027,53 @@ struct BlurOverlayModifier: ViewModifier {
         }
       }
     )
+  }
+}
+
+struct StrongBlurOverlayModifier: ViewModifier {
+  let isBlurred: Bool
+  let cornerRadius: CGFloat
+  
+  func body(content: Content) -> some View {
+    content.overlay(
+      Group {
+        if isBlurred {
+          blurOverlay(for: content)
+        }
+      }
+    )
+  }
+  
+  private func blurOverlay(for content: Content) -> some View {
+    let blurredBackground = content
+      .blur(radius: 50)
+      .scaleEffect(1.2)
+      .clipped()
+    
+    return Rectangle()
+      .fill(Color.clear)
+      .background(blurredBackground)
+      .overlay(Color.black.opacity(0.3))
+      .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+      .overlay(
+        VStack {
+          Image(systemName: "eye.slash.fill")
+            .font(.title2)
+            .foregroundColor(.white)
+          Text("Sensitive Content")
+            .font(.caption)
+            .fontWeight(.medium)
+            .foregroundColor(.white)
+          Text("Tap to reveal")
+            .font(.caption2)
+            .foregroundColor(.white.opacity(0.8))
+        }
+        .padding(8)
+        .background(
+          RoundedRectangle(cornerRadius: 8)
+            .fill(Color.black.opacity(0.6))
+        )
+      )
   }
 }
 

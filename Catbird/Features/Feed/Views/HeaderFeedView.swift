@@ -7,6 +7,7 @@ import SwiftUI
 struct HeaderFeedView<Header: View>: View {
     // MARK: - Properties
     let appState: AppState
+    @Environment(\.colorScheme) private var currentColorScheme
     let fetch: FetchType
     @Binding var path: NavigationPath
     @Binding var selectedTab: Int
@@ -69,7 +70,7 @@ struct HeaderFeedView<Header: View>: View {
             }
             .animation(.easeInOut(duration: 0.3), value: isInitialLoad)
             .animation(.easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty)
-            .background(Color.primaryBackground.ignoresSafeArea())
+            .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: currentColorScheme).ignoresSafeArea())
 
             if showScrollToTop {
                 VStack {
@@ -245,7 +246,7 @@ struct HeaderFeedView<Header: View>: View {
         }
 
         if let cachedFeed = await appState.getPrefetchedFeed(fetch) {
-            model.setCachedFeed(cachedFeed.posts, cursor: cachedFeed.cursor)
+            await model.setCachedFeed(cachedFeed.posts, cursor: cachedFeed.cursor)
             isInitialLoad = false
         }
 

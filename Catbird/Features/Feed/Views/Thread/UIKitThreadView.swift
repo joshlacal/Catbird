@@ -201,130 +201,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // MARK: - Theme Configuration
   
   private func configureNavigationAndToolbarTheme() {
-    // Get current theme settings
-    let isDarkMode = appState.themeManager.isDarkMode(for: getCurrentColorScheme())
-    let isBlackMode = appState.themeManager.isUsingTrueBlack
-    
-    // Configure navigation bar if we have one
-    if let navController = navigationController {
-      let navBar = navController.navigationBar
-      
-      let appearance = UINavigationBarAppearance()
-      
-      if isDarkMode {
-        if isBlackMode {
-          // True black mode
-          appearance.configureWithOpaqueBackground()
-          appearance.backgroundColor = UIColor.black
-          appearance.shadowColor = .clear
-        } else {
-          // Dim mode
-          let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-          appearance.configureWithOpaqueBackground()
-          appearance.backgroundColor = dimBackground
-          appearance.shadowColor = .clear
-        }
-      } else {
-        // Light mode
-        appearance.configureWithDefaultBackground()
-      }
-      
-      // Apply custom fonts with width=120
-      NavigationFontConfig.applyFonts(to: appearance)
-      
-      navBar.standardAppearance = appearance
-      navBar.scrollEdgeAppearance = appearance
-      navBar.compactAppearance = appearance
-    }
-    
-    // Configure toolbar if we have one
-    if let toolbar = navigationController?.toolbar {
-      let toolbarAppearance = UIToolbarAppearance()
-      
-      if isDarkMode {
-        if isBlackMode {
-          toolbarAppearance.backgroundColor = UIColor.black
-          toolbarAppearance.shadowColor = .clear
-        } else {
-          // Dim mode
-          let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-          toolbarAppearance.configureWithOpaqueBackground()
-          toolbarAppearance.backgroundColor = dimBackground
-          toolbarAppearance.shadowColor = .clear
-        }
-      } else {
-        toolbarAppearance.configureWithDefaultBackground()
-      }
-      
-      toolbar.standardAppearance = toolbarAppearance
-      toolbar.scrollEdgeAppearance = toolbarAppearance
-    }
-    
-    // Also try to configure the parent navigation controller if embedded in SwiftUI
-    configureParentNavigationTheme()
+    // Theme configuration is handled by SwiftUI's themedNavigationBar modifier
+    // No need to modify UIKit navigation bar appearance directly
   }
   
   private func configureParentNavigationTheme() {
-    // Walk up the responder chain to find any navigation bars or toolbars
-    var responder: UIResponder? = self
-    
-    while let nextResponder = responder?.next {
-      if let navController = nextResponder as? UINavigationController {
-        // Found a navigation controller in the responder chain
-        let isDarkMode = appState.themeManager.isDarkMode(for: getCurrentColorScheme())
-        let isBlackMode = appState.themeManager.isUsingTrueBlack
-        
-        let appearance = UINavigationBarAppearance()
-        
-        if isDarkMode {
-          if isBlackMode {
-            appearance.configureWithOpaqueBackground()
-            appearance.backgroundColor = UIColor.black
-            appearance.shadowColor = .clear
-          } else {
-            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-            appearance.configureWithOpaqueBackground()
-            appearance.backgroundColor = dimBackground
-            appearance.shadowColor = .clear
-          }
-        } else {
-          appearance.configureWithDefaultBackground()
-        }
-        
-        // Apply custom fonts with width=120
-        NavigationFontConfig.applyFonts(to: appearance)
-        
-        navController.navigationBar.standardAppearance = appearance
-        navController.navigationBar.scrollEdgeAppearance = appearance
-        navController.navigationBar.compactAppearance = appearance
-        
-        // Configure toolbar too
-        if navController.toolbar != nil {
-          let toolbarAppearance = UIToolbarAppearance()
-          
-          if isDarkMode {
-            if isBlackMode {
-              toolbarAppearance.backgroundColor = UIColor.black
-              toolbarAppearance.shadowColor = .clear
-            } else {
-              let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-              toolbarAppearance.configureWithOpaqueBackground()
-              toolbarAppearance.backgroundColor = dimBackground
-              toolbarAppearance.shadowColor = .clear
-            }
-          } else {
-            toolbarAppearance.configureWithDefaultBackground()
-          }
-          
-          navController.toolbar.standardAppearance = toolbarAppearance
-          navController.toolbar.scrollEdgeAppearance = toolbarAppearance
-        }
-        
-        break
-      }
-      
-      responder = nextResponder
-    }
+    // Theme configuration is handled by SwiftUI's themedNavigationBar modifier
+    // No need to modify UIKit navigation bar appearance directly
   }
 
   // MARK: - UI Setup

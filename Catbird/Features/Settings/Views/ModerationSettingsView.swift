@@ -72,14 +72,19 @@ struct ModerationSettingsView: View {
                         }
                     }
                     
-                    NavigationLink(destination: ModerationListsView()) {
+                    // NavigationLink(destination: ModerationListsView()) {
                         Label {
-                            Text("Moderation Lists")
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Moderation Lists")
+                                Text("Coming soon - shared blocking and muting lists")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         } icon: {
                             Image(systemName: "list.bullet.clipboard")
                                 .foregroundStyle(.purple)
                         }
-                    }
+                    // }
                     
                     NavigationLink(destination: ModerationListView(accounts: $mutedAccounts, isLoading: $isLoadingMutedAccounts, title: "Muted Accounts", isBlocked: false)) {
                         Label {
@@ -238,6 +243,8 @@ struct ModerationSettingsView: View {
         }
         .navigationTitle("Moderation")
         .navigationBarTitleDisplayMode(.inline)
+        .appDisplayScale(appState: appState)
+        .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
         .task {
             await loadPreferences()
             await loadLabelers()
@@ -467,16 +474,10 @@ struct ModerationSettingsView: View {
     }
 }
 
-// Protocol for profile-like objects that can be used in moderation views
-protocol ProfileBasicInfo: Identifiable {
-    var id: String { get }
-    var did: String { get }
-    var handle: String { get }
-    var displayName: String? { get }
-    var avatar: URL? { get }
-}
+// Note: ProfileBasicInfo protocol is defined in PrivacySecuritySettingsView.swift
+// Since it's in the same module, we can use it here
 
-// Extend MutedAccount to conform to ProfileBasicInfo
+// Extend MutedAccount to conform to ProfileBasicInfo  
 extension ModerationSettingsView.MutedAccount: ProfileBasicInfo {}
 
 // Extend BlockedAccount to conform to ProfileBasicInfo
@@ -641,18 +642,708 @@ struct ModerationAccountRow: View {
     }
 }
 
+/* Temporarily disabled due to AT Protocol compatibility issues
 struct ModerationListsView: View {
+    @Environment(AppState.self) private var appState
+    @State private var moderationLists: [AppBskyGraphDefs.ListView] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var showingCreateList = false
+    
     var body: some View {
         List {
-            Text("Moderation Lists feature coming soon")
-                .foregroundStyle(.secondary)
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .listRowBackground(Color.clear)
+            } else if moderationLists.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "list.bullet.clipboard")
+                        .appFont(AppTextRole.largeTitle)
+                        .foregroundStyle(.secondary)
+                    
+                    Text("No Moderation Lists")
+                        .appFont(AppTextRole.headline)
+                        .fontWeight(.medium)
+                    
+                    Text("Create moderation lists to block or mute multiple accounts at once. Lists can be shared with others.")
+                        .appFont(AppTextRole.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    
+                    Button("Create List") {
+                        showingCreateList = true
+                    }
+                    .buttonStyle(.bordered)
+                }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .listRowBackground(Color.clear)
+                .padding(.vertical, 40)
+            } else {
+                ForEach(moderationLists, id: \.uri) { list in
+                    NavigationLink(destination: ModerationListDetailView(list: list)) {
+                        ModerationListRow(list: list)
+                    }
+                }
+            }
+            
+            if let error = errorMessage {
+                Section {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .appFont(AppTextRole.caption)
+                }
+            }
         }
         .navigationTitle("Moderation Lists")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingCreateList = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .task {
+            await loadModerationLists()
+        }
+        .refreshable {
+            await loadModerationLists()
+        }
+        .sheet(isPresented: $showingCreateList) {
+            CreateModerationListView { newList in
+                moderationLists.append(newList)
+            }
+        }
+    }
+    
+    private func loadModerationLists() async {
+        isLoading = true
+        errorMessage = nil
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Client not available"
+            isLoading = false
+            return
+        }
+        
+        do {
+            guard let currentUserDID = appState.authManager.userDID else {
+                errorMessage = "User not authenticated"
+                isLoading = false
+                return
+            }
+            
+            let params = AppBskyGraphGetLists.Parameters(
+                actor: try ATIdentifier(string: currentUserDID),
+                limit: 50,
+                cursor: nil
+            )
+            
+            let (responseCode, response) = try await client.app.bsky.graph.getLists(input: params)
+            
+            if responseCode == 200, let lists = response?.lists {
+                let filteredLists = lists.filter { list in
+                    list.purpose == .appBskyGraphDefsModlist ||
+                    list.purpose == .appBskyGraphDefsCuratelist
+                }
+                moderationLists = filteredLists
+            } else {
+                errorMessage = "Failed to load moderation lists"
+            }
+        } catch {
+            errorMessage = "Failed to load moderation lists: \(error.localizedDescription)"
+        }
+        
+        isLoading = false
     }
 }
+
+struct ModerationListRow: View {
+    let list: AppBskyGraphDefs.ListView
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // List icon
+            Image(systemName: listIcon)
+                .foregroundStyle(listIconColor)
+                .appFont(AppTextRole.title2)
+                .frame(width: 24)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(list.name)
+                    .appFont(AppTextRole.headline)
+                    .fontWeight(.medium)
+                
+                if let description = list.description, !description.isEmpty {
+                    Text(description)
+                        .appFont(AppTextRole.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                
+                HStack(spacing: 16) {
+                    if let itemCount = list.listItemCount {
+                        Label("\(itemCount)", systemImage: "person.2")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Label(listPurposeText, systemImage: "shield")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Spacer()
+            
+            Image(systemName: "chevron.right")
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private var listIcon: String {
+        switch list.purpose {
+        case .appBskyGraphDefsModlist:
+            return "shield.fill"
+        case .appBskyGraphDefsCuratelist:
+            return "eye.slash.fill"
+        default:
+            return "list.bullet"
+        }
+    }
+    
+    private var listIconColor: Color {
+        switch list.purpose {
+        case .appBskyGraphDefsModlist:
+            return .red
+        case .appBskyGraphDefsCuratelist:
+            return .orange
+        default:
+            return .blue
+        }
+    }
+    
+    private var listPurposeText: String {
+        switch list.purpose {
+        case .appBskyGraphDefsModlist:
+            return "Block List"
+        case .appBskyGraphDefsCuratelist:
+            return "Mute List"
+        default:
+            return "List"
+        }
+    }
+}
+
+struct ModerationListDetailView: View {
+    let list: AppBskyGraphDefs.ListView
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    @State private var listItems: [AppBskyGraphDefs.ListItemView] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var showingDeleteAlert = false
+    @State private var isDeleting = false
+    @State private var cursor: String?
+    
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Image(systemName: listIcon)
+                            .foregroundStyle(listIconColor)
+                            .appFont(AppTextRole.title)
+                            .frame(width: 32)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(list.name)
+                                .appFont(AppTextRole.title2)
+                                .fontWeight(.bold)
+                            
+                            Text(listPurposeText)
+                                .appFont(AppTextRole.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    if let description = list.description, !description.isEmpty {
+                        Text(description)
+                            .appFont(AppTextRole.body)
+                            .padding(.top, 4)
+                    }
+                    
+                    if let itemCount = list.listItemCount {
+                        Text("\(itemCount) accounts")
+                            .appFont(AppTextRole.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            
+            if isLoading {
+                Section {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .listRowBackground(Color.clear)
+                }
+            } else if listItems.isEmpty {
+                Section {
+                    Text("No accounts in this list")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .listRowBackground(Color.clear)
+                }
+            } else {
+                Section("Accounts") {
+                    ForEach(listItems, id: \.uri) { item in
+                        ModerationListItemRow(item: item) {
+                            await removeItemFromList(item)
+                        }
+                    }
+                }
+            }
+            
+            if let error = errorMessage {
+                Section {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .appFont(AppTextRole.caption)
+                }
+            }
+            
+            Section {
+                Button(role: .destructive) {
+                    showingDeleteAlert = true
+                } label: {
+                    if isDeleting {
+                        HStack {
+                            Text("Deleting List...")
+                            Spacer()
+                            ProgressView()
+                        }
+                    } else {
+                        Text("Delete List")
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
+                .disabled(isDeleting)
+            }
+        }
+        .navigationTitle("List Details")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await loadListItems()
+        }
+        .refreshable {
+            await loadListItems()
+        }
+        .alert("Delete List", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                Task { await deleteList() }
+            }
+        } message: {
+            Text("Are you sure you want to delete this moderation list? This action cannot be undone.")
+        }
+    }
+    
+    private var listIcon: String {
+        switch list.purpose {
+        case .appBskyGraphDefsModlist:
+            return "shield.fill"
+        case .appBskyGraphDefsCuratelist:
+            return "eye.slash.fill"
+        default:
+            return "list.bullet"
+        }
+    }
+    
+    private var listIconColor: Color {
+        switch list.purpose {
+        case .appBskyGraphDefsModlist:
+            return .red
+        case .appBskyGraphDefsCuratelist:
+            return .orange
+        default:
+            return .blue
+        }
+    }
+    
+    private var listPurposeText: String {
+        switch list.purpose {
+        case .appBskyGraphDefsModlist:
+            return "Block List"
+        case .appBskyGraphDefsCuratelist:
+            return "Mute List"
+        default:
+            return "List"
+        }
+    }
+    
+    private func loadListItems() async {
+        isLoading = true
+        errorMessage = nil
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Client not available"
+            isLoading = false
+            return
+        }
+        
+        do {
+            let params = AppBskyGraphGetList.Parameters(
+                list: list.uri,
+                limit: 50,
+                cursor: cursor
+            )
+            
+            let (responseCode, response) = try await client.app.bsky.graph.getList(input: params)
+            
+            if responseCode == 200, let items = response?.items {
+                if cursor == nil {
+                    listItems = items
+                } else {
+                    listItems.append(contentsOf: items)
+                }
+                cursor = response?.cursor
+            } else {
+                errorMessage = "Failed to load list items"
+            }
+        } catch {
+            errorMessage = "Failed to load list items: \(error.localizedDescription)"
+        }
+        
+        isLoading = false
+    }
+    
+    private func removeItemFromList(_ item: AppBskyGraphDefs.ListItemView) async {
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Client not available"
+            return
+        }
+        
+        do {
+            let input = ComAtprotoRepoDeleteRecord.Input(
+                repo: try ATIdentifier(string: list.creator.did.didString()),
+                collection: try NSID(nsidString: "app.bsky.graph.listitem"),
+                rkey: try RecordKey(keyString: item.uri.rkey ?? "")
+            )
+            
+            let response = try await client.com.atproto.repo.deleteRecord(input: input)
+            
+            if response.responseCode == 200 {
+                listItems.removeAll { $0.uri == item.uri }
+            } else {
+                errorMessage = "Failed to remove account from list"
+            }
+        } catch {
+            errorMessage = "Failed to remove account: \(error.localizedDescription)"
+        }
+    }
+    
+    private func deleteList() async {
+        isDeleting = true
+        errorMessage = nil
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Client not available"
+            isDeleting = false
+            return
+        }
+        
+        do {
+            let input = ComAtprotoRepoDeleteRecord.Input(
+                repo: try ATIdentifier(string: list.creator.did.didString()),
+                collection: try NSID(nsidString: "app.bsky.graph.list"),
+                rkey: try RecordKey(keyString: list.uri.rkey ?? "")
+            )
+            
+            let response = try await client.com.atproto.repo.deleteRecord(input: input)
+            
+            if response.responseCode == 200 {
+                dismiss()
+            } else {
+                errorMessage = "Failed to delete list"
+            }
+        } catch {
+            errorMessage = "Failed to delete list: \(error.localizedDescription)"
+        }
+        
+        isDeleting = false
+    }
+}
+
+struct ModerationListItemRow: View {
+    let item: AppBskyGraphDefs.ListItemView
+    let onRemove: () async -> Void
+    @State private var isRemoving = false
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            ProfileAvatarView(
+                url: item.subject.avatar?.url,
+                fallbackText: String(item.subject.handle.description.prefix(1).uppercased()),
+                size: 40
+            )
+            
+            VStack(alignment: .leading, spacing: 2) {
+                if let displayName = item.subject.displayName {
+                    Text(displayName)
+                        .appFont(AppTextRole.headline)
+                        .fontWeight(.medium)
+                }
+                
+                Text("@\(item.subject.handle)")
+                    .appFont(AppTextRole.callout)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            Button {
+                isRemoving = true
+                Task {
+                    await onRemove()
+                    isRemoving = false
+                }
+            } label: {
+                if isRemoving {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text("Remove")
+                        .appFont(AppTextRole.callout)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(.systemGray5))
+                        .foregroundStyle(.primary)
+                        .cornerRadius(6)
+                }
+            }
+            .disabled(isRemoving)
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct CreateModerationListView: View {
+    let onListCreated: (AppBskyGraphDefs.ListView) -> Void
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var listName = ""
+    @State private var listDescription = ""
+    @State private var selectedPurpose: ListPurpose = .block
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+    
+    enum ListPurpose: String, CaseIterable {
+        case block = "app.bsky.graph.defs#modlist"
+        case mute = "app.bsky.graph.defs#curatelist"
+        
+        var displayName: String {
+            switch self {
+            case .block:
+                return "Block List"
+            case .mute:
+                return "Mute List"
+            }
+        }
+        
+        var description: String {
+            switch self {
+            case .block:
+                return "Accounts on this list will be blocked"
+            case .mute:
+                return "Accounts on this list will be muted"
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .block:
+                return "shield.fill"
+            case .mute:
+                return "eye.slash.fill"
+            }
+        }
+        
+        var color: Color {
+            switch self {
+            case .block:
+                return .red
+            case .mute:
+                return .orange
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("List Information") {
+                    TextField("List Name", text: $listName)
+                        .autocorrectionDisabled()
+                    
+                    TextField("Description (optional)", text: $listDescription, axis: .vertical)
+                        .lineLimit(3...6)
+                        .autocorrectionDisabled()
+                }
+                
+                Section("List Type") {
+                    ForEach(ListPurpose.allCases, id: \.self) { purpose in
+                        Button {
+                            selectedPurpose = purpose
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: purpose.icon)
+                                    .foregroundStyle(purpose.color)
+                                    .frame(width: 24)
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(purpose.displayName)
+                                        .appFont(AppTextRole.headline)
+                                        .foregroundStyle(.primary)
+                                    
+                                    Text(purpose.description)
+                                        .appFont(AppTextRole.callout)
+                                        .foregroundStyle(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                if selectedPurpose == purpose {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.blue)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                if let error = errorMessage {
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .appFont(AppTextRole.caption)
+                    }
+                }
+            }
+            .navigationTitle("Create List")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        Task { await createList() }
+                    } label: {
+                        if isCreating {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("Create")
+                        }
+                    }
+                    .disabled(listName.isEmpty || isCreating)
+                }
+            }
+        }
+    }
+    
+    private func createList() async {
+        isCreating = true
+        errorMessage = nil
+        
+        guard let client = appState.atProtoClient else {
+            errorMessage = "Client not available"
+            isCreating = false
+            return
+        }
+        
+        do {
+            guard let currentUserDID = appState.authManager.userDID else {
+                errorMessage = "User not authenticated"
+                isCreating = false
+                return
+            }
+            
+            let listRecord = AppBskyGraphList(
+                purpose: selectedPurpose.rawValue,
+                name: listName,
+                description: listDescription.isEmpty ? nil : listDescription,
+                avatar: nil,
+                labels: nil,
+                createdAt: Date()
+            )
+            
+            let input = ComAtprotoRepoPutRecord.Input(
+                repo: try ATIdentifier(string: currentUserDID),
+                collection: try NSID(nsidString: "app.bsky.graph.list"),
+                rkey: nil,
+                validate: true,
+                record: .appBskyGraphList(listRecord),
+                swapCommit: nil,
+                swapRecord: nil
+            )
+            
+            let (responseCode, response) = try await client.com.atproto.repo.putRecord(input: input)
+            
+            if responseCode == 200, let response = response {
+                // Create a ListView object for the UI
+                let newList = AppBskyGraphDefs.ListView(
+                    uri: response.uri,
+                    cid: response.cid,
+                    name: listName,
+                    purpose: selectedPurpose == .block ? .appBskyGraphDefsModlist : .appBskyGraphDefsCuratelist,
+                    description: listDescription.isEmpty ? nil : listDescription,
+                    descriptionFacets: nil,
+                    avatar: nil,
+                    listItemCount: 0,
+                    labels: nil,
+                    viewer: nil,
+                    indexedAt: Date(),
+                    creator: AppBskyActorDefs.ProfileView(
+                        did: try DID(didString: currentUserDID),
+                        handle: Handle(handle: ""), // Will be filled by the parent view
+                        displayName: nil,
+                        description: nil,
+                        avatar: nil,
+                        associated: nil,
+                        indexedAt: Date(),
+                        createdAt: Date(),
+                        labels: nil,
+                        viewer: nil
+                    )
+                )
+                
+                onListCreated(newList)
+                dismiss()
+            } else {
+                errorMessage = "Failed to create list"
+            }
+        } catch {
+            errorMessage = "Failed to create list: \(error.localizedDescription)"
+        }
+        
+        isCreating = false
+    }
+}
+*/ // End of temporarily disabled moderation lists
 
 struct AddLabelerView: View {
     @State private var labelerDID = ""
@@ -1120,6 +1811,6 @@ struct ContentPreviewView: View {
 #Preview {
     NavigationStack {
         ModerationSettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

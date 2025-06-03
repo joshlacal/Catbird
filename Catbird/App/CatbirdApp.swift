@@ -52,9 +52,11 @@ struct CatbirdApp: App {
     }
   }
   // MARK: - State
-  // Create AppState as a stored property to ensure it's only created once
-  private let appState = AppState()
+  // Use singleton AppState to prevent multiple instances
+  private let appState = AppState.shared
   @State private var didInitialize = false
+  @State private var isAuthenticatedWithBiometric = false
+  @State private var showBiometricPrompt = false
 
   // MARK: - SwiftData
   let modelContainer: ModelContainer
@@ -68,50 +70,9 @@ struct CatbirdApp: App {
   init() {
     logger.info("🚀 CatbirdApp initializing")
 
-    // MARK: - Customizing Navigation Bar Fonts with CoreText
-    // Note: Initial navigation bar setup is minimal here.
-    // The actual theme-specific configuration is done by ThemeManager
-    // after app settings are loaded in AppState.initialize()
-    
-    // Set initial appearances to saved theme colors to avoid black flash
-    let standardAppearance = UINavigationBarAppearance()
-    let scrollEdgeAppearance = UINavigationBarAppearance() 
-    let compactAppearance = UINavigationBarAppearance()
-    
-    // Load saved theme settings from UserDefaults for initial setup
-    let defaults = UserDefaults.standard
-    let savedTheme = defaults.string(forKey: "theme") ?? "system"
-    let savedDarkMode = defaults.string(forKey: "darkThemeMode") ?? "dim"
-    
-    // Configure appearances based on saved settings
-    if savedTheme == "dark" || (savedTheme == "system" && UITraitCollection.current.userInterfaceStyle == .dark) {
-      let backgroundColor = savedDarkMode == "black" ? UIColor.black : UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-      
-      // Dark mode: standard=default, scrollEdge=transparent, compact=opaque
-      standardAppearance.configureWithDefaultBackground()
-      standardAppearance.backgroundColor = backgroundColor
-      
-      scrollEdgeAppearance.configureWithTransparentBackground()
-      scrollEdgeAppearance.backgroundColor = backgroundColor
-      
-      compactAppearance.configureWithOpaqueBackground()
-      compactAppearance.backgroundColor = backgroundColor
-    } else {
-      // Light mode: standard=default, scrollEdge=transparent, compact=opaque
-      standardAppearance.configureWithDefaultBackground()
-      scrollEdgeAppearance.configureWithTransparentBackground() 
-      compactAppearance.configureWithOpaqueBackground()
-    }
-    
-    // Apply fonts to all appearances
-    NavigationFontConfig.applyFonts(to: standardAppearance)
-    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance)
-    NavigationFontConfig.applyFonts(to: compactAppearance)
-    
-    // Set initial appearances that prevent black flash before theme is applied
-    UINavigationBar.appearance().standardAppearance = standardAppearance
-    UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
-    UINavigationBar.appearance().compactAppearance = compactAppearance
+    // MARK: - Navigation Bar Configuration
+    // Navigation bar theme is handled completely by ThemeManager during AppState.initialize()
+    // to avoid conflicts between initial setup and dynamic theme changes
 
     // Configure audio session at app launch
     do {
@@ -171,9 +132,18 @@ struct CatbirdApp: App {
             let rootVC = window.rootViewController {
             appState.urlHandler.registerTopViewController(rootVC)
           }
+          
+          // Setup background notification observer
+          setupBackgroundNotification()
         }
         .environment(appState)
         .modelContainer(modelContainer)
+        // Handle biometric authentication when app becomes active
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+          Task {
+            await checkBiometricAuthentication()
+          }
+        }
         // Initialize app state when the app launches
         .task {
 
@@ -207,6 +177,9 @@ struct CatbirdApp: App {
 
           // Initialize preferences manager with modelContext
           appState.initializePreferencesManager(with: modelContext)
+          
+          // Check biometric authentication on app launch
+          await checkBiometricAuthentication()
 
           // Only fix timeline feed issues when needed
           Task {
@@ -276,6 +249,121 @@ struct CatbirdApp: App {
             _ = appState.urlHandler.handle(url)
           }
         }
+        .overlay {
+          if showBiometricPrompt && !isAuthenticatedWithBiometric {
+            BiometricAuthenticationOverlay(
+              isAuthenticated: $isAuthenticatedWithBiometric,
+              authManager: appState.authManager
+            )
+          }
+        }
+    }
+  }
+  
+  // MARK: - Biometric Authentication
+  private func checkBiometricAuthentication() async {
+    // Check if biometric auth is enabled and we haven't authenticated yet
+    guard appState.authManager.biometricAuthEnabled,
+          !isAuthenticatedWithBiometric else {
+      return
+    }
+    
+    await MainActor.run {
+      showBiometricPrompt = true
+    }
+  }
+  
+  // Reset authentication when app goes to background
+  private func setupBackgroundNotification() {
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      // Reset authentication state when app enters background
+      self.isAuthenticatedWithBiometric = false
+    }
+  }
+}
+
+// MARK: - Biometric Authentication Overlay
+struct BiometricAuthenticationOverlay: View {
+  @Binding var isAuthenticated: Bool
+  let authManager: AuthenticationManager
+  @State private var isAuthenticating = false
+  
+  var body: some View {
+    ZStack {
+      // Full screen background
+      Color.black
+        .ignoresSafeArea()
+      
+      VStack(spacing: 30) {
+        // App icon
+        Image("CatbirdIcon")
+          .resizable()
+          .frame(width: 80, height: 80)
+          .cornerRadius(16)
+        
+        Text("Catbird Locked")
+          .font(.largeTitle)
+          .fontWeight(.bold)
+          .foregroundColor(.white)
+        
+        Text("Authenticate to continue")
+          .font(.subheadline)
+          .foregroundColor(.gray)
+        
+        if isAuthenticating {
+          ProgressView()
+            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+        } else {
+          Button {
+            Task {
+              await authenticateWithBiometrics()
+            }
+          } label: {
+            Label("Unlock with \(authManager.biometricType.displayName)", systemImage: biometricIcon)
+              .font(.headline)
+              .foregroundColor(.white)
+              .padding()
+              .background(Color.blue)
+              .cornerRadius(10)
+          }
+        }
+      }
+    }
+    .task {
+      // Automatically prompt for biometric authentication when view appears
+      await authenticateWithBiometrics()
+    }
+  }
+  
+  private var biometricIcon: String {
+    switch authManager.biometricType {
+    case .faceID:
+      return "faceid"
+    case .touchID:
+      return "touchid"
+    case .opticID:
+      return "opticid"
+    default:
+      return "lock.shield"
+    }
+  }
+  
+  private func authenticateWithBiometrics() async {
+    await MainActor.run {
+      isAuthenticating = true
+    }
+    
+    let success = await authManager.quickAuthenticationCheck()
+    
+    await MainActor.run {
+      isAuthenticating = false
+      if success {
+        isAuthenticated = true
+      }
     }
   }
 }

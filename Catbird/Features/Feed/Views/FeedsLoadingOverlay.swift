@@ -4,6 +4,9 @@ import SwiftUI
 struct FeedsLoadingOverlay: View {
   /// Indicates whether the feeds are currently loading.
   let isLoading: Bool
+  
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var currentColorScheme
 
   var body: some View {
     if isLoading {
@@ -13,7 +16,7 @@ struct FeedsLoadingOverlay: View {
         Spacer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color(UIColor.systemBackground).opacity(0.9))
+      .background(Color.dynamicBackground(appState.themeManager, currentScheme: currentColorScheme).opacity(0.9))
     }
   }
 }

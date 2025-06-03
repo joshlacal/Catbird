@@ -35,7 +35,7 @@ struct TappableTextView: View {
     self.textDesign = .default
     self.textWeight = .regular
     self.fontWidth = nil
-    self.lineSpacing = 1.2
+    self.lineSpacing = 1.6
     self.letterSpacing = 0.2
   }
     
@@ -46,7 +46,7 @@ struct TappableTextView: View {
       textDesign: Font.Design = .default,
       textWeight: Font.Weight = .regular,
       fontWidth: CGFloat? = nil,
-      lineSpacing: CGFloat = 1.2,
+      lineSpacing: CGFloat = 1.6,
       letterSpacing: CGFloat = 0.2
   ) {
       self.attributedString = attributedString
@@ -64,7 +64,7 @@ struct TappableTextView: View {
             if containsOnlyEmojis {
                 // If the string contains only emojis, use a larger font size
                 Text(attributedString)
-                    .appFont(size: effectiveTextSize ?? 27, weight: textWeight, relativeTo: textStyle)
+                    .appFont(size: effectiveTextSize ?? 24, weight: textWeight, relativeTo: textStyle)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .tracking(letterSpacing)
@@ -73,16 +73,15 @@ struct TappableTextView: View {
                     .allowsTightening(true)
                     .minimumScaleFactor(0.9)
             } else {
-                // Regular text handling
+                // Regular text handling - use app font system properly
                 Text(attributedString)
-                    .appFont(size: effectiveTextSize ?? 27, weight: textWeight, relativeTo: textStyle)
-//                    .customScaledFont(
-//                        size: effectiveTextSize,
-//                        weight: textWeight,
-//                        width: fontWidth,
-//                        relativeTo: textStyle,
-//                        design: textDesign
-//                    )
+                    .customScaledFont(
+                        size: effectiveTextSize,
+                        weight: textWeight,
+                        width: fontWidth,
+                        relativeTo: textStyle,
+                        design: textDesign
+                    )
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .tracking(letterSpacing)

@@ -3,7 +3,7 @@ import SwiftUI
 import ExyteChat
 
 struct ContentView: View {
-  @Environment(AppState.self) private var appState
+  private let appState = AppState.shared
   @State private var selectedTab = 0
   @State private var lastTappedTab: Int?
   @State private var authRetryAttempted = false
@@ -58,13 +58,14 @@ struct ContentView: View {
     }
     .applyTheme(appState.themeManager)
     .fontManager(appState.fontManager)
+    // Theme and font changes are handled efficiently by the modifiers above
   }
 }
 
 // MARK: - Loading View
 
 struct ContentViewLoadingView: View {
-  @Environment(AppState.self) private var appState
+  private let appState = AppState.shared
   let message: String
 
   var body: some View {
@@ -87,7 +88,7 @@ struct ContentViewLoadingView: View {
 
 @available(iOS 18.0, *)
 struct MainContentView18: View {
-  @Environment(AppState.self) private var appState
+  private let appState = AppState.shared
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
@@ -194,11 +195,7 @@ struct MainContentView18: View {
       }
       .onAppear {
           UITabBarItem.appearance().badgeColor = UIColor(Color.accentColor)
-        // Apply theme immediately when view appears
-        appState.themeManager.applyTheme(
-          theme: appState.appSettings.theme,
-          darkThemeMode: appState.appSettings.darkThemeMode
-        )
+        // Theme is already applied during AppState initialization - no need to reapply here
         
         // Initialize from notification manager
         notificationBadgeCount = appState.notificationManager.unreadCount
@@ -214,23 +211,8 @@ struct MainContentView18: View {
           }
         }
         
-        // Set up theme change observer to update UIKit appearances
-        NotificationCenter.default.addObserver(
-          forName: NSNotification.Name("ThemeChanged"),
-          object: nil,
-          queue: .main
-        ) { _ in
-          // Only force update tab bars here, since navigation bars are already handled by ThemeManager
-          if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            for window in windowScene.windows {
-              // Force tab bars to update
-              if let tabBarController = window.rootViewController?.children.first(where: { $0 is UITabBarController }) as? UITabBarController {
-                tabBarController.tabBar.setNeedsDisplay()
-                tabBarController.tabBar.layoutIfNeeded()
-              }
-            }
-          }
-        }
+        // Note: Theme change updates are now handled by @Observable system in AppState
+        // No need for NotificationCenter observers that conflict with SwiftUI observation
           
           Task {
               // Only initialize feed on first load
@@ -318,7 +300,7 @@ struct MainContentView18: View {
 
 @available(iOS 17.0, *)
 struct MainContentView17: View {
-  @Environment(AppState.self) private var appState
+  private let appState = AppState.shared
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
@@ -449,11 +431,7 @@ struct MainContentView17: View {
       }
       .onAppear {
           UITabBarItem.appearance().badgeColor = UIColor(Color.accentColor)
-        // Apply theme immediately when view appears
-        appState.themeManager.applyTheme(
-          theme: appState.appSettings.theme,
-          darkThemeMode: appState.appSettings.darkThemeMode
-        )
+        // Theme is already applied during AppState initialization - no need to reapply here
 
         // Initialize from notification manager
         notificationBadgeCount = appState.notificationManager.unreadCount
@@ -469,23 +447,8 @@ struct MainContentView17: View {
           }
         }
         
-        // Set up theme change observer to update UIKit appearances
-        NotificationCenter.default.addObserver(
-          forName: NSNotification.Name("ThemeChanged"),
-          object: nil,
-          queue: .main
-        ) { _ in
-          // Only force update tab bars here, since navigation bars are already handled by ThemeManager
-          if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            for window in windowScene.windows {
-              // Force tab bars to update
-              if let tabBarController = window.rootViewController?.children.first(where: { $0 is UITabBarController }) as? UITabBarController {
-                tabBarController.tabBar.setNeedsDisplay()
-                tabBarController.tabBar.layoutIfNeeded()
-              }
-            }
-          }
-        }
+        // Note: Theme change updates are now handled by @Observable system in AppState
+        // No need for NotificationCenter observers that conflict with SwiftUI observation
           
           Task {
               // Only initialize feed on first load

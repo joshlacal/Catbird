@@ -84,8 +84,4 @@ struct ShimmeringViewModifier: ViewModifier {
     }
 }
 
-extension View {
-    func shimmering() -> some View {
-        modifier(ShimmeringViewModifier())
-    }
-}
+// Note: shimmering() extension is defined elsewhere in the codebase

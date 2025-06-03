@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Foundation
+import NukeUI
 import Petrel
 import PhotosUI
 import SwiftUI
@@ -69,6 +70,7 @@ extension Sequence where Element: Hashable {
 struct PostComposerView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var viewModel: PostComposerViewModel
     @FocusState private var isTextFieldFocused: Bool
     @State private var showingDismissAlert = false
@@ -91,44 +93,7 @@ struct PostComposerView: View {
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Thread indicator if in thread mode
-                if viewModel.isThreadMode {
-                    threadIndicatorView
-                }
-                
-                // Parent post reply view if needed
-                if viewModel.parentPost != nil {
-                    ReplyingToView(parentPost: viewModel.parentPost!)
-                        .padding(.horizontal)
-                        .padding(.top)
-                }
-                
-                // Post editor area
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        textEditorSection
-
-                        // Quoted post preview if available
-                        if viewModel.quotedPost != nil {
-                            quotedPostPreview
-                        }
-
-                        mediaSection
-                        urlCardsSection
-                        languageSection
-                    }
-                    .padding()
-                }
-                
-                // Thread navigation if in thread mode
-                if viewModel.isThreadMode {
-                    threadNavigationView
-                }
-                
-                // Bottom toolbar
-                bottomToolbar
-            }
+            mainContentView
             .interactiveDismissDisabled(true)
             .navigationTitle(getNavigationTitle())
             .navigationBarTitleDisplayMode(.inline)
@@ -243,6 +208,12 @@ struct PostComposerView: View {
             .sheet(isPresented: $viewModel.showThreadgateOptions) {
                 ThreadgateOptionsView(settings: $viewModel.threadgateSettings)
             }
+            // GIF picker sheet
+            .sheet(isPresented: $viewModel.showingGifPicker) {
+                GifPickerView { gif in
+                    viewModel.selectGif(gif)
+                }
+            }
             // Alerts
             .alert(item: $viewModel.alertItem) { alertItem in
                 Alert(
@@ -258,6 +229,60 @@ struct PostComposerView: View {
             .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
                 viewModel.insertEmoji(emoji)
             }
+        }
+    }
+    
+    // MARK: - Main Content Views
+    
+    private var mainContentView: some View {
+        ZStack {
+            // Use theme background for entire view
+            Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                parentPostReplySection
+                mainComposerArea
+                bottomToolbar
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var parentPostReplySection: some View {
+        if viewModel.parentPost != nil {
+            ReplyingToView(parentPost: viewModel.parentPost!)
+                .padding(.horizontal)
+                .padding(.top)
+        }
+    }
+    
+    @ViewBuilder
+    private var mainComposerArea: some View {
+        if viewModel.isThreadMode {
+            threadVerticalView
+        } else {
+            singlePostEditor
+        }
+    }
+    
+    private var singlePostEditor: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                textEditorSection
+                quotedPostSection
+                mediaSection
+                urlCardsSection
+                languageSection
+            }
+            .padding()
+        }
+    }
+    
+    @ViewBuilder
+    private var quotedPostSection: some View {
+        if viewModel.quotedPost != nil {
+            quotedPostPreview
         }
     }
     
@@ -302,132 +327,102 @@ struct PostComposerView: View {
         }
     }
     
-    // Thread indicator showing current post in thread
-    private var threadIndicatorView: some View {
-        HStack(spacing: 4) {
-            Text("Thread")
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-            
-            Text("\(viewModel.currentThreadEntryIndex + 1)/\(viewModel.threadEntries.count)")
-                .appFont(AppTextRole.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(Color.accentColor.opacity(0.2))
-                .foregroundColor(.accentColor)
-                .cornerRadius(10)
-            
-            Spacer()
-            
-            Button(action: {
-                showThreadOptions.toggle()
-            }) {
-                Image(systemName: "ellipsis.circle")
-                    .foregroundColor(.accentColor)
-            }
-            .actionSheet(isPresented: $showThreadOptions) {
-                ActionSheet(
-                    title: Text("Thread Options"),
-                    buttons: [
-                        .default(Text("Remove this post")) {
-                            viewModel.removeThreadEntry(at: viewModel.currentThreadEntryIndex)
-                        },
-                        .destructive(Text("Exit thread mode")) {
-                            viewModel.disableThreadMode()
-                        },
-                        .cancel()
-                    ]
-                )
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .shadow(color: .black.opacity(0.05), radius: 2, y: 2)
-    }
     
-    // Thread navigation buttons for moving between thread posts
-    private var threadNavigationView: some View {
-        HStack {
-            Button(action: {
-                viewModel.previousThreadEntry()
-            }) {
-                HStack {
-                    Image(systemName: "arrow.left")
-                    Text("Previous")
+    // MARK: - Vertical Thread View
+    
+    private var threadVerticalView: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(viewModel.threadEntries.enumerated()), id: \.offset) { index, entry in
+                    VStack(spacing: 0) {
+                        // Thread connection line (top)
+                        if index > 0 {
+                            Rectangle()
+                                .fill(Color.accentColor.opacity(0.3))
+                                .frame(width: 2, height: 16)
+                                .offset(x: -140) // Align with avatar position
+                        }
+                        
+                        // Thread preview posts
+                        ThreadPreviewPostView(
+                            entry: entry,
+                            isCurrentPost: index == viewModel.currentThreadEntryIndex,
+                            onTap: {
+                                // Save current post content before switching
+                                viewModel.updateCurrentThreadEntry()
+                                viewModel.currentThreadEntryIndex = index
+                            }
+                        )
+                        .padding(.horizontal, 16)
+                        
+                        // Thread connection line (bottom)
+                        if index < viewModel.threadEntries.count - 1 {
+                            Rectangle()
+                                .fill(Color.accentColor.opacity(0.3))
+                                .frame(width: 2, height: 16)
+                                .offset(x: -140) // Align with avatar position
+                        }
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.1))
-                .foregroundColor(.accentColor)
-                .cornerRadius(8)
-            }
-            .disabled(viewModel.currentThreadEntryIndex == 0)
-            .opacity(viewModel.currentThreadEntryIndex == 0 ? 0.5 : 1)
-            
-            Spacer()
-            
-            Button(action: {
-                viewModel.nextThreadEntry()
-            }) {
-                HStack {
-                    Text(
-                        viewModel.currentThreadEntryIndex < viewModel.threadEntries.count - 1
-                        ? "Next" : "Add Post")
-                    Image(systemName: "arrow.right")
+                
+                // Add new post button at bottom
+                Button(action: {
+                    viewModel.addNewThreadEntry()
+                }) {
+                    HStack {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.3))
+                            .frame(width: 32, height: 32)
+                            .overlay(
+                                Image(systemName: "plus")
+                                    .appFont(size: 16)
+                                    .foregroundColor(.accentColor)
+                            )
+                        
+                        Text("Add another post")
+                            .appFont(AppTextRole.body)
+                            .foregroundColor(.accentColor)
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.accentColor)
-                .foregroundColor(.white)
-                .cornerRadius(8)
+                .buttonStyle(PlainButtonStyle())
             }
+            .padding(.vertical, 16)
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .shadow(color: .black.opacity(0.05), radius: 2, y: -2)
     }
     
     // MARK: - Existing UI Components
     
     private var textEditorSection: some View {
-        ZStack(alignment: .topLeading) {
-            // Background TextEditor for actual text input
-            TextEditor(text: $viewModel.postText)
-                .focused($isTextFieldFocused)
-                .task { @MainActor in
-                    isTextFieldFocused = true
-                }
-                .frame(minHeight: 120)
-                .padding(8)
-                .background(Color(.systemBackground))
-                .onChange(of: viewModel.postText) {
-                    viewModel.updatePostContent()
-                }
-                // Note: onPasteCommand is macOS only, iOS uses the paste button in toolbar
-                .opacity(viewModel.postText.isEmpty ? 1 : 0.1) // Make nearly transparent when there's text
-            
-            // Overlay with highlighted attributed text
-            if !viewModel.postText.isEmpty {
-                VStack(alignment: .leading) {
-                    Text(viewModel.attributedPostText)
-                        .frame(minHeight: 120, alignment: .topLeading)
-                        .padding(8)
-                        .multilineTextAlignment(.leading)
-                        .allowsHitTesting(false) // Allow touches to pass through to TextEditor
-                    
-                    Spacer()
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                // Background TextEditor for actual text input - no visible styling
+                TextEditor(text: $viewModel.postText)
+                    .focused($isTextFieldFocused)
+                    .task { @MainActor in
+                        isTextFieldFocused = true
+                    }
+                    .frame(minHeight: 120)
+                    .padding(12)
+                    .background(Color.clear) // Remove background styling
+                    .onChange(of: viewModel.postText) {
+                        viewModel.updatePostContent()
+                    }
+                
+                // Placeholder text
+                if viewModel.postText.isEmpty {
+                    Text("What's on your mind?")
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 20)
+                        .allowsHitTesting(false)
                 }
             }
             
-            // Placeholder text
-            if viewModel.postText.isEmpty {
-                Text("What's on your mind?")
-                    .foregroundColor(.gray)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 16)
-                    .allowsHitTesting(false)
-            }
-            
+            // Show mention suggestions below the text editor
             mentionSuggestionsView
         }
     }
@@ -458,7 +453,9 @@ struct PostComposerView: View {
     
     private var mediaSection: some View {
         Group {
-            if viewModel.videoItem != nil {
+            if let selectedGif = viewModel.selectedGif {
+                selectedGifView(selectedGif)
+            } else if viewModel.videoItem != nil {
                 // Fix the VideoPickerView call by providing all required parameters
                 VideoPickerView(
                     videoItem: $viewModel.videoItem,
@@ -491,6 +488,80 @@ struct PostComposerView: View {
         }
     }
     
+    private func selectedGifView(_ gif: TenorGif) -> some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            ZStack(alignment: .topTrailing) {
+                LazyImage(url: gifPreviewURL(for: gif)) { state in
+                    if let image = state.image {
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else if state.isLoading {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.systemGray6))
+                            .frame(height: 150)
+                            .overlay(
+                                ProgressView()
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.systemGray5))
+                            .frame(height: 150)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .foregroundColor(.secondary)
+                            )
+                    }
+                }
+                
+                Button(action: {
+                    viewModel.removeSelectedGif()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .appFont(AppTextRole.title1)
+                        .foregroundStyle(.white, Color(.systemGray3))
+                        .background(
+                            Circle()
+                                .fill(Color.black.opacity(0.3))
+                        )
+                }
+                .padding(8)
+            }
+            
+            // GIF info
+            HStack {
+                Image(systemName: "gift.fill")
+                    .foregroundColor(.accentColor)
+                
+                Text(gif.title.isEmpty ? "GIF" : gif.title)
+                    .appFont(AppTextRole.caption)
+                    .lineLimit(2)
+                
+                Spacer()
+                
+                Text("via Tenor")
+                    .appFont(AppTextRole.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 4)
+        }
+        .padding(.vertical, 8)
+    }
+    
+    private func gifPreviewURL(for gif: TenorGif) -> URL? {
+        // Use best quality animated GIF for preview - prioritize actual GIF format over MP4
+        if let gif = gif.media_formats.gif {
+            return URL(string: gif.url)
+        } else if let mediumgif = gif.media_formats.mediumgif {
+            return URL(string: mediumgif.url)
+        } else if let tinygif = gif.media_formats.tinygif {
+            return URL(string: tinygif.url)
+        }
+        return nil
+    }
+
     private func singleImageView(_ image: Image) -> some View {
         VStack(alignment: .trailing) {
             ZStack(alignment: .topTrailing) {
@@ -545,7 +616,7 @@ struct PostComposerView: View {
     private var languageSection: some View {
         Group {
             if !viewModel.selectedLanguages.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
+                ScrollView(Axis.Set.horizontal, showsIndicators: false) {
                     HStack {
                         ForEach(viewModel.selectedLanguages, id: \.self) { lang in
                             HStack {
@@ -588,120 +659,178 @@ struct PostComposerView: View {
         }
     }
     
+    // Helper computed properties for character count
+    private var remainingCharacters: Int {
+        viewModel.maxCharacterCount - viewModel.characterCount
+    }
+    
+    private var characterCountColor: Color {
+        let remaining = remainingCharacters
+        if remaining < 0 {
+            return .red
+        } else if remaining < 20 {
+            return .orange
+        } else if remaining < 50 {
+            return .yellow
+        } else {
+            return .secondary
+        }
+    }
+    
     // Modified bottom toolbar to include reply controls
     private var bottomToolbar: some View {
-        HStack {
-            // Thread toggle button (only show if not replying)
-            if viewModel.parentPost == nil {
-                Button(action: {
-                    if viewModel.isThreadMode {
-                        viewModel.disableThreadMode()
-                    } else {
-                        viewModel.enableThreadMode()
-                    }
-                }) {
-                    Image(
-                        systemName: viewModel.isThreadMode
-                        ? "x.circle.fill" : "plus.circle"
-                    )
-                    .appFont(size: 20)
-                    .foregroundStyle(.primary)
+        VStack(spacing: 0) {
+            // Character count indicator at top
+            HStack {
+                Spacer()
+                HStack(spacing: 6) {
+                    // Visual indicator circle
+                    Circle()
+                        .fill(characterCountColor)
+                        .frame(width: 8, height: 8)
+                    
+                    // Countdown display
+                    Text("\(remainingCharacters)")
+                        .appFont(AppTextRole.footnote)
+                        .fontWeight(.medium)
+                        .foregroundColor(characterCountColor)
                 }
             }
+            .padding(.horizontal)
+            .padding(.top, 8)
             
-            // Add reply controls button (threadgate)
-            if viewModel.parentPost == nil {
-                Button(action: {
-                    viewModel.showThreadgateOptions = true
-                }) {
-                    Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
-                        .appFont(size: 20)
-                        .foregroundStyle(.primary)
-                }
-            }
-            
-            // Language button
-            Menu {
-                ForEach(getAvailableLanguages(), id: \.self) { langContainer in
+            // Main toolbar
+            HStack(spacing: 16) {
+                // Media upload group
+                HStack(spacing: 12) {
                     Button(action: {
-                        viewModel.toggleLanguage(langContainer)
+                        photoPickerVisible = true
                     }) {
-                        let displayName = Locale.current.localizedString(
-                            forLanguageCode: langContainer.lang.languageCode?.identifier ?? ""
-                        ) ?? langContainer.lang.minimalIdentifier
-                        
-                        if viewModel.selectedLanguages.contains(langContainer) {
-                            Label(displayName, systemImage: "checkmark")
-                        } else {
-                            Text(displayName)
+                        Image(systemName: "photo")
+                            .appFont(size: 22)
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    Button(action: {
+                        videoPickerVisible = true
+                    }) {
+                        Image(systemName: "video")
+                            .appFont(size: 22)
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    if appState.appSettings.allowTenor {
+                        Button(action: {
+                            viewModel.showingGifPicker = true
+                        }) {
+                            Image(systemName: "gift")
+                                .appFont(size: 22)
+                                .foregroundStyle(viewModel.selectedGif != nil ? Color.accentColor : Color.primary)
                         }
                     }
+                    
+                    Button(action: {
+                        Task {
+                            await viewModel.handlePasteFromClipboard()
+                        }
+                    }) {
+                        Image(systemName: "doc.on.clipboard")
+                            .appFont(size: 22)
+                            .foregroundStyle(viewModel.hasClipboardMedia() ? Color.accentColor : Color.primary)
+                    }
+                    .disabled(!viewModel.hasClipboardMedia())
                 }
-            } label: {
-                Image(systemName: "globe")
-                    .appFont(size: 20)
-                    .foregroundStyle(.primary)
-            }
-            
-            // Labels button
-            Button(action: {
-                viewModel.showLabelSelector = true
-            }) {
-                Image(systemName: "tag")
-                    .appFont(size: 20)
-                    .foregroundStyle(.primary)
-            }
-            
-            // Emoji button
-            Button(action: {
-                showingEmojiPicker = true
-            }) {
-                Image(systemName: "face.smiling")
-                    .appFont(size: 20)
-                    .foregroundStyle(.primary)
-            }
-            
-            // Paste button
-            Button(action: {
-                Task {
-                    await viewModel.handlePasteFromClipboard()
+                
+                // Separator
+                Rectangle()
+                    .frame(width: 1, height: 20)
+                    .foregroundColor(.gray.opacity(0.3))
+                
+                // Text enhancement group
+                HStack(spacing: 12) {
+                    Button(action: {
+                        showingEmojiPicker = true
+                    }) {
+                        Image(systemName: "face.smiling")
+                            .appFont(size: 22)
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    Menu {
+                        ForEach(getAvailableLanguages(), id: \.self) { langContainer in
+                            Button(action: {
+                                viewModel.toggleLanguage(langContainer)
+                            }) {
+                                let displayName = Locale.current.localizedString(
+                                    forLanguageCode: langContainer.lang.languageCode?.identifier ?? ""
+                                ) ?? langContainer.lang.minimalIdentifier
+                                
+                                if viewModel.selectedLanguages.contains(langContainer) {
+                                    Label(displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "globe")
+                            .appFont(size: 22)
+                            .foregroundStyle(.primary)
+                    }
                 }
-            }) {
-                Image(systemName: "doc.on.clipboard")
-                    .appFont(size: 20)
-                    .foregroundStyle(viewModel.hasClipboardMedia() ? Color.accentColor : Color.primary)
+                
+                Spacer()
+                
+                // Post settings group (right side)
+                HStack(spacing: 12) {
+                    // Thread toggle button (only show if not replying)
+                    if viewModel.parentPost == nil {
+                        Button(action: {
+                            if viewModel.isThreadMode {
+                                viewModel.disableThreadMode()
+                            } else {
+                                viewModel.enableThreadMode()
+                            }
+                        }) {
+                            Image(
+                                systemName: viewModel.isThreadMode
+                                ? "minus.circle.fill" : "plus.circle.fill"
+                            )
+                            .appFont(size: 22)
+                            .foregroundStyle(viewModel.isThreadMode ? Color.orange : Color.accentColor)
+                        }
+                    }
+                    
+                    // Add reply controls button (threadgate)
+                    if viewModel.parentPost == nil {
+                        Button(action: {
+                            viewModel.showThreadgateOptions = true
+                        }) {
+                            Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
+                                .appFont(size: 22)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    
+                    // Labels button
+                    Button(action: {
+                        viewModel.showLabelSelector = true
+                    }) {
+                        Image(systemName: "tag")
+                            .appFont(size: 22)
+                            .foregroundStyle(.primary)
+                    }
+                }
             }
-            .disabled(!viewModel.hasClipboardMedia())
-            
-            // Add video button
-            Button(action: {
-                videoPickerVisible = true
-            }) {
-                Image(systemName: "video")
-                    .appFont(size: 20)
-                    .foregroundStyle(.primary)
-            }
-            
-            // Add photo button
-            Button(action: {
-                photoPickerVisible = true
-            }) {
-                Image(systemName: "photo")
-                    .appFont(size: 20)
-                    .foregroundStyle(.primary)
-            }
-            
-            Spacer()
-
-            // Character count
-            Text("\(viewModel.characterCount)/\(viewModel.maxCharacterCount)")
-                .appFont(AppTextRole.footnote)
-                .foregroundColor(viewModel.isOverCharacterLimit ? .red : .secondary)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
         }
-        .padding()
-        .background(
-            Color(.systemBackground)
-                .shadow(color: .black.opacity(0.1), radius: 3, y: -2)
+        .background(Color(.systemBackground))
+        .overlay(
+            Rectangle()
+                .frame(height: 0.5)
+                .foregroundColor(.gray.opacity(0.3)),
+            alignment: .top
         )
     }
     
@@ -879,4 +1008,141 @@ struct ComposeURLCardView: View {
       .padding(4)
     }
   }
+}
+
+// MARK: - Thread Components
+
+struct ThreadPreviewPostView: View {
+    let entry: ThreadEntry
+    let isCurrentPost: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            postContentView
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var postContentView: some View {
+        HStack(alignment: .top, spacing: 12) {
+            avatarView
+            VStack(alignment: .leading, spacing: 8) {
+                authorInfoView
+                textContentView
+                mediaIndicatorsView
+                characterCountView
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(backgroundView)
+        .overlay(borderView)
+    }
+    
+    private var avatarView: some View {
+        Circle()
+            .fill(Color.accentColor.opacity(0.3))
+            .frame(width: 32, height: 32)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .appFont(size: 16)
+                    .foregroundColor(.white)
+            )
+    }
+    
+    private var authorInfoView: some View {
+        HStack {
+            Text("You")
+                .appFont(AppTextRole.subheadline)
+                .fontWeight(.semibold)
+            
+            Text("@handle")
+                .appFont(AppTextRole.caption)
+                .foregroundColor(.secondary)
+            
+            Spacer()
+            
+            if isCurrentPost {
+                editingIndicatorView
+            }
+        }
+    }
+    
+    private var editingIndicatorView: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(Color.orange)
+                .frame(width: 6, height: 6)
+            Text("editing")
+                .appFont(AppTextRole.caption2)
+                .foregroundColor(.orange)
+        }
+    }
+    
+    private var textContentView: some View {
+        Group {
+            if !entry.text.isEmpty {
+                Text(entry.text)
+                    .appFont(AppTextRole.body)
+                    .lineLimit(4)
+                    .multilineTextAlignment(.leading)
+            } else {
+                Text("Empty post")
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.secondary)
+                    .italic()
+            }
+        }
+    }
+    
+    private var mediaIndicatorsView: some View {
+        Group {
+            if !entry.mediaItems.isEmpty || entry.videoItem != nil {
+                HStack(spacing: 8) {
+                    if !entry.mediaItems.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "photo")
+                                .appFont(size: 12)
+                            Text("\(entry.mediaItems.count)")
+                                .appFont(AppTextRole.caption2)
+                        }
+                        .foregroundColor(.secondary)
+                    }
+                    
+                    if entry.videoItem != nil {
+                        HStack(spacing: 4) {
+                            Image(systemName: "video")
+                                .appFont(size: 12)
+                            Text("1")
+                                .appFont(AppTextRole.caption2)
+                        }
+                        .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+    }
+    
+    private var characterCountView: some View {
+        HStack {
+            Spacer()
+            Text("\(entry.text.count)/300")
+                .appFont(AppTextRole.caption2)
+                .foregroundColor(entry.text.count > 300 ? .red : .secondary)
+        }
+    }
+    
+    private var backgroundView: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(isCurrentPost ? Color.orange.opacity(0.1) : Color(.systemGray6))
+    }
+    
+    private var borderView: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .stroke(
+                isCurrentPost ? Color.orange.opacity(0.5) : Color.clear,
+                lineWidth: 2
+            )
+    }
 }

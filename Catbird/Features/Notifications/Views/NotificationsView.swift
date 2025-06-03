@@ -90,14 +90,14 @@ struct NotificationsView: View {
       Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
     }
     .pickerStyle(.segmented)
-    .padding(.horizontal)
-    .padding(.bottom, 8)
+    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+    .listRowSeparator(.hidden)
   }
 
   @ViewBuilder
   private var notificationContentWithHeader: some View {
     if let error = viewModel.error {
-      VStack(spacing: 0) {
+      VStack(spacing: DesignTokens.Spacing.none) {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         
@@ -108,14 +108,14 @@ struct NotificationsView: View {
         )
       }
     } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
-      VStack(spacing: 0) {
+      VStack(spacing: DesignTokens.Spacing.none) {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         
         loadingView
       }
     } else if viewModel.groupedNotifications.isEmpty {
-      VStack(spacing: 0) {
+      VStack(spacing: DesignTokens.Spacing.none) {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         
@@ -155,16 +155,17 @@ struct NotificationsView: View {
   }
 
   private var emptyView: some View {
-    VStack(spacing: 16) {
+    VStack(spacing: DesignTokens.Spacing.xl) {
       Image(systemName: "bell.slash")
         .appFont(size: 48)
         .foregroundColor(.secondary)
 
       Text("No Notifications")
-        .appTitle2()
+        .enhancedAppHeadline()
         .fontWeight(.semibold)
 
       Text("You don't have any notifications yet")
+        .enhancedAppSubheadline()
         .foregroundColor(.secondary)
 
       Button(action: {
@@ -389,7 +390,7 @@ struct NotificationCard: View {
         Button {
           onTap(NavigationDestination.profile(notification.author.did.didString()))
         } label: {
-          HStack(spacing: 12) {
+          HStack(spacing: DesignTokens.Spacing.base) {
             LazyImage(url: URL(string: notification.author.avatar?.uriString() ?? "")) { state in
               if let image = state.image {
                 image
@@ -418,8 +419,8 @@ struct NotificationCard: View {
               .appFont(AppTextRole.caption)
               .foregroundColor(.secondary.opacity(0.6))
           }
-          .padding(.horizontal)
-          .padding(.vertical, 8)
+          .spacingBase(.horizontal)
+          .spacingMD(.vertical)
           .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -715,7 +716,7 @@ struct AvatarStack: View {
 
 #Preview {
   NotificationsView(
-    appState: AppState(),
+    appState: AppState.shared,
     selectedTab: .constant(2),
     lastTappedTab: .constant(nil)
   )

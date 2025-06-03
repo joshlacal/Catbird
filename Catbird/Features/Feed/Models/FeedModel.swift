@@ -95,7 +95,8 @@ final class FeedModel: StateInvalidationSubscriber {
 
       // Process posts using FeedTuner (following React Native pattern)
       logger.debug("🔍 About to call feedTuner.tune() with \(fetchedPosts.count) posts")
-      let slices = feedTuner.tune(fetchedPosts)
+      let filterSettings = await getFilterSettings()
+      let slices = feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
       logger.debug("🔍 FeedTuner returned \(slices.count) slices")
       let newPosts = slices.map { slice in
         // Convert to CachedFeedViewPost with thread metadata preserved
@@ -131,14 +132,17 @@ final class FeedModel: StateInvalidationSubscriber {
   }
 
   @MainActor
-  func setCachedFeed(_ cachedPosts: [AppBskyFeedDefs.FeedViewPost], cursor: String?) {
+  func setCachedFeed(_ cachedPosts: [AppBskyFeedDefs.FeedViewPost], cursor: String?) async {
     // Process posts using FeedTuner for consistency
-    let slices = feedTuner.tune(cachedPosts)
-    self.posts = slices.map { slice in
-      return CachedFeedViewPost(from: slice, feedType: "timeline")
+    let filterSettings = await getFilterSettings()
+    let slices = feedTuner.tune(cachedPosts, filterSettings: filterSettings)
+    await MainActor.run {
+      self.posts = slices.map { slice in
+        return CachedFeedViewPost(from: slice, feedType: "timeline")
+      }
+      self.cursor = cursor
+      self.hasMore = cursor != nil
     }
-    self.cursor = cursor
-    self.hasMore = cursor != nil
   }
 
   @MainActor
@@ -161,7 +165,8 @@ final class FeedModel: StateInvalidationSubscriber {
       )
 
       // Process new posts using FeedTuner
-      let newSlices = feedTuner.tune(fetchedPosts)
+      let filterSettings = await getFilterSettings()
+      let newSlices = feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
       let newCachedPosts = newSlices.map { slice in
         return CachedFeedViewPost(from: slice, feedType: fetchType.identifier)
       }
@@ -363,10 +368,11 @@ final class FeedModel: StateInvalidationSubscriber {
     fetchedPosts: [AppBskyFeedDefs.FeedViewPost],
     newCursor: String?,
     filterSettings: FeedFilterSettings
-  ) -> [CachedFeedViewPost] {
+  ) async -> [CachedFeedViewPost] {
     // First process posts using FeedTuner (following React Native pattern)
     logger.debug("🔍 processAndFilterPosts: About to call feedTuner.tune() with \(fetchedPosts.count) posts")
-    let slices = feedTuner.tune(fetchedPosts)
+    let tunerSettings = await getFilterSettings()
+    let slices = feedTuner.tune(fetchedPosts, filterSettings: tunerSettings)
     logger.debug("🔍 processAndFilterPosts: FeedTuner returned \(slices.count) slices")
     
     // Convert slices to cached posts
@@ -444,7 +450,7 @@ final class FeedModel: StateInvalidationSubscriber {
       appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: fetch)
 
       // Process and filter posts (this now includes deduplication logic)
-      let filteredPosts = processAndFilterPosts(
+      let filteredPosts = await processAndFilterPosts(
         fetchedPosts: fetchedPosts,
         newCursor: newCursor,
         filterSettings: filterSettings
@@ -504,7 +510,7 @@ final class FeedModel: StateInvalidationSubscriber {
       )
 
       // Process and filter posts (this now includes deduplication logic)
-      let filteredNewPosts = processAndFilterPosts(
+      let filteredNewPosts = await processAndFilterPosts(
         fetchedPosts: fetchedPosts,
         newCursor: newCursor,
         filterSettings: filterSettings
@@ -589,6 +595,10 @@ final class FeedModel: StateInvalidationSubscriber {
     case .postLiked(_), .postUnliked(_), .postReposted(_), .postUnreposted(_):
       // These are handled by PostShadowManager, no feed refresh needed
       break
+    case .feedListChanged:
+      // Feed list changes don't affect individual feed content,
+      // this is handled at the feeds management level
+      break
     }
   }
   
@@ -629,7 +639,8 @@ final class FeedModel: StateInvalidationSubscriber {
       post: post,
       reply: nil,
       reason: nil,
-      feedContext: nil
+      feedContext: nil,
+      reqId: nil
     )
     
     // Create a cached post with temporary flag
@@ -649,6 +660,28 @@ final class FeedModel: StateInvalidationSubscriber {
     Task {
       try? await Task.sleep(for: .seconds(1))
       await refreshFeedAfterEvent()
+    }
+  }
+  
+  // MARK: - Helper Methods
+  
+  /// Get current feed filter settings from preferences and app settings
+  private func getFilterSettings() async -> FeedTunerSettings {
+    do {
+      let preferences = try await appState.preferencesManager.getPreferences()
+      let feedPref = preferences.feedViewPref
+      
+      return FeedTunerSettings(
+        hideReplies: feedPref?.hideReplies ?? false,
+        hideRepliesByUnfollowed: feedPref?.hideRepliesByUnfollowed ?? false,
+        hideReposts: feedPref?.hideReposts ?? false,
+        hideQuotePosts: feedPref?.hideQuotePosts ?? false,
+        hideNonPreferredLanguages: appState.appSettings.hideNonPreferredLanguages,
+        preferredLanguages: appState.appSettings.contentLanguages
+      )
+    } catch {
+      logger.warning("Failed to get feed preferences, using defaults: \(error)")
+      return .default
     }
   }
 }

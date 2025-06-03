@@ -430,7 +430,7 @@ struct RefinedSearchView: View {
 
 // MARK: - Preview
 #Preview {
-    @Previewable @State var appState = AppState()
+    @Previewable @State var appState = AppState.shared
     let selectedTab = Binding.constant(1)
     
     RefinedSearchView(appState: appState, selectedTab: selectedTab, lastTappedTab: .constant(1))

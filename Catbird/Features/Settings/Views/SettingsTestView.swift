@@ -156,5 +156,5 @@ struct SettingsTestView: View {
 
 #Preview {
     SettingsTestView()
-        .environment(AppState())
+        .environment(AppState.shared)
 }

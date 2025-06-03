@@ -208,7 +208,7 @@ struct AdvancedFilterView: View {
 
 #Preview {
     // Create a mock view model for preview
-    let appState = AppState()
+    let appState = AppState.shared
     let viewModel = RefinedSearchViewModel(appState: appState)
     
     return AdvancedFilterView(viewModel: viewModel)

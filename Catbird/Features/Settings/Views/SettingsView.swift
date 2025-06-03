@@ -4,6 +4,7 @@ import Petrel
 
 struct SettingsView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var currentColorScheme
   @State private var isLoggingOut = false
   @State private var error: Error?
   @State private var isShowingAccountSwitcher = false
@@ -211,6 +212,15 @@ struct SettingsView: View {
       }
       .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
+      .appDisplayScale(appState: appState)
+      .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+      .toolbar {
+        ToolbarItem(placement: .navigationBarTrailing) {
+          Button("Done") {
+            dismiss()
+          }
+        }
+      }
       .alert("Error", isPresented: .constant(error != nil)) {
         Button("OK") {
           error = nil
@@ -296,6 +306,7 @@ struct SettingsView: View {
 // MARK: - Component Views
 
 struct AccountHeaderView: View {
+    @Environment(\.colorScheme) private var currentColorScheme
   @Binding var isShowingAccountSwitcher: Bool
   let availableAccounts: Int
   let appState: AppState
@@ -339,7 +350,7 @@ struct AccountHeaderView: View {
       )
       .padding(.horizontal)
       .padding(.bottom, 8)
-      .background(Color(.secondarySystemBackground))
+      .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: currentColorScheme))
       .clipShape(RoundedRectangle(cornerRadius: 10))
       .id(appState.currentUserDID)
     }
@@ -465,5 +476,5 @@ extension Bundle {
 
 #Preview {
   SettingsView()
-    .environment(AppState())
+    .environment(AppState.shared)
 }

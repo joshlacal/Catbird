@@ -712,7 +712,7 @@ struct ProfileHeader: View {
     private let bannerHeight: CGFloat = 150
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.none) {
             // Banner and Avatar
             bannerView
             
@@ -794,7 +794,7 @@ struct ProfileHeader: View {
     }
     
     private var profileInfoContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
             // Add space for the avatar overflow and position follow button
             ZStack(alignment: .trailing) {
                 // Space for avatar overflow
@@ -813,24 +813,24 @@ struct ProfileHeader: View {
             }
             
             // Display name and handle
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     
                     Text(profile.displayName ?? profile.handle.description)
-                        .appFont(AppTextRole.title3)
+                        .enhancedAppHeadline()
                         .fontWeight(.bold)
                         .lineLimit(nil)
                         .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
                     
-            HStack(spacing: 0) {
+            HStack(spacing: DesignTokens.Spacing.none) {
 
                 Text("@\(profile.handle)")
-                    .appFont(AppTextRole.subheadline)
+                    .enhancedAppSubheadline()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
                 if profile.viewer?.followedBy != nil {
                     FollowsBadgeView()
-                        .padding(.leading, 4)
+                        .spacingXS(.leading)
                 }
             }
             .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
@@ -840,20 +840,20 @@ struct ProfileHeader: View {
             // Bio
             if let description = profile.description, !description.isEmpty {
                 Text(description)
-                    .appFont(AppTextRole.subheadline)
+                    .enhancedAppBody()
                     .lineLimit(nil)
                     .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
             }
             
             // Stats
-            HStack(spacing: 16) {
+            HStack(spacing: DesignTokens.Spacing.xl) {
                 // Following
                 Button(action: {
                     
                     path.append(ProfileNavigationDestination.following(profile.did.didString()))
                     
                 }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
                         Text("\(profile.followsCount ?? 0)")
                             .fixedSize(horizontal: true, vertical: false)
                             .appFont(AppTextRole.subheadline)
@@ -871,7 +871,7 @@ struct ProfileHeader: View {
                 Button(action: {
                     path.append(ProfileNavigationDestination.followers(profile.did.didString()))
                 }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
                         Text("\(profile.followersCount ?? 0)")
                             .fixedSize(horizontal: true, vertical: false)
                             .appFont(AppTextRole.subheadline)
@@ -1054,7 +1054,7 @@ struct ProfileHeader: View {
 
 // MARK: - Preview
 #Preview {
-  let appState = AppState()
+  let appState = AppState.shared
     NavigationStack {
     UnifiedProfileView(
       appState: appState,

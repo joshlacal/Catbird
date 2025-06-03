@@ -77,6 +77,25 @@ struct ContentMediaSettingsView: View {
                 }
             }
             
+            // Language Filtering
+            Section("Language Filtering") {
+                Toggle("Hide posts in non-preferred languages", isOn: Binding(
+                    get: { appState.appSettings.hideNonPreferredLanguages },
+                    set: { appState.appSettings.hideNonPreferredLanguages = $0 }
+                ))
+                .tint(.blue)
+                
+                Toggle("Show language indicators on posts", isOn: Binding(
+                    get: { appState.appSettings.showLanguageIndicators },
+                    set: { appState.appSettings.showLanguageIndicators = $0 }
+                ))
+                .tint(.blue)
+                
+                NavigationLink("Manage Languages") {
+                    LanguageSettingsView()
+                }
+            }
+            
             // Thread View Preferences
             Section("Thread Display") {
                 if isLoadingThreadPrefs {
@@ -137,6 +156,12 @@ struct ContentMediaSettingsView: View {
                 Toggle("GIPHY", isOn: Binding(
                     get: { appState.appSettings.allowGiphy },
                     set: { appState.appSettings.allowGiphy = $0 }
+                ))
+                .tint(.blue)
+                
+                Toggle("Tenor", isOn: Binding(
+                    get: { appState.appSettings.allowTenor },
+                    set: { appState.appSettings.allowTenor = $0 }
                 ))
                 .tint(.blue)
                 
@@ -278,6 +303,7 @@ struct ContentMediaSettingsView: View {
         appState.appSettings.allowVimeo = true
         appState.appSettings.allowTwitch = true
         appState.appSettings.allowGiphy = true
+        appState.appSettings.allowTenor = true
         appState.appSettings.allowSpotify = true
         appState.appSettings.allowAppleMusic = true
         appState.appSettings.allowSoundCloud = true
@@ -307,6 +333,6 @@ struct ContentMediaSettingsView: View {
 #Preview {
     NavigationStack {
         ContentMediaSettingsView()
-            .environment(AppState())
+            .environment(AppState.shared)
     }
 }

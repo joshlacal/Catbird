@@ -16,6 +16,7 @@ import Petrel
     let url: URL
     let type: VideoType
     let aspectRatio: CGFloat
+    let thumbnailURL: URL?
     var currentTime: Double = 0
     var duration: Double?
     var isLoading = false
@@ -34,10 +35,11 @@ import Petrel
         }
     }
     
-    init(id: String, url: URL, type: VideoType, aspectRatio: CGFloat) {
+    init(id: String, url: URL, type: VideoType, aspectRatio: CGFloat, thumbnailURL: URL? = nil) {
         self.id = id
         self.url = url
         self.type = type
         self.aspectRatio = aspectRatio
+        self.thumbnailURL = thumbnailURL
     }
 }

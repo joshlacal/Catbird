@@ -538,25 +538,31 @@ final class PostManager {
       
       // Trigger state invalidation for thread creation
       if let appState = appState, let rootRef = rootRef {
-        Task { @MainActor in
-          // Create a temporary post for the root of the thread
-          let tempPost = try createTemporaryPost(
-            text: posts[0],
-            did: did,
-            uri: rootRef.uri,
-            cid: rootRef.cid,
-            parentPost: nil,
-            embed: nil, // TODO: Support embeds in threads
-            languages: languages,
-            labels: selfLabels,
-            createdAt: ATProtocolDate(date: currentDate)
-          )
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
           
-          // Notify that a new post (thread root) was created
-          appState.stateInvalidationBus.notify(.postCreated(tempPost))
+          do {
+            // Create a temporary post for the root of the thread
+            let tempPost = try self.createTemporaryPost(
+              text: posts[0],
+              did: did,
+              uri: rootRef.uri,
+              cid: rootRef.cid,
+              parentPost: nil,
+              embed: embeds?.first ?? nil,
+              languages: languages,
+              labels: selfLabels,
+              createdAt: ATProtocolDate(date: currentDate)
+            )
           
-          // Also notify thread update for the new thread
-          appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
+            // Notify that a new post (thread root) was created
+            appState.stateInvalidationBus.notify(.postCreated(tempPost))
+            
+            // Also notify thread update for the new thread
+            appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
+          } catch {
+            self.logger.error("Failed to create temporary post for thread notification: \(error)")
+          }
         }
       }
 

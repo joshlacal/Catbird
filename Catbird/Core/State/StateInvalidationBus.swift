@@ -16,6 +16,7 @@ enum StateInvalidationEvent {
   case threadUpdated(rootUri: String)
   case chatMessageReceived
   case notificationsUpdated
+  case feedListChanged  // New event for when feeds are added/removed
 }
 
 /// Central event bus for coordinating state invalidation across the app
@@ -179,6 +180,8 @@ final class StateInvalidationBus {
       return "chatMessageReceived"
     case .notificationsUpdated:
       return "notificationsUpdated"
+    case .feedListChanged:
+      return "feedListChanged"
     }
   }
   
@@ -208,6 +211,8 @@ final class StateInvalidationBus {
       return "chatMessageReceived"
     case .notificationsUpdated:
       return "notificationsUpdated"
+    case .feedListChanged:
+      return "feedListChanged"
     }
   }
 }

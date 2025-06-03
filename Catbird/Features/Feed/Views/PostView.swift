@@ -56,10 +56,10 @@ var id: String {
     }
   }
 
-  // Using multiples of 3 for spacing
+  // Using design tokens for consistent spacing
   private static let baseUnit: CGFloat = 3
-  private static let avatarSize: CGFloat = 48
-  private static let avatarContainerWidth: CGFloat = 54
+  private static let avatarSize: CGFloat = DesignTokens.Size.avatarLG  // 48pt (16 * 3)
+  private static let avatarContainerWidth: CGFloat = DesignTokens.Spacing.custom(18)  // 54pt (18 * 3)
 
   // MARK: - Initialization
   init(
@@ -87,7 +87,7 @@ var id: String {
 
   // MARK: - Body
   var body: some View {
-    HStack(alignment: .top, spacing: 0) {
+      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
       // Use the extracted AuthorAvatarColumn view
       AuthorAvatarColumn(
         author: postState.currentPost.author,
@@ -97,9 +97,9 @@ var id: String {
       )
 
       // Content column
-      VStack(alignment: .leading, spacing: 0) {
-        // Add content label view if there are labels
-        if let labels = postState.currentPost.labels, !labels.isEmpty {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        // Only show content labels if there's no embed - embeds handle their own labels
+        if let labels = postState.currentPost.labels, !labels.isEmpty, postState.currentPost.embed == nil {
           ContentLabelView(labels: labels)
             .padding(.bottom, PostView.baseUnit)
         }
@@ -111,7 +111,7 @@ var id: String {
         if let embed = postState.currentPost.embed {
           embedContent(embed, labels: postState.currentPost.labels)
             .environment(\.postID, id)
-            .padding(.vertical, PostView.baseUnit)
+            .padding(.bottom, PostView.baseUnit)
             .fixedSize(horizontal: false, vertical: true)
         }
 
@@ -125,6 +125,8 @@ var id: String {
       }
       .padding(.top, PostView.baseUnit)
     }
+    .appDisplayScale(appState: appState)
+    .contrastAwareBackground(appState: appState, defaultColor: .clear)
     .transaction { t in  // Disable initial animations
       if !initialLoadComplete {
         t.animation = nil
@@ -177,6 +179,7 @@ var id: String {
           postEllipsisMenuView
         }
         .padding(.horizontal, PostView.baseUnit)
+
 
         if let grandparentAuthor = grandparentAuthor {
           replyIndicatorView(grandparentAuthor: grandparentAuthor)

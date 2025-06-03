@@ -64,6 +64,7 @@ final class AuthenticationManager {
   // Biometric authentication
   private(set) var biometricAuthEnabled = false
   private(set) var biometricType: LABiometryType = .none
+  private(set) var lastBiometricError: LAError?
 
   // OAuth configuration
   private let oauthConfig = OAuthConfiguration(
@@ -605,6 +606,8 @@ final class AuthenticationManager {
   /// Enable or disable biometric authentication
   @MainActor
   func setBiometricAuthEnabled(_ enabled: Bool) async {
+    lastBiometricError = nil
+    
     guard biometricType != .none else {
       logger.warning("Cannot enable biometric auth: not available on device")
       return
@@ -619,6 +622,7 @@ final class AuthenticationManager {
         logger.info("Biometric authentication enabled")
       } else {
         logger.warning("Failed to enable biometric authentication")
+        // Keep biometricAuthEnabled as false, lastBiometricError is already set
       }
     } else {
       biometricAuthEnabled = false
@@ -652,6 +656,7 @@ final class AuthenticationManager {
         return false
       }
     } catch let error as LAError {
+      lastBiometricError = error
       switch error.code {
       case .userCancel:
         logger.info("User cancelled biometric authentication")
