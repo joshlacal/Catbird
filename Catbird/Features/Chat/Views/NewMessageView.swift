@@ -29,7 +29,9 @@ struct NewMessageView: View {
     NavigationStack {
       VStack(spacing: 0) {
         // Search field
-        SearchBar(text: $searchText, placeholder: "Search for people", autoFocus: true)
+        SearchBarView(searchText: $searchText, placeholder: "Search for people") {
+          // TODO: Implement search functionality
+        }
           .padding(.horizontal)
           .padding(.top)
 

@@ -46,6 +46,9 @@ final class AuthenticationManager {
 
   // Current authentication state - the source of truth
   private(set) var state: AuthState = .initializing
+  
+  // Handle storage for multi-account support
+  private let handleStorageKey = "catbird_account_handles"
 
   // State change handling with async streams
   @ObservationIgnored
@@ -161,44 +164,44 @@ final class AuthenticationManager {
 
     logger.debug("Checking authentication state")
 
-    do {
-      // First, try to refresh token if it exists with retry logic
-      if await client.hasValidSession() {
-        let refreshSuccess = await refreshTokenWithRetry(client: client)
-        if !refreshSuccess {
-          logger.warning("Token refresh failed after retries, proceeding with existing session")
-        }
+    // First, try to refresh token if it exists with retry logic
+    if await client.hasValidSession() {
+      let refreshSuccess = await refreshTokenWithRetry(client: client)
+      if !refreshSuccess {
+        logger.warning("Token refresh failed after retries, proceeding with existing session")
       }
+    }
 
-      // After potential refresh, check session validity
-      let hasValidSession = await client.hasValidSession()
+    // After potential refresh, check session validity
+    let hasValidSession = await client.hasValidSession()
 
-      if hasValidSession {
-        // Get user DID
-        do {
-          let did = try await client.getDid()
+    if hasValidSession {
+      // Get user DID
+      do {
+        let did = try await client.getDid()
 
-          self.handle = try await client.getHandle()
-          logger.info("User is authenticated with DID: \(String(describing: did))")
+        self.handle = try await client.getHandle()
+        logger.info("User is authenticated with DID: \(String(describing: did))")
 
-          // Update state properly through the state update method
-          await MainActor.run {
-            updateState(.authenticated(userDID: did))
-            logger.info("Auth state updated to authenticated via proper channels")
-
-            // Double check the state was updated properly
-            logger.info("Current state after update: \(String(describing: self.state))")
-          }
-        } catch {
-          logger.error("Error fetching user identity: \(error.localizedDescription)")
-          updateState(.unauthenticated)
+        // Store handle for multi-account support
+        if let handle = self.handle {
+          storeHandle(handle, for: did)
         }
-      } else {
-        logger.info("No valid session found")
+
+        // Update state properly through the state update method
+        await MainActor.run {
+          updateState(.authenticated(userDID: did))
+          logger.info("Auth state updated to authenticated via proper channels")
+
+          // Double check the state was updated properly
+          logger.info("Current state after update: \(String(describing: self.state))")
+        }
+      } catch {
+        logger.error("Error fetching user identity: \(error.localizedDescription)")
         updateState(.unauthenticated)
       }
-    } catch let error {
-      logger.error("Error during authentication state check: \(error.localizedDescription)")
+    } else {
+      logger.info("No valid session found")
       updateState(.unauthenticated)
     }
   }
@@ -373,6 +376,11 @@ final class AuthenticationManager {
     let did = try await client.getDid() // Propagate error if this fails
     self.handle = try await client.getHandle() // Propagate error if this fails
 
+    // Store handle for multi-account support
+    if let handle = self.handle {
+      storeHandle(handle, for: did)
+    }
+
     // Update state
     updateState(.authenticated(userDID: did))
     logger.info("Authentication successful for user \(self.handle ?? "unknown")")
@@ -424,6 +432,65 @@ final class AuthenticationManager {
       lhs.did == rhs.did
     }
   }
+  
+  // MARK: - Handle Storage
+  
+  /// Store handle for a specific DID
+  private func storeHandle(_ handle: String, for did: String) {
+    var handles = getStoredHandles()
+    handles[did] = handle
+    
+    if let data = try? JSONEncoder().encode(handles) {
+      UserDefaults.standard.set(data, forKey: handleStorageKey)
+    }
+  }
+  
+  /// Get stored handle for a specific DID
+  private func getStoredHandle(for did: String) -> String? {
+    let handles = getStoredHandles()
+    return handles[did]
+  }
+  
+  /// Get all stored handles
+  private func getStoredHandles() -> [String: String] {
+    guard let data = UserDefaults.standard.data(forKey: handleStorageKey),
+          let handles = try? JSONDecoder().decode([String: String].self, from: data) else {
+      return [:]
+    }
+    return handles
+  }
+  
+  /// Remove stored handle for a specific DID
+  private func removeStoredHandle(for did: String) {
+    var handles = getStoredHandles()
+    handles.removeValue(forKey: did)
+    
+    if let data = try? JSONEncoder().encode(handles) {
+      UserDefaults.standard.set(data, forKey: handleStorageKey)
+    }
+  }
+  
+  /// Remove an account completely (including stored handle)
+  @MainActor
+  func removeAccount(did: String) async {
+    logger.info("Removing account: \(did)")
+    
+    // Remove stored handle
+    removeStoredHandle(for: did)
+    
+    // Remove from client if available
+    if let client = client {
+      do {
+        try await client.removeAccount(did: did)
+        logger.info("Account removed successfully")
+      } catch {
+        logger.error("Error removing account: \(error.localizedDescription)")
+      }
+    }
+    
+    // Refresh available accounts
+    await refreshAvailableAccounts()
+  }
 
   /// Get list of all available accounts
   @MainActor
@@ -454,9 +521,13 @@ final class AuthenticationManager {
           if account.did == currentDID {
           // For current account, we can get handle directly
           handle = try? await client.getHandle()
+          // Also store it for future use
+          if let handle = handle {
+            storeHandle(handle, for: account.did)
+          }
         } else {
-          // For other accounts, we'll need to get from stored configuration
-          // Handle will be nil, but that's ok for now
+          // For other accounts, get from stored handles
+          handle = getStoredHandle(for: account.did)
         }
 
           let isActive = account.did == currentDID
@@ -536,35 +607,6 @@ final class AuthenticationManager {
     }
   }
 
-  /// Remove an account
-  @MainActor
-  func removeAccount(did: String) async throws {
-    guard let client = client else {
-      throw AuthError.clientNotInitialized
-    }
-
-    logger.info("Removing account with DID: \(did)")
-
-    // Remove the account using client method - Propagating errors via function signature
-    try await client.removeAccount(did: did)
-
-    // If this was the current account, state would have been updated by the client
-    // Refresh our available accounts list
-    await refreshAvailableAccounts()
-
-    // Check if we need to update our state
-    if case .authenticated(let currentDid) = state, currentDid == did {
-      if let firstAccount = availableAccounts.first {
-        // Switch to another account if available - Propagating errors
-        try await switchToAccount(did: firstAccount.did)
-      } else {
-        // No accounts left, go to unauthenticated state
-        updateState(.unauthenticated)
-      }
-    }
-
-    logger.info("Successfully removed account with DID: \(did)")
-  }
 
   /// Get current active account info
   @MainActor

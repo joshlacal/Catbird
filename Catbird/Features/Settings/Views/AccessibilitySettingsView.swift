@@ -63,46 +63,16 @@ struct AccessibilitySettingsView: View {
                 ))
                 .tint(.blue)
                 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Display Scale")
-                        Spacer()
-                        Text("\(Int(appState.appSettings.displayScale * 100))%")
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    Slider(
-                        value: Binding(
-                            get: { appState.appSettings.displayScale },
-                            set: { appState.appSettings.displayScale = $0 }
-                        ),
-                        in: 0.85...1.3,
-                        step: 0.05
-                    )
-                    .tint(.blue)
-                    
-                    HStack {
-                        Text("85%")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("130%")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                
                 // Preview component
                 DisplayPreviewView(
                     increaseContrast: appState.appSettings.increaseContrast,
-                    boldText: appState.appSettings.boldText,
-                    scale: appState.appSettings.displayScale
+                    boldText: appState.appSettings.boldText
                 )
                 .padding(.vertical, 8)
             } header: {
                 Text("Display Settings")
             } footer: {
-                Text("These settings affect how content is displayed throughout the app.")
+                Text("These settings affect contrast and text weight. Text size is controlled by iOS Dynamic Type in Settings → Accessibility → Display & Text Size.")
                     .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -321,7 +291,6 @@ struct AccessibilitySettingsView: View {
 private struct DisplayPreviewView: View {
     let increaseContrast: Bool
     let boldText: Bool
-    let scale: Double
     
     @Environment(AppState.self) private var appState
     
@@ -338,7 +307,6 @@ private struct DisplayPreviewView: View {
                         Circle()
                             .fill(Color.blue)
                             .frame(width: 40, height: 40)
-                            .appDisplayScale(appState: appState)
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Sample User")
@@ -377,7 +345,6 @@ private struct DisplayPreviewView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.adaptiveBorder(appState: appState), lineWidth: appState.appSettings.increaseContrast ? 2 : 1)
                 )
-                .appDisplayScale(appState: appState)
             }
         }
     }

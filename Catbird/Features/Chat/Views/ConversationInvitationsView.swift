@@ -10,18 +10,23 @@ struct ConversationInvitationsView: View {
   
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationInvitationsView")
   
-  // Filter for conversations that might be invitations (could be based on status or other criteria)
+  // Filter for conversations that are actual invitations based on their status
   private var invitations: [ChatBskyConvoDefs.ConvoView] {
-    // This would need to be adapted based on how invitations are identified in the actual API
-    // For now, we'll use conversations with no last message as a proxy for invitations
-    appState.chatManager.conversations.filter { conversation in
-      conversation.lastMessage == nil && conversation.unreadCount == 0
-    }
+    // Use the proper message requests from ChatManager
+    // Message requests are invitations that haven't been accepted yet
+    return appState.chatManager.messageRequests
   }
   
   var body: some View {
     List {
-      if invitations.isEmpty {
+      if isLoading && invitations.isEmpty {
+        HStack {
+          Spacer()
+          ProgressView("Loading invitations...")
+          Spacer()
+        }
+        .listRowSeparator(.hidden)
+      } else if invitations.isEmpty {
         ContentUnavailableView {
           Label("No Pending Invitations", systemImage: "tray")
         } description: {
@@ -54,16 +59,25 @@ struct ConversationInvitationsView: View {
   }
   
   private func loadInvitations() async {
-    // This would load pending invitations from the server
-    // For now, we'll refresh the conversations list
-    await appState.chatManager.loadConversations(refresh: true)
+    // Load pending invitations (message requests) from the server
+    isLoading = true
+    defer { isLoading = false }
+    
+    // Load message requests specifically - these are conversation invitations
+    await appState.chatManager.loadMessageRequests(refresh: true)
+    
+    logger.debug("Loaded \(appState.chatManager.messageRequests.count) conversation invitations")
   }
   
   private func acceptInvitation(_ conversation: ChatBskyConvoDefs.ConvoView) {
     Task {
-      let success = await appState.chatManager.acceptConversation(convoId: conversation.id)
+      // Use the dedicated message request acceptance method
+      let success = await appState.chatManager.acceptMessageRequest(convoId: conversation.id)
       if success {
         logger.debug("Successfully accepted invitation for conversation: \(conversation.id)")
+        
+        // Refresh invitations list to remove the accepted one
+        await loadInvitations()
       } else {
         logger.error("Failed to accept invitation for conversation: \(conversation.id)")
       }
@@ -72,8 +86,16 @@ struct ConversationInvitationsView: View {
   
   private func declineInvitation(_ conversation: ChatBskyConvoDefs.ConvoView) {
     Task {
-      await appState.chatManager.leaveConversation(convoId: conversation.id)
-      logger.debug("Declined invitation for conversation: \(conversation.id)")
+      // Use the dedicated message request decline method
+      let success = await appState.chatManager.declineMessageRequest(convoId: conversation.id)
+      if success {
+        logger.debug("Successfully declined invitation for conversation: \(conversation.id)")
+        
+        // Refresh invitations list to remove the declined one
+        await loadInvitations()
+      } else {
+        logger.error("Failed to decline invitation for conversation: \(conversation.id)")
+      }
     }
   }
 }

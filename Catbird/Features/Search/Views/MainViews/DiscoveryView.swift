@@ -22,7 +22,9 @@ struct DiscoveryView: View {
                 // Recent profile searches
                 
                 // Trending topics
-                if !viewModel.trendingTopics.isEmpty, let client = appState.atProtoClient {
+                if !viewModel.trendingTopics.isEmpty, 
+                   let client = appState.atProtoClient,
+                   appState.appSettings.showTrendingTopics {
                     TrendingTopicsSection(
                         topics: viewModel.trendingTopics,
                         onSelect: { term in

@@ -42,6 +42,17 @@ final class URLHandler {
         // Update in-app browser setting from AppSettings
         self.useInAppBrowser = appState.appSettings.useInAppBrowser
         
+        // Listen for settings changes
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("AppSettingsChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            self.useInAppBrowser = appState.appSettings.useInAppBrowser
+            self.logger.debug("URLHandler updated useInAppBrowser setting: \(self.useInAppBrowser)")
+        }
+        
         logger.debug("URLHandler configured with AppState reference, useInAppBrowser: \(self.useInAppBrowser)")
     }
     

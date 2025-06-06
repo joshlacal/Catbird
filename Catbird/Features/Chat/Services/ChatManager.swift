@@ -5,6 +5,13 @@ import Petrel
 import SwiftUI
 import UIKit
 
+/// Data structure for post embeds in chat messages
+struct PostEmbedData: Codable {
+  let postView: AppBskyFeedDefs.PostView
+  let authorHandle: String
+  let displayText: String
+}
+
 /// Manages chat operations for the Bluesky chat feature
 @Observable
 final class ChatManager: StateInvalidationSubscriber {
@@ -448,7 +455,7 @@ final class ChatManager: StateInvalidationSubscriber {
     // 4. If success, update local state (e.g., mark conversation as muted)
     let muteInput = ChatBskyConvoMuteConvo.Input(convoId: convoId)
      do {
-      let (responseCode, response) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
+      let (responseCode, _) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error muting conversation \(convoId): HTTP \(responseCode)")
@@ -479,7 +486,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     let unmuteInput = ChatBskyConvoUnmuteConvo.Input(convoId: convoId)
      do {
-      let (responseCode, response) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
+      let (responseCode, _) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error unmuting conversation \(convoId): HTTP \(responseCode)")
@@ -509,7 +516,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     let acceptInput = ChatBskyConvoAcceptConvo.Input(convoId: convoId)
      do {
-      let (responseCode, response) = try await client.chat.bsky.convo.acceptConvo(input: acceptInput)
+      let (responseCode, _) = try await client.chat.bsky.convo.acceptConvo(input: acceptInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error accepting conversation \(convoId): HTTP \(responseCode)")
@@ -603,6 +610,11 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func sendMessage(convoId: String, text: String) async -> Bool {
+    return await sendMessage(convoId: convoId, text: text, embed: nil)
+  }
+  
+  /// Send a message with optional embed (for sharing posts)
+  func sendMessage(convoId: String, text: String, embed: ChatBskyConvoDefs.MessageInputEmbedUnion?) async -> Bool {
     guard let client = client else {
       logger.error("Cannot send message to \(convoId): client or session is nil")
       errorState = .noClient
@@ -647,7 +659,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let messageInput = ChatBskyConvoDefs.MessageInput(
         text: text,
         facets: nil,  // Placeholder for rich text facets
-        embed: nil  // Placeholder for embeds
+        embed: embed
       )
 
       let input = ChatBskyConvoSendMessage.Input(
@@ -655,7 +667,7 @@ final class ChatManager: StateInvalidationSubscriber {
         message: messageInput
       )
 
-      logger.debug("Sending message to conversation \(convoId)")
+      logger.debug("Sending message to conversation \(convoId)\(embed != nil ? " with embed" : "")")
 
    
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
@@ -710,7 +722,7 @@ final class ChatManager: StateInvalidationSubscriber {
       pendingMessages.removeValue(forKey: tempId)
 
       // Update conversation list's last message preview
-      updateConversationLastMessage(convoId: convoId, messageView: messageView)
+      await updateConversationLastMessage(convoId: convoId, messageView: messageView)
 
       logger.debug("Message sent successfully to conversation \(convoId)")
       return true
@@ -764,7 +776,7 @@ final class ChatManager: StateInvalidationSubscriber {
         }
       } else {
         // Fallback if response doesn't contain the updated convo view
-        if let index = conversations.firstIndex(where: { $0.id == convoId }) {
+        if conversations.firstIndex(where: { $0.id == convoId }) != nil {
           // Manually create a modified version or wait for next refresh
           // For simplicity, let's assume the next refresh will fix it,
           // but ideally, we'd update the unreadCount to 0 here.
@@ -862,7 +874,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     let input = ChatBskyConvoDeleteMessageForSelf.Input(convoId: convoId, messageId: messageId)
      do {
-      let (responseCode, response) = try await client.chat.bsky.convo.deleteMessageForSelf(input: input)
+      let (responseCode, _) = try await client.chat.bsky.convo.deleteMessageForSelf(input: input)
  
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error deleting message \(messageId): HTTP \(responseCode)")
@@ -909,7 +921,7 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       // Update local state - set all unread counts to 0
-      for i in conversations.indices {
+      for _ in conversations.indices {
         // Since ConvoView might be immutable, we'd need to refresh from server
         // For now, just refresh the conversation list
       }
@@ -1228,42 +1240,58 @@ final class ChatManager: StateInvalidationSubscriber {
 //    }
 //    
 //    // Process embeds (images, posts, records, etc.)
-//    if let embedUnion = messageView.embed {
-//      switch embedUnion {
-//      case .appBskyEmbedRecordView(let recordView):
-//        logger.debug("Message contains record embed: \(String(describing: recordView))")
-//        // Handle the specific record type within the recordView.record
-//        switch recordView.record {
-//        case .appBskyFeedDefsPostView(let postView):
-//          // Now you have access to postView which is of type AppBskyFeedDefs.PostView
-//          // You can use postView.uri, postView.author.handle, postView.record.text etc.
-//          // For now, let's append a simple text representation to the message.
-//          // You might create a custom attachment type or a more complex representation later.
-//          let postAuthorHandle = postView.author.handle
-//          let postTextSnippet = String(postView.record.text.prefix(50)) // Take a snippet
-//          processedText += "\n\n[Shared Post by @\(postAuthorHandle): \"\(postTextSnippet)...\"]"
-//          // If you want to make it an attachment, you'd need a suitable AttachmentType
-//          // and decide how to represent it. For example, as a generic link if supported.
-//          // attachments.append(Attachment(id: postView.uri, url: URL(string: postView.uri)!, type: .image)) // Placeholder type
-//
-//        case .appBskyGraphDefsListView(let listView):
-//          logger.debug("Embed is a list view: \(listView.name)")
-//          processedText += "\n\n[Shared List: \(listView.name)]"
-//        case .appBskyLabelerDefsLabelerView(let labelerView):
-//          logger.debug("Embed is a labeler view: \(labelerView.creator.handle)")
-//          processedText += "\n\n[Shared Labeler: @\(labelerView.creator.handle)]"
-//        case .appBskyGraphDefsStarterPackViewBasic(let starterPackView):
-//          logger.debug("Embed is a starter pack: \(starterPackView.record.text)")
-//          processedText += "\n\n[Shared Starter Pack]"
-//        case .unexpected(let data):
-//          logger.warning("Unexpected record type in embed: \(String(describing: data))")
-//        default:
-//          logger.warning("Unhandled record type in embed: \(String(describing: recordView.record))")
-//        }
-//      case .unexpected(let data):
-//        logger.debug("Unexpected embed type: \(String(describing: data))")
-//      }
-//    }
+    if let embedUnion = messageView.embed {
+      switch embedUnion {
+      case .appBskyEmbedRecordView(let recordView):
+        logger.debug("Message contains record embed: \(String(describing: recordView))")
+        // Handle the specific record type within the recordView.record
+        switch recordView.record {
+        case .appBskyEmbedRecordViewRecord(let recordViewRecord):
+          // Create a rich post embed attachment for display in chat
+          let postAuthorHandle = recordViewRecord.author.handle.description
+          
+          // Access the record value to get the text
+          let recordValue = recordViewRecord.value
+          if case .knownType = recordValue {
+            // Extract text from the record - this will need adjustment based on actual structure
+            let postTextSnippet = "Post from @\(postAuthorHandle)" // Simplified for now
+            let postDisplayText = postTextSnippet
+            
+            // Create a custom attachment for the post
+            // Use the post URI as a unique identifier
+            if let postURL = URL(string: "at://\(recordViewRecord.uri)") {
+              let attachment = Attachment(
+                id: recordViewRecord.uri.uriString(),
+                url: postURL,
+                type: .image // Using image type for post embeds
+              )
+              attachments.append(attachment)
+            }
+          }
+
+        case .appBskyGraphDefsListView(let listView):
+          logger.debug("Embed is a list view: \(listView.name)")
+          processedText += "\n\n📝 Shared List: \(listView.name)"
+          
+        case .appBskyLabelerDefsLabelerView(let labelerView):
+          logger.debug("Embed is a labeler view: \(labelerView.creator.handle)")
+          processedText += "\n\n🏷️ Shared Labeler: @\(labelerView.creator.handle)"
+          
+        case .appBskyGraphDefsStarterPackViewBasic(let starterPackView):
+          logger.debug("Embed is a starter pack")
+          processedText += "\n\n🎁 Shared Starter Pack"
+          
+        case .unexpected(let data):
+          logger.warning("Unexpected record type in embed: \(String(describing: data))")
+          
+        default:
+          logger.warning("Unhandled record type in embed: \(String(describing: recordView.record))")
+        }
+        
+      case .unexpected(let data):
+        logger.debug("Unexpected embed type: \(String(describing: data))")
+      }
+    }
     return Message(
       id: messageView.id,  // Use the message ID from Bluesky
       user: User(
@@ -1312,10 +1340,10 @@ final class ChatManager: StateInvalidationSubscriber {
     if let index = conversations.firstIndex(where: { $0.id == convoId }) {
       // We need to update the ConvoView, which might be immutable.
       // A common pattern is to replace the element with a modified copy.
-      var convoToUpdate = conversations[index]
+      _ = conversations[index]
 
       // Create the correct union type for the last message
-      let updatedLastMessage = ChatBskyConvoDefs.ConvoViewLastMessageUnion
+      _ = ChatBskyConvoDefs.ConvoViewLastMessageUnion
         .chatBskyConvoDefsMessageView(messageView)
 
       // Create a new ConvoView instance with the updated lastMessage
@@ -1596,7 +1624,7 @@ final class ChatManager: StateInvalidationSubscriber {
     if success {
       // Move conversation from requests to accepted
       if let requestIndex = messageRequests.firstIndex(where: { $0.id == convoId }) {
-        var conversation = messageRequests.remove(at: requestIndex)
+        let conversation = messageRequests.remove(at: requestIndex)
         // Update status to accepted (this would normally come from server)
         // Note: We can't modify the struct directly, so we'll rely on the next refresh
         acceptedConversations.insert(conversation, at: 0)

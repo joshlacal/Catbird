@@ -515,7 +515,8 @@ extension Font {
         baseSize: CGFloat,
         weight: Font.Weight = .regular,
         design: Font.Design = .default,
-        relativeTo textStyle: Font.TextStyle
+        relativeTo textStyle: Font.TextStyle,
+        maxContentSizeCategory: UIContentSizeCategory? = nil
     ) -> Font {
         // Map SwiftUI text style to UIFont text style
         let uiTextStyle: UIFont.TextStyle
@@ -566,9 +567,15 @@ extension Font {
         
         // Use UIFontMetrics to scale our custom base font with Dynamic Type
         let metrics = UIFontMetrics(forTextStyle: uiTextStyle)
-        let scaledFont = metrics.scaledFont(for: customBaseFont)
         
-        return Font(scaledFont)
+        // Apply maximum content size category constraint if provided
+        if let maxCategory = maxContentSizeCategory {
+            let scaledFont = metrics.scaledFont(for: customBaseFont, maximumPointSize: UIFont.preferredFont(forTextStyle: uiTextStyle, compatibleWith: UITraitCollection(preferredContentSizeCategory: maxCategory)).pointSize)
+            return Font(scaledFont)
+        } else {
+            let scaledFont = metrics.scaledFont(for: customBaseFont)
+            return Font(scaledFont)
+        }
     }
     
     /// Creates a custom system font that supports width variants and dynamic type scaling.
@@ -682,12 +689,10 @@ struct AccessibleTextModifier: ViewModifier {
         let settings = appState?.appSettings
         let shouldIncreaseContrast = settings?.increaseContrast ?? false
         let shouldUseBoldText = settings?.boldText ?? false
-        let displayScale = CGFloat(settings?.displayScale ?? 1.0)
         
         content
             .fontWeight(adjustedFontWeight(shouldUseBoldText: shouldUseBoldText))
             .foregroundStyle(shouldIncreaseContrast ? Color.adaptiveForeground(appState: appState, defaultColor: .primary) : Color.primary)
-            .scaleEffect(displayScale)
             .contrastAwareBackground(appState: appState, defaultColor: .clear)
     }
     
@@ -708,12 +713,10 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
         let settings = appState?.appSettings
         let shouldIncreaseContrast = settings?.increaseContrast ?? false
         let shouldUseBoldText = settings?.boldText ?? false
-        let displayScale = CGFloat(settings?.displayScale ?? 1.0)
         
         content
             .fontWeight(shouldUseBoldText ? .semibold : .regular)
             .foregroundStyle(shouldIncreaseContrast ? Color.adaptiveForeground(appState: appState, defaultColor: .primary) : Color.primary)
-            .scaleEffect(displayScale)
             .contrastAwareBackground(appState: appState, defaultColor: .clear)
     }
 }

@@ -319,13 +319,79 @@ final class PostManager {
       createdAt: createdAt
     )
     
+    // Convert the embed from PostEmbedUnion to PostViewEmbedUnion if available
+    let postViewEmbed: AppBskyFeedDefs.PostViewEmbedUnion?
+    if let embed = embed {
+      switch embed {
+      case .appBskyEmbedImages(let images):
+        // Convert to view format
+        let imageViews = try images.images.map { image in
+          // Construct proper Bluesky CDN URLs
+          let cidString = image.image.ref?.cid.string ?? ""
+          let thumbUrlString = "https://cdn.bsky.app/img/feed_thumbnail/plain/\(did)/\(cidString)@jpeg"
+          let fullsizeUrlString = "https://cdn.bsky.app/img/feed_fullsize/plain/\(did)/\(cidString)@jpeg"
+          
+          // If we can't create valid URIs, throw an error to prevent creating a temp post
+          guard let thumbURI = try? URI(thumbUrlString),
+                let fullsizeURI = try? URI(fullsizeUrlString) else {
+            throw PostManagerError.invalidImageURI
+          }
+          
+          return AppBskyEmbedImages.ViewImage(
+            thumb: thumbURI,
+            fullsize: fullsizeURI,
+            alt: image.alt ?? "",
+            aspectRatio: image.aspectRatio
+          )
+        }
+        postViewEmbed = .appBskyEmbedImagesView(AppBskyEmbedImages.View(images: imageViews))
+        
+      case .appBskyEmbedExternal(let external):
+        // Convert to view format
+        let thumbUrl: URI?
+        if let thumbCid = external.external.thumb?.ref?.cid.string {
+          let thumbUrlString = "https://cdn.bsky.app/img/feed_thumbnail/plain/\(did)/\(thumbCid)@jpeg"
+          thumbUrl = try? URI(thumbUrlString)
+        } else {
+          thumbUrl = nil
+        }
+        
+        let externalView = AppBskyEmbedExternal.ViewExternal(
+          uri: external.external.uri,
+          title: external.external.title,
+          description: external.external.description,
+          thumb: thumbUrl
+        )
+        postViewEmbed = .appBskyEmbedExternalView(AppBskyEmbedExternal.View(external: externalView))
+        
+      case .appBskyEmbedRecord(let record):
+        // For record embeds (quotes), we need to fetch the actual record
+        // For now, we'll leave it nil and let it load when the real post loads
+        postViewEmbed = nil
+        
+      case .appBskyEmbedRecordWithMedia(let recordWithMedia):
+        // Similar to record embed, complex to convert without fetching
+        postViewEmbed = nil
+        
+      case .appBskyEmbedVideo(let video):
+        // For video embeds, create a basic view
+        // Note: Full video details would need to be fetched
+        postViewEmbed = nil
+        
+      case .unexpected:
+        postViewEmbed = nil
+      }
+    } else {
+      postViewEmbed = nil
+    }
+    
     // Create the PostView
     return AppBskyFeedDefs.PostView(
       uri: uri,
       cid: cid,
       author: author,
       record: ATProtocolValueContainer.knownType(postRecord),
-      embed: nil, // Will be populated when real post loads
+      embed: postViewEmbed,
       replyCount: 0,
       repostCount: 0,
       likeCount: 0,
@@ -603,6 +669,17 @@ final class PostManager {
         return "Client not initialized"
       case .badResponse(let code):
         return "Bad response: \(code)"
+      }
+    }
+  }
+  
+  enum PostManagerError: Error {
+    case invalidImageURI
+    
+    var localizedDescription: String {
+      switch self {
+      case .invalidImageURI:
+        return "Failed to create valid image URIs"
       }
     }
   }

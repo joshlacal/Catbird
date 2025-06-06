@@ -143,8 +143,8 @@ struct ContentLabelManager: View {
         // Check for the most restrictive content type first
         let labelValues = labels.map { $0.val.lowercased() }
         
-        // For now, return warn for any sensitive content labels
-        // This will be enhanced to check actual user preferences from server
+        // Check for sensitive content labels and return appropriate visibility
+        // This is the basic sync version - for full preference checking, use getEffectiveContentVisibility
         if labelValues.contains(where: { ["nsfw", "porn", "nudity", "sexual", "gore", "violence", "graphic", "suggestive"].contains($0) }) {
             return .warn
         }

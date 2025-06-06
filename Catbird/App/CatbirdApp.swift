@@ -37,7 +37,7 @@ struct CatbirdApp: App {
       didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
       // Forward the device token to our notification manager
-      guard let appState = appState else { return }
+      guard let appState = self.appState else { return }
 
       Task {
         await appState.notificationManager.handleDeviceToken(deviceToken)
@@ -83,16 +83,47 @@ struct CatbirdApp: App {
       logger.error("❌ Failed to configure audio session: \(error)")
     }
 
-    // Initialize model container
+    // Initialize model container with error recovery
     do {
-      modelContainer = try ModelContainer(
-        for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
-        configurations: ModelConfiguration(isStoredInMemoryOnly: false)
+      // Use app's Documents directory instead of App Group for SwiftData
+      let appDocumentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+      let storeURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
+      
+      self.modelContainer = try ModelContainer(
+        for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+        // 🧪 EXPERIMENTAL: Repository parsing models
+        RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+        configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
       )
       logger.debug("✅ Model container initialized successfully")
     } catch {
       logger.error("❌ Could not initialize ModelContainer: \(error)")
-      fatalError("Failed to initialize ModelContainer: \(error)")
+      
+      // Try to recover by deleting corrupted database
+      let fileManager = FileManager.default
+      let appDocumentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+      let dbURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
+      
+      if fileManager.fileExists(atPath: dbURL.path) {
+        do {
+          try fileManager.removeItem(at: dbURL)
+          logger.info("🔄 Removed corrupted database, attempting recreate")
+          
+          // Retry initialization
+          self.modelContainer = try ModelContainer(
+            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+            // 🧪 EXPERIMENTAL: Repository parsing models
+            RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+            configurations: ModelConfiguration("Catbird", schema: nil, url: dbURL)
+          )
+          logger.debug("✅ Model container recreated successfully after recovery")
+        } catch {
+          logger.error("❌ Failed to recover database: \(error)")
+          fatalError("Failed to initialize ModelContainer after recovery: \(error)")
+        }
+      } else {
+        fatalError("Failed to initialize ModelContainer: \(error)")
+      }
     }
 
     // Initialize debug tools in development builds

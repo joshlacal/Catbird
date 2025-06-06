@@ -100,6 +100,15 @@ final class AppState {
   /// Chat manager for handling Bluesky chat operations
   @ObservationIgnored let chatManager: ChatManager
   
+  /// Backup manager for handling local data backups
+  @ObservationIgnored let backupManager = BackupManager()
+  
+  /// 🧪 EXPERIMENTAL: Repository parsing service for CAR file analysis
+  @ObservationIgnored let repositoryParsingService = RepositoryParsingService()
+  
+  /// 🚨 EXPERIMENTAL: Account migration service for cross-instance migration
+  @ObservationIgnored let migrationService = AccountMigrationService()
+  
   
   /// Network monitor for tracking connectivity status
   @ObservationIgnored let networkMonitor = NetworkMonitor()
@@ -159,6 +168,7 @@ final class AppState {
             if let client = self.authManager.client {
               self.graphManager = GraphManager(atProtoClient: client)
                 await self.chatManager.updateClient(client) // Update ChatManager client
+              self.migrationService.updateSourceClient(client) // Update Migration service client
               self.urlHandler.configure(with: self)
               
               
@@ -186,6 +196,15 @@ final class AppState {
                 
                 // Load current user profile for optimistic updates
                 await self.loadCurrentUserProfile(did: userDID)
+                
+                // Check for automatic backup if enabled
+                if let userProfile = self.currentUserProfile {
+                  await self.backupManager.createAutomaticBackupIfNeeded(
+                    for: userDID,
+                    userHandle: userProfile.handle.description,
+                    client: client
+                  )
+                }
               }
             }
           } else if case .unauthenticated = state {
@@ -197,6 +216,7 @@ final class AppState {
             self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
              await self.chatManager.updateClient(nil)
+            self.migrationService.updateSourceClient(nil)
             // Add profile reset if needed
           } else if case .initializing = state {
             // Handle initializing state if needed
@@ -526,7 +546,9 @@ final class AppState {
   func initializePreferencesManager(with modelContext: ModelContext) {
     preferencesManager.setModelContext(modelContext)
     appSettings.initialize(with: modelContext)
-    logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
+    repositoryParsingService.configure(with: modelContext)
+    backupManager.configure(with: modelContext, repositoryParsingService: repositoryParsingService)
+    logger.debug("Initialized PreferencesManager, AppSettings, BackupManager, and RepositoryParsingService with ModelContext")
     
     // Apply theme settings (now that SwiftData is available, this will use the persisted values)
     _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)

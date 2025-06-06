@@ -11,6 +11,10 @@ enum NavigationDestination: Hashable {
     case starterPack(ATProtocolURI)
     case conversation(String) // convoId
     case chatTab
+    case repositoryBrowser
+    case repositoryDetail(UUID) // RepositoryRecord ID
+    case migrationWizard
+    case migrationProgress(UUID) // MigrationOperation ID
     
     func hash(into hasher: inout Hasher) {
         switch self {
@@ -39,6 +43,16 @@ enum NavigationDestination: Hashable {
             hasher.combine(convoId)
         case .chatTab:
             hasher.combine("chatTab")
+        case .repositoryBrowser:
+            hasher.combine("repositoryBrowser")
+        case .repositoryDetail(let id):
+            hasher.combine("repositoryDetail")
+            hasher.combine(id)
+        case .migrationWizard:
+            hasher.combine("migrationWizard")
+        case .migrationProgress(let id):
+            hasher.combine("migrationProgress")
+            hasher.combine(id)
         }
     }
     
@@ -62,6 +76,14 @@ enum NavigationDestination: Hashable {
             return true
         case (.timeline, .timeline):
             return true
+        case (.repositoryBrowser, .repositoryBrowser):
+            return true
+        case (.repositoryDetail(let lhsId), .repositoryDetail(let rhsId)):
+            return lhsId == rhsId
+        case (.migrationWizard, .migrationWizard):
+            return true
+        case (.migrationProgress(let lhsId), .migrationProgress(let rhsId)):
+            return lhsId == rhsId
         default:
             return false
         }

@@ -143,7 +143,6 @@ struct AppearanceSettingsView: View {
         }
         .navigationTitle("Appearance")
         .navigationBarTitleDisplayMode(.inline)
-        .appDisplayScale(appState: appState)
         .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
         // No manual sync needed - direct binding to AppSettings
     }
@@ -362,18 +361,40 @@ struct AccessibilityQuickActionsRow: View {
             
             HStack(spacing: 12) {
                 Button("Optimize for Reading") {
+                    // Apply settings for optimal reading experience
                     appState.appSettings.fontSize = "large"
                     appState.appSettings.lineSpacing = "relaxed"
                     appState.appSettings.dynamicTypeEnabled = true
+                    // Force immediate font manager update
+                    // Force font update
+                    appState.fontManager.applyFontSettings(
+                        fontStyle: appState.appSettings.fontStyle,
+                        fontSize: appState.appSettings.fontSize,
+                        lineSpacing: appState.appSettings.lineSpacing,
+                        letterSpacing: appState.appSettings.letterSpacing,
+                        dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled,
+                        maxDynamicTypeSize: appState.appSettings.maxDynamicTypeSize
+                    )
                 }
                 .buttonStyle(.bordered)
                 .appFont(AppTextRole.caption)
                 
                 Button("Maximum Accessibility") {
-                    appState.appSettings.fontSize = "large"
+                    // Apply settings for maximum accessibility
+                    appState.appSettings.fontSize = "extraLarge"
                     appState.appSettings.lineSpacing = "relaxed"
                     appState.appSettings.dynamicTypeEnabled = true
                     appState.appSettings.maxDynamicTypeSize = "accessibility3"
+                    // Force immediate font manager update
+                    // Force font update
+                    appState.fontManager.applyFontSettings(
+                        fontStyle: appState.appSettings.fontStyle,
+                        fontSize: appState.appSettings.fontSize,
+                        lineSpacing: appState.appSettings.lineSpacing,
+                        letterSpacing: appState.appSettings.letterSpacing,
+                        dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled,
+                        maxDynamicTypeSize: appState.appSettings.maxDynamicTypeSize
+                    )
                 }
                 .buttonStyle(.bordered)
                 .appFont(AppTextRole.caption)

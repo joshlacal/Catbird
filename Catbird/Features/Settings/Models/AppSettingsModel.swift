@@ -155,10 +155,18 @@ final class AppSettingsModel {
         }
         
         // Content and Media
-        autoplayVideos = defaults.bool(forKey: "autoplayVideos")
-        useInAppBrowser = defaults.bool(forKey: "useInAppBrowser")
-        showTrendingTopics = defaults.bool(forKey: "showTrendingTopics")
-        showTrendingVideos = defaults.bool(forKey: "showTrendingVideos")
+        if defaults.object(forKey: "autoplayVideos") != nil {
+            autoplayVideos = defaults.bool(forKey: "autoplayVideos")
+        }
+        if defaults.object(forKey: "useInAppBrowser") != nil {
+            useInAppBrowser = defaults.bool(forKey: "useInAppBrowser")
+        }
+        if defaults.object(forKey: "showTrendingTopics") != nil {
+            showTrendingTopics = defaults.bool(forKey: "showTrendingTopics")
+        }
+        if defaults.object(forKey: "showTrendingVideos") != nil {
+            showTrendingVideos = defaults.bool(forKey: "showTrendingVideos")
+        }
         
         // Thread Preferences
         if let value = defaults.string(forKey: "threadSortOrder") { threadSortOrder = value }

@@ -50,7 +50,7 @@ import SwiftUI
         try await postViewModel.toggleRepost()
     }
     
-    /// Share the post using system share sheet
+    /// Share the post using system share sheet or to chat
     /// - Parameter post: The post to share
     @MainActor
     func share(post: AppBskyFeedDefs.PostView) async {
@@ -62,9 +62,12 @@ import SwiftUI
         guard let url = shareURL else { return }
         
         #if os(iOS)
+        // Create custom activity for sharing to chat
+        let shareToChat = ShareToChatActivity(post: post, appState: appState)
+        
         let activityViewController = UIActivityViewController(
-            activityItems: [url],
-            applicationActivities: nil
+            activityItems: [url, ShareablePost(post: post)],
+            applicationActivities: [shareToChat]
         )
         
         // Get the current active window scene to present the share sheet

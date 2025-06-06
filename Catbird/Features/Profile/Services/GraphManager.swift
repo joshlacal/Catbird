@@ -46,9 +46,102 @@ final class GraphManager {
 
   // Cache expiration time (30 minutes)
   private let cacheExpirationTime: TimeInterval = 1800
+  
+  // Cache invalidation strategies
+  enum CacheInvalidationReason {
+    case userInitiated      // User manually refreshed
+    case dataStale         // Data is older than expiration time
+    case errorOccurred     // Network or API error
+    case relationshipChanged // Follow/block/mute state changed
+    case accountSwitched   // Different account logged in
+  }
 
   init(atProtoClient: ATProtoClient?) {
     self.atProtoClient = atProtoClient
+  }
+
+  // MARK: - Cache Invalidation
+  
+  /// Comprehensive cache invalidation with reason tracking
+  @MainActor
+  func invalidateCache(for reason: CacheInvalidationReason, cacheTypes: CacheType...) {
+    logger.info("Invalidating cache for reason: \(String(describing: reason))")
+    
+    let typesToInvalidate = cacheTypes.isEmpty ? CacheType.allCases : cacheTypes
+    
+    for cacheType in typesToInvalidate {
+      switch cacheType {
+      case .following:
+        followingCache.removeAll()
+        lastFollowingUpdate = nil
+        
+      case .mutes:
+        muteCache.removeAll()
+        lastMutesUpdate = nil
+        
+      case .blocks:
+        blockCache.removeAll()
+        lastBlocksUpdate = nil
+        
+      case .all:
+        followingCache.removeAll()
+        muteCache.removeAll()
+        blockCache.removeAll()
+        lastFollowingUpdate = nil
+        lastMutesUpdate = nil
+        lastBlocksUpdate = nil
+      }
+    }
+    
+    // Log cache state for debugging
+    logger.debug("Cache invalidated. Remaining items - Following: \(self.followingCache.count), Mutes: \(self.muteCache.count), Blocks: \(self.blockCache.count)")
+  }
+  
+  /// Smart cache invalidation that considers staleness and errors
+  @MainActor
+  private func shouldInvalidateCache(for cacheType: CacheType) -> Bool {
+    let lastUpdate: Date?
+    
+    switch cacheType {
+    case .following:
+      lastUpdate = lastFollowingUpdate
+    case .mutes:
+      lastUpdate = lastMutesUpdate
+    case .blocks:
+      lastUpdate = lastBlocksUpdate
+    case .all:
+      return true // Always invalidate when requesting all
+    }
+    
+    guard let lastUpdate = lastUpdate else {
+      return true // No data cached, need to fetch
+    }
+    
+    let timeSinceUpdate = Date().timeIntervalSince(lastUpdate)
+    return timeSinceUpdate > cacheExpirationTime
+  }
+  
+  /// Enum for specifying which caches to invalidate
+  enum CacheType: CaseIterable {
+    case following
+    case mutes
+    case blocks
+    case all
+  }
+  
+  /// Force refresh all caches (user-initiated)
+  func refreshAllCaches() async throws {
+    await MainActor.run {
+      invalidateCache(for: .userInitiated, cacheTypes: .all)
+    }
+    
+    // Fetch fresh data
+    async let following = refreshFollowingCache()
+    async let mutes = refreshMuteCache()
+    async let blocks = refreshBlockCache()
+    
+    // Wait for all to complete
+    _ = try await (following, mutes, blocks)
   }
 
   /// Updates the ATProtoClient reference
@@ -119,18 +212,22 @@ final class GraphManager {
         return false
       }
 
-      // Update cache
-      //            if let uri = response.uri {
+      // Update cache with new relationship
       await updateFollowingCache(did: did, uri: response.uri)
-      //            } else {
-      //                // Force refresh of following cache on next check
-      //                await invalidateFollowingCache()
-      //            }
+      
+      // Invalidate related caches since relationships changed
+      await MainActor.run {
+        invalidateCache(for: .relationshipChanged, cacheTypes: .following)
+      }
 
       logger.debug("Successfully followed user: \(did)")
       return true
     } catch {
       logger.error("Error following user: \(error.localizedDescription)")
+      // Invalidate cache on error to ensure fresh data on next attempt
+      await MainActor.run {
+        invalidateCache(for: .errorOccurred, cacheTypes: .following)
+      }
       throw error
     }
   }
@@ -170,11 +267,20 @@ final class GraphManager {
 
       // Remove from cache
       await removeFromFollowingCache(uri: followingUri)
+      
+      // Invalidate related caches since relationships changed
+      await MainActor.run {
+        invalidateCache(for: .relationshipChanged, cacheTypes: .following)
+      }
 
       logger.debug("Successfully unfollowed user using URI")
       return true
     } catch {
       logger.error("Error unfollowing user: \(error.localizedDescription)")
+      // Invalidate cache on error to ensure fresh data on next attempt
+      await MainActor.run {
+        invalidateCache(for: .errorOccurred, cacheTypes: .following)
+      }
       throw error
     }
   }
@@ -520,9 +626,9 @@ final class GraphManager {
       return collectedBlocks  // Return the result
     } catch {
       logger.error("Error fetching blocks: \(error.localizedDescription)")
-      // Invalidate cache on error? Or just rethrow? Rethrow for now.
+      // Use comprehensive cache invalidation strategy for errors
       await MainActor.run {
-        lastBlocksUpdate = nil  // Invalidate cache timestamp on error
+        invalidateCache(for: .errorOccurred, cacheTypes: .blocks)
       }
       throw error  // Re-throw the error
     }
@@ -705,9 +811,9 @@ final class GraphManager {
       return collectedMutes  // Return the result
     } catch {
       logger.error("Error fetching mutes: \(error.localizedDescription)")
-      // Invalidate cache on error? Or just rethrow? Rethrow for now.
+      // Use comprehensive cache invalidation strategy for errors
       await MainActor.run {
-        lastMutesUpdate = nil  // Invalidate cache timestamp on error
+        invalidateCache(for: .errorOccurred, cacheTypes: .mutes)
       }
       throw error  // Re-throw the error
     }

@@ -244,11 +244,160 @@ import OSLog
         )
     }
     
-    /// Apply Dynamic Type size constraints
+    /// Apply Dynamic Type size constraints at the app level
     private func applyDynamicTypeConstraints() {
-        // This would need to be implemented at the app level to limit Dynamic Type
-        // For now, we'll log the constraint
-        logger.info("Dynamic Type enabled with max size: \(String(describing: self.maxContentSizeCategory))")
+        guard dynamicTypeEnabled else {
+            logger.debug("Dynamic Type disabled, no constraints to apply")
+            return
+        }
+        
+        let currentCategory = UIApplication.shared.preferredContentSizeCategory
+        let maxCategory = maxContentSizeCategory
+        
+        logger.info("Applying Dynamic Type constraints - current: \(String(describing: currentCategory)), max allowed: \(String(describing: maxCategory))")
+        
+        // Check if current size exceeds our maximum allowed size
+        if shouldLimitContentSizeCategory(current: currentCategory, maximum: maxCategory) {
+            logger.info("Current Dynamic Type size (\(String(describing: currentCategory))) exceeds maximum (\(String(describing: maxCategory))), applying constraint")
+            
+            // Apply the constraint by setting up a custom trait collection override
+            // This affects all UIFont.preferredFont calls throughout the app
+            applyContentSizeCategoryOverride(maxCategory)
+        } else {
+            logger.debug("Current Dynamic Type size is within allowed limits")
+            // Remove any existing override if current size is acceptable
+            removeContentSizeCategoryOverride()
+        }
+    }
+    
+    /// Check if the current content size category should be limited
+    private func shouldLimitContentSizeCategory(
+        current: UIContentSizeCategory,
+        maximum: UIContentSizeCategory
+    ) -> Bool {
+        // Define size category hierarchy for comparison
+        let sizeHierarchy: [UIContentSizeCategory] = [
+            .extraSmall,
+            .small,
+            .medium,
+            .large,
+            .extraLarge,
+            .extraExtraLarge,
+            .extraExtraExtraLarge,
+            .accessibilityMedium,
+            .accessibilityLarge,
+            .accessibilityExtraLarge,
+            .accessibilityExtraExtraLarge,
+            .accessibilityExtraExtraExtraLarge
+        ]
+        
+        guard let currentIndex = sizeHierarchy.firstIndex(of: current),
+              let maxIndex = sizeHierarchy.firstIndex(of: maximum) else {
+            // If we can't determine the order, don't limit
+            logger.warning("Unable to compare content size categories")
+            return false
+        }
+        
+        return currentIndex > maxIndex
+    }
+    
+    /// Apply content size category override to limit Dynamic Type
+    private func applyContentSizeCategoryOverride(_ maxCategory: UIContentSizeCategory) {
+        // Create a custom trait collection with the maximum allowed content size category
+        let customTraitCollection = UITraitCollection(preferredContentSizeCategory: maxCategory)
+        
+        // Apply this trait collection to all windows in the app
+        // This ensures that UIFont.preferredFont calls will use the limited size
+        DispatchQueue.main.async {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                for window in windowScene.windows {
+                    // Override the trait collection for this window
+                    // This affects all UIFont.preferredFont calls within this window
+                    window.overrideUserInterfaceStyle = window.overrideUserInterfaceStyle // Preserve existing style override
+                    
+                    // Store reference to original traits for potential restoration
+                    self.storeOriginalTraitCollection(for: window)
+                    
+                    // Apply the content size override
+                    self.applyTraitCollectionOverride(to: window, with: customTraitCollection)
+                }
+            }
+        }
+        
+        // Post notification that constraint has been applied
+        NotificationCenter.default.post(
+            name: NSNotification.Name("DynamicTypeConstraintApplied"),
+            object: nil,
+            userInfo: ["maxCategory": maxCategory]
+        )
+    }
+    
+    /// Remove content size category override to restore normal Dynamic Type behavior
+    private func removeContentSizeCategoryOverride() {
+        DispatchQueue.main.async {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                for window in windowScene.windows {
+                    // Restore original trait collection if we stored one
+                    self.restoreOriginalTraitCollection(for: window)
+                }
+            }
+        }
+        
+        // Post notification that constraint has been removed
+        NotificationCenter.default.post(
+            name: NSNotification.Name("DynamicTypeConstraintRemoved"),
+            object: nil
+        )
+    }
+    
+    // MARK: - Trait Collection Management
+    
+    /// Storage for original trait collections before override
+    private var originalTraitCollections: [ObjectIdentifier: UITraitCollection] = [:]
+    
+    /// Store the original trait collection for a window before applying override
+    private func storeOriginalTraitCollection(for window: UIWindow) {
+        let windowId = ObjectIdentifier(window)
+        if originalTraitCollections[windowId] == nil {
+            originalTraitCollections[windowId] = window.traitCollection
+        }
+    }
+    
+    /// Apply trait collection override to a specific window
+    private func applyTraitCollectionOverride(to window: UIWindow, with traitCollection: UITraitCollection) {
+        // Create a custom trait collection that combines existing traits with our content size override
+        let combinedTraitCollection: UITraitCollection
+        if #available(iOS 17.0, *) {
+            combinedTraitCollection = window.traitCollection.modifyingTraits { mutableTraits in
+                mutableTraits.preferredContentSizeCategory = traitCollection.preferredContentSizeCategory
+            }
+        } else {
+            combinedTraitCollection = UITraitCollection(traitsFrom: [
+                window.traitCollection,
+                traitCollection
+            ])
+        }
+        
+        // Apply the override using a custom trait collection implementation
+        // This is done by temporarily setting the window's trait collection
+        if let rootViewController = window.rootViewController {
+            rootViewController.setOverrideTraitCollection(combinedTraitCollection, forChild: rootViewController)
+        }
+    }
+    
+    /// Restore the original trait collection for a window
+    private func restoreOriginalTraitCollection(for window: UIWindow) {
+        let windowId = ObjectIdentifier(window)
+        
+        if let originalTraitCollection = originalTraitCollections[windowId] {
+            // Restore the original trait collection
+            if let rootViewController = window.rootViewController {
+                rootViewController.setOverrideTraitCollection(nil, forChild: rootViewController)
+            }
+            
+            // Clean up stored reference
+            originalTraitCollections.removeValue(forKey: windowId)
+        }
     }
     
     /// Get scaled font size
@@ -281,7 +430,8 @@ import OSLog
                 baseSize: scaledSize,
                 weight: weight,
                 design: fontDesign,
-                relativeTo: textStyle
+                relativeTo: textStyle,
+                maxContentSizeCategory: maxContentSizeCategory
             )
         } else {
             // Use only our fixed size with user's size preference
@@ -332,7 +482,8 @@ import OSLog
                 baseSize: scaledBaseSize,
                 weight: weight,
                 design: fontDesign,
-                relativeTo: textStyle
+                relativeTo: textStyle,
+                maxContentSizeCategory: maxContentSizeCategory
             )
         } else {
             // Use only our app's font size preference (no Dynamic Type)
@@ -509,10 +660,10 @@ extension View {
     /// Compatibility layer for .system() method calls on AppTextRole
     func appFont(_ systemCall: SystemFontCall) -> some View {
         switch systemCall {
-        case .system(let textStyle, let design, let weight):
+        case .system(let textStyle, _, _):
             let appRole = AppTextRole.from(textStyle)
             return AnyView(self.modifier(AppFontModifier(role: appRole)))
-        case .systemSize(let size, let weight, let design):
+        case .systemSize(let size, let weight, _):
             return AnyView(self.modifier(CustomAppFontModifier(size: size, weight: weight, textStyle: .body)))
         }
     }

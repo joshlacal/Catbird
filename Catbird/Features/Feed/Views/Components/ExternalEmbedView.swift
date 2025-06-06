@@ -367,8 +367,10 @@ struct ExternalEmbedView: View {
             return appState.appSettings.allowVimeo
         case let h where h.contains("twitch.tv"):
             return appState.appSettings.allowTwitch
-        case let h where h.contains("giphy.com") || h.contains("tenor.com"):
+        case let h where h.contains("giphy.com"):
             return appState.appSettings.allowGiphy
+        case let h where h.contains("tenor.com"):
+            return appState.appSettings.allowTenor
         case let h where h.contains("spotify.com"):
             return appState.appSettings.allowSpotify
         case let h where h.contains("music.apple.com"):

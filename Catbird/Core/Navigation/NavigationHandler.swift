@@ -74,6 +74,30 @@ struct NavigationHandler {
              )
 //             .themedNavigationBar(appState.themeManager)
              .id("chatTab") // Static ID for the tab view itself
+            
+        case .repositoryBrowser:
+            RepositoryBrowserView()
+                .themedNavigationBar(appState.themeManager)
+                .id("repositoryBrowser")
+            
+        case .repositoryDetail(let repositoryID):
+            // This would show a detailed view of a specific repository
+            RepositoryDetailView(repositoryID: repositoryID)
+                .themedNavigationBar(appState.themeManager)
+                .id(repositoryID)
+                
+        case .migrationWizard:
+            MigrationWizardView()
+                .themedNavigationBar(appState.themeManager)
+                .id("migrationWizard")
+                
+        case .migrationProgress(let migrationID):
+            MigrationProgressView(
+                migration: appState.migrationService.currentMigration,
+                migrationService: appState.migrationService
+            )
+            .themedNavigationBar(appState.themeManager)
+            .id(migrationID)
         }
     }
     
@@ -101,6 +125,14 @@ struct NavigationHandler {
             return "Conversation"
         case .chatTab:
             return "Messages"
+        case .repositoryBrowser:
+            return "🧪 Repository Browser"
+        case .repositoryDetail:
+            return "Repository Detail"
+        case .migrationWizard:
+            return "🚨 Account Migration"
+        case .migrationProgress:
+            return "Migration Progress"
         }
     }
     
@@ -127,6 +159,14 @@ struct NavigationHandler {
             return "bubble.left.and.bubble.right.fill" // Or just "bubble.left.fill"
         case .chatTab:
             return "bubble.left.and.bubble.right"
+        case .repositoryBrowser:
+            return "archivebox.fill"
+        case .repositoryDetail:
+            return "doc.text.magnifyingglass"
+        case .migrationWizard:
+            return "arrow.triangle.2.circlepath"
+        case .migrationProgress:
+            return "arrow.up.arrow.down.circle"
         }
     }
 }

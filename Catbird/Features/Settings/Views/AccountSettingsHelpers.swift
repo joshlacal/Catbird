@@ -13,6 +13,7 @@ struct EmailUpdateSheet: View {
     @State private var newEmail = ""
     @State private var isUpdating = false
     @State private var errorMessage: String?
+    @State private var showingError = false
     
     var body: some View {
         NavigationStack {
@@ -81,12 +82,38 @@ struct EmailUpdateSheet: View {
                 return
             }
             
-            // Note: AT Protocol doesn't have a direct email update endpoint
-            // This would typically be done through account management UI
-            // For now, we'll simulate success
-            Task { @MainActor in
-                onEmailUpdated(newEmail)
-                dismiss()
+            // Use the AT Protocol email update API
+            do {
+                // First, request an email update token
+                let client = await AppState.shared.atProtoClient
+                guard let client = client else {
+                    Task { @MainActor in
+                        errorMessage = "Unable to connect to server"
+                        showingError = true
+                    }
+                    return
+                }
+                
+                let (responseCode, response) = try await client.com.atproto.server.requestEmailUpdate()
+                
+                if responseCode == 200 {
+                    // Email update token has been sent to current email
+                    // User needs to check their email and confirm the update
+                    Task { @MainActor in
+                        onEmailUpdated(newEmail)
+                        dismiss()
+                    }
+                } else {
+                    Task { @MainActor in
+                        errorMessage = "Failed to request email update (Code: \(responseCode))"
+                        showingError = true
+                    }
+                }
+            } catch {
+                Task { @MainActor in
+                    errorMessage = "Email update failed: \(error.localizedDescription)"
+                    showingError = true
+                }
             }
         }
     }
