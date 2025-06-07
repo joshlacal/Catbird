@@ -560,6 +560,23 @@ import OSLog
             saveChanges()
         }
     }
+    
+    // WebView Embeds
+    var useWebViewEmbeds: Bool {
+        get { settingsModel?.useWebViewEmbeds ?? defaults.useWebViewEmbeds }
+        set {
+            settingsModel?.useWebViewEmbeds = newValue
+            saveChanges()
+        }
+    }
+    
+    var enablePictureInPicture: Bool {
+        get { settingsModel?.enablePictureInPicture ?? defaults.enablePictureInPicture }
+        set {
+            settingsModel?.enablePictureInPicture = newValue
+            saveChanges()
+        }
+    }
 
     // Languages
     var appLanguage: String {

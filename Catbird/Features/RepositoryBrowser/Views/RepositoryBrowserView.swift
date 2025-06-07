@@ -26,9 +26,20 @@ struct RepositoryBrowserView: View {
                     initializeViewModel()
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("BackupCreated"))) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("BackupCreated"))) { notification in
                 // Refresh when a new backup is created
-                viewModel?.refresh()
+                // Add a small delay to ensure SwiftData has fully synced the changes
+                Task {
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                    viewModel?.refresh()
+                    
+                    // Log the notification details
+                    if let userInfo = notification.userInfo,
+                       let backupID = userInfo["backupID"] as? UUID,
+                       let userDID = userInfo["userDID"] as? String {
+                        print("🔄 RepositoryBrowserView: Refreshing after backup created - ID: \(backupID), UserDID: \(userDID)")
+                    }
+                }
             }
             .alert("Repository Browser Error", isPresented: errorBinding) {
                 Button("OK") {
@@ -166,7 +177,12 @@ struct RepositoryBrowserView: View {
     // MARK: - ViewModel Initialization
     
     private func initializeViewModel() {
+        // Force ModelContext to process any pending changes before initializing
+        modelContext.processPendingChanges()
         viewModel = RepositoryBrowserViewModel(modelContext: modelContext)
+        
+        // Also immediately refresh to ensure we have the latest data
+        viewModel?.refresh()
     }
     
     @ViewBuilder

@@ -1,0 +1,26 @@
+# pack-refs with: peeled fully-peeled sorted 
+a8431d5f6cf9606eaa51cd92bcdde903109a8686 refs/heads/absolute-content-position
+148c7a9d148e3911673b1e822506ebb60da7e867 refs/heads/custom-zoom
+77588f4e1e303dc50db8279064c6d875ccb59044 refs/heads/master
+e7d7f580b9cc1b853a6907d535966917f22a1ebb refs/heads/readme
+efb4bf88968954277fa967b4cad50097fdd3d3dd refs/heads/scaling
+148c7a9d148e3911673b1e822506ebb60da7e867 refs/pull/15/head
+31d2550f3d1ea0d3e1b8a51c392073f17779dbb1 refs/pull/17/head
+f975c1804d05431eb3061edb7ade30288b94cf43 refs/tags/1.0.0
+b53b132f7237cc5005643055fdcfea761f95b134 refs/tags/1.0.1
+6b454001b6cda1c45e55ca58e977812c55e5039e refs/tags/1.0.2
+a76696035b3bb53a52cc2cac7d63177ffe4eafbc refs/tags/1.0.3
+41db563f6ecc20cdbbc4aa63e7e92dbdceb3df22 refs/tags/1.0.4
+bf7dbb392f972bc04a2622615c5878252ba628ec refs/tags/1.0.5
+9dadeab5a66e7c4bff97b1e363f791b4ebfca1f6 refs/tags/1.0.6
+8de04797aa3c3bada70bb7bcecf040cf36ca3b56 refs/tags/1.1.0
+6f23d66176a9a43c16ee000a2c6d12795fd450e1 refs/tags/1.1.1
+5857ebe5349ddea27db2b6a6c51cb27e5f4d2033 refs/tags/1.1.10
+6317c9645049d0474948c593ac4ee071f68c995f refs/tags/1.1.2
+389c0e131fa39df7e9f50394f0f2a13632b63366 refs/tags/1.1.3
+589be1a33e142e47893136901c31dc9f3685f6b5 refs/tags/1.1.4
+fe292e9aaf783ef4c6f08525fe1e763e8cb062c9 refs/tags/1.1.5
+d64d8e8920adf6c516eedb97e1b9fe4767a6c1d9 refs/tags/1.1.6
+3601245191ffb0aa237ca408d7b4dd03b4d9d7eb refs/tags/1.1.7
+41a7138a3b99c1206f2dd522635272e6e262e723 refs/tags/1.1.8
+f1a349d7300f6dc9c213691aa69d47873bfc72dc refs/tags/1.1.9

@@ -159,9 +159,9 @@ extension View {
 // MARK: - Text Modifiers
 
 extension View {
-    /// Apply themed text color
+    /// Apply themed text color with automatic accessibility support
     func themedText(_ themeManager: ThemeManager, style: TextStyle = .primary, appSettings: AppSettings) -> some View {
-        ThemedTextView(content: self, themeManager: themeManager, style: style)
+        ThemedAccessibleTextView(content: self, themeManager: themeManager, style: style, appSettings: appSettings)
             .themeTransition(themeManager, appSettings: appSettings)
     }
 }
@@ -428,6 +428,24 @@ struct ThemedGlassBackground: View {
     }
 }
 
+struct ThemedAccessibleTextView<Content: View>: View {
+    let content: Content
+    let themeManager: ThemeManager
+    let style: TextStyle
+    let appSettings: AppSettings
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(AppState.self) private var appState
+    
+    var body: some View {
+        let baseColor = Color.dynamicText(themeManager, style: style, currentScheme: colorScheme)
+        let accessibleColor = appState.appSettings.increaseContrast ? 
+            Color.adaptiveForeground(appState: appState, defaultColor: baseColor) : baseColor
+            
+        content.foregroundColor(accessibleColor)
+    }
+}
+
+// Keep the old view for backwards compatibility
 struct ThemedTextView<Content: View>: View {
     let content: Content
     let themeManager: ThemeManager

@@ -1,0 +1,76 @@
+14d20f82761301b0adaca1101b199861e3f18d8a	not-for-merge	branch 'camera-orientation-lock' of https://github.com/exyte/MediaPicker
+40eb7689d0288109a5193a2aac7918509ae99f35	not-for-merge	branch 'f3dm76-patch-1' of https://github.com/exyte/MediaPicker
+1d3c06109c39b2ad2bfd8bc1004a381c888882c7	not-for-merge	branch 'feature/deselect-items-from-camera' of https://github.com/exyte/MediaPicker
+ebb2172b2679e07e9b61901b851ae58c4cafea9b	not-for-merge	branch 'feature/sample_related_fixes' of https://github.com/exyte/MediaPicker
+b5741e6f551aef805e3060b1fe714a92402e81a6	not-for-merge	branch 'feature/showFullscreenPreviewSelection' of https://github.com/exyte/MediaPicker
+e8d1bc3de3ed7b2e5c697919e7b66ce4b85407f1	not-for-merge	branch 'fix/app-crashes-without-camera-permission' of https://github.com/exyte/MediaPicker
+d78107e1d59f013ee549a8d2ba69e117f6e221b1	not-for-merge	branch 'fix/camera-rework' of https://github.com/exyte/MediaPicker
+f4f756dbdb53f087757bbd901d5eadc2be9c47e2	not-for-merge	branch 'fix/cameraStubCloseAction' of https://github.com/exyte/MediaPicker
+7577cce4b46aedc9f01c06684e0ddea5f0a1c14d	not-for-merge	branch 'fix/empty-data-text-color' of https://github.com/exyte/MediaPicker
+708e9d28272e56b190ff9409a684a213ececb680	not-for-merge	branch 'fix/support-ios-15' of https://github.com/exyte/MediaPicker
+c287ee410e5d9e9d642ed9c715042830f174a1d6	not-for-merge	branch 'main' of https://github.com/exyte/MediaPicker
+18d3c3e31a2d0bc0a0b4a01a78fbf8e1e6733c86	not-for-merge	branch 'zapletnev-patch-1' of https://github.com/exyte/MediaPicker
+9dd07db32dec5cd071846ef0bbbf8c28ac4d170e	not-for-merge	branch 'zapletnev-patch-2' of https://github.com/exyte/MediaPicker
+f1bf04c0d4e0185d47db86bd5819e484ad4b6c07	not-for-merge	branch 'zoom-scale' of https://github.com/exyte/MediaPicker
+2eaadbe29187d8ccebeb0534a9b069e0ba69713e	not-for-merge	'refs/pull/1/head' of https://github.com/exyte/MediaPicker
+48e94d2349b63e0d38f58c01fcb66748098213af	not-for-merge	'refs/pull/10/head' of https://github.com/exyte/MediaPicker
+6a67be95b11191f6602fba3ba1867ba3170b5931	not-for-merge	'refs/pull/18/head' of https://github.com/exyte/MediaPicker
+8d1a0d5e260697d795f2266eab7387729683a447	not-for-merge	'refs/pull/2/head' of https://github.com/exyte/MediaPicker
+1d3c06109c39b2ad2bfd8bc1004a381c888882c7	not-for-merge	'refs/pull/21/head' of https://github.com/exyte/MediaPicker
+e8d1bc3de3ed7b2e5c697919e7b66ce4b85407f1	not-for-merge	'refs/pull/22/head' of https://github.com/exyte/MediaPicker
+7577cce4b46aedc9f01c06684e0ddea5f0a1c14d	not-for-merge	'refs/pull/23/head' of https://github.com/exyte/MediaPicker
+b5741e6f551aef805e3060b1fe714a92402e81a6	not-for-merge	'refs/pull/27/head' of https://github.com/exyte/MediaPicker
+387b50adc21eacd10e0df198c2ac381d24d440f4	not-for-merge	'refs/pull/28/head' of https://github.com/exyte/MediaPicker
+f4f756dbdb53f087757bbd901d5eadc2be9c47e2	not-for-merge	'refs/pull/29/head' of https://github.com/exyte/MediaPicker
+e8ca95e9bc0891a4832f81f941b3a749cf8efbab	not-for-merge	'refs/pull/3/head' of https://github.com/exyte/MediaPicker
+4eef5a2792b0a5639ac9f1335034b7a188b5efc4	not-for-merge	'refs/pull/31/head' of https://github.com/exyte/MediaPicker
+ced40066cc95c06797892cc49367ec9e0fa67ac3	not-for-merge	'refs/pull/4/head' of https://github.com/exyte/MediaPicker
+f1bf04c0d4e0185d47db86bd5819e484ad4b6c07	not-for-merge	'refs/pull/5/head' of https://github.com/exyte/MediaPicker
+ebb2172b2679e07e9b61901b851ae58c4cafea9b	not-for-merge	'refs/pull/6/head' of https://github.com/exyte/MediaPicker
+d78107e1d59f013ee549a8d2ba69e117f6e221b1	not-for-merge	'refs/pull/7/head' of https://github.com/exyte/MediaPicker
+7e5512b54c52ae1aef498fe17faa22043a5fba75	not-for-merge	remote-tracking branch 'origin/main' of https://github.com/exyte/MediaPicker
+e2003d7654696dfb1baa66319a0f5e54668fb84f	not-for-merge	tag '0.0.1' of https://github.com/exyte/MediaPicker
+55e97cd83a1dab5ea88cf4275be442bd2386ca61	not-for-merge	tag '0.1.0' of https://github.com/exyte/MediaPicker
+c364cdc8a95764aaa30ea262460396619e8efa9c	not-for-merge	tag '0.1.1' of https://github.com/exyte/MediaPicker
+b5b4113b8f3d92a85095b585eb8ac495f57739f2	not-for-merge	tag '0.1.2' of https://github.com/exyte/MediaPicker
+218fb855c775a6cf3d250e310a730110c4f11a02	not-for-merge	tag '0.2.5' of https://github.com/exyte/MediaPicker
+4563e807a6df622bff0ffd419be67ee6b3af88db	not-for-merge	tag '0.2.6' of https://github.com/exyte/MediaPicker
+507770f1cba78922960f40da5120e39d321b44e6	not-for-merge	tag '1.0.0' of https://github.com/exyte/MediaPicker
+5d2761ced2126e7f39f264e0f730e35a329b4089	not-for-merge	tag '1.0.1' of https://github.com/exyte/MediaPicker
+444b2c976744cb535da9463765335d11ae7ad024	not-for-merge	tag '1.0.2' of https://github.com/exyte/MediaPicker
+85f936a3f07e025fe7d30bdde6e36b42580fcdc4	not-for-merge	tag '1.1.0' of https://github.com/exyte/MediaPicker
+122b0dd1545b98b39d0a0de2d2c7722b79a0e89c	not-for-merge	tag '1.1.1' of https://github.com/exyte/MediaPicker
+a51ca1bfee514a5976fa1adbbedc2297e8b66b9a	not-for-merge	tag '1.2.1' of https://github.com/exyte/MediaPicker
+0c315da1ff2c5bf364a63f1709bb77cdbded3573	not-for-merge	tag '1.2.2' of https://github.com/exyte/MediaPicker
+59ea00a62b8f168a4775e2b1931ac405cab155c5	not-for-merge	tag '1.2.3' of https://github.com/exyte/MediaPicker
+b3630840039a5809f834f2de778d5eaf52479ee6	not-for-merge	tag '1.2.4' of https://github.com/exyte/MediaPicker
+149b34b3fed7069e231928c9e73db9c1a29997e4	not-for-merge	tag '1.2.5' of https://github.com/exyte/MediaPicker
+49ca50bdcadaf358022ebcbed570d6ba97e68cdf	not-for-merge	tag '1.2.6' of https://github.com/exyte/MediaPicker
+24582e20c532540e0dc7bd4c0e4696898219fa18	not-for-merge	tag '1.2.7' of https://github.com/exyte/MediaPicker
+d5b203e1813a1ffd3463f678c71b82eaa38ab24a	not-for-merge	tag '1.2.8' of https://github.com/exyte/MediaPicker
+2c493fe2738009bea6803d9b75693e5f1e73d349	not-for-merge	tag '1.2.9' of https://github.com/exyte/MediaPicker
+9fc7fda45e8cfec58669659539e32729384f0cbc	not-for-merge	tag '1.3.0' of https://github.com/exyte/MediaPicker
+9f1cca9d4709724d0e41defdeb3145be1d155420	not-for-merge	tag '1.3.1' of https://github.com/exyte/MediaPicker
+638c86d8f1056b5256c45479808838ad4fdfa79a	not-for-merge	tag '1.3.2' of https://github.com/exyte/MediaPicker
+db795c1daceca978f74dc8ed19fc20c36196c0ec	not-for-merge	tag '1.3.3' of https://github.com/exyte/MediaPicker
+98c18a6d41d029489a062ff0d26e06bec8e6ec1e	not-for-merge	tag '1.4.0' of https://github.com/exyte/MediaPicker
+973477a7d158546f091e93fdc606c6aaabae3b81	not-for-merge	tag '2.0.0' of https://github.com/exyte/MediaPicker
+23c0e861e257f39b91fd5d8b584c0e6186bbbda6	not-for-merge	tag '2.0.1' of https://github.com/exyte/MediaPicker
+01f52ab100975658045afebdb5ae87a4156b37b2	not-for-merge	tag '2.0.2' of https://github.com/exyte/MediaPicker
+33db7bff79f90b2bf99713bc2b43a91a281fb8c6	not-for-merge	tag '2.1.0' of https://github.com/exyte/MediaPicker
+94b64f31e3be73f56010b17262432757f3e879ab	not-for-merge	tag '2.1.1' of https://github.com/exyte/MediaPicker
+6544ceb35f0196c1bb6a46c12849cb337a6d2c6b	not-for-merge	tag '2.2.1' of https://github.com/exyte/MediaPicker
+7f119c9abb587d63a5362d6237147bd593bd032f	not-for-merge	tag '2.2.2' of https://github.com/exyte/MediaPicker
+9eebe3032f655437f47a423bb7fa1fd249f4571a	not-for-merge	tag '2.2.3' of https://github.com/exyte/MediaPicker
+17d6a3a6d210925d4a2d2b489cc1612f41685d00	not-for-merge	tag '2.2.4' of https://github.com/exyte/MediaPicker
+874c46df48de5e57be046b243bba9690f57d2900	not-for-merge	tag '3.0.0' of https://github.com/exyte/MediaPicker
+f712dc7fb926929c5ac364a829fd6aa3c5ce1cb2	not-for-merge	tag '3.0.1' of https://github.com/exyte/MediaPicker
+fbe1426dfd34fe4479105715257f5d207dbdfd0a	not-for-merge	tag '3.0.2' of https://github.com/exyte/MediaPicker
+fde1aae475945e2a98c16ba66926ba676bfe29eb	not-for-merge	tag '3.0.3' of https://github.com/exyte/MediaPicker
+c2ba2234769b65454d57d7ea4f92e33f35dfbd0e	not-for-merge	tag '3.0.4' of https://github.com/exyte/MediaPicker
+464df79082d707447cd7833766f4a0edc2d9d1bf	not-for-merge	tag '3.0.5' of https://github.com/exyte/MediaPicker
+96de619d3d6a1ad09e93f69a6eeb4c9b9db0580b	not-for-merge	tag '3.1.0' of https://github.com/exyte/MediaPicker
+51742b354bc93fba2efe0909afe363cd4ca1812e	not-for-merge	tag '3.1.1' of https://github.com/exyte/MediaPicker
+f99c07b20ac9e3306c5302fe6d3e329413009dcc	not-for-merge	tag '3.1.2' of https://github.com/exyte/MediaPicker
+ee4ad7b0a3cbd4546041921c73a2194b6188cfb3	not-for-merge	tag '3.1.3' of https://github.com/exyte/MediaPicker
+bf1f06dca314f6ed890c47ff8216c6360118c91c	not-for-merge	tag '3.1.4' of https://github.com/exyte/MediaPicker

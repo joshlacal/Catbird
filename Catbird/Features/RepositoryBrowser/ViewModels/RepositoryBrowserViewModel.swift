@@ -137,12 +137,12 @@ final class RepositoryBrowserViewModel {
         
         Task {
             do {
-                // Load backup records directly from ModelContext to avoid isolation issues
-                let backupDescriptor = FetchDescriptor<BackupRecord>(
-                    sortBy: [SortDescriptor(\.createdDate, order: .reverse)]
-                )
-                let loadedBackupRecords = try modelContext.fetch(backupDescriptor)
-                self.logger.info("Direct fetch found \(loadedBackupRecords.count) backup records")
+                // Create BackupModelActor for consistent access to backup records
+                let backupActor = BackupModelActor(modelContainer: modelContext.container)
+                
+                // Load backup records through actor to ensure consistency
+                let loadedBackupRecords = try await backupActor.fetchAllBackupRecords()
+                self.logger.info("BackupModelActor found \(loadedBackupRecords.count) backup records")
                 
                 // Create actor for repository record operations only
                 let repositoryActor = RepositoryModelActor(modelContainer: modelContext.container)

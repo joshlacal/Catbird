@@ -62,7 +62,7 @@ struct TappableTextView: View {
     var body: some View {
         Group {
             if containsOnlyEmojis {
-                // If the string contains only emojis, use a larger font size
+                // If the string contains only emojis, use a larger font size with accessibility support
                 Text(attributedString)
                     .appFont(size: effectiveTextSize ?? 24, weight: textWeight, relativeTo: textStyle)
                     .fixedSize(horizontal: false, vertical: true)
@@ -73,15 +73,8 @@ struct TappableTextView: View {
                     .allowsTightening(true)
                     .minimumScaleFactor(0.9)
             } else {
-                // Regular text handling - use app font system properly
+                // Regular text handling - preserve AttributedString formatting
                 Text(attributedString)
-                    .customScaledFont(
-                        size: effectiveTextSize,
-                        weight: textWeight,
-                        width: fontWidth,
-                        relativeTo: textStyle,
-                        design: textDesign
-                    )
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .tracking(letterSpacing)
@@ -104,6 +97,25 @@ struct TappableTextView: View {
         }
 
     }
+    
+    // Helper function to convert Font.TextStyle to AppTextRole
+    private func textStyleToRole(_ textStyle: Font.TextStyle) -> AppTextRole {
+        switch textStyle {
+        case .largeTitle: return .largeTitle
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .body: return .body
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption
+        case .caption2: return .caption2
+        @unknown default: return .body
+        }
+    }
+    
   // Computed property for text size that increases size for emoji-only strings
   private var effectiveTextSize: CGFloat? {
       if containsOnlyEmojis {

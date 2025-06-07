@@ -1,6 +1,7 @@
 import SwiftUI
 import NukeUI
 import Petrel
+import WebKit
 
 struct ExternalEmbedView: View {
     let external: AppBskyEmbedExternal.ViewExternal
@@ -41,77 +42,97 @@ struct ExternalEmbedView: View {
 
     @ViewBuilder
     private var content: some View {
-        Group {
-            if let videoModel = videoModel {
-                // Video player - no blur handling when shouldBlur is false (ContentLabelManager handles it)
-                if shouldBlur {
-                    ZStack(alignment: .topTrailing) {
-                        ModernVideoPlayerView18(
-                            model: videoModel,
-                            postID: postID
-                        )
-                        .frame(maxWidth: .infinity)
-                        .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
-                        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .blur(radius: isBlurred ? 60 : 0)
-                        
-                        blurToggleButton
-                        
-                        if isBlurred {
-                            sensitiveContentOverlay
-                        }
-                    }
-                } else {
-                    // Simple video display when ContentLabelManager handles filtering
-                    ModernVideoPlayerView18(
-                        model: videoModel,
-                        postID: postID
-                    )
-                    .frame(maxWidth: .infinity)
-                    .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
-                    .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                }
-            } else {
-                // Link card - no blur handling when shouldBlur is false
-                if shouldBlur {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ZStack(alignment: .topTrailing) {
-                            thumbnailImageContent
-                                .blur(radius: isBlurred ? 60 : 0)
-                            
-                            blurToggleButton
-                            
-                            if isBlurred {
-                                sensitiveContentOverlay
-                            }
-                        }
-                        
-                        linkDetails
-                    }
-                    .padding(6)
-                    .background(Color.gray.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
-                } else {
-                    // Simple link display when ContentLabelManager handles filtering
-                    VStack(alignment: .leading, spacing: 3) {
-                        thumbnailImageContent
-                        linkDetails
-                    }
-                    .padding(6)
-                    .background(Color.gray.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
+        if let videoModel = videoModel {
+            videoPlayerContent(videoModel: videoModel)
+        } else if let url = URL(string: external.uri.uriString()),
+                  appState.appSettings.useWebViewEmbeds,
+                  let embedType = ExternalMediaType.detect(from: url),
+                  shouldShowWebViewEmbed(for: embedType) {
+            webViewEmbedContent(url: url, embedType: embedType)
+        } else {
+            linkCardContent()
+        }
+    }
+    
+    @ViewBuilder
+    private func videoPlayerContent(videoModel: VideoModel) -> some View {
+        if shouldBlur {
+            ZStack(alignment: .topTrailing) {
+                ModernVideoPlayerView18(
+                    model: videoModel,
+                    postID: postID
+                )
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
+                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .blur(radius: isBlurred ? 60 : 0)
+                
+                blurToggleButton
+                
+                if isBlurred {
+                    sensitiveContentOverlay
                 }
             }
+        } else {
+            ModernVideoPlayerView18(
+                model: videoModel,
+                postID: postID
+            )
+            .frame(maxWidth: .infinity)
+            .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
+            .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+        }
+    }
+    
+    @ViewBuilder
+    private func webViewEmbedContent(url: URL, embedType: ExternalMediaType) -> some View {
+        EnhancedEmbeddedMediaWebView(
+            url: url,
+            embedType: embedType,
+            shouldBlur: shouldBlur
+        )
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+    
+    @ViewBuilder
+    private func linkCardContent() -> some View {
+        if shouldBlur {
+            VStack(alignment: .leading, spacing: 3) {
+                ZStack(alignment: .topTrailing) {
+                    thumbnailImageContent
+                        .blur(radius: isBlurred ? 60 : 0)
+                    
+                    blurToggleButton
+                    
+                    if isBlurred {
+                        sensitiveContentOverlay
+                    }
+                }
+                
+                linkDetails
+            }
+            .padding(6)
+            .background(Color.gray.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                thumbnailImageContent
+                linkDetails
+            }
+            .padding(6)
+            .background(Color.gray.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
         }
     }
     
@@ -381,6 +402,32 @@ struct ExternalEmbedView: View {
             return appState.appSettings.allowFlickr
         default:
             return true // Allow unknown external sites by default
+        }
+    }
+    
+    /// Check if WebView embeds should be shown for specific media types
+    private func shouldShowWebViewEmbed(for embedType: ExternalMediaType) -> Bool {
+        switch embedType {
+        case .youtube:
+            return appState.appSettings.allowYouTube
+        case .youtubeShorts:
+            return appState.appSettings.allowYouTubeShorts
+        case .vimeo:
+            return appState.appSettings.allowVimeo
+        case .twitch:
+            return appState.appSettings.allowTwitch
+        case .spotify:
+            return appState.appSettings.allowSpotify
+        case .appleMusic:
+            return appState.appSettings.allowAppleMusic
+        case .soundcloud:
+            return appState.appSettings.allowSoundCloud
+        case .giphy:
+            return appState.appSettings.allowGiphy
+        case .tenor:
+            return appState.appSettings.allowTenor
+        case .flickr:
+            return appState.appSettings.allowFlickr
         }
     }
     

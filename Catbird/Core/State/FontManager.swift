@@ -574,33 +574,109 @@ enum AppTextRole: CaseIterable {
 
 struct AppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     
     let role: AppTextRole
     
     func body(content: Content) -> some View {
+        let baseWeight = getBaseWeight(for: role)
+        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState.appSettings.boldText)
+        
         content
-            .font(fontManager.fontForTextRole(role))
+            .font(fontManager.fontForTextRole(role).weight(adjustedWeight))
             .lineSpacing(fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier)
             .tracking(fontManager.letterSpacingValue)
+    }
+    
+    private func getAccessibleTextColor() -> Color {
+        // Apply high contrast if enabled
+        if appState.appSettings.increaseContrast {
+            return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
+        } else {
+            return Color.primary
+        }
+    }
+    
+    private func getBaseWeight(for role: AppTextRole) -> Font.Weight {
+        switch role {
+        case .largeTitle, .title1:
+            return .bold
+        case .title2, .title3, .headline:
+            return .semibold
+        case .subheadline:
+            return .medium
+        case .body, .callout, .footnote:
+            return .regular
+        case .caption, .caption2:
+            return .medium
+        }
+    }
+    
+    private func adjustFontWeight(baseWeight: Font.Weight, boldText: Bool) -> Font.Weight {
+        guard boldText else { return baseWeight }
+        
+        // Increase font weight for accessibility
+        switch baseWeight {
+        case .ultraLight: return .light
+        case .thin: return .regular
+        case .light: return .medium
+        case .regular: return .semibold
+        case .medium: return .semibold
+        case .semibold: return .bold
+        case .bold: return .heavy
+        case .heavy: return .black
+        default: return .semibold
+        }
     }
 }
 
 struct CustomAppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     
     let size: CGFloat
     let weight: Font.Weight
     let textStyle: Font.TextStyle?
     
     func body(content: Content) -> some View {
+        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState.appSettings.boldText)
+        
         content
             .font(fontManager.scaledFont(
                 size: size,
-                weight: weight,
+                weight: adjustedWeight,
                 relativeTo: textStyle ?? .body  // Always provide a textStyle for Dynamic Type
             ))
             .lineSpacing(fontManager.getLineSpacing(for: size))
             .tracking(fontManager.letterSpacingValue)
+    }
+    
+    private func getAccessibleTextColor() -> Color {
+        // Apply high contrast if enabled
+        if appState.appSettings.increaseContrast {
+            return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
+        } else {
+            return Color.primary
+        }
+    }
+    
+    private func adjustFontWeight(baseWeight: Font.Weight, boldText: Bool) -> Font.Weight {
+        guard boldText else { return baseWeight }
+        
+        // Increase font weight for accessibility
+        switch baseWeight {
+        case .ultraLight: return .light
+        case .thin: return .regular
+        case .light: return .medium
+        case .regular: return .semibold
+        case .medium: return .semibold
+        case .semibold: return .bold
+        case .bold: return .heavy
+        case .heavy: return .black
+        default: return .semibold
+        }
     }
 }
 

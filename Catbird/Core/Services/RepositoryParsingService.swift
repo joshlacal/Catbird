@@ -444,7 +444,7 @@ enum ParsingStatus: String, CaseIterable {
 
 // MARK: - Errors
 
-enum RepositoryParsingError: LocalizedError {
+public enum RepositoryParsingError: LocalizedError {
     case experimentalFeatureDisabled
     case modelContextNotAvailable
     case backupRecordNotFound
@@ -452,7 +452,7 @@ enum RepositoryParsingError: LocalizedError {
     case backupFileNotFound
     case invalidRecordData(String)
     
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .experimentalFeatureDisabled:
             return "Experimental repository parsing is disabled. Enable it in settings to use this feature."

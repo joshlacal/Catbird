@@ -129,6 +129,19 @@ struct ContentMediaSettingsView: View {
             
             // External Media Embeds
             Section {
+                Toggle("Enable WebView Embeds", isOn: Binding(
+                    get: { appState.appSettings.useWebViewEmbeds },
+                    set: { appState.appSettings.useWebViewEmbeds = $0 }
+                ))
+                .tint(.blue)
+                
+                Toggle("Picture in Picture", isOn: Binding(
+                    get: { appState.appSettings.enablePictureInPicture },
+                    set: { appState.appSettings.enablePictureInPicture = $0 }
+                ))
+                .tint(.blue)
+                .disabled(!appState.appSettings.useWebViewEmbeds)
+                
                 Toggle("YouTube", isOn: Binding(
                     get: { appState.appSettings.allowYouTube },
                     set: { appState.appSettings.allowYouTube = $0 }
@@ -191,7 +204,7 @@ struct ContentMediaSettingsView: View {
             } header: {
                 Text("External Media Embeds")
             } footer: {
-                Text("Control which external media services are allowed to display embedded content in posts.")
+                Text("WebView embeds show interactive content directly in posts. Picture in Picture allows videos to continue playing in a floating window while browsing. When WebView embeds are disabled, external media will display as link cards. Control which external media services are allowed to display embedded content in posts.")
                     .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -298,6 +311,8 @@ struct ContentMediaSettingsView: View {
         appState.appSettings.showTrendingVideos = true
         
         // Reset external media settings
+        appState.appSettings.useWebViewEmbeds = true
+        appState.appSettings.enablePictureInPicture = true
         appState.appSettings.allowYouTube = true
         appState.appSettings.allowYouTubeShorts = true
         appState.appSettings.allowVimeo = true

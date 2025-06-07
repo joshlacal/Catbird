@@ -414,11 +414,17 @@ struct AccountSettingsView: View {
                     BackupSettingsSheet(
                         configuration: config,
                         onConfigurationUpdated: { updatedConfig in
-                            do {
-                                try appState.backupManager.updateBackupConfiguration(updatedConfig)
-                                backupConfiguration = updatedConfig
-                            } catch {
-                                handleAPIError(error, operation: "update backup settings")
+                            Task {
+                                do {
+                                    try await appState.backupManager.updateBackupConfiguration(updatedConfig)
+                                    await MainActor.run {
+                                        backupConfiguration = updatedConfig
+                                    }
+                                } catch {
+                                    await MainActor.run {
+                                        handleAPIError(error, operation: "update backup settings")
+                                    }
+                                }
                             }
                         }
                     )
@@ -645,8 +651,8 @@ struct AccountSettingsView: View {
         logger.info("appState.authManager.state.userDID: '\(appState.authManager.state.userDID ?? "nil")'")
         
         do {
-            let records = try appState.backupManager.getBackupRecords(for: userDID)
-            let config = try appState.backupManager.getBackupConfiguration(for: userDID)
+            let records = try await appState.backupManager.getBackupRecords(for: userDID)
+            let config = try await appState.backupManager.getBackupConfiguration(for: userDID)
             
             logger.info("Successfully loaded \(records.count) backup records")
             

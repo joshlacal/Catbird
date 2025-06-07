@@ -75,6 +75,10 @@ final class AppSettingsModel {
     var allowSoundCloud: Bool = true
     var allowFlickr: Bool = true
     
+    // WebView Embeds
+    var useWebViewEmbeds: Bool = true
+    var enablePictureInPicture: Bool = true
+    
     // Languages
     var appLanguage: String = "system"
     var primaryLanguage: String = "en"
@@ -191,6 +195,16 @@ final class AppSettingsModel {
         allowSoundCloud = defaults.bool(forKey: "allowSoundCloud")
         allowFlickr = defaults.bool(forKey: "allowFlickr")
         
+        // WebView Embeds
+        useWebViewEmbeds = defaults.bool(forKey: "useWebViewEmbeds")
+        if useWebViewEmbeds == false && defaults.object(forKey: "useWebViewEmbeds") == nil {
+            useWebViewEmbeds = true // Default to true if not set
+        }
+        enablePictureInPicture = defaults.bool(forKey: "enablePictureInPicture")
+        if enablePictureInPicture == false && defaults.object(forKey: "enablePictureInPicture") == nil {
+            enablePictureInPicture = true // Default to true if not set
+        }
+        
         // Languages
         if let value = defaults.string(forKey: "appLanguage") { appLanguage = value }
         if let value = defaults.string(forKey: "primaryLanguage") { primaryLanguage = value }
@@ -282,6 +296,10 @@ final class AppSettingsModel {
         allowAppleMusic = true
         allowSoundCloud = true
         allowFlickr = true
+        
+        // WebView Embeds
+        useWebViewEmbeds = true
+        enablePictureInPicture = true
         
         // Languages
         appLanguage = "system"

@@ -254,6 +254,11 @@ Before any release, ensure:
 - Video assets are managed by `VideoAssetManager` with caching
 - Never log sensitive information
 
+## Coding Principles
+
+### Overarching Development Directive
+- **ALWAYS WRITE CODE FOR A PRODUCTION, RELEASE-READY APP**
+
 ---
 
 *This document is focused on essential information for effective development. For detailed MCP server usage, worktree workflows, and testing patterns, see the full documentation in project files.*

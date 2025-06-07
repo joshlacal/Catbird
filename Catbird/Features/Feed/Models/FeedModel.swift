@@ -120,6 +120,9 @@ final class FeedModel: StateInvalidationSubscriber {
       self.lastRefreshTime = Date()
 
       await refreshPostShadows(fetchedPosts)
+      
+      // Update widget data
+      FeedWidgetDataProvider.shared.updateWidgetData(from: newPosts, feedType: fetch)
     } catch {
       self.error = error
     }
@@ -142,6 +145,9 @@ final class FeedModel: StateInvalidationSubscriber {
       }
       self.cursor = cursor
       self.hasMore = cursor != nil
+      
+      // Update widget data for cached feed
+      FeedWidgetDataProvider.shared.updateWidgetData(from: self.posts, feedType: lastFeedType)
     }
   }
 

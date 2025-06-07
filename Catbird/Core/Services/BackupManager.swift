@@ -12,6 +12,7 @@ final class BackupManager {
     
     private let logger = Logger(subsystem: "blue.catbird", category: "BackupManager")
     private var modelContext: ModelContext?
+    private var backupActor: BackupModelActor?
     private var automaticBackupTimer: Timer?
     private weak var repositoryParsingService: RepositoryParsingService?
     
@@ -36,9 +37,14 @@ final class BackupManager {
     func configure(with modelContext: ModelContext, repositoryParsingService: RepositoryParsingService? = nil) {
         self.modelContext = modelContext
         self.repositoryParsingService = repositoryParsingService
+        
+        // Create actor with the same container for consistent access
+        self.backupActor = BackupModelActor(modelContainer: modelContext.container)
+        
         setupAutomaticBackupTimer()
         logger.info("BackupManager configured with ModelContext: \(String(describing: modelContext))")
         logger.info("ModelContext container: \(String(describing: modelContext.container))")
+        logger.info("BackupModelActor created for consistent SwiftData access")
         
         // Test that we can fetch records
         do {
@@ -61,7 +67,7 @@ final class BackupManager {
         }
         
         // Check if we can create a new backup (rate limiting)
-        let config = try getBackupConfiguration(for: userDID)
+        let config = try await getBackupConfiguration(for: userDID)
         if !config.canCreateNewBackup {
             throw BackupError.tooSoonForNewBackup
         }
@@ -77,7 +83,7 @@ final class BackupManager {
     /// Creates an automatic backup if needed
     @MainActor
     func createAutomaticBackupIfNeeded(for userDID: String, userHandle: String, client: ATProtoClient) async {
-        guard let config = try? getBackupConfiguration(for: userDID),
+        guard let config = try? await getBackupConfiguration(for: userDID),
               config.needsAutomaticBackup else {
             return
         }
@@ -97,81 +103,48 @@ final class BackupManager {
     }
     
     /// Gets all backup records for a user
-    func getBackupRecords(for userDID: String) throws -> [BackupRecord] {
-        guard let modelContext = modelContext else {
-            logger.error("ModelContext not available when fetching backup records")
+    func getBackupRecords(for userDID: String) async throws -> [BackupRecord] {
+        guard let backupActor = backupActor else {
+            logger.error("BackupActor not available when fetching backup records")
             throw BackupError.modelContextNotAvailable
         }
         
-        logger.info("QUERY: Fetching backup records for user: \(userDID)")
-        logger.info("QUERY: ModelContext instance: \(String(describing: modelContext))")
+        logger.info("QUERY: Fetching backup records for user: \(userDID) using BackupModelActor")
         
-        // First, let's check all backup records without filtering
-        let allRecordsDescriptor = FetchDescriptor<BackupRecord>(
-            sortBy: [SortDescriptor(\.createdDate, order: .reverse)]
-        )
-        let allRecords = try modelContext.fetch(allRecordsDescriptor)
+        // Use actor for consistent access
+        let records = try await backupActor.fetchBackupRecords(for: userDID)
+        logger.info("QUERY: BackupModelActor returned \(records.count) records for user: \(userDID)")
+        
+        // Also fetch all records for debugging
+        let allRecords = try await backupActor.fetchAllBackupRecords()
         logger.info("QUERY: Total backup records in database: \(allRecords.count)")
         
-        for (index, record) in allRecords.enumerated() {
-            logger.info("QUERY: All Record \(index): userDID='\(record.userDID)', target='\(userDID)', match=\(record.userDID == userDID)")
-        }
-        
-        // Now filter by user DID - try different approaches
-        let descriptor = FetchDescriptor<BackupRecord>(
-            predicate: #Predicate { $0.userDID == userDID },
-            sortBy: [SortDescriptor(\.createdDate, order: .reverse)]
-        )
-        
-        let records = try modelContext.fetch(descriptor)
-        logger.info("QUERY: Found \(records.count) backup records for user: \(userDID)")
-        
-        // If no records found, let's also try without predicate to see what's in the database
         if records.isEmpty && !allRecords.isEmpty {
-            logger.warning("QUERY: No records found with predicate, but database has \(allRecords.count) records")
-            logger.warning("QUERY: First record in DB has userDID: '\(allRecords.first?.userDID ?? "nil")'")
-            logger.warning("QUERY: Looking for userDID: '\(userDID)'")
-            
-            // Try manual filtering as a fallback
-            let manuallyFiltered = allRecords.filter { $0.userDID == userDID }
-            logger.warning("QUERY: Manual filter found \(manuallyFiltered.count) records")
-        }
-        
-        for (index, record) in records.enumerated() {
-            logger.info("QUERY: Filtered Record \(index): ID=\(record.id.uuidString), status=\(String(describing: record.status)), created=\(record.createdDate)")
+            logger.warning("QUERY: No records found for userDID '\(userDID)', but database has \(allRecords.count) total records")
+            for (index, record) in allRecords.enumerated() {
+                logger.warning("QUERY: Record \(index) - userDID: '\(record.userDID)'")
+            }
         }
         
         return records
     }
     
     /// Gets backup configuration for a user
-    func getBackupConfiguration(for userDID: String) throws -> BackupConfiguration {
-        guard let modelContext = modelContext else {
+    func getBackupConfiguration(for userDID: String) async throws -> BackupConfiguration {
+        guard let backupActor = backupActor else {
             throw BackupError.modelContextNotAvailable
         }
         
-        let descriptor = FetchDescriptor<BackupConfiguration>(
-            predicate: #Predicate { $0.userDID == userDID }
-        )
-        
-        if let existingConfig = try modelContext.fetch(descriptor).first {
-            return existingConfig
-        } else {
-            // Create default configuration
-            let newConfig = BackupConfiguration(userDID: userDID)
-            modelContext.insert(newConfig)
-            try modelContext.save()
-            return newConfig
-        }
+        return try await backupActor.getBackupConfiguration(for: userDID)
     }
     
     /// Updates backup configuration
-    func updateBackupConfiguration(_ config: BackupConfiguration) throws {
-        guard let modelContext = modelContext else {
+    func updateBackupConfiguration(_ config: BackupConfiguration) async throws {
+        guard let backupActor = backupActor else {
             throw BackupError.modelContextNotAvailable
         }
         
-        try modelContext.save()
+        try await backupActor.updateBackupConfiguration(config)
         
         // Restart timer with new configuration
         setupAutomaticBackupTimer()
@@ -248,9 +221,9 @@ final class BackupManager {
     }
     
     /// Cleans up old backups based on configuration
-    func cleanupOldBackups(for userDID: String) throws {
-        let config = try getBackupConfiguration(for: userDID)
-        let records = try getBackupRecords(for: userDID)
+    func cleanupOldBackups(for userDID: String) async throws {
+        let config = try await getBackupConfiguration(for: userDID)
+        let records = try await getBackupRecords(for: userDID)
         
         // Keep only the most recent backups
         let recordsToDelete = Array(records.dropFirst(config.maxBackupsToKeep))
@@ -333,56 +306,68 @@ final class BackupManager {
                 repositorySize: Int64(carData.count)
             )
             
-            guard let modelContext = modelContext else {
-                logger.error("❌ CRITICAL: ModelContext is nil when trying to save BackupRecord!")
+            guard let backupActor = backupActor else {
+                logger.error("❌ CRITICAL: BackupActor is nil when trying to save BackupRecord!")
+                logger.error("❌ ModelContext: \(String(describing: self.modelContext))")
+                logger.error("❌ BackupManager.configure was called: \(self.modelContext != nil)")
                 throw BackupError.modelContextNotAvailable
             }
             
-            logger.info("SAVE: About to insert BackupRecord with ID: \(record.id) for user: \(userDID)")
-            logger.info("SAVE: ModelContext instance: \(String(describing: modelContext))")
+            logger.info("SAVE: About to save BackupRecord with ID: \(record.id) for user: \(userDID) using BackupModelActor")
             logger.info("SAVE: Record userDID: '\(record.userDID)'")
             logger.info("SAVE: Parameter userDID: '\(userDID)'")
-            modelContext.insert(record)
             
-            logger.info("Calling modelContext.save()...")
-            try modelContext.save()
-            logger.info("✅ modelContext.save() completed successfully")
+            // Use actor for consistent saving
+            do {
+                logger.info("🔵 SAVE: Calling backupActor.saveBackupRecord...")
+                logger.info("🔵 SAVE: BackupActor instance: \(String(describing: backupActor))")
+                
+                // Force a simple test to see if actor is working
+                let testFetch = try await backupActor.fetchAllBackupRecords()
+                logger.info("🔵 SAVE: Test fetch before save found \(testFetch.count) records")
+                
+                try await backupActor.saveBackupRecord(record)
+                logger.info("✅ BackupModelActor saved record successfully")
+                
+                // Immediate test fetch to verify
+                let testFetch2 = try await backupActor.fetchAllBackupRecords()
+                logger.info("✅ SAVE: Test fetch after save found \(testFetch2.count) records")
+            } catch {
+                logger.error("❌ SAVE ERROR: BackupModelActor.saveBackupRecord failed: \(error)")
+                logger.error("❌ SAVE ERROR Details: \(error.localizedDescription)")
+                throw error
+            }
             
-            // Force SwiftData to process pending changes
-            logger.info("Processing pending changes...")
-            modelContext.processPendingChanges()
-            logger.info("✅ Pending changes processed")
-            
-            // Verify the record was saved using the same modelContext
-            logger.info("Verifying save by fetching records...")
-            let descriptor = FetchDescriptor<BackupRecord>(
-                predicate: #Predicate { $0.userDID == userDID },
-                sortBy: [SortDescriptor(\.createdDate, order: .reverse)]
-            )
-            let verifyRecords = try modelContext.fetch(descriptor)
-            logger.info("After save, found \(verifyRecords.count) backup records for user \(userDID)")
+            // Verify the record was saved by fetching through actor
+            logger.info("Verifying save by fetching records through actor...")
+            let verifyRecords = try await backupActor.fetchBackupRecords(for: userDID)
+            logger.info("After save, BackupModelActor found \(verifyRecords.count) backup records for user \(userDID)")
             if let latestRecord = verifyRecords.first {
                 logger.info("Latest record ID: \(latestRecord.id.uuidString), status: \(String(describing: latestRecord.status))")
             }
+            
+            // Double-check all records
+            let allRecordsCheck = try await backupActor.fetchAllBackupRecords()
+            logger.info("🔍 DEBUG: Total records in DB after save: \(allRecordsCheck.count)")
             
             backupProgress = 0.9
             backupStatusMessage = "Finalizing backup..."
             
             // Update configuration if automatic backup
             if isAutomatic {
-                let config = try getBackupConfiguration(for: userDID)
+                let config = try await getBackupConfiguration(for: userDID)
                 config.lastAutoBackupDate = Date()
-                try modelContext.save()
+                try await backupActor.updateBackupConfiguration(config)
             }
             
             // Verify integrity if configured
-            let config = try getBackupConfiguration(for: userDID)
+            let config = try await getBackupConfiguration(for: userDID)
             if config.verifyIntegrityAfterBackup {
                 try await verifyBackupIntegrity(record)
             }
             
             // Clean up old backups
-            try cleanupOldBackups(for: userDID)
+            try await cleanupOldBackups(for: userDID)
             
             // Auto-parse repository if enabled (EXPERIMENTAL)
             if config.autoParseAfterBackup ?? true { // Default to true if nil (for existing configs)
@@ -439,7 +424,7 @@ final class BackupManager {
     @MainActor
     func triggerAutomaticBackupCheck(for userDID: String, userHandle: String, client: ATProtoClient) async {
         do {
-            let config = try getBackupConfiguration(for: userDID)
+            let config = try await getBackupConfiguration(for: userDID)
             if config.autoBackupEnabled && config.needsAutomaticBackup && config.canCreateNewBackup {
                 logger.info("Triggering automatic backup for user: \(userHandle)")
                 _ = try await performBackup(
