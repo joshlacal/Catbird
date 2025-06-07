@@ -1,9 +1,0 @@
-{
-  "testId": "test-orchestrator-system",
-  "timestamp": "2025-05-30T22:57:23.894Z",
-  "orchestratorStatus": "working",
-  "cliBinaryFound": true,
-  "simulatorAccess": true,
-  "projectAccess": true,
-  "worktreeSupport": true
-}

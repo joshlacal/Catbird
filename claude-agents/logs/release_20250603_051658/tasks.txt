@@ -1,9 +1,0 @@
-feed-filtering-fix|opus|Fix the feed filtering in Catbird: 1. Implement hideRepliesByUnfollowed in FeedTuner.swift line 473-476 2. Ensure all content filtering settings in ContentMediaSettingsView actually affect feed display 3. Test that all filter combinations work correctly
-language-filtering|opus|Implement language filtering in Catbird: 1. Uncomment and implement language filtering in ContentMediaSettingsView.swift lines 82-95 2. Add language detection to PostParser 3. Filter posts based on user language preferences
-font-accessibility|sonnet|Verify font accessibility settings: 1. Check that line spacing, display scale, increased contrast, and bold text in AccessibilitySettingsView actually affect text rendering 2. Connect all settings to the rendering system 3. Test with Dynamic Type
-app-passwords|sonnet|Replace App Passwords functionality coming soon placeholder in PrivacySecuritySettingsView.swift line 94 with actual implementation
-moderation-lists|sonnet|Replace Moderation Lists feature coming soon in ModerationSettingsView.swift with actual list management UI
-typing-indicators|sonnet|Fix typing indicators in ChatManager.swift lines 1668-1672 to use real AT Protocol events instead of simulation
-feed-discovery|sonnet|Replace hardcoded discovery data in FeedDiscoveryCardsView.swift with real API calls for trending topics
-quote-posts|sonnet|Complete quote post TODOs in PostManager.swift with proper creation and rendering
-video-upload|sonnet|Add video upload progress indicators and compression options to MediaUploadManager.swift
