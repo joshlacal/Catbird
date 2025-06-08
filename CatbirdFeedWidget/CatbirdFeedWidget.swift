@@ -62,10 +62,10 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
             widgetLogger.debug("Loaded \(feedData.posts.count) posts from shared data")
             
             // Filter posts based on selected feed type
-            if feedData.feedType == configuration.feedType.rawValue {
+            if feedData.feedType == configuration.feedType {
                 return feedData.posts
             } else {
-                widgetLogger.debug("Feed type mismatch: \(feedData.feedType) != \(configuration.feedType.rawValue)")
+                widgetLogger.debug("Feed type mismatch: \(feedData.feedType) != \(configuration.feedType)")
                 return nil
             }
         } catch {
@@ -143,7 +143,7 @@ struct CatbirdFeedWidgetEntryView : View {
                 MediumFeedWidget(entry: entry)
             }
         }
-        .widgetURL(URL(string: "blue.catbird://feed/\(entry.configuration.feedType.rawValue)")!)
+        .widgetURL(URL(string: "blue.catbird://feed/\(entry.configuration.feedType)")!)
     }
 }
 
@@ -160,7 +160,7 @@ struct SmallFeedWidget: View {
                     Image(systemName: "quote.bubble.fill")
                         .font(.system(size: 14))
                         .foregroundStyle(.blue)
-                    Text(entry.configuration.feedType.rawValue.capitalized)
+                    Text(entry.configuration.feedType.capitalized)
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -210,7 +210,7 @@ struct MediumFeedWidget: View {
                     Image(systemName: "quote.bubble.fill")
                         .font(.system(size: 16))
                         .foregroundStyle(.blue)
-                    Text(entry.configuration.feedType.rawValue.capitalized)
+                    Text(entry.configuration.feedType.capitalized)
                         .font(.subheadline.bold())
                         .foregroundStyle(.primary)
                     Spacer()
@@ -251,7 +251,7 @@ struct LargeFeedWidget: View {
                     Image(systemName: "quote.bubble.fill")
                         .font(.system(size: 18))
                         .foregroundStyle(.blue)
-                    Text(entry.configuration.feedType.rawValue.capitalized + " Feed")
+                    Text(entry.configuration.feedType.capitalized + " Feed")
                         .font(.headline)
                         .foregroundStyle(.primary)
                     Spacer()
@@ -301,7 +301,7 @@ struct ExtraLargeFeedWidget: View {
                     Image(systemName: "quote.bubble.fill")
                         .font(.system(size: 20))
                         .foregroundStyle(.blue)
-                    Text(entry.configuration.feedType.rawValue.capitalized + " Feed")
+                    Text(entry.configuration.feedType.capitalized + " Feed")
                         .font(.title3.bold())
                         .foregroundStyle(.primary)
                     Spacer()

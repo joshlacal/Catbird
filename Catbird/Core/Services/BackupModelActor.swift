@@ -32,6 +32,9 @@ actor BackupModelActor {
         context.insert(record)
         logger.info("🔵 SAVE: Inserted record into context")
         
+        // Define record ID for predicate closure
+        let recordID = record.id
+        
         // Check if record exists in context before save
         let preSearchDescriptor = FetchDescriptor<BackupRecord>(
             predicate: #Predicate<BackupRecord> { backupRecord in backupRecord.id == recordID }
@@ -47,11 +50,10 @@ actor BackupModelActor {
         logger.info("✅ SAVE: Processed pending changes")
         
         // Verify the save immediately
-        let recordID = record.id
-        let descriptor = FetchDescriptor<BackupRecord>(
+        let verifyDescriptor = FetchDescriptor<BackupRecord>(
             predicate: #Predicate<BackupRecord> { backupRecord in backupRecord.id == recordID }
         )
-        let verifyRecords = try context.fetch(descriptor)
+        let verifyRecords = try context.fetch(verifyDescriptor)
         logger.info("✅ SAVE VERIFY: Found \(verifyRecords.count) records with ID \(record.id)")
         
         // Also check all records in this context

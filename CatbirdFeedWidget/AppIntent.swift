@@ -10,9 +10,14 @@ import AppIntents
 
 struct ConfigurationAppIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource { "Configuration" }
-    static var description: IntentDescription { "This is an example widget." }
+    static var description: IntentDescription { "Configure your Catbird feed widget." }
 
-    // An example configurable parameter.
-    @Parameter(title: "Favorite Emoji", default: "😃")
-    var favoriteEmoji: String
+    @Parameter(title: "Feed Type", default: "timeline")
+    var feedType: String
+    
+    @Parameter(title: "Post Count", default: 3)
+    var postCount: Int
+    
+    @Parameter(title: "Show Images", default: true)
+    var showImages: Bool
 }
