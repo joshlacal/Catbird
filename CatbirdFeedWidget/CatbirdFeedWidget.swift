@@ -265,12 +265,13 @@ struct LargeFeedWidget: View {
                 
                 // Show up to 3 posts
                 VStack(spacing: 0) {
-                    ForEach(entry.posts.prefix(3), id: \.id) { post in
+                    let limitedPosts = Array(entry.posts.prefix(3))
+                    ForEach(Array(limitedPosts.enumerated()), id: \.element.id) { index, post in
                         PostRowView(post: post, showImage: entry.configuration.showImages)
                             .padding(.horizontal)
                             .padding(.vertical, 8)
                         
-                        if post.id != entry.posts.prefix(3).last?.id {
+                        if index < limitedPosts.count - 1 {
                             Divider()
                                 .padding(.leading)
                         }
@@ -315,12 +316,13 @@ struct ExtraLargeFeedWidget: View {
                 // Show all posts with scroll
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(entry.posts, id: \.id) { post in
+                        let allPosts = Array(entry.posts)
+                        ForEach(Array(allPosts.enumerated()), id: \.element.id) { index, post in
                             PostRowView(post: post, showImage: entry.configuration.showImages, expanded: true)
                                 .padding(.horizontal)
                                 .padding(.vertical, 12)
                             
-                            if post.id != entry.posts.last?.id {
+                            if index < allPosts.count - 1 {
                                 Divider()
                                     .padding(.leading)
                             }
