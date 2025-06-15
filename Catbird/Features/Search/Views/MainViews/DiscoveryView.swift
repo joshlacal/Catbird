@@ -18,9 +18,7 @@ struct DiscoveryView: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                // Recent profile searches
-                
+            VStack(spacing: 32) {
                 // Trending topics
                 if !viewModel.trendingTopics.isEmpty, 
                    let client = appState.atProtoClient,
@@ -54,25 +52,13 @@ struct DiscoveryView: View {
                     )
                 }
                 
-//                 Tagged suggestions
-//                if !viewModel.taggedSuggestions.isEmpty {
-//                    TaggedSuggestionsSection(
-//                        suggestions: viewModel.taggedSuggestions,
-//                        onSelectProfile: { did in
-//                            path.append(NavigationDestination.profile(did))
-//                        },
-//                        onRefresh: {
-//                            Task {
-//                                guard let client = appState.atProtoClient else { return }
-//                                await viewModel.fetchTaggedSuggestions(client: client)
-//                            }
-//                        }
-//                    )
-//                }
-                Spacer(minLength: 50)
+                // Spacer for bottom safe area
+                Spacer(minLength: 32)
             }
-            .padding(.vertical)
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
+        .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
         .scrollDismissesKeyboard(.immediately)
         .refreshable {
             guard let client = appState.atProtoClient else { return }
@@ -85,8 +71,14 @@ struct DiscoveryView: View {
 struct AllTrendingTopicsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var selectedCategory: String?
-    @State private var showContributors: Bool = true
+    @State private var showContributors: Bool = false
+    @State private var viewMode: ViewMode = .list
+    
+    enum ViewMode {
+        case list, grid
+    }
     
     let topics: [AppBskyUnspeccedDefs.TrendView]
     let onSelect: (String) -> Void
@@ -114,29 +106,47 @@ struct AllTrendingTopicsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: 20) {
                     // Categories filter
                     categoriesFilterView
-                        .padding(.horizontal)
+                        .padding(.horizontal, 16)
                     
                     if filteredTopics.isEmpty {
-                        Text("No topics found")
-                            .foregroundColor(.secondary)
-                            .padding(.top, 40)
+                        emptyStateView
                     } else {
-                        topicsListView
+                        if viewMode == .list {
+                            topicsListView
+                        } else {
+                            topicsGridView
+                        }
                     }
                 }
-                .padding(.vertical)
+                .padding(.vertical, 16)
             }
+            .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
             .navigationTitle("Trending Topics")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(showContributors ? "Hide Contributors" : "Show Contributors") {
-                        showContributors.toggle()
+                    Menu {
+                        Button(action: { viewMode = .list }) {
+                            Label("List View", systemImage: "list.bullet")
+                        }
+                        Button(action: { viewMode = .grid }) {
+                            Label("Grid View", systemImage: "square.grid.2x2")
+                        }
+                        
+                        Divider()
+                        
+                        Button(action: { showContributors.toggle() }) {
+                            Label(showContributors ? "Hide Contributors" : "Show Contributors", 
+                                  systemImage: showContributors ? "eye.slash" : "eye")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .appFont(AppTextRole.subheadline)
                 }
+                
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
                         dismiss()
@@ -146,16 +156,36 @@ struct AllTrendingTopicsView: View {
         }
     }
     
+    private var emptyStateView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+            
+            Text("No topics found")
+                .appFont(AppTextRole.headline)
+                .foregroundColor(.primary)
+            
+            Text("Try adjusting your filters or check back later")
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.top, 60)
+        .padding(.horizontal, 32)
+    }
+    
     // Categories horizontal scroll view
     private var categoriesFilterView: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 categoryFilterButton(nil)
                 
                 ForEach(categories, id: \.self) { category in
                     categoryFilterButton(category)
                 }
             }
+            .padding(.horizontal, 16)
         }
     }
     
@@ -166,18 +196,25 @@ struct AllTrendingTopicsView: View {
             }
         } label: {
             Text(category?.capitalized ?? "All")
-                .appFont(AppTextRole.footnote.weight(selectedCategory == category ? .semibold : .regular))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .appFont(AppTextRole.subheadline.weight(selectedCategory == category ? .semibold : .medium))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 .background(
                     Capsule()
                         .fill(selectedCategory == category ?
-                              categoryColor(for: category).opacity(0.2) :
-                              Color(.systemGray6))
+                              categoryColor(for: category) :
+                              Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
                 )
                 .foregroundColor(selectedCategory == category ?
-                                categoryColor(for: category) :
-                                Color(.label))
+                                .white :
+                                Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                .overlay(
+                    Capsule()
+                        .stroke(selectedCategory == category ? 
+                                Color.clear : 
+                                Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), 
+                                lineWidth: 1)
+                )
         }
     }
     
@@ -186,190 +223,211 @@ struct AllTrendingTopicsView: View {
             ForEach(filteredTopics.indices, id: \.self) { index in
                 let topic = filteredTopics[index]
                 topicCard(topic: topic)
-                    .padding(.horizontal)
+                    .padding(.horizontal, 16)
             }
         }
+    }
+    
+    private var topicsGridView: some View {
+        LazyVGrid(columns: [
+            GridItem(.flexible(), spacing: 12),
+            GridItem(.flexible(), spacing: 12)
+        ], spacing: 16) {
+            ForEach(filteredTopics.indices, id: \.self) { index in
+                let topic = filteredTopics[index]
+                compactTopicCard(topic: topic)
+            }
+        }
+        .padding(.horizontal, 16)
     }
     
     private func topicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Topic header
-            topicHeader(topic: topic)
-            
-            Divider()
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            
-            // Topic details
-            topicDetails(topic: topic)
-            
-            // Contributors section (conditionally shown)
-            if showContributors && !topic.actors.isEmpty {
-                Divider()
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
+        Button {
+            onSelect(topic.displayName ?? topic.topic)
+            dismiss()
+        } label: {
+            VStack(alignment: .leading, spacing: 16) {
+                // Main topic info
+                HStack(alignment: .top, spacing: 16) {
+                    // Category icon
+                    categoryIcon(for: topic.category)
+                        .appFont(AppTextRole.title2)
+                        .foregroundColor(categoryColor(for: topic.category))
+                        .frame(width: 48, height: 48)
+                        .background(
+                            Circle()
+                                .fill(categoryColor(for: topic.category).opacity(0.15))
+                        )
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Category and badges
+                        HStack {
+                            if let category = topic.category {
+                                Text(formatCategory(category))
+                                    .appFont(AppTextRole.caption.weight(.medium))
+                                    .foregroundColor(categoryColor(for: topic.category))
+                                    .textCase(.uppercase)
+                            }
+                            
+                            Spacer()
+                            
+                            HStack(spacing: 6) {
+                                if let status = topic.status, status == "hot" {
+                                    trendingBadge(status: status)
+                                }
+                                
+                                if isWithinLastThirtyMinutes(date: topic.startedAt.date) {
+                                    newBadge()
+                                }
+                            }
+                        }
+                        
+                        // Topic name
+                        Text(topic.displayName)
+                            .appFont(AppTextRole.title2.weight(.semibold))
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+                        
+                        // Stats row
+                        HStack(spacing: 20) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(formatPostCount(topic.postCount))
+                                    .appFont(AppTextRole.subheadline.weight(.semibold))
+                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                                Text("Posts")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(formatTimeSince(topic.startedAt.date))
+                                    .appFont(AppTextRole.subheadline.weight(.semibold))
+                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                                Text("Trending")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "arrow.up.right")
+                                .appFont(AppTextRole.subheadline)
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+                }
                 
-                topicContributors(topic: topic)
+                // Contributors section (conditionally shown)
+                if showContributors && !topic.actors.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Color.dynamicSeparator(appState.themeManager, currentScheme: colorScheme)
+                            .frame(height: 1)
+                        
+                        Text("Top Contributors")
+                            .appFont(AppTextRole.subheadline.weight(.medium))
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                        
+                        topicContributors(topic: topic)
+                    }
+                }
             }
+            .padding(20)
+            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+            .cornerRadius(16)
+            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 8, y: 4)
         }
-        .background(Color(.systemBackground))
-        .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
+        .buttonStyle(.plain)
     }
     
-    private func topicHeader(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            categoryIcon(for: topic.category)
-                .appFont(AppTextRole.title2)
-                .foregroundColor(categoryColor(for: topic.category))
-                .frame(width: 40, height: 40)
-                .background(
-                    Circle()
-                        .fill(categoryColor(for: topic.category).opacity(0.2))
-                )
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(topic.displayName)
-                    .appFont(AppTextRole.headline)
-                    .foregroundColor(.primary)
-                
+    private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        Button {
+            onSelect(topic.displayName ?? topic.topic)
+            dismiss()
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    if let category = topic.category {
-                        Text(category.capitalized)
-                            .appFont(AppTextRole.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    categoryIcon(for: topic.category)
+                        .appFont(AppTextRole.headline)
+                        .foregroundColor(categoryColor(for: topic.category))
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(categoryColor(for: topic.category).opacity(0.15))
+                        )
                     
                     Spacer()
                     
-                    // Add badges in a container
-                    HStack(spacing: 4) {
-                        if let status = topic.status, status == "hot" {
-                            trendingBadge(status: status)
-                        }
-                        
-                        if isWithinLastThirtyMinutes(date: topic.startedAt.date) {
-                            newBadge()
-                        }
+                    if let status = topic.status, status == "hot" {
+                        trendingBadge(status: status)
                     }
                 }
-            }
-            
-            Spacer()
-            
-            Button {
-                onSelect(topic.displayName ?? topic.topic)
-                dismiss()
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .appFont(AppTextRole.from(.body))
-                    .foregroundColor(.accentColor)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.1))
-                    )
-            }
-        }
-        .padding()
-    }
-    
-    private func topicDetails(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
-                // Post count
-                VStack(alignment: .leading, spacing: 2) {
+                
+                Text(topic.displayName)
+                    .appFont(AppTextRole.headline.weight(.semibold))
+                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                
+                VStack(alignment: .leading, spacing: 4) {
                     Text(formatPostCount(topic.postCount))
-                        .appFont(AppTextRole.headline)
-                        .foregroundColor(.primary)
-                    Text("Total Posts")
+                        .appFont(AppTextRole.subheadline.weight(.medium))
+                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                    
+                    Text(formatTimeSince(topic.startedAt.date))
                         .appFont(AppTextRole.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                 }
                 
-                Divider()
-                    .frame(height: 24)
-                
-                // Time since started trending
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(formatTimeSince(topic.startedAt.date))
-                            .appFont(AppTextRole.headline)
-                            .foregroundColor(.primary)
-                        
-                        Text("Trending Since")
-                            .appFont(AppTextRole.caption)
-                            .foregroundColor(.secondary)
-                    }
-                
-                Spacer()
-                
-                // Visit link button
-                Button {
-                    if let url = URL(string: "https://bsky.app\(topic.link)") {
-                        _ = appState.urlHandler.handle(url, tabIndex: 1)
-                        dismiss()
-                    }
-                } label: {
-                    Text("Visit Feed")
-                        .appFont(AppTextRole.footnote)
-                        .foregroundColor(.white)
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 12)
-                        .background(
-                            Capsule()
-                                .fill(Color.accentColor)
-                        )
-                }
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 120)
+            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+            .cornerRadius(12)
+            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)
         }
+        .buttonStyle(.plain)
     }
     
     private func topicContributors(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Top Contributors")
-                .appFont(AppTextRole.subheadline.weight(.medium))
-                .padding(.horizontal)
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(topic.actors.prefix(5), id: \.did) { actor in
-                        contributorView(actor: actor)
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(topic.actors.prefix(4), id: \.did) { actor in
+                    contributorView(actor: actor)
                 }
-                .padding(.horizontal)
             }
+            .padding(.horizontal, 2)
         }
-        .padding(.bottom, 12)
     }
     
     private func contributorView(actor: AppBskyActorDefs.ProfileViewBasic) -> some View {
         Button {
-            // Navigate to profile
             dismiss()
             appState.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
-            VStack(alignment: .center, spacing: 4) {
-                AsyncProfileImage(url: actor.avatar?.url, size: 48)
-//                    .overlay(
-//                        Circle()
-//                            .stroke(Color.accentColor, lineWidth: actor.verification?.verifiedStatus == "valid" ? 2 : 0)
-//                    )
+            HStack(spacing: 8) {
+                AsyncProfileImage(url: actor.avatar?.url, size: 32)
                 
-                VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(actor.displayName ?? "@\(actor.handle)")
                         .appFont(AppTextRole.caption.weight(.medium))
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundColor(.primary)
+                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                     
-                    Text("@\(actor.handle.description.prefix(15))\(actor.handle.description.count > 15 ? "..." : "")")
+                    Text("@\(actor.handle)")
                         .appFont(AppTextRole.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                         .lineLimit(1)
                 }
-                .frame(width: 80)
+                
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
+            .cornerRadius(8)
         }
     }
     
@@ -456,6 +514,21 @@ struct AllTrendingTopicsView: View {
         } else {
             return "\(count)"
         }
+    }
+    
+    private func formatCategory(_ category: String) -> String {
+        let specialCases: [String: String] = [
+            "pop-culture": "Entertainment",
+            "video-games": "Video Games"
+        ]
+        
+        if let specialCase = specialCases[category.lowercased()] {
+            return specialCase
+        }
+        
+        let words = category.components(separatedBy: "-")
+        let capitalizedWords = words.map { $0.capitalized }
+        return capitalizedWords.joined(separator: " ")
     }
     
     private func formatTimeSince(_ date: Date) -> String {

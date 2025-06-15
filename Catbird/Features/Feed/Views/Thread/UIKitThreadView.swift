@@ -6,13 +6,17 @@ import os
 // MARK: - UIKit Color Scheme Helper
 extension UIViewController {
     func getCurrentColorScheme() -> ColorScheme {
-        return traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        // Use ThemeManager's effective color scheme to account for manual overrides
+            return AppState.shared.themeManager.effectiveColorScheme(for: systemScheme)
     }
 }
 
 extension UIView {
     func getCurrentColorScheme() -> ColorScheme {
-        return traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        // Use ThemeManager's effective color scheme to account for manual overrides
+            return AppState.shared.themeManager.effectiveColorScheme(for: systemScheme)
     }
 }
 
@@ -23,7 +27,7 @@ final class ThreadCompositionalLayout: UICollectionViewCompositionalLayout {
   private var mainPostSectionIndex: Int = 2
   
   private let layoutLogger = Logger(
-    subsystem: "com.joshlacalamito.Catbird", category: "ThreadCompositionalLayout")
+    subsystem: "blue.catbird", category: "ThreadCompositionalLayout")
 
   override func prepare(forCollectionViewUpdates updateItems: [UICollectionViewUpdateItem]) {
     super.prepare(forCollectionViewUpdates: updateItems)
@@ -75,7 +79,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   // Logger for debugging thread loading issues
   private let controllerLogger = Logger(
-    subsystem: "com.joshlacalamito.Catbird", category: "ThreadViewController")
+    subsystem: "blue.catbird", category: "ThreadViewController")
 
   // MARK: - UI Components
     private lazy var collectionView: UICollectionView = {
@@ -181,6 +185,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Apply theme directly to this view controller's navigation and toolbar
     configureNavigationAndToolbarTheme()
+    
+    // Apply width=120 fonts to this navigation bar
+    if let navigationBar = navigationController?.navigationBar {
+      NavigationFontConfig.applyFonts(to: navigationBar)
+    }
+  }
+  
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    
+    // Ensure theming is applied after view appears (helps with material effects)
+    DispatchQueue.main.async {
+      self.configureNavigationAndToolbarTheme()
+    }
   }
   
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -201,8 +219,76 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // MARK: - Theme Configuration
   
   private func configureNavigationAndToolbarTheme() {
-    // Theme configuration is handled by SwiftUI's themedNavigationBar modifier
-    // No need to modify UIKit navigation bar appearance directly
+    let currentScheme = getCurrentColorScheme()
+    let isDarkMode = appState.themeManager.isDarkMode(for: currentScheme)
+    let isBlackMode = appState.themeManager.isUsingTrueBlack
+    
+    // MARK: - Configure Navigation Bar
+//    if let navigationBar = navigationController?.navigationBar {
+//        let navAppearance = UINavigationBarAppearance()
+//        
+//        if isDarkMode && isBlackMode {
+//            // True black mode
+//            navAppearance.configureWithOpaqueBackground()
+//            navAppearance.backgroundColor = UIColor.black
+//            navAppearance.shadowColor = .clear
+//        } else if isDarkMode {
+//            // Dim mode
+//            navAppearance.configureWithOpaqueBackground()
+//            navAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
+//            navAppearance.shadowColor = .clear
+//        } else {
+//            // Light mode
+//            navAppearance.configureWithDefaultBackground()
+//        }
+//        
+//        // Apply width=120 fonts to navigation bar
+//        NavigationFontConfig.applyFonts(to: navAppearance)
+//        
+//        // Apply the navigation bar appearance
+//        navigationBar.standardAppearance = navAppearance
+//        navigationBar.scrollEdgeAppearance = navAppearance
+//        navigationBar.compactAppearance = navAppearance
+//    }
+//    
+    // MARK: - Configure Tab Bar (only if present)
+    guard let tabBarController = self.tabBarController else { return }
+    
+    let tabBarAppearance = UITabBarAppearance()
+    
+    if isDarkMode && isBlackMode {
+        // True black mode - solid black background
+        tabBarAppearance.configureWithOpaqueBackground()
+        tabBarAppearance.backgroundColor = UIColor.black
+        tabBarAppearance.shadowColor = .clear
+        
+        // Set blue tint color for better visibility on black
+        tabBarController.tabBar.tintColor = UIColor.systemBlue
+    } else if isDarkMode {
+        // Dim mode - use dim background color
+        tabBarAppearance.configureWithOpaqueBackground()
+        tabBarAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
+        tabBarAppearance.shadowColor = .clear
+        
+        // Reset tint color to system default (not black)
+        tabBarController.tabBar.tintColor = nil
+    } else {
+        // Light mode - use system background
+        tabBarAppearance.configureWithDefaultBackground()
+        tabBarAppearance.backgroundColor = UIColor.systemBackground
+        
+        // Explicitly set blue tint color to ensure visibility
+        tabBarController.tabBar.tintColor = UIColor.systemBlue
+    }
+    
+    // Apply the tab bar appearance
+    tabBarController.tabBar.standardAppearance = tabBarAppearance
+    tabBarController.tabBar.scrollEdgeAppearance = tabBarAppearance
+    
+    // Ensure proper color scheme for tab bar icons and text
+    if #available(iOS 13.0, *) {
+        tabBarController.tabBar.overrideUserInterfaceStyle = currentScheme == .dark ? .dark : .light
+    }
   }
   
   private func configureParentNavigationTheme() {
@@ -2011,6 +2097,8 @@ struct ThreadView: View {
 
   var body: some View {
     ThreadViewControllerRepresentable(postURI: postURI, path: $path)
+//      .themedNavigationBar(appState.themeManager)
+//      .applyTheme(appState.themeManager)
   }
 }
 

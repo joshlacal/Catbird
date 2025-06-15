@@ -62,9 +62,7 @@ struct ProfileRowView: View {
                 followButton()
             }
         }
-        .padding(3)
-//        .padding(.vertical, 12)
-//        .padding(.horizontal)
+        .padding(.vertical, 8)
         .task {
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()

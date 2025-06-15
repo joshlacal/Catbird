@@ -100,6 +100,7 @@ struct NotificationsView: View {
       VStack(spacing: DesignTokens.Spacing.none) {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+          .fixedSize()
         
         ErrorStateView(
           error: error,
@@ -406,11 +407,11 @@ struct NotificationCard: View {
             VStack(alignment: .leading, spacing: 2) {
               Text(notification.author.displayName ?? notification.author.handle.description)
                 .fontWeight(.semibold)
-                .foregroundColor(.primary)
+                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
 
               Text("@\(notification.author.handle)")
                 .appSubheadline()
-                .foregroundColor(.secondary)
+                .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             }
 
             Spacer()
@@ -478,14 +479,12 @@ struct NotificationCard: View {
           Spacer()
           Text(formatTimeAgo(from: group.latestNotification.indexedAt.date))
             .appSubheadline()
-            .foregroundColor(.secondary)
+            .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             .accessibilityLabel(formatTimeAgo(from: group.latestNotification.indexedAt.date, forAccessibility: true))
 
         }
 
-        Text(notificationText)
-          .appBody()
-          .foregroundColor(.primary)
+        TappableTextView(attributedString: notificationText)
           .lineLimit(nil)
           .fixedSize(horizontal: false, vertical: true)
           .padding(.top, 4)
@@ -570,7 +569,7 @@ struct NotificationCard: View {
         !feedPost.text.isEmpty {
         Text(feedPost.text)
           .appBody()
-          .foregroundColor(.secondary)
+          .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
           .lineLimit(nil)
           .frame(maxWidth: .infinity, alignment: .leading)
       } else if let embed = post.embed {
@@ -578,21 +577,21 @@ struct NotificationCard: View {
         case .appBskyEmbedImagesView(let images):
           Text(images.images.map { $0.thumb.uriString() }.joined(separator: ", "))
             .appBody()
-            .foregroundColor(.secondary)
+            .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .appBskyEmbedVideoView(let video):
           Text(video.playlist.uriString())
             .appBody()
-            .foregroundColor(.secondary)
+            .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .appBskyEmbedExternalView(let external):
           Text(external.external.uri.uriString())
             .appBody()
-            .foregroundColor(.secondary)
+            .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -603,7 +602,7 @@ struct NotificationCard: View {
               let post = recordPost as? AppBskyFeedPost {
               Text(post.text)
                 .appBody()
-                .foregroundColor(.secondary)
+                .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -619,7 +618,7 @@ struct NotificationCard: View {
               let post = recordPost as? AppBskyFeedPost {
               Text(post.text)
                 .appBody()
-                .foregroundColor(.secondary)
+                .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

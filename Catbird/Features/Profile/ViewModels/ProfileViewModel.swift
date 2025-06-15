@@ -3,6 +3,7 @@ import OSLog
 import Observation
 import Petrel
 import SwiftUI
+import UIKit
 
 @Observable final class ProfileViewModel: StateInvalidationSubscriber {
   // MARK: - Properties
@@ -17,10 +18,12 @@ import SwiftUI
   private(set) var lists: [AppBskyGraphDefs.ListView] = []
   private(set) var starterPacks: [AppBskyGraphDefs.StarterPackViewBasic] = []
   private(set) var feeds: [AppBskyFeedDefs.GeneratorView] = []
+  private(set) var knownFollowers: [AppBskyActorDefs.ProfileView] = []
 
   // UI state
   private(set) var isLoading = false
   private(set) var isLoadingMorePosts = false
+  private(set) var isLoadingKnownFollowers = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
 
@@ -35,6 +38,7 @@ import SwiftUI
   private var listsCursor: String?
   private var starterPacksCursor: String?
   private var feedsCursor: String?
+  private var knownFollowersCursor: String?
 
   // Dependencies
   private let client: ATProtoClient?
@@ -123,6 +127,45 @@ import SwiftUI
   /// Loads user's liked posts
   func loadLikes() async {
     await loadFeed(type: .likes, resetCursor: likesCursor == nil)
+  }
+
+  /// Loads known followers - people who follow this profile and are also followed by the current user
+  func loadKnownFollowers() async {
+    guard let client = client, let profile = profile, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
+
+    isLoadingKnownFollowers = true
+
+    do {
+      let params = AppBskyGraphGetKnownFollowers.Parameters(
+        actor: try ATIdentifier(string: profile.did.didString()),
+        limit: 20,
+        cursor: knownFollowersCursor
+      )
+
+      let (responseCode, output) = try await client.app.bsky.graph.getKnownFollowers(input: params)
+
+      if responseCode == 200, let followers = output?.followers {
+        await MainActor.run {
+          if self.knownFollowersCursor == nil {
+            self.knownFollowers = followers
+          } else {
+            self.knownFollowers.append(contentsOf: followers)
+          }
+          self.knownFollowersCursor = output?.cursor
+          self.isLoadingKnownFollowers = false
+        }
+      } else {
+        logger.warning("Failed to load known followers: HTTP \(responseCode)")
+        await MainActor.run { 
+          self.isLoadingKnownFollowers = false 
+        }
+      }
+    } catch {
+      logger.error("Error loading known followers: \(error.localizedDescription)")
+      await MainActor.run { 
+        self.isLoadingKnownFollowers = false 
+      }
+    }
   }
 
   /// Loads user's starter packs
@@ -470,8 +513,96 @@ import SwiftUI
     }
   }
 
+  // MARK: - Image Upload Methods
+  
+  /// Uploads an image and returns a Blob for use in profile
+  func uploadImageBlob(_ imageData: Data) async throws -> Blob {
+    guard let client = client else {
+      throw NSError(
+        domain: "ProfileImageUpload", code: 0,
+        userInfo: [NSLocalizedDescriptionKey: "Client not available"])
+    }
+    
+    let processedData = try await processImageForUpload(imageData)
+    
+    let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
+      data: processedData,
+      mimeType: "image/jpeg",
+      stripMetadata: true
+    )
+    
+    guard responseCode == 200, let blob = blobOutput?.blob else {
+      throw NSError(
+        domain: "ProfileImageUpload", code: responseCode,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to upload image: HTTP \(responseCode)"])
+    }
+    
+    return blob
+  }
+  
+  /// Processes image data for upload with compression and format conversion
+  private func processImageForUpload(_ data: Data) async throws -> Data {
+    var processedData = data
+    
+    // Convert HEIC to JPEG if needed
+    if checkImageFormat(data) == "HEIC" {
+      if let converted = convertHEICToJPEG(data) {
+        processedData = converted
+      }
+    }
+    
+    // Compress image to meet AT Protocol limits (target 900KB, max 1MB)
+    if let image = UIImage(data: processedData),
+       let compressed = compressImage(image, maxSizeInBytes: 900_000) {
+      processedData = compressed
+    }
+    
+    return processedData
+  }
+  
+  /// Checks the image format based on data header
+  private func checkImageFormat(_ data: Data) -> String {
+    guard data.count >= 4 else { return "Unknown" }
+    
+    let bytes = data.prefix(4)
+    if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
+      return "JPEG"
+    } else if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+      return "PNG"
+    } else if data.count >= 12 {
+      let heicHeader = data.subdata(in: 4..<12)
+      if String(data: heicHeader, encoding: .ascii)?.contains("ftyp") == true {
+        let heicTypes = ["heic", "heix", "hevc", "hevx"]
+        if let typeString = String(data: data.subdata(in: 8..<12), encoding: .ascii),
+           heicTypes.contains(where: typeString.lowercased().contains) {
+          return "HEIC"
+        }
+      }
+    }
+    return "Unknown"
+  }
+  
+  /// Converts HEIC data to JPEG
+  private func convertHEICToJPEG(_ data: Data) -> Data? {
+    guard let image = UIImage(data: data) else { return nil }
+    return image.jpegData(compressionQuality: 0.8)
+  }
+  
+  /// Compresses image to target size
+  private func compressImage(_ image: UIImage, maxSizeInBytes: Int) -> Data? {
+    var compression: CGFloat = 0.8
+    var imageData = image.jpegData(compressionQuality: compression)
+    
+    while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
+      compression -= 0.1
+      imageData = image.jpegData(compressionQuality: compression)
+    }
+    
+    return imageData
+  }
+
   // MARK: Update Profile
-  func updateProfile(displayName: String, description: String) async throws {
+  func updateProfile(displayName: String, description: String, avatar: Blob? = nil, banner: Blob? = nil) async throws {
     guard let client = client else {
       throw NSError(
         domain: "ProfileCreation", code: 0,
@@ -510,8 +641,8 @@ import SwiftUI
       updatedProfile = AppBskyActorProfile(
         displayName: displayName,
         description: description,
-        avatar: existingProfile.avatar,
-        banner: existingProfile.banner,
+        avatar: avatar ?? existingProfile.avatar,
+        banner: banner ?? existingProfile.banner,
         labels: existingProfile.labels,
         joinedViaStarterPack: existingProfile.joinedViaStarterPack,
         pinnedPost: existingProfile.pinnedPost,
@@ -543,8 +674,8 @@ import SwiftUI
       updatedProfile = AppBskyActorProfile(
         displayName: displayName,
         description: description,
-        avatar: nil,
-        banner: nil,
+        avatar: avatar,
+        banner: banner,
         labels: nil,
         joinedViaStarterPack: nil, pinnedPost: nil,
         createdAt: ATProtocolDate(date: Date())
@@ -647,6 +778,7 @@ import SwiftUI
       lists = []
       starterPacks = []
       feeds = []
+      knownFollowers = []
       error = nil
       
     default:

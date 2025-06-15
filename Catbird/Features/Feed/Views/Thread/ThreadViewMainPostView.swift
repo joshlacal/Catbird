@@ -81,7 +81,7 @@ struct ThreadViewMainPostView: View {
                   Text((post.author.displayName ?? post.author.handle.description).truncated(to: 30))
                       .lineLimit(1, reservesSpace: true)
                   .appHeadline()
-                  .foregroundColor(.primary)
+                  .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
                   .truncationMode(.tail)
                   .allowsTightening(true)
                   .fixedSize(horizontal: true, vertical: false)
@@ -89,7 +89,7 @@ struct ThreadViewMainPostView: View {
 
                 Text("@\(post.author.handle)".truncated(to: 30))
                   .appSubheadline()
-                  .foregroundColor(.secondary)
+                  .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                   .lineLimit(1)
                   .truncationMode(.tail)
                   .allowsTightening(true)
@@ -109,7 +109,7 @@ struct ThreadViewMainPostView: View {
             .frame(height: 60, alignment: .center)
             .padding(.bottom, 3)
               
-              Post(post: feedPost, isSelectable: true, path: $path, textSize: 28, textStyle: .title, textDesign: .default, textWeight: .regular, fontWidth: 100)
+              Post(post: feedPost, isSelectable: true, path: $path, textSize: 28, textStyle: .title3, textDesign: .default, textWeight: .regular, fontWidth: 100)
                   .lineLimit(nil)
                   .fixedSize(horizontal: false, vertical: true)
                   .padding(.vertical, 6)
@@ -137,7 +137,7 @@ struct ThreadViewMainPostView: View {
             Text(Self.dateTimeFormatter.string(from: feedPost.createdAt.date))
               .appSubheadline()
               .textScale(.secondary)
-              .foregroundColor(.secondary)
+              .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
               .padding(Self.baseUnit * 3)
           }
         }

@@ -607,7 +607,6 @@ final class AuthenticationManager {
     }
   }
 
-
   /// Get current active account info
   @MainActor
   func getCurrentAccountInfo() async -> AccountInfo? {

@@ -49,11 +49,25 @@ final class FeedModel: StateInvalidationSubscriber {
     
     // Subscribe to state invalidation events
     appState.stateInvalidationBus.subscribe(self)
+    
+    // Subscribe to social graph changes (mute/block/follow changes)
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("UserGraphChanged"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        await self?.handleSocialGraphChange()
+      }
+    }
   }
   
   deinit {
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
+    
+    // Remove NotificationCenter observers
+    NotificationCenter.default.removeObserver(self)
   }
 
   // MARK: - Feed Loading
@@ -80,6 +94,7 @@ final class FeedModel: StateInvalidationSubscriber {
     error = nil
 
     guard appState.atProtoClient != nil else {
+      logger.warning("🔥 FEED MODEL: No AT Proto client available - cannot load feed data for \(fetch.identifier)")
       if strategy == .backgroundRefresh {
         isBackgroundRefreshing = false
       } else {
@@ -440,6 +455,7 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // Check for client availability
     guard let client = appState.atProtoClient else {
+      logger.warning("🔥 FEED MODEL: No AT Proto client available - cannot load feed data for \(fetch.identifier)")
       if strategy == .backgroundRefresh {
         isBackgroundRefreshing = false
       } else {
@@ -578,19 +594,28 @@ final class FeedModel: StateInvalidationSubscriber {
       // Clear and reload feed when account is switched
       await clearAndReloadFeed()
       
+    case .authenticationCompleted:
+      // Authentication completed - reload feed if it's empty
+        Task { @MainActor in
+
+        if posts.isEmpty {
+                await clearAndReloadFeed()
+            }
+      }
+      
     case .feedUpdated(let fetchType):
       // Refresh if this is the same feed type
       if lastFeedType.identifier == fetchType.identifier {
         await refreshFeedAfterEvent()
       }
       
-    case .profileUpdated(_):
+    case .profileUpdated:
       // Refresh if this is a profile feed
-      if case .author(_) = lastFeedType {
+      if case .author = lastFeedType {
         await refreshFeedAfterEvent()
       }
       
-    case .threadUpdated(_):
+    case .threadUpdated:
       // Thread updates don't typically affect feed views
       break
       
@@ -598,7 +623,7 @@ final class FeedModel: StateInvalidationSubscriber {
       // These don't affect feed content
       break
       
-    case .postLiked(_), .postUnliked(_), .postReposted(_), .postUnreposted(_):
+    case .postLiked, .postUnliked, .postReposted, .postUnreposted:
       // These are handled by PostShadowManager, no feed refresh needed
       break
     case .feedListChanged:
@@ -669,6 +694,31 @@ final class FeedModel: StateInvalidationSubscriber {
     }
   }
   
+  /// Handle social graph changes (mute/block/follow state changes)
+  @MainActor
+  private func handleSocialGraphChange() async {
+    logger.debug("Social graph changed, refiltering feed content")
+    
+    // Don't refresh if we don't have posts yet
+    guard !posts.isEmpty else { return }
+    
+    // Reapply filters to existing posts using updated mute cache
+    let filterSettings = await getFilterSettings()
+    let tunedSlices = feedTuner.tune(posts.map { $0.feedViewPost }, filterSettings: filterSettings)
+    let reprocessedPosts = tunedSlices.map { slice in
+      return CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
+    }
+    
+    // Only update if the filtered content actually changed
+    let currentIds = Set(posts.map { $0.id })
+    let newIds = Set(reprocessedPosts.map { $0.id })
+    
+    if currentIds != newIds {
+      posts = reprocessedPosts
+      logger.debug("Feed content updated after social graph change: \(currentIds.count) -> \(newIds.count) posts")
+    }
+  }
+  
   // MARK: - Helper Methods
   
   /// Get current feed filter settings from preferences and app settings
@@ -677,13 +727,19 @@ final class FeedModel: StateInvalidationSubscriber {
       let preferences = try await appState.preferencesManager.getPreferences()
       let feedPref = preferences.feedViewPref
       
+      // Get muted and blocked users from GraphManager
+      let mutedUsers = await appState.graphManager.muteCache
+      let blockedUsers = await appState.graphManager.blockCache
+      
       return FeedTunerSettings(
         hideReplies: feedPref?.hideReplies ?? false,
         hideRepliesByUnfollowed: feedPref?.hideRepliesByUnfollowed ?? false,
         hideReposts: feedPref?.hideReposts ?? false,
         hideQuotePosts: feedPref?.hideQuotePosts ?? false,
         hideNonPreferredLanguages: appState.appSettings.hideNonPreferredLanguages,
-        preferredLanguages: appState.appSettings.contentLanguages
+        preferredLanguages: appState.appSettings.contentLanguages,
+        mutedUsers: mutedUsers,
+        blockedUsers: blockedUsers
       )
     } catch {
       logger.warning("Failed to get feed preferences, using defaults: \(error)")

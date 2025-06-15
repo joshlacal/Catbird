@@ -63,7 +63,6 @@ extension ChatManager {
             logger.debug("Getting or creating conversation with user: \(userDID.didString())")
                      
             let (responseCode, response) = try await client.chat.bsky.convo.getConvoForMembers(input: params)
-            
                    
             guard responseCode >= 200 && responseCode < 300 else {
                 logger.error("Error getting conversation: HTTP \(responseCode)")

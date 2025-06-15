@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Petrel
 import SwiftUI
 
@@ -16,124 +17,92 @@ struct HomeView: View {
 
   // Local state
   @State private var showingSettings = false
-  @State private var isReturningFromView = false
-  @State private var feedViewError: String?
-  @State private var feedViewKey = UUID()
-  @State private var lastNavigationTime = Date()
-  @State private var navigationStackKey = UUID()
 
   // For logging
   let id = UUID().uuidString.prefix(6)
+  private let logger = Logger(subsystem: "blue.catbird", category: "HomeView")
 
   var body: some View {
     let navigationPath = appState.navigationManager.pathBinding(for: 0)
 
-    return NavigationStack(path: navigationPath) {
-      VStack {
-        // Initialize FeedView with current settings
-        initializeFeedView()
-
-        // Display any errors that might have occurred
-        if let error = feedViewError {
-          Text("Error: \(error)")
-            .foregroundStyle(.red)
-            .appFont(AppTextRole.caption)
-            .padding()
+    // Use NativeFeedContentView with direct UIKit integration for proper navigation bar behavior
+    NavigationStack(path: navigationPath) {
+      Group {
+        if #available(iOS 18.0, *) {
+          FullUIKitFeedWrapper(
+            posts: [], // Will be loaded by the controller
+            appState: appState,
+            fetchType: selectedFeed,
+            path: navigationPath,
+            onScrollOffsetChanged: { _ in }
+          )
+        } else {
+          FeedView(
+            appState: appState,
+            fetch: selectedFeed,
+            path: navigationPath,
+            selectedTab: $selectedTab
+          )
         }
       }
-      .onAppear {
-        // Update current tab index when this tab appears
-        appState.navigationManager.updateCurrentTab(0)
-        
-        // Apply theme immediately to ensure navigation bar is correct
-        appState.themeManager.applyTheme(
-          theme: appState.appSettings.theme,
-          darkThemeMode: appState.appSettings.darkThemeMode
-        )
-        
-        // Note: Navigation bars are already updated by ThemeManager.applyTheme()
-        // No need to recreate the entire navigation stack on theme changes
-      }
-      .navigationDestination(for: NavigationDestination.self) { destination in
-        NavigationHandler.viewForDestination(
-          destination, path: navigationPath, appState: appState, selectedTab: $selectedTab
-        )
-        .navigationTitle(NavigationHandler.titleForDestination(destination))
-      }
-      .onChange(of: navigationPath.wrappedValue) { oldPath, newPath in
-        handleNavigationChange(oldCount: oldPath.count, newCount: newPath.count)
-      }
-      .onChange(of: selectedFeed) { oldValue, newValue in
-        handleSelectedFeedChange(oldValue: oldValue, newValue: newValue)
-      }
-      .onChange(of: lastTappedTab) { oldValue, newValue in
-        handleLastTappedTabChange(oldValue: oldValue, newValue: newValue)
-      }
+      .id(selectedFeed.identifier)  // Add stable identity to prevent double initialization
       .navigationTitle(currentFeedName)
+      .navigationBarTitleDisplayMode(.large)
+      .ensureNavigationFonts()
       .toolbar {
-        // Leading toolbar item
         ToolbarItem(placement: .navigationBarLeading) {
-          Button {
+          Button(action: {
             isDrawerOpen = true
-          } label: {
+          }) {
             Image(systemName: "circle.grid.3x3.circle")
+              .foregroundStyle(isRootView ? Color.accentColor : Color.secondary)
           }
+          .disabled(!isRootView)
         }
 
-        // Avatar toolbar item - now using UIKitAvatarView
         ToolbarItem(placement: .navigationBarTrailing) {
-          Button {
+          Button(action: {
             showingSettings = true
-          } label: {
+          }) {
             UIKitAvatarView(
               did: appState.currentUserDID,
               client: appState.atProtoClient,
-              size: 24
+              size: 28
             )
-            .frame(width: 24, height: 24)
-            // Force recreation when DID changes
-            .id("avatar-\(appState.currentUserDID ?? "none")")
-            .overlay {
-              Circle()
-                .stroke(Color.primary.opacity(0.5), lineWidth: 1)
-            }
-            .shadow(color: Color.black.opacity(0.2), radius: 1, x: 0, y: 1)
-            .accessibilityLabel("User Avatar")
           }
         }
       }
+      .navigationDestination(for: NavigationDestination.self) { destination in
+        NavigationHandler.viewForDestination(
+          destination,
+          path: navigationPath,
+          appState: appState,
+          selectedTab: .constant(0)
+        )
+        .ensureDeepNavigationFonts()
+      }
     }
-    .id(navigationStackKey)
     .sheet(isPresented: $showingSettings) {
       SettingsView()
     }
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-  }
-
-  private func handleNavigationChange(oldCount: Int, newCount: Int) {
-    // Update isRootView based on navigation depth
-    isRootView = (newCount == 0)
-
-    // Track navigation state to detect when we're returning from a view
-    if oldCount > newCount {
-      // We're returning from a deeper view
-      isReturningFromView = true
-      lastNavigationTime = Date()
-
-      // Reset the flag after a short delay
-      DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-        isReturningFromView = false
-      }
+    .onAppear {
+      appState.navigationManager.updateCurrentTab(0)
+    }
+    .onChange(of: selectedFeed) { oldValue, newValue in
+      handleSelectedFeedChange(oldValue: oldValue, newValue: newValue)
+    }
+    .onChange(of: lastTappedTab) { oldValue, newValue in
+      handleLastTappedTabChange(oldValue: oldValue, newValue: newValue)
+    }
+    .onChange(of: navigationPath.wrappedValue) { oldPath, newPath in
+      handleNavigationChange(oldCount: oldPath.count, newCount: newPath.count)
     }
   }
 
   private func handleSelectedFeedChange(oldValue: FetchType, newValue: FetchType) {
-    // Force FeedView recreation when feed changes
     if oldValue != newValue {
-      // Generate a new UUID to force the view to be recreated
-      feedViewKey = UUID()
-
-      // Clear any cached models to ensure fresh content
+      // Clear the feed cache when switching feeds
       Task { @MainActor in
         FeedModelContainer.shared.clearCache()
       }
@@ -141,32 +110,21 @@ struct HomeView: View {
   }
 
   private func handleLastTappedTabChange(oldValue: Int?, newValue: Int?) {
-    // Handle the case when home tab is tapped again
     if newValue == 0, selectedTab == 0 {
-      // Trigger scroll to top using appState
       appState.tabTappedAgain = 0
-
-      // Reset after handling
       DispatchQueue.main.async {
         lastTappedTab = nil
       }
     }
   }
 
-  @ViewBuilder
-  private func initializeFeedView() -> some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 0)
+  private func handleNavigationChange(oldCount: Int, newCount: Int) {
+    // Update isRootView based on navigation depth
+    isRootView = (newCount == 0)
 
-    VStack(alignment: .center) {
-      // Use feedViewKey to force recreation when selectedFeed changes
-      FeedView(
-        appState: appState,
-        fetch: selectedFeed,
-        path: navigationPath,
-        selectedTab: $selectedTab,
-        isReturningFromView: isReturningFromView
-      )
-      .id(feedViewKey.uuidString)
-    }
+    // Log navigation state changes for debugging
+    logger.debug(
+      "[\(id)] Navigation changed: oldCount=\(oldCount), newCount=\(newCount), isRootView=\(isRootView)"
+    )
   }
 }

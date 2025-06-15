@@ -181,19 +181,16 @@ final class AppSettingsModel {
         showSavedFeedSamples = defaults.bool(forKey: "showSavedFeedSamples")
         
         // External Media
-        allowYouTube = defaults.bool(forKey: "allowYouTube")
-        allowYouTubeShorts = defaults.bool(forKey: "allowYouTubeShorts")
-        allowVimeo = defaults.bool(forKey: "allowVimeo")
-        allowTwitch = defaults.bool(forKey: "allowTwitch")
-        allowGiphy = defaults.bool(forKey: "allowGiphy")
-        allowTenor = defaults.bool(forKey: "allowTenor")
-        if allowTenor == false && defaults.object(forKey: "allowTenor") == nil {
-            allowTenor = true // Default to true if not set
-        }
-        allowSpotify = defaults.bool(forKey: "allowSpotify")
-        allowAppleMusic = defaults.bool(forKey: "allowAppleMusic")
-        allowSoundCloud = defaults.bool(forKey: "allowSoundCloud")
-        allowFlickr = defaults.bool(forKey: "allowFlickr")
+        allowYouTube = defaults.object(forKey: "allowYouTube") != nil ? defaults.bool(forKey: "allowYouTube") : true
+        allowYouTubeShorts = defaults.object(forKey: "allowYouTubeShorts") != nil ? defaults.bool(forKey: "allowYouTubeShorts") : true
+        allowVimeo = defaults.object(forKey: "allowVimeo") != nil ? defaults.bool(forKey: "allowVimeo") : true
+        allowTwitch = defaults.object(forKey: "allowTwitch") != nil ? defaults.bool(forKey: "allowTwitch") : true
+        allowGiphy = defaults.object(forKey: "allowGiphy") != nil ? defaults.bool(forKey: "allowGiphy") : true
+        allowTenor = defaults.object(forKey: "allowTenor") != nil ? defaults.bool(forKey: "allowTenor") : true
+        allowSpotify = defaults.object(forKey: "allowSpotify") != nil ? defaults.bool(forKey: "allowSpotify") : true
+        allowAppleMusic = defaults.object(forKey: "allowAppleMusic") != nil ? defaults.bool(forKey: "allowAppleMusic") : true
+        allowSoundCloud = defaults.object(forKey: "allowSoundCloud") != nil ? defaults.bool(forKey: "allowSoundCloud") : true
+        allowFlickr = defaults.object(forKey: "allowFlickr") != nil ? defaults.bool(forKey: "allowFlickr") : true
         
         // WebView Embeds
         useWebViewEmbeds = defaults.bool(forKey: "useWebViewEmbeds")

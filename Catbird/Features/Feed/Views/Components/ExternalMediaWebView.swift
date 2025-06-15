@@ -1,24 +1,41 @@
 import SwiftUI
 import WebKit
 
-struct ExternalMediaWebView: UIViewRepresentable {
+struct ExternalMediaWebView: UIViewRepresentable, Equatable {
     let url: URL
     let shouldBlur: Bool
-    @State private var isLoading = true
-    @State private var hasError = false
+    @Binding var isLoading: Bool
+    @Binding var hasError: Bool
+    
+    // Add equatable conformance to prevent unnecessary recreation
+    static func == (lhs: ExternalMediaWebView, rhs: ExternalMediaWebView) -> Bool {
+        return lhs.url == rhs.url && lhs.shouldBlur == rhs.shouldBlur
+    }
     
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
-        webView.navigationDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = false
-        webView.scrollView.isScrollEnabled = false
-        webView.isOpaque = false
-        webView.backgroundColor = UIColor.clear
+        let configuration = WKWebViewConfiguration()
         
-        // Configure for embedded content
-        let configuration = webView.configuration
+        // Configure for embedded content with better interactivity
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.allowsPictureInPictureMediaPlayback = true
+        
+        // Enable user interaction
+        configuration.suppressesIncrementalRendering = false
+        
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = false
+        webView.scrollView.isScrollEnabled = true
+        webView.scrollView.bounces = false
+        webView.isOpaque = false
+        webView.backgroundColor = UIColor.clear
+        webView.scrollView.backgroundColor = UIColor.clear
+        
+        // Enable user interaction and touch events
+        webView.isUserInteractionEnabled = true
+        webView.scrollView.isUserInteractionEnabled = true
         
         return webView
     }
@@ -34,30 +51,68 @@ struct ExternalMediaWebView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    class Coordinator: NSObject, WKNavigationDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let parent: ExternalMediaWebView
         
         init(_ parent: ExternalMediaWebView) {
             self.parent = parent
         }
         
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            DispatchQueue.main.async {
+                self.parent.isLoading = true
+                self.parent.hasError = false
+            }
+        }
+        
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            parent.isLoading = false
-            parent.hasError = false
+            DispatchQueue.main.async {
+                self.parent.isLoading = false
+                self.parent.hasError = false
+            }
         }
         
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            parent.isLoading = false
-            parent.hasError = true
+            DispatchQueue.main.async {
+                self.parent.isLoading = false
+                self.parent.hasError = true
+            }
+        }
+        
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            DispatchQueue.main.async {
+                self.parent.isLoading = false
+                self.parent.hasError = true
+            }
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            // Only allow initial load and iframe content
-            if navigationAction.navigationType == .other || navigationAction.targetFrame?.isMainFrame == false {
+            // Allow all embed content and user interactions within the frame
+            if navigationAction.targetFrame?.isMainFrame == false {
+                // Always allow iframe content (embeds)
                 decisionHandler(.allow)
-            } else {
+            } else if navigationAction.navigationType == .other {
+                // Allow initial load and programmatic navigation
+                decisionHandler(.allow)
+            } else if navigationAction.navigationType == .linkActivated {
+                // Handle external link clicks by opening in Safari
+                if let url = navigationAction.request.url {
+                    UIApplication.shared.open(url)
+                }
                 decisionHandler(.cancel)
+            } else {
+                // Allow other types of navigation (like user interactions within embeds)
+                decisionHandler(.allow)
             }
+        }
+        
+        // Handle popup windows (some embeds need this)
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            // Open popup content in Safari instead
+            if let url = navigationAction.request.url {
+                UIApplication.shared.open(url)
+            }
+            return nil
         }
     }
 }
@@ -69,6 +124,7 @@ struct EmbeddedMediaWebView: View {
     @State private var isBlurred: Bool
     @State private var isLoading = true
     @State private var hasError = false
+    @State private var hasLoadedOnce = false
     
     init(url: URL, embedType: ExternalMediaType, shouldBlur: Bool) {
         self.url = url
@@ -93,7 +149,7 @@ struct EmbeddedMediaWebView: View {
                     )
             }
             
-            if isLoading {
+            if isLoading && !hasLoadedOnce {
                 loadingView
             }
         }
@@ -102,14 +158,18 @@ struct EmbeddedMediaWebView: View {
     }
     
     private var webViewContent: some View {
-        ExternalMediaWebView(url: embedURL, shouldBlur: shouldBlur)
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WebViewLoaded"))) { _ in
-                isLoading = false
+        ExternalMediaWebView(
+            url: embedURL, 
+            shouldBlur: shouldBlur,
+            isLoading: $isLoading,
+            hasError: $hasError
+        )
+        .id(embedURL.absoluteString) // Stable identity prevents recreation
+        .onChange(of: isLoading) { _, newValue in
+            if !newValue && !hasError {
+                hasLoadedOnce = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WebViewError"))) { _ in
-                hasError = true
-                isLoading = false
-            }
+        }
     }
     
     private var embedURL: URL {
@@ -197,13 +257,18 @@ struct EmbeddedMediaWebView: View {
     private var loadingView: some View {
         VStack(spacing: 8) {
             ProgressView()
-                .scaleEffect(1.2)
-            Text("Loading embed...")
-                .font(.caption)
+                .scaleEffect(0.8)
+                .progressViewStyle(CircularProgressViewStyle(tint: .secondary))
+            Text("Loading...")
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
+        .padding(12)
+        .background(Color(UIColor.systemBackground).opacity(0.9))
+        .cornerRadius(8)
+        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.gray.opacity(0.1))
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
     
     private var errorView: some View {
@@ -228,7 +293,7 @@ struct EmbeddedMediaWebView: View {
     }
 }
 
-enum ExternalMediaType {
+enum ExternalMediaType: Equatable {
     case youtube(videoId: String)
     case youtubeShorts(videoId: String)
     case vimeo(videoId: String)

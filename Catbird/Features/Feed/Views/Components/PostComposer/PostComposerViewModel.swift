@@ -92,6 +92,7 @@ final class PostComposerViewModel {
   private let logger = Logger(subsystem: "blue.catbird", category: "PostComposerViewModel")
   
   var postText: String = ""
+  var richAttributedText: NSAttributedString = NSAttributedString()
   var selectedLanguages: [LanguageCodeContainer] = []
   var suggestedLanguage: LanguageCodeContainer?
   var selectedLabels: Set<ComAtprotoLabelDefs.LabelValue> = []
@@ -121,7 +122,7 @@ final class PostComposerViewModel {
   var isPostButtonDisabled: Bool {
     // Only disable if: no content at all OR over character limit OR currently uploading OR missing required alt text
     let hasNoContent = postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && videoItem == nil
-      && mediaItems.isEmpty && selectedImageItem == nil && selectedGif == nil && detectedURLs.isEmpty
+      && mediaItems.isEmpty && selectedGif == nil && detectedURLs.isEmpty
     
     // Check if alt text is required and missing
     let requiresAltText = appState.appSettings.requireAltText
@@ -176,8 +177,7 @@ final class PostComposerViewModel {
   var isAltTextEditorPresented = false
   var isVideoUploading: Bool = false
 
-  // Multiple images selection
-  var selectedImageItems: [PhotosPickerItem] = []
+  // ✅ CLEANED: Removed selectedImageItems - now using direct processing to mediaItems
 
   // Media upload management
   var mediaUploadManager: MediaUploadManager?
@@ -211,6 +211,9 @@ final class PostComposerViewModel {
     if let client = appState.atProtoClient {
       self.mediaUploadManager = MediaUploadManager(client: client)
     }
+    
+    // Initialize attributed text
+    self.richAttributedText = NSAttributedString(string: postText)
   }
 
   // MARK: - Separate Photo and Video Selection Methods
@@ -234,8 +237,6 @@ final class PostComposerViewModel {
     // Clear existing media
     logger.debug("DEBUG: Clearing existing media")
     mediaItems.removeAll()
-    selectedImageItem = nil
-    selectedImage = nil
 
     // Create video media item
     logger.debug("DEBUG: Creating new video media item")
@@ -284,8 +285,6 @@ final class PostComposerViewModel {
 
       // Clear existing media
       mediaItems.removeAll()
-      selectedImageItem = nil
-      selectedImage = nil
 
       // Create video media item
       let newVideoItem = MediaItem(pickerItem: videoPickerItem)
@@ -853,6 +852,29 @@ final class PostComposerViewModel {
     }
   }
   
+  func updateFromAttributedText(_ nsAttributedText: NSAttributedString) {
+    // Extract plain text from attributed text
+    let newText = nsAttributedText.string
+    
+    // Only update if text actually changed to avoid infinite loops
+    if newText != postText {
+      postText = newText
+      
+      // Update the NSAttributedString property
+      richAttributedText = nsAttributedText
+      
+      // Trigger standard post content update
+      updatePostContent()
+    }
+  }
+  
+  func syncAttributedTextFromPlainText() {
+    // Update NSAttributedString when plain text changes
+    if postText != richAttributedText.string {
+      richAttributedText = NSAttributedString(string: postText)
+    }
+  }
+  
   /// Update the attributed text with real-time highlighting using the existing RichText system
   private func updateAttributedText(facets: [AppBskyRichtextFacet]) {
     // Start with plain attributed text
@@ -1126,49 +1148,50 @@ final class PostComposerViewModel {
     return processedData
   }
 
-  @MainActor
-  func loadSelectedImage() async {
-    guard let item = selectedImageItem else { return }
-
-    // Check if we've already processed this image
-    if let identifier = item.itemIdentifier,
-      let cachedData = processedImageCache[identifier] {
-      #if os(iOS)
-        if let uiImage = UIImage(data: cachedData) {
-          selectedImage = Image(uiImage: uiImage)
-        }
-      #elseif os(macOS)
-        if let nsImage = NSImage(data: cachedData) {
-          selectedImage = Image(nsImage: nsImage)
-        }
-      #endif
-      return
-    }
-
-    // Load and process the image asynchronously
-    Task {
-      guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-
-      // Store in cache if possible
-      if let identifier = item.itemIdentifier {
-        processedImageCache[identifier] = data
-      }
-
-      #if os(iOS)
-        if let uiImage = UIImage(data: data) {
-          selectedImage = Image(uiImage: uiImage)
-        }
-      #elseif os(macOS)
-        if let nsImage = NSImage(data: data) {
-          selectedImage = Image(nsImage: nsImage)
-        }
-      #endif
-    }
-  }
+  // ✅ CLEANED: Removed loadSelectedImage() - now using direct processing to mediaItems
 
   // Add cleanup method
   func cleanup() {
     processedImageCache.removeAll()
+  }
+
+  // MARK: - Unified Media Handling
+  
+  /// Enhanced MediaItem with source tracking to prevent duplicates
+  enum MediaSource: Equatable {
+    case photoPicker(String) // PhotosPickerItem identifier
+    case pastedImage(Data)   // Raw image data for comparison
+    case pastedVideo(URL)    // Video URL
+    case clipboard(String)   // Clipboard content hash
+  }
+  
+  // Track media sources to prevent duplicates
+  private var mediaSourceTracker: Set<String> = []
+  
+  /// Generate unique identifier for media source
+  private func generateSourceID(for source: MediaSource) -> String {
+    switch source {
+    case .photoPicker(let id):
+      return "picker:\(id)"
+    case .pastedImage(let data):
+      return "image:\(data.hashValue)"
+    case .pastedVideo(let url):
+      return "video:\(url.absoluteString)"
+    case .clipboard(let hash):
+      return "clipboard:\(hash)"
+    }
+  }
+  
+  /// Check if media from this source was already added
+  private func isMediaSourceAlreadyAdded(_ source: MediaSource) -> Bool {
+    let sourceID = generateSourceID(for: source)
+    return mediaSourceTracker.contains(sourceID)
+  }
+  
+  /// Track media source as added
+  private func trackMediaSource(_ source: MediaSource) {
+    let sourceID = generateSourceID(for: source)
+    mediaSourceTracker.insert(sourceID)
   }
 
   // MARK: - Clipboard/Paste Functionality
@@ -1177,7 +1200,42 @@ final class PostComposerViewModel {
   func hasClipboardMedia() -> Bool {
     #if os(iOS)
       let pasteboard = UIPasteboard.general
-      return pasteboard.hasImages || pasteboard.hasURLs || pasteboard.hasStrings
+      
+      // Check direct image/media access first
+      if pasteboard.hasImages || pasteboard.hasURLs || pasteboard.hasStrings {
+        return true
+      }
+      
+      // Check item providers for various media types
+      for itemProvider in pasteboard.itemProviders {
+        let mediaTypes = [
+          UTType.image.identifier, UTType.png.identifier, UTType.jpeg.identifier, 
+          UTType.tiff.identifier, UTType.gif.identifier, UTType.movie.identifier,
+          "public.image", "public.movie"
+        ]
+        
+        for mediaType in mediaTypes {
+          if itemProvider.hasItemConformingToTypeIdentifier(mediaType) {
+            return true
+          }
+        }
+      }
+      
+      // Check pasteboard items directly for media data
+      for item in pasteboard.items {
+        let mediaKeys = [
+          "public.image", "public.jpeg", "public.png", "public.tiff", 
+          "public.gif", "public.movie", "public.url", "public.text"
+        ]
+        
+        for mediaKey in mediaKeys {
+          if item[mediaKey] != nil {
+            return true
+          }
+        }
+      }
+      
+      return false
     #elseif os(macOS)
       let pasteboard = NSPasteboard.general
       return pasteboard.canReadItem(withDataConformingToTypes: [UTType.image.identifier, UTType.movie.identifier]) || 
@@ -1185,164 +1243,165 @@ final class PostComposerViewModel {
     #endif
   }
 
-  /// Handle paste operation from clipboard
+  // ✅ CLEANED: Removed legacy handlePasteFromClipboard() and associated methods
+  // All clipboard handling is now unified through handleMediaPaste()
+  
+  // MARK: - Genmoji Handling
+  
+  /// Convert genmoji data to MediaItems for upload to Bluesky
   @MainActor
-  func handlePasteFromClipboard() async {
-    logger.debug("DEBUG: handlePasteFromClipboard called")
+  func convertGenmojiToMediaItems(_ genmojis: [GenmojiData]) async {
+    logger.debug("DEBUG: Converting \(genmojis.count) genmoji to media items")
     
-    #if os(iOS)
-      let pasteboard = UIPasteboard.general
-      
-      logger.debug("DEBUG: Pasteboard has images: \(pasteboard.hasImages)")
-      logger.debug("DEBUG: Pasteboard has URLs: \(pasteboard.hasURLs)")
-      logger.debug("DEBUG: Pasteboard has strings: \(pasteboard.hasStrings)")
-      logger.debug("DEBUG: Pasteboard item count: \(pasteboard.items.count)")
-      
-      // Log available types for debugging
-      for (index, item) in pasteboard.items.enumerated() {
-        logger.debug("DEBUG: Item \(index) types: \(Array(item.keys))")
+    for genmojiData in genmojis {
+      guard let uiImage = UIImage(data: genmojiData.imageData) else {
+        logger.debug("DEBUG: Failed to create UIImage from genmoji data")
+        continue
       }
       
-      // First check for images
-      if pasteboard.hasImages {
-        logger.debug("DEBUG: Handling pasted images")
-        await handlePastedImages()
-      }
-      // Then check for URLs that might be videos
-      else if pasteboard.hasURLs {
-        logger.debug("DEBUG: Handling pasted URLs")
-        await handlePastedURLs()
-      }
-      // Finally check for text content
-      else if pasteboard.hasStrings {
-        logger.debug("DEBUG: Handling pasted text")
-        await handlePastedText()
-      } else {
-        logger.debug("DEBUG: No supported content found in clipboard")
-      }
-    #elseif os(macOS)
-      let pasteboard = NSPasteboard.general
+      logger.debug("DEBUG: Creating MediaItem for genmoji with size: \(uiImage.size.width)x\(uiImage.size.height)")
       
-      // Check for images first
-      if let imageData = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png) ?? pasteboard.data(forType: .jpeg) {
-        logger.debug("DEBUG: Handling pasted image data on macOS")
-        await handlePastedImageData(imageData)
+      // Create MediaItem for genmoji
+      var mediaItem = MediaItem()
+      mediaItem.image = Image(uiImage: uiImage)
+      mediaItem.isLoading = false
+      mediaItem.aspectRatio = CGSize(width: uiImage.size.width, height: uiImage.size.height)
+      mediaItem.rawData = genmojiData.imageData
+      
+      // Use content description as alt text, or default
+      mediaItem.altText = genmojiData.contentDescription ?? "Genmoji"
+      
+      // Check if we have available slots
+      guard mediaItems.count < maxImagesAllowed else {
+        logger.debug("DEBUG: Hit image limit, cannot add more genmoji")
+        alertItem = AlertItem(
+          title: "Media Limit",
+          message: "Cannot add genmoji. You've reached the \(maxImagesAllowed) media limit."
+        )
+        break
       }
-      // Check for video URLs
-      else if let urlString = pasteboard.string(forType: .string),
-              let url = URL(string: urlString),
-              isVideoURL(url) {
-        logger.debug("DEBUG: Handling pasted video URL on macOS")
-        await handlePastedVideoURL(url)
-      }
-      // Check for text content
-      else if let textString = pasteboard.string(forType: .string) {
-        logger.debug("DEBUG: Handling pasted text on macOS")
-        await handlePastedTextString(textString)
-      } else {
-        logger.debug("DEBUG: No supported content found in clipboard on macOS")
-      }
-    #endif
-  }
-
-  #if os(iOS)
-  /// Handle pasted text from iOS clipboard
-  @MainActor
-  private func handlePastedText() async {
-    let pasteboard = UIPasteboard.general
-    
-    if let pastedString = pasteboard.string {
-      await handlePastedTextString(pastedString)
+      
+      self.mediaItems.append(mediaItem)
+      logger.debug("DEBUG: Added genmoji as media item, total count now: \(self.mediaItems.count)")
     }
   }
   
-  /// Handle pasted images from iOS clipboard
+  /// Handle detected genmoji from the text editor
   @MainActor
-  private func handlePastedImages() async {
-    logger.debug("DEBUG: handlePastedImages called")
+  func processDetectedGenmoji(_ genmojis: [GenmojiData]) async {
+    logger.debug("DEBUG: Processing \(genmojis.count) detected genmoji")
+    
+    // Clear existing video if adding genmoji (since they're images)
+    if !genmojis.isEmpty && videoItem != nil {
+      videoItem = nil
+      logger.debug("DEBUG: Cleared video to make room for genmoji")
+    }
+    
+    await convertGenmojiToMediaItems(genmojis)
+  }
+  
+  /// Update post text to remove genmoji characters (for Bluesky)
+  func updatePostTextWithoutGenmoji() {
+    // This will be called when creating the post to get clean text for Bluesky
+    // The rich text editor will still show genmoji inline for user experience
+    if #available(iOS 18.1, *) {
+      // We'll implement this in the post creation flow
+    }
+  }
+
+  /// Unified media paste handler - replaces all separate paste methods
+  @MainActor
+  func handleMediaPaste() async {
+    logger.debug("🎯 UNIFIED: handleMediaPaste called")
+    
+    #if os(iOS)
     let pasteboard = UIPasteboard.general
     
-    // Get all images from clipboard
-    var pastedImages: [Data] = []
+    // Debug: Log what's available
+    logger.debug("🎯 Pasteboard state: images=\(pasteboard.hasImages), strings=\(pasteboard.hasStrings), URLs=\(pasteboard.hasURLs)")
     
-    logger.debug("DEBUG: Processing \(pasteboard.items.count) pasteboard items")
-    for (index, item) in pasteboard.items.enumerated() {
-      logger.debug("DEBUG: Processing item \(index)")
-      // Try different image types
-      for imageType in ["public.image", "public.jpeg", "public.png", "public.heic"] {
-        if let imageData = item[imageType] as? Data {
-          logger.debug("DEBUG: Found image data of type \(imageType), size: \(imageData.count) bytes")
-          pastedImages.append(imageData)
-          break
+    // Method 1: Direct image access (Photos app, etc.)
+    if pasteboard.hasImages, let image: UIImage = pasteboard.image {
+        logger.debug("🎯 Found direct image, size: \(image.size.debugDescription)")
+      await processPastedImage(image, from: .clipboard("direct_image"))
+      return
+    }
+    
+    // Method 2: Item providers (Safari, memoji, etc.)
+    if let itemProvider = pasteboard.itemProviders.first {
+      logger.debug("🎯 Found item provider, checking types...")
+      
+      let imageTypes = [UTType.image.identifier, UTType.png.identifier, UTType.jpeg.identifier, UTType.tiff.identifier]
+      
+      for imageType in imageTypes {
+        if itemProvider.hasItemConformingToTypeIdentifier(imageType) {
+          logger.debug("🎯 Found conforming type: \(imageType)")
+          
+          do {
+            let result = try await itemProvider.loadItem(forTypeIdentifier: imageType)
+            
+            if let imageData = result as? Data, let image: UIImage = UIImage(data: imageData) {
+                logger.debug("🎯 Loaded image from data, size: \(image.size.debugDescription)")
+              await processPastedImage(image, from: .pastedImage(imageData))
+              return
+            } else if let image: UIImage = result as? UIImage {
+                logger.debug("🎯 Loaded image directly, size: \(image.size.debugDescription)")
+              await processPastedImage(image, from: .clipboard("direct_uiimage"))
+              return
+            }
+          } catch {
+            logger.error("🎯 Error loading item: \(error)")
+            continue
+          }
         }
       }
     }
     
-    logger.debug("DEBUG: Found \(pastedImages.count) pasted images")
-    
-    if !pastedImages.isEmpty {
-      // Clear existing video if pasting images
-      videoItem = nil
-      
-      // Limit to available slots
-      let availableSlots = maxImagesAllowed - mediaItems.count
-      let imagesToProcess = Array(pastedImages.prefix(availableSlots))
-      
-      logger.debug("DEBUG: Processing \(imagesToProcess.count) images (available slots: \(availableSlots))")
-      
-      for (index, imageData) in imagesToProcess.enumerated() {
-        logger.debug("DEBUG: Adding pasted image \(index + 1)/\(imagesToProcess.count)")
-        await addPastedImageData(imageData)
-      }
-      
-      // Show feedback if we hit the limit
-      if pastedImages.count > imagesToProcess.count {
-        logger.debug("DEBUG: Hit image limit, showing alert")
-        alertItem = AlertItem(
-          title: "Image Limit",
-          message: "Only \(imagesToProcess.count) images were pasted due to the \(maxImagesAllowed) image limit."
-        )
-      }
-    } else {
-      logger.debug("DEBUG: No images found in pasteboard")
-    }
-  }
-
-  /// Handle pasted URLs that might be videos
-  @MainActor
-  private func handlePastedURLs() async {
-    let pasteboard = UIPasteboard.general
-    
-    for item in pasteboard.items {
-      if let urlString = item["public.url"] as? String ?? item["public.text"] as? String,
-         let url = URL(string: urlString),
-         isVideoURL(url) {
-        await handlePastedVideoURL(url)
-        return // Only handle one video
-      }
-    }
-  }
-  #endif
-
-  /// Handle pasted image data from external sources
-  @MainActor
-  func handlePastedImageData(_ imageData: Data) async {
-    await addPastedImageData(imageData)
-  }
-
-  /// Add pasted image data as a media item
-  @MainActor
-  private func addPastedImageData(_ imageData: Data) async {
-    logger.debug("DEBUG: addPastedImageData called with \(imageData.count) bytes")
-    
-    guard let uiImage = UIImage(data: imageData) else {
-      logger.debug("DEBUG: Failed to create UIImage from data")
+    // Method 3: String content (URLs, text)
+    if pasteboard.hasStrings, let string = pasteboard.string {
+      logger.debug("🎯 Found string content, length: \(string.count)")
+      await handlePastedTextString(string)
       return
     }
     
-      logger.debug("DEBUG: Created UIImage with size: \(String(describing:uiImage.size))")
+    logger.debug("🎯 No supported content found in pasteboard")
+    #endif
+  }
+  
+  /// Process pasted image with duplicate prevention
+  @MainActor
+  private func processPastedImage(_ uiImage: UIImage, from source: MediaSource) async {
+    logger.debug("🎯 Processing pasted image with source tracking")
     
-    // Create MediaItem for pasted content (no PhotosPickerItem needed)
+    // Check for duplicates
+    if isMediaSourceAlreadyAdded(source) {
+      logger.debug("🎯 DUPLICATE: Image from this source already added")
+      return
+    }
+    
+    // Clear existing video if pasting images
+    videoItem = nil
+    
+    // Check if we have available slots
+    guard mediaItems.count < maxImagesAllowed else {
+      logger.debug("🎯 Hit image limit, showing alert")
+      alertItem = AlertItem(
+        title: "Image Limit",
+        message: "Cannot add more images. You've reached the \(maxImagesAllowed) image limit."
+      )
+      return
+    }
+    
+    // Convert UIImage to data for storage consistency
+    guard let imageData = uiImage.jpegData(compressionQuality: 0.8) else {
+      logger.debug("🎯 Failed to convert UIImage to data")
+      return
+    }
+    
+    // Track this source to prevent duplicates
+    trackMediaSource(source)
+    
+    // Create MediaItem for pasted content
     var mediaItem: MediaItem = MediaItem()
     mediaItem.image = Image(uiImage: uiImage)
     mediaItem.isLoading = false
@@ -1350,7 +1409,27 @@ final class PostComposerViewModel {
     mediaItem.rawData = imageData
     
     self.mediaItems.append(mediaItem)
-    logger.debug("DEBUG: Added media item, total count now: \(self.mediaItems.count)")
+    logger.debug("🎯 SUCCESS: Added pasted image, total count now: \(self.mediaItems.count)")
+  }
+  
+  /// Handle pasted video URL from text editor paste
+  @MainActor
+  func handlePastedVideoURL(_ url: URL) async {
+    logger.debug("DEBUG: handlePastedVideoURL called with URL: \(url)")
+    
+    // Clear existing media if pasting video
+    mediaItems.removeAll()
+    
+    // Create video media item from URL
+    var newVideoItem = MediaItem()
+    newVideoItem.rawVideoURL = url
+    newVideoItem.isLoading = true
+    
+    self.videoItem = newVideoItem
+    
+    // Load video thumbnail and metadata
+    await loadVideoThumbnail(for: newVideoItem)
+    logger.debug("DEBUG: Added pasted video from URL")
   }
 
   /// Handle pasted text string and append to current post text
@@ -1375,73 +1454,6 @@ final class PostComposerViewModel {
     let videoExtensions = ["mp4", "mov", "avi", "mkv", "webm", "m4v"]
     let pathExtension = url.pathExtension.lowercased()
     return videoExtensions.contains(pathExtension)
-  }
-
-  /// Handle pasted video URL
-  @MainActor
-  func handlePastedVideoURL(_ url: URL) async {
-    // Clear existing media
-    mediaItems.removeAll()
-    selectedImageItem = nil
-    selectedImage = nil
-    
-    // Create a MediaItem for the pasted video URL
-    var videoMediaItem: MediaItem = MediaItem()
-    videoMediaItem.rawVideoURL = url
-    videoItem = videoMediaItem
-    
-    // Load video thumbnail
-    await loadVideoThumbnailFromURL(url, for: videoMediaItem)
-  }
-
-  /// Load video thumbnail from URL
-  @MainActor
-  private func loadVideoThumbnailFromURL(_ url: URL, for item: MediaItem) async {
-    do {
-      let asset = AVURLAsset(url: url)
-      
-      // Validate the asset
-      let isPlayable = try await asset.load(.isPlayable)
-      guard isPlayable else {
-        alertItem = AlertItem(
-          title: "Video Error",
-          message: "The pasted video URL is not accessible or invalid."
-        )
-        videoItem = nil
-        return
-      }
-      
-      // Get video track for dimensions
-      let tracks = try await asset.loadTracks(withMediaType: .video)
-      guard let videoTrack = tracks.first else {
-        alertItem = AlertItem(
-          title: "Video Error", 
-          message: "No video track found in the pasted video."
-        )
-        videoItem = nil
-        return
-      }
-      
-      let videoSize = try await videoTrack.load(.naturalSize)
-      let duration = try await asset.load(.duration)
-      let videoDuration = CMTimeGetSeconds(duration)
-      
-      // Generate thumbnail
-      let time = CMTime(seconds: min(0.5, videoDuration / 2), preferredTimescale: 600)
-      let cgImage = try await generateThumbnail(from: asset, at: time)
-      let thumbnail = UIImage(cgImage: cgImage)
-      
-      // Update video item
-      videoItem?.image = Image(uiImage: thumbnail)
-      videoItem?.aspectRatio = CGSize(width: videoSize.width, height: videoSize.height)
-      videoItem?.isLoading = false
-    } catch {
-      alertItem = AlertItem(
-        title: "Video Error",
-        message: "Failed to load video from pasted URL: \(error.localizedDescription)"
-      )
-      videoItem = nil
-    }
   }
 
   #if os(macOS)
@@ -1582,7 +1594,14 @@ final class PostComposerViewModel {
   }
 
   func insertEmoji(_ emoji: String) {
+    // Update both plain text and attributed text
     postText += emoji
+    
+    // Create new attributed text with emoji appended
+    let mutableAttributedText = NSMutableAttributedString(attributedString: richAttributedText)
+    mutableAttributedText.append(NSAttributedString(string: emoji))
+    richAttributedText = mutableAttributedText
+    
     updatePostContent()
   }
 
@@ -1657,7 +1676,9 @@ final class PostComposerViewModel {
     func createPost() async throws {
         await applyProfileLabels()
 
-        let parsedContent = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+        // Get clean text for Bluesky (without genmoji, which are handled as media)
+        let cleanText = getCleanTextForBluesky()
+        let parsedContent = PostParser.parsePostContent(cleanText, resolvedProfiles: resolvedProfiles)
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(
             values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) }
         )
@@ -1680,6 +1701,51 @@ final class PostComposerViewModel {
             embed: embed,
             threadgateAllowRules: useThreadgate ? allowRules : nil
         )
+    }
+    
+    /// Get clean text for Bluesky (without genmoji)
+    private func getCleanTextForBluesky() -> String {
+        if #available(iOS 18.1, *) {
+            // Check if the attributed text contains genmoji
+            let fullRange = NSRange(location: 0, length: richAttributedText.length)
+            var hasGenmoji = false
+            
+            richAttributedText.enumerateAttribute(.adaptiveImageGlyph, in: fullRange) { value, _, stop in
+                if value is NSAdaptiveImageGlyph {
+                    hasGenmoji = true
+                    stop.pointee = true
+                }
+            }
+            
+            if hasGenmoji {
+                // Remove genmoji from text for Bluesky
+                let mutableText = NSMutableAttributedString(attributedString: richAttributedText)
+                var genmojiRanges: [NSRange] = []
+                
+                mutableText.enumerateAttribute(.adaptiveImageGlyph, in: fullRange, options: .reverse) { value, range, _ in
+                    if value is NSAdaptiveImageGlyph {
+                        genmojiRanges.append(range)
+                    }
+                }
+                
+                // Remove genmoji ranges
+                for range in genmojiRanges {
+                    mutableText.deleteCharacters(in: range)
+                }
+                
+                return mutableText.string
+            }
+        }
+        
+        // Fallback to regular post text
+        return postText
+    }
+    
+    /// Get clean text for a thread entry (without genmoji)
+    private func getCleanTextForBlueskyFromEntry(_ entry: ThreadEntry) -> String {
+        // For thread entries, we use the stored text directly
+        // Genmoji would have been processed when the entry was created
+        return entry.text
     }
     
   func checkImageFormat(_ data: Data) -> String {
@@ -1974,10 +2040,7 @@ final class PostComposerViewModel {
       return try await createImagesEmbed()
     }
 
-    // Handle legacy single image if it exists
-    if let selectedImageItem = selectedImageItem {
-      return try await createImageEmbed(selectedImageItem)
-    }
+    // ✅ CLEANED: Removed legacy single image handling - now all images in mediaItems
 
     // Otherwise, use the first URL card if available
     if let firstURL = detectedURLs.first, let card = urlCards[firstURL] {
@@ -1991,7 +2054,7 @@ final class PostComposerViewModel {
   // Add method to check if a URL will be used as embed
   func willBeUsedAsEmbed(for url: String) -> Bool {
     // If there's a GIF, video or image selected, no URL will be used as embed
-    if selectedGif != nil || videoItem != nil || !mediaItems.isEmpty || selectedImageItem != nil {
+    if selectedGif != nil || videoItem != nil || !mediaItems.isEmpty {
       return false
     }
 
@@ -2104,9 +2167,8 @@ final class PostComposerViewModel {
     return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
   }
 
-  // MARK: - Legacy Properties (keeping for compatibility)
-  var selectedImageItem: PhotosPickerItem?
-  var selectedImage: Image?
+  // ✅ CLEANED: Removed legacy properties selectedImageItem and selectedImage
+  // All media now unified in mediaItems array
 }
 
 extension PostComposerViewModel {
@@ -2209,6 +2271,8 @@ extension PostComposerViewModel {
     threadEntries[currentThreadEntryIndex].urlCards = urlCards
     threadEntries[currentThreadEntryIndex].facets = parsedContent.2
     threadEntries[currentThreadEntryIndex].hashtags = parsedContent.1
+    
+    logger.debug("Saved thread entry \\(currentThreadEntryIndex): text='\\(postText.prefix(50))...', mediaCount=\\(mediaItems.count)")
   }
 
   // Load state from current thread entry into UI
@@ -2221,8 +2285,13 @@ extension PostComposerViewModel {
     detectedURLs = entry.detectedURLs
     urlCards = entry.urlCards
 
+    // Sync the rich attributed text to match the loaded text
+    syncAttributedTextFromPlainText()
+
     // Update any UI that depends on the text
     updatePostContent()
+    
+    logger.debug("Loaded thread entry \\(currentThreadEntryIndex): text='\\(entry.text.prefix(50))...', mediaCount=\\(entry.mediaItems.count)")
   }
 
   // MARK: - Helper Methods for PostComposerView
@@ -2250,8 +2319,9 @@ extension PostComposerViewModel {
 
     // Process each entry
     for entry in threadEntries {
-      // Add the post text
-      postTexts.append(entry.text)
+      // Add the post text (clean for Bluesky)
+      let cleanText = getCleanTextForBlueskyFromEntry(entry)
+      postTexts.append(cleanText)
 
       // Add facets if available, or calculate them if not
       if let existingFacets = entry.facets {

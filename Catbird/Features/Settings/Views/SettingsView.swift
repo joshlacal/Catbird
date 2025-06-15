@@ -19,7 +19,8 @@ struct SettingsView: View {
 
   var body: some View {
     NavigationStack {
-      List {
+      ResponsiveContentView {
+        List {
         Section {
           AccountHeaderView(
             isShowingAccountSwitcher: $isShowingAccountSwitcher,
@@ -149,6 +150,17 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            
+            Button {
+                appState.onboardingManager.resetAllOnboarding()
+            } label: {
+                Label {
+                    Text("Show Tips Again")
+                } icon: {
+                    Image(systemName: "lightbulb.fill")
+                        .foregroundStyle(.yellow)
+                }
+            }
 
             #if DEBUG
             NavigationLink {
@@ -159,6 +171,17 @@ struct SettingsView: View {
                 } icon: {
                     Image(systemName: "hammer.fill")
                         .foregroundStyle(.gray)
+                }
+            }
+            
+            NavigationLink {
+                SystemLogView()
+            } label: {
+                Label {
+                    Text("System Logs")
+                } icon: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .foregroundStyle(.green)
                 }
             }
             
@@ -208,6 +231,7 @@ struct SettingsView: View {
 
         Section {
             LogoutButton(isLoggingOut: $isLoggingOut, handleLogout: handleLogout)
+        }
         }
       }
       .navigationTitle("Settings")

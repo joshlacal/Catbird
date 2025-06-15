@@ -68,11 +68,11 @@ final class AppState {
   /// App-specific settings that aren't synced with the server
   @ObservationIgnored let appSettings = AppSettings()
   
-  /// Theme manager for handling app-wide theme changes - observes via themeDidChange
-  @ObservationIgnored private let _themeManager = ThemeManager()
-  
   /// Font manager for handling typography and font settings - observes via fontDidChange
   @ObservationIgnored private let _fontManager = FontManager()
+  
+  /// Theme manager for handling app-wide theme changes - observes via themeDidChange
+  @ObservationIgnored private let _themeManager: ThemeManager
   
   // MARK: - Observable Theme/Font State
   
@@ -96,6 +96,9 @@ final class AppState {
 
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
+  
+  /// Observable chat unread count for UI updates
+  var chatUnreadCount: Int = 0
 
   /// Chat manager for handling Bluesky chat operations
   @ObservationIgnored let chatManager: ChatManager
@@ -109,9 +112,11 @@ final class AppState {
   /// 🚨 EXPERIMENTAL: Account migration service for cross-instance migration
   @ObservationIgnored let migrationService = AccountMigrationService()
   
-  
   /// Network monitor for tracking connectivity status
   @ObservationIgnored let networkMonitor = NetworkMonitor()
+  
+  /// Onboarding manager for tracking user onboarding progress
+  @ObservationIgnored let onboardingManager = OnboardingManager()
 
   // MARK: - Feed State
 
@@ -136,6 +141,9 @@ final class AppState {
     }
     self.urlHandler = URLHandler()
 
+    // Initialize theme manager with font manager dependency
+    self._themeManager = ThemeManager(fontManager: _fontManager)
+
     // Initialize post manager with nil client (will be updated later)
     self.postManager = PostManager(client: nil, appState: nil)
 
@@ -143,7 +151,7 @@ final class AppState {
     self.graphManager = GraphManager(atProtoClient: nil)
 
     // Initialize chat manager with nil client (will be updated with self reference after initialization)
-        self.chatManager = ChatManager(client: nil, appState: nil)
+    self.chatManager = ChatManager(client: nil, appState: nil)
 
     // Load user settings
       if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(forKey: "isAdultContentEnabled")
@@ -171,10 +179,12 @@ final class AppState {
               self.migrationService.updateSourceClient(client) // Update Migration service client
               self.urlHandler.configure(with: self)
               
-              
               Task { @MainActor in
                 await self.notificationManager.requestNotificationsAfterLogin()
               }
+
+              // Notify that authentication is complete to refresh all views
+              self.notifyAccountSwitched()
 
               // When we authenticate, also try to refresh preferences
               Task { @MainActor in
@@ -260,6 +270,10 @@ final class AppState {
   @MainActor
   func initialize() async {
     logger.info("🚀 Starting AppState.initialize()")
+    
+    // Configure Nuke image pipeline with GIF support
+    configureImagePipeline()
+    
     configureURLHandler()
 
     // Initialize AuthManager FIRST
@@ -280,6 +294,7 @@ final class AppState {
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
            await chatManager.updateClient(client) // Update ChatManager client if uncommented
+           updateChatUnreadCount() // Update chat unread count
     } else {
       graphManager = GraphManager(atProtoClient: nil)  // Ensure graphManager is also updated if client is nil post-init
     }
@@ -288,6 +303,7 @@ final class AppState {
     setupModelPruningTimer()
     setupPreferencesRefreshTimer()
     setupNotifications()
+    setupChatObservers()
     
     // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
     _themeManager.applyTheme(
@@ -354,6 +370,7 @@ final class AppState {
     preferencesManager.updateClient(authManager.client)
     notificationManager.updateClient(authManager.client)
         await chatManager.updateClient(authManager.client) // Update ChatManager client
+        updateChatUnreadCount() // Update chat unread count
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
     } else {
@@ -536,6 +553,18 @@ final class AppState {
     urlHandler.navigateAction = { [weak self] destination, tabIndex in
 
       self?.navigationManager.navigate(to: destination, in: tabIndex)
+    }
+  }
+  
+  /// Configure Nuke image pipeline with GIF animation support
+  private func configureImagePipeline() {
+    Task {
+      // Use the custom pipeline from ImageLoadingManager which has GIF support enabled
+      let pipeline = await ImageLoadingManager.shared.pipeline
+      await MainActor.run {
+        ImagePipeline.shared = pipeline
+        logger.info("Configured Nuke image pipeline with GIF animation support")
+      }
     }
   }
 
@@ -767,6 +796,55 @@ final class AppState {
     }
   }
 
+  /// Update chat unread count from chat manager
+  @MainActor
+  func updateChatUnreadCount() {
+    let newCount = chatManager.totalUnreadCount
+    if chatUnreadCount != newCount {
+      chatUnreadCount = newCount
+      logger.debug("Chat unread count updated: \(newCount)")
+    }
+  }
+  
+  /// Setup chat observers and background polling for unread messages
+  private func setupChatObservers() {
+    // Set up callback for when chat unread count changes
+    chatManager.onUnreadCountChanged = { [weak self] in
+      Task { @MainActor [weak self] in
+        self?.updateChatUnreadCount()
+      }
+    }
+    
+    // Update chat unread count initially
+    Task { @MainActor in
+      updateChatUnreadCount()
+    }
+    
+    // Set up periodic polling for chat messages (since they don't come through push notifications)
+    Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self = self, case .authenticated = self.authState else { return }
+        
+        // Load conversations to check for new messages and update unread counts
+        await self.chatManager.loadConversations(refresh: true)
+        self.updateChatUnreadCount()
+      }
+    }
+    
+    // Also update when app comes to foreground
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self = self else { return }
+        await self.chatManager.loadConversations(refresh: true)
+        self.updateChatUnreadCount()
+      }
+    }
+  }
+
   @objc private func handleNotificationsMarkedAsSeen() {
     notificationManager.updateUnreadCountAfterSeen()
   }
@@ -934,6 +1012,13 @@ final class AppState {
   func notifyAccountSwitched() {
     logger.info("Account switched notification")
     stateInvalidationBus.notifyAccountSwitched()
+  }
+  
+  /// Notify that authentication was completed (triggers initial feed load)
+  @MainActor
+  func notifyAuthenticationCompleted() {
+    logger.info("Authentication completed notification")
+    stateInvalidationBus.notifyAuthenticationCompleted()
   }
   
   /// Notify that a feed was updated

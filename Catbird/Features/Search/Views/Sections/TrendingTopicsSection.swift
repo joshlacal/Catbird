@@ -109,9 +109,9 @@ struct TrendingTopicsSection: View {
                 }
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
         .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
+        .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 8, y: 4)
         .padding(.horizontal)
     }
     
@@ -145,7 +145,7 @@ struct TrendingTopicsSection: View {
                             .appFont(AppTextRole.subheadline)
                             .textCase(.uppercase)
                             .textScale(.secondary)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
 //                            .padding(.vertical, 2)
 //                            .padding(.horizontal, 6)
 //                            .background(
@@ -158,7 +158,7 @@ struct TrendingTopicsSection: View {
                         Text(topic.displayName)
                             .appFont(.customSystemFont(size: 23, weight: .medium, width: 120, relativeTo: .title3))
                             .padding(.bottom, 3)
-                            .foregroundColor(.primary)
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                         
                         if let status = topic.status, status == "hot" {
                             trendingBadge(status: status)
@@ -168,11 +168,11 @@ struct TrendingTopicsSection: View {
                     HStack(spacing: 12) {
                         Label(formatPostCount(topic.postCount), systemImage: "text.bubble")
                             .appFont(AppTextRole.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                         
                         Label(formatTimeSince(topic.startedAt.date), systemImage: "clock")
                                 .appFont(AppTextRole.caption2)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                     }
                     .padding(.top, 2)
                 }
@@ -188,8 +188,8 @@ struct TrendingTopicsSection: View {
                             .fill(Color.accentColor.opacity(0.1))
                     )
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal)
+            .padding(.vertical, 16)
+            .padding(.horizontal, 16)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())

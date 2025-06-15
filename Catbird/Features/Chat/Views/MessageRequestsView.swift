@@ -129,11 +129,8 @@ struct FilterPickerView: View {
   var body: some View {
     Picker("Filter", selection: $selectedFilter) {
       ForEach(MessageRequestsView.RequestFilter.allCases, id: \.self) { filter in
-        HStack {
-          Image(systemName: filter.systemImage)
-          Text(filter.rawValue)
-        }
-        .tag(filter)
+        Text(filter.rawValue)
+          .tag(filter)
       }
     }
     .pickerStyle(.segmented)
@@ -240,17 +237,20 @@ struct MessageRequestRow: View {
       }
       
       // Action buttons
-      HStack(spacing: 12) {
+      HStack(spacing: 8) {
         Button {
           isProcessing = true
           onDecline()
           isProcessing = false
         } label: {
-          HStack {
+          HStack(spacing: 4) {
             Image(systemName: "xmark")
+              .imageScale(.small)
             Text("Decline")
+              .lineLimit(1)
+              .minimumScaleFactor(0.8)
           }
-          .frame(maxWidth: .infinity)
+          .frame(maxWidth: .infinity, minHeight: 36)
         }
         .buttonStyle(.bordered)
         .disabled(isProcessing)
@@ -258,11 +258,14 @@ struct MessageRequestRow: View {
         Button {
           showingPreview = true
         } label: {
-          HStack {
+          HStack(spacing: 4) {
             Image(systemName: "eye")
+              .imageScale(.small)
             Text("Preview")
+              .lineLimit(1)
+              .minimumScaleFactor(0.8)
           }
-          .frame(maxWidth: .infinity)
+          .frame(maxWidth: .infinity, minHeight: 36)
         }
         .buttonStyle(.bordered)
         .disabled(isProcessing)
@@ -272,16 +275,19 @@ struct MessageRequestRow: View {
           onAccept()
           isProcessing = false
         } label: {
-          HStack {
+          HStack(spacing: 4) {
             if isProcessing {
               ProgressView()
                 .scaleEffect(0.8)
             } else {
               Image(systemName: "checkmark")
+                .imageScale(.small)
             }
             Text("Accept")
+              .lineLimit(1)
+              .minimumScaleFactor(0.8)
           }
-          .frame(maxWidth: .infinity)
+          .frame(maxWidth: .infinity, minHeight: 36)
         }
         .buttonStyle(.borderedProminent)
         .disabled(isProcessing)
@@ -310,7 +316,7 @@ struct MessagePreviewView: View {
           
           Text(messageView.text)
                             .appFont(AppTextRole.body)
-            .lineLimit(3)
+            .lineLimit(nil)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color.gray.opacity(0.1))

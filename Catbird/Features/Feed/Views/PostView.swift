@@ -45,6 +45,7 @@ let isToYou: Bool
   @State private var viewModel: PostViewModel
   @State private var shadowUpdateTask: Task<Void, Error>?  // For AsyncStream management
   @State private var initialLoadComplete = false  // For transaction animation control
+  @State private var postError: PostViewError?  // Error state tracking
 
   // MARK: - Computed Properties
 var id: String {
@@ -87,7 +88,26 @@ var id: String {
 
   // MARK: - Body
   var body: some View {
-      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+    Group {
+      if let error = postError {
+        // Show error state
+        errorView(for: error)
+      } else {
+        // Show normal post content
+        normalPostView
+      }
+    }
+    .task {
+      await setupPost()
+    }
+    .onDisappear {  // Cancel the shadow update task when the view disappears
+      shadowUpdateTask?.cancel()
+      shadowUpdateTask = nil
+    }
+  }
+  
+  private var normalPostView: some View {
+    HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
       // Use the extracted AuthorAvatarColumn view
       AuthorAvatarColumn(
         author: postState.currentPost.author,
@@ -148,12 +168,26 @@ var id: String {
         )
       }
     }
-    .task {
-      await setupPost()
-    }
-    .onDisappear {  // Cancel the shadow update task when the view disappears
-      shadowUpdateTask?.cancel()
-      shadowUpdateTask = nil
+  }
+  
+  @ViewBuilder
+  private func errorView(for error: PostViewError) -> some View {
+    switch error {
+    case .blocked(let blockedPost):
+      BlockedPostView(blockedPost: blockedPost, path: $path)
+        .id("blocked-\(post.uri.uriString())")
+        
+    case .notFound(let reason):
+      PostNotFoundView(uri: post.uri, reason: reason, path: $path)
+        .id("notfound-\(post.uri.uriString())")
+        
+    case .parseError:
+      PostNotFoundView(uri: post.uri, reason: .parseError, path: $path)
+        .id("parseerror-\(post.uri.uriString())")
+        
+    case .permissionDenied:
+      PostNotFoundView(uri: post.uri, reason: .permissionDenied, path: $path)
+        .id("permission-\(post.uri.uriString())")
     }
   }
 
@@ -179,7 +213,6 @@ var id: String {
           postEllipsisMenuView
         }
         .padding(.horizontal, PostView.baseUnit)
-
 
         if let grandparentAuthor = grandparentAuthor {
           replyIndicatorView(grandparentAuthor: grandparentAuthor)
@@ -298,6 +331,13 @@ var id: String {
 
   /// Set up the post and its observers
   private func setupPost() async {
+    // Check for error conditions first
+    if let error = detectPostError() {
+      postError = error
+      initialLoadComplete = true
+      return
+    }
+    
     // Set up report callback
     contextMenuViewModel.onReportPost = {
       postState.showingReportView = true  // Use consolidated state
@@ -323,6 +363,55 @@ var id: String {
 
     // Mark initial load as complete for transaction animation control
     initialLoadComplete = true
+  }
+  
+  /// Detect if the post has any error conditions
+  private func detectPostError() -> PostViewError? {
+    // Check if the post record can be decoded
+    guard case .knownType(let record) = post.record,
+          record is AppBskyFeedPost else {
+      return .parseError
+    }
+    
+    // Check if the author is blocked/blocking
+    if let viewer = post.author.viewer {
+      // Check if this should be shown as blocked
+      let iBlockedThem = viewer.blocking != nil
+      let theyBlockedMe = viewer.blockedBy == true
+      
+      // Only show BlockedPostView in specific cases (e.g., thread continuity)
+      // Most blocked content should be filtered out by FeedTuner
+      if theyBlockedMe || (iBlockedThem && shouldShowBlockedContent()) {
+        // Create a BlockedPost from the available data
+        let blockedAuthor = AppBskyFeedDefs.BlockedAuthor(
+          did: post.author.did,
+          viewer: viewer
+        )
+        let blockedPost = AppBskyFeedDefs.BlockedPost(
+          uri: post.uri,
+          blocked: true,
+          author: blockedAuthor
+        )
+        return .blocked(blockedPost)
+      }
+    }
+    
+    // Check for other error conditions
+    // Could add more sophisticated checks here
+    
+    return nil
+  }
+  
+  /// Determine if blocked content should be shown (e.g., for thread continuity)
+  private func shouldShowBlockedContent() -> Bool {
+    // Show blocked content if:
+    // 1. We're in a thread view and this maintains continuity
+    // 2. User specifically requested to see it
+    // 3. It's essential for context
+    
+    // For now, be conservative and don't show blocked content
+    // The FeedTuner should handle most filtering
+    return false
   }
 
   /// Fetch the current user's DID
@@ -461,4 +550,12 @@ extension EnvironmentValues {
     get { self[PostIDKey.self] }
     set { self[PostIDKey.self] = newValue }
   }
+}
+
+// MARK: - PostViewError
+enum PostViewError {
+    case blocked(AppBskyFeedDefs.BlockedPost)
+    case notFound(PostNotFoundReason)
+    case parseError
+    case permissionDenied
 }

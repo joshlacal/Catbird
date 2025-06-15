@@ -2,7 +2,6 @@ import Foundation
 import NaturalLanguage
 import OSLog
 
-
 // MARK: - Language Detection Utility
 
 class LanguageDetector {

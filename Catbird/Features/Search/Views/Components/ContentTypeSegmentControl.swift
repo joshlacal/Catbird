@@ -20,11 +20,8 @@ struct ContentTypeSegmentControl: View {
   var body: some View {
     Picker("Content Type", selection: $selectedContentType) {
       ForEach(displayedTypes, id: \.self) { type in
-          Label {
-              Text(type.title)
-          } icon: {
-              Image(systemName: type.icon)
-          }
+        // Only use text in segmented pickers - iOS doesn't support mixed icon/text
+        Text(type.title)
           .tag(type)
       }
     }

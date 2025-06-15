@@ -11,6 +11,7 @@ enum StateInvalidationEvent {
   case postReposted(uri: String)
   case postUnreposted(uri: String)
   case accountSwitched
+  case authenticationCompleted  // Fired when authentication becomes available
   case feedUpdated(FetchType)
   case profileUpdated(did: String)
   case threadUpdated(rootUri: String)
@@ -109,6 +110,12 @@ final class StateInvalidationBus {
     notify(.accountSwitched)
   }
   
+  /// Convenience method for authentication completion
+  @MainActor
+  func notifyAuthenticationCompleted() {
+    notify(.authenticationCompleted)
+  }
+  
   /// Convenience method for feed updates
   @MainActor
   func notifyFeedUpdated(_ fetchType: FetchType) {
@@ -156,20 +163,22 @@ final class StateInvalidationBus {
   /// Generate a key for throttling similar events
   private func eventKey(_ event: StateInvalidationEvent) -> String {
     switch event {
-    case .postCreated(_):
+    case .postCreated:
       return "postCreated"
-    case .replyCreated(_, _):
+    case .replyCreated:
       return "replyCreated"
-    case .postLiked(_):
+    case .postLiked:
       return "postLiked"
-    case .postUnliked(_):
+    case .postUnliked:
       return "postUnliked"
-    case .postReposted(_):
+    case .postReposted:
       return "postReposted"
-    case .postUnreposted(_):
+    case .postUnreposted:
       return "postUnreposted"
     case .accountSwitched:
       return "accountSwitched"
+    case .authenticationCompleted:
+      return "authenticationCompleted"
     case .feedUpdated(let fetchType):
       return "feedUpdated_\(fetchType.identifier)"
     case .profileUpdated(let did):
@@ -201,6 +210,8 @@ final class StateInvalidationBus {
       return "postUnreposted(uri: \(uri))"
     case .accountSwitched:
       return "accountSwitched"
+    case .authenticationCompleted:
+      return "authenticationCompleted"
     case .feedUpdated(let fetchType):
       return "feedUpdated(type: \(fetchType.identifier))"
     case .profileUpdated(let did):

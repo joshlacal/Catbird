@@ -8,11 +8,14 @@
 import AVFoundation
 import Foundation
 import UIKit
+import os.log
 
 class AudioSessionManager {
     static let shared = AudioSessionManager()
     private var wasAudioPlayingBeforeInterruption = false
     private var isActive = false
+    private var isPiPAudioSessionActive = false
+    private let logger = Logger(subsystem: "blue.catbird", category: "AudioSessionManager")
     
     private init() {
         // Configure audio session at startup to prevent auto-activation
@@ -79,13 +82,31 @@ class AudioSessionManager {
             wasAudioPlayingBeforeInterruption = audioSession.isOtherAudioPlaying
             
             // Configure for playback that ducks but doesn't stop background audio
+            // Use allowBluetooth and allowAirPlay for better PiP support
             try audioSession.setCategory(.playback, mode: .moviePlayback, 
-                                       options: [.mixWithOthers, .duckOthers])
+                                       options: [.mixWithOthers, .duckOthers, .allowBluetooth, .allowAirPlay])
             try audioSession.setActive(true)
             isActive = true
             logger.debug("Audio session activated for video with sound")
         } catch {
             logger.debug("Failed to configure audio session for unmute: \(error)")
+        }
+    }
+    
+    /// Configure audio session specifically for Picture-in-Picture playback
+    func configureForPictureInPicture() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            
+            // PiP requires playback category with specific options
+            try audioSession.setCategory(.playback, mode: .moviePlayback,
+                                       options: [.mixWithOthers, .allowBluetooth, .allowAirPlay, .allowBluetoothA2DP])
+            try audioSession.setActive(true)
+            isActive = true
+            isPiPAudioSessionActive = true
+            logger.debug("Audio session configured for Picture-in-Picture")
+        } catch {
+            logger.debug("Failed to configure audio session for PiP: \(error)")
         }
     }
     
@@ -100,16 +121,29 @@ class AudioSessionManager {
             // Reset to ambient which doesn't affect other audio
             try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
             isActive = false
+            isPiPAudioSessionActive = false
             logger.debug("Audio session deactivated and set to ambient")
         } catch {
             logger.debug("Failed to deactivate audio session: \(error)")
         }
     }
     
+    /// Reset PiP audio session state (call when PiP is no longer needed)
+    func resetPiPAudioSession() {
+        isPiPAudioSessionActive = false
+        logger.debug("PiP audio session flag reset")
+    }
+    
     /// Ensures the app is in silent playback mode - used when autoplaying videos
     func configureForSilentPlayback() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
+            
+            // Don't override PiP audio session
+            if isPiPAudioSessionActive {
+                logger.debug("Skipping silent playback config - PiP audio session is active")
+                return
+            }
             
             // Only change settings if we're active - avoid unnecessary audio interruptions
             if isActive {

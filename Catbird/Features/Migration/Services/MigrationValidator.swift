@@ -153,7 +153,7 @@ class MigrationValidator {
     logger.info("Validating rate limits for migration")
     
     // Get server info to check rate limits
-    let _ = try await getServerInfo(client: sourceClient)
+    _ = try await getServerInfo(client: sourceClient)
     let destinationInfo = try await getServerInfo(client: destinationClient)
     
     // Check if estimated data size exceeds rate limits

@@ -25,6 +25,9 @@ struct HeaderFeedView<Header: View>: View {
     
     // Flag to track if we're returning from another view
     let isReturningFromView: Bool
+    
+    // Scroll offset callback for navigation bar behavior
+    let onScrollOffsetChanged: ((CGFloat) -> Void)?
 
     // MARK: - Initialization
     init(
@@ -33,6 +36,7 @@ struct HeaderFeedView<Header: View>: View {
         path: Binding<NavigationPath>,
         selectedTab: Binding<Int>,
         isReturningFromView: Bool = false,
+        onScrollOffsetChanged: ((CGFloat) -> Void)? = nil,
         @ViewBuilder headerBuilder: @escaping () -> Header
     ) {
         self.appState = appState
@@ -40,6 +44,7 @@ struct HeaderFeedView<Header: View>: View {
         self._path = path
         self._selectedTab = selectedTab
         self.isReturningFromView = isReturningFromView
+        self.onScrollOffsetChanged = onScrollOffsetChanged
         self.headerBuilder = headerBuilder
     }
 

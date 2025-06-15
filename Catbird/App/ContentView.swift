@@ -52,12 +52,15 @@ struct ContentView: View {
         DispatchQueue.main.async {
           Task { @MainActor in
             try? await Task.sleep(for: .seconds(0.1))
+            // Check for onboarding after successful authentication
+            appState.onboardingManager.checkForWelcomeOnboarding()
           }
         }
       }
     }
     .applyTheme(appState.themeManager)
     .fontManager(appState.fontManager)
+    .themedNavigationBar(appState.themeManager)
     // Theme and font changes are handled efficiently by the modifiers above
   }
 }
@@ -104,6 +107,7 @@ struct MainContentView18: View {
   @State private var showingSettings = false
     @State private var showingNewMessageSheet = false
     @State private var hasInitializedFeed = false
+    @State private var showingOnboarding = false
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
@@ -192,9 +196,10 @@ struct MainContentView18: View {
             )
             .id(appState.currentUserDID) // Ensure view identity on user change
         }
+        .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
       }
+      .themedNavigationBar(appState.themeManager)
       .onAppear {
-          UITabBarItem.appearance().badgeColor = UIColor(Color.accentColor)
         // Theme is already applied during AppState initialization - no need to reapply here
         
         // Initialize from notification manager
@@ -281,6 +286,20 @@ struct MainContentView18: View {
       .sheet(isPresented: $showingNewMessageSheet) {
         NewMessageView()
       }
+      .sheet(isPresented: $showingOnboarding) {
+        WelcomeOnboardingView()
+          .environment(appState)
+      }
+      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+        showingOnboarding = newValue
+      }
+      .onChange(of: showingOnboarding) { _, newValue in
+        if !newValue && appState.onboardingManager.showWelcomeSheet {
+          Task { @MainActor in
+            appState.onboardingManager.completeWelcomeOnboarding()
+          }
+        }
+      }
 
     } drawer: {
       FeedsStartPage(
@@ -316,6 +335,7 @@ struct MainContentView17: View {
   @State private var showingSettings = false
     @State private var showingNewMessageSheet = false
     @State private var hasInitializedFeed = false
+    @State private var showingOnboarding = false
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
@@ -427,10 +447,11 @@ struct MainContentView17: View {
         .tabItem {
             Label("Messages", systemImage: "envelope")
         }
+        .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
         .tag(4)
       }
+      .themedNavigationBar(appState.themeManager)
       .onAppear {
-          UITabBarItem.appearance().badgeColor = UIColor(Color.accentColor)
         // Theme is already applied during AppState initialization - no need to reapply here
 
         // Initialize from notification manager
@@ -511,6 +532,20 @@ struct MainContentView17: View {
       }
       .sheet(isPresented: $showingNewMessageSheet) {
         NewMessageView()
+      }
+      .sheet(isPresented: $showingOnboarding) {
+        WelcomeOnboardingView()
+          .environment(appState)
+      }
+      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+        showingOnboarding = newValue
+      }
+      .onChange(of: showingOnboarding) { _, newValue in
+        if !newValue && appState.onboardingManager.showWelcomeSheet {
+          Task { @MainActor in
+            appState.onboardingManager.completeWelcomeOnboarding()
+          }
+        }
       }
 
       } drawer: {

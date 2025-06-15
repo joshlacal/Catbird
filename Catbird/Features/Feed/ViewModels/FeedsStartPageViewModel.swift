@@ -120,12 +120,39 @@ final class FeedsStartPageViewModel {
       _cachedSavedFeeds = preferences.savedFeeds
       _cachedPinnedFeedsSet = Set(preferences.pinnedFeeds)
 
+      // Update widget data with feed preferences
+      await updateWidgetFeedPreferences()
+
       logger.debug(
         "Updated caches with \(self._cachedPinnedFeeds.count) pinned and \(self._cachedSavedFeeds.count) saved feeds"
       )
     } catch {
       logger.error("Error updating caches: \(error.localizedDescription)")
     }
+  }
+  
+  /// Updates widget with current feed preferences and generator information
+  @MainActor
+  private func updateWidgetFeedPreferences() async {
+    // Create feed generator display name mapping
+    var feedGeneratorDisplayNames: [String: String] = [:]
+    
+    for (uri, generator) in feedGenerators {
+      feedGeneratorDisplayNames[uri.uriString()] = generator.displayName
+    }
+    
+    // Add system feeds
+    feedGeneratorDisplayNames["timeline"] = "Home Timeline"
+    feedGeneratorDisplayNames["following"] = "Following"
+    
+    // Update widget with current preferences
+    FeedWidgetDataProvider.shared.updateSharedFeedPreferences(
+      pinnedFeeds: _cachedPinnedFeeds,
+      savedFeeds: _cachedSavedFeeds,
+      feedGenerators: feedGeneratorDisplayNames
+    )
+    
+    logger.debug("Updated widget with feed preferences")
   }
 
   func loadFeedsIfNeeded(forceRefresh: Bool = false) async {

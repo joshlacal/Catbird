@@ -4,6 +4,7 @@ import NukeUI
 import OSLog
 import Petrel
 import SwiftUI
+import TipKit
 
 // MARK: - Chat Tab View
 
@@ -25,7 +26,8 @@ struct ChatTabView: View {
   var body: some View {
     ZStack {
       NavigationStack(path: chatNavigationPath) {
-        ConversationListView(
+        ResponsiveContentView {
+          ConversationListView(
           // Pass the ChatManager instance directly
           chatManager: appState.chatManager,
           searchText: searchText,
@@ -40,7 +42,8 @@ struct ChatTabView: View {
           onSelectSearchResult: { profile in
             startConversation(with: profile)
           }
-        )
+          )
+        }
         .navigationTitle("Direct Messages")
         .searchable(text: $searchText, prompt: "Search")
         .onChange(of: searchText) { _, newValue in
@@ -657,9 +660,6 @@ struct ConversationView: View {
             }
           }
           .chatTheme(accentColor: .blue)
-          
-          // Typing indicator at the bottom
-          TypingIndicatorView(convoId: convoId)
         }
       }
 
@@ -715,6 +715,7 @@ struct ConversationView: View {
     }
     .sheet(isPresented: $showingReportSheet) {
       if let message = messageToReport,
+         !convoId.isEmpty,
          let originalMessage = chatManager.originalMessagesMap[convoId]?[message.id] {
         ReportChatMessageView(
           message: originalMessage,
@@ -896,6 +897,13 @@ struct ConversationView: View {
   
   // Helper method to build message view - extracted from complex messageBuilder closure
   private func buildMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> AnyView {
+    // Defensive programming: Validate convoId and safely access originalMessagesMap
+    guard !convoId.isEmpty else {
+      logger.error("ConvoId is empty, cannot access originalMessagesMap")
+      return createSimpleMessageView(message: message, positionInUserGroup: positionInUserGroup)
+    }
+    
+    // Safely access the original messages map
     let convoMessages = chatManager.originalMessagesMap[convoId]
     let originalMessageView = convoMessages?[message.id]
     
@@ -978,7 +986,7 @@ struct ConversationView: View {
 
     let images = ChatTheme.Images(
       //            camera: Image(systemName: "camera.fill"),
-      arrowSend: Image(systemName: "arrow.up.circle.fill"),
+        arrowSend: Image(systemName: "arrow.up"),
       //             attach: Image(systemName: "paperclip")
       // ... other image customizations
     )
@@ -986,9 +994,20 @@ struct ConversationView: View {
     return ChatTheme(colors: colors, images: images)
   }
 
+  // Helper to create a simple message view without embeds as fallback
+  private func createSimpleMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> AnyView {
+    return AnyView(
+      VStack(alignment: message.user.isCurrentUser ? .trailing : .leading, spacing: 2) {
+        MessageBubble(message: message, embed: nil, position: positionInUserGroup, path: chatNavigationPath)
+          .padding(1)
+      }
+    )
+  }
+  
   // Helper to find the original MessageView for a given message ID
   private func getOriginalMessageForId(messageId: String) -> ChatBskyConvoDefs.MessageView? {
-    chatManager.originalMessagesMap[convoId]?[messageId]
+    guard !convoId.isEmpty else { return nil }
+    return chatManager.originalMessagesMap[convoId]?[messageId]
   }
 }
 

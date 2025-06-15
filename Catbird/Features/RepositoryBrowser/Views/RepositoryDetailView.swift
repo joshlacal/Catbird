@@ -500,7 +500,7 @@ private struct ContentBreakdownBar: View {
     
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 Rectangle()
                     .fill(segment.2)
                     .frame(width: calculateWidth(for: segment.1))

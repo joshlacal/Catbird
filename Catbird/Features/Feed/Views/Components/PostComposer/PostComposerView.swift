@@ -11,6 +11,7 @@ import NukeUI
 import Petrel
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 func getAvailableLanguages() -> [LanguageCodeContainer] {
   // Define a curated list of common language tags following BCP 47
@@ -85,6 +86,7 @@ struct PostComposerView: View {
     @State private var showThreadOptions: Bool = false
     @State private var isSubmitting = false
     @State private var showingEmojiPicker = false
+    @State private var isKeyboardVisible = false
     
     init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
         self._viewModel = State(
@@ -131,6 +133,10 @@ struct PostComposerView: View {
                             }
                         }
                     )
+                }
+                
+                ToolbarItemGroup(placement: .keyboard) {
+                    keyboardToolbarContent
                 }
             }
             .task {
@@ -221,11 +227,7 @@ struct PostComposerView: View {
                     message: Text(alertItem.message),
                     dismissButton: .default(Text("OK")))
             }
-            .onChange(of: viewModel.selectedImageItem) {
-                Task {
-                    await viewModel.loadSelectedImage()
-                }
-            }
+            // ✅ CLEANED: Removed selectedImageItem handling - now using direct processing
             .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
                 viewModel.insertEmoji(emoji)
             }
@@ -243,8 +245,19 @@ struct PostComposerView: View {
             VStack(spacing: 0) {
                 parentPostReplySection
                 mainComposerArea
-                bottomToolbar
+                
+                // Show toolbar at bottom when keyboard is not visible
+                if !isKeyboardVisible {
+                    keyboardToolbarContent
+                }
             }
+            
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
         }
     }
     
@@ -268,14 +281,15 @@ struct PostComposerView: View {
     
     private var singlePostEditor: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 20) {
                 textEditorSection
-                quotedPostSection
+                quotedPostSection  
                 mediaSection
                 urlCardsSection
                 languageSection
             }
-            .padding()
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
     }
     
@@ -327,7 +341,6 @@ struct PostComposerView: View {
         }
     }
     
-    
     // MARK: - Vertical Thread View
     
     private var threadVerticalView: some View {
@@ -337,92 +350,112 @@ struct PostComposerView: View {
                     VStack(spacing: 0) {
                         // Thread connection line (top)
                         if index > 0 {
-                            Rectangle()
-                                .fill(Color.accentColor.opacity(0.3))
-                                .frame(width: 2, height: 16)
-                                .offset(x: -140) // Align with avatar position
+                            threadConnectionLine
                         }
                         
-                        // Thread preview posts
-                        ThreadPreviewPostView(
+                        // Thread post editor/preview
+                        ThreadPostEditorView(
                             entry: entry,
+                            entryIndex: index,
                             isCurrentPost: index == viewModel.currentThreadEntryIndex,
+                            isEditing: index == viewModel.currentThreadEntryIndex,
+                            viewModel: viewModel,
                             onTap: {
                                 // Save current post content before switching
                                 viewModel.updateCurrentThreadEntry()
                                 viewModel.currentThreadEntryIndex = index
+                                viewModel.loadEntryState()
+                            },
+                            onDelete: {
+                                if viewModel.threadEntries.count > 1 {
+                                    viewModel.removeThreadEntry(at: index)
+                                }
                             }
                         )
                         .padding(.horizontal, 16)
                         
                         // Thread connection line (bottom)
                         if index < viewModel.threadEntries.count - 1 {
-                            Rectangle()
-                                .fill(Color.accentColor.opacity(0.3))
-                                .frame(width: 2, height: 16)
-                                .offset(x: -140) // Align with avatar position
+                            threadConnectionLine
                         }
                     }
                 }
                 
                 // Add new post button at bottom
-                Button(action: {
-                    viewModel.addNewThreadEntry()
-                }) {
-                    HStack {
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.3))
-                            .frame(width: 32, height: 32)
-                            .overlay(
-                                Image(systemName: "plus")
-                                    .appFont(size: 16)
-                                    .foregroundColor(.accentColor)
-                            )
-                        
-                        Text("Add another post")
-                            .appFont(AppTextRole.body)
-                            .foregroundColor(.accentColor)
-                        
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                }
-                .buttonStyle(PlainButtonStyle())
+                addNewPostButton
             }
             .padding(.vertical, 16)
         }
     }
     
+    private var threadConnectionLine: some View {
+        HStack {
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.3))
+                .frame(width: 2, height: 16)
+            Spacer()
+        }
+        .padding(.leading, 38) // Align with avatar center
+    }
+    
+    private var addNewPostButton: some View {
+        Button(action: {
+            viewModel.addNewThreadEntry()
+        }) {
+            HStack(spacing: 12) {
+                // User avatar placeholder
+                Circle()
+                    .fill(Color.accentColor.opacity(0.3))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Image(systemName: "plus")
+                            .appFont(size: 16)
+                            .foregroundColor(.accentColor)
+                    )
+                
+                Text("Add another post")
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.accentColor)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
     // MARK: - Existing UI Components
     
     private var textEditorSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                // Background TextEditor for actual text input - no visible styling
-                TextEditor(text: $viewModel.postText)
-                    .focused($isTextFieldFocused)
-                    .task { @MainActor in
-                        isTextFieldFocused = true
+        VStack(alignment: .leading, spacing: 12) {
+            // Clean text editor without overlaid placeholder
+            RichTextEditor(
+                attributedText: $viewModel.richAttributedText,
+                placeholder: "What's on your mind?",
+                onImagePasted: { _ in
+                    Task {
+                        await viewModel.handleMediaPaste()
                     }
-                    .frame(minHeight: 120)
-                    .padding(12)
-                    .background(Color.clear) // Remove background styling
-                    .onChange(of: viewModel.postText) {
-                        viewModel.updatePostContent()
+                },
+                onGenmojiDetected: { genmojis in
+                    Task {
+                        await viewModel.processDetectedGenmoji(genmojis)
                     }
-                
-                // Placeholder text
-                if viewModel.postText.isEmpty {
-                    Text("What's on your mind?")
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 20)
-                        .allowsHitTesting(false)
+                },
+                onTextChanged: { attributedText in
+                    viewModel.updateFromAttributedText(attributedText)
                 }
+            )
+            .frame(minHeight: 120)
+            .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+            .focused($isTextFieldFocused)
+            .task { @MainActor in
+                isTextFieldFocused = true
             }
             
-            // Show mention suggestions below the text editor
+            // Show mention suggestions below the text editor  
             mentionSuggestionsView
         }
     }
@@ -472,17 +505,16 @@ struct PostComposerView: View {
                     maxImagesAllowed: viewModel.maxImagesAllowed,
                     onAddMore: { photoPickerVisible = true },
                     onPaste: {
+                        // ✅ CLEANED: Unified paste handling
                         Task {
-                            await viewModel.handlePasteFromClipboard()
+                            await viewModel.handleMediaPaste()
                         }
                     },
                     hasClipboardMedia: viewModel.hasClipboardMedia()
                 )
                 .padding(.vertical, 8)
-            } else if let image = viewModel.selectedImage {
-                singleImageView(image)
             } else {
-                //        mediaButtonsView
+                // ✅ CLEANED: Removed legacy selectedImage fallback - all images now in mediaItems
                 EmptyView()
             }
         }
@@ -491,30 +523,11 @@ struct PostComposerView: View {
     private func selectedGifView(_ gif: TenorGif) -> some View {
         VStack(alignment: .trailing, spacing: 8) {
             ZStack(alignment: .topTrailing) {
-                LazyImage(url: gifPreviewURL(for: gif)) { state in
-                    if let image = state.image {
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    } else if state.isLoading {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemGray6))
-                            .frame(height: 150)
-                            .overlay(
-                                ProgressView()
-                            )
-                    } else {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemGray5))
-                            .frame(height: 150)
-                            .overlay(
-                                Image(systemName: "photo")
-                                    .foregroundColor(.secondary)
-                            )
-                    }
-                }
+                // Use GifVideoView for animated preview
+                GifVideoView(gif: gif, onTap: {})
+                    .frame(maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .allowsHitTesting(false) // Prevent interfering with remove button
                 
                 Button(action: {
                     viewModel.removeSelectedGif()
@@ -550,43 +563,8 @@ struct PostComposerView: View {
         .padding(.vertical, 8)
     }
     
-    private func gifPreviewURL(for gif: TenorGif) -> URL? {
-        // Use best quality animated GIF for preview - prioritize actual GIF format over MP4
-        if let gif = gif.media_formats.gif {
-            return URL(string: gif.url)
-        } else if let mediumgif = gif.media_formats.mediumgif {
-            return URL(string: mediumgif.url)
-        } else if let tinygif = gif.media_formats.tinygif {
-            return URL(string: tinygif.url)
-        }
-        return nil
-    }
 
-    private func singleImageView(_ image: Image) -> some View {
-        VStack(alignment: .trailing) {
-            ZStack(alignment: .topTrailing) {
-                image
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                
-                Button(action: {
-                    viewModel.selectedImageItem = nil
-                    viewModel.selectedImage = nil
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .appFont(AppTextRole.title1)
-                        .foregroundStyle(.white, Color(.systemGray3))
-                        .background(
-                            Circle()
-                                .fill(Color.black.opacity(0.3))
-                        )
-                }
-                .padding(8)
-            }
-        }
-    }
+    // ✅ CLEANED: Removed singleImageView - no longer needed with unified mediaItems system
     
     private var urlCardsSection: some View {
         Group {
@@ -616,45 +594,45 @@ struct PostComposerView: View {
     private var languageSection: some View {
         Group {
             if !viewModel.selectedLanguages.isEmpty {
-                ScrollView(Axis.Set.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        ForEach(viewModel.selectedLanguages, id: \.self) { lang in
-                            HStack {
-                                Text(
-                                    Locale.current.localizedString(
-                                        forLanguageCode: lang.lang.languageCode?.identifier ?? "")
-                                    ?? lang.lang.minimalIdentifier
-                                )
-                                .appFont(AppTextRole.caption)
-                                
-                                Button(action: {
-                                    viewModel.toggleLanguage(lang)
-                                }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .appFont(AppTextRole.caption)
+                        Image(systemName: "globe")
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(.secondary)
+                        Text("Languages")
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(viewModel.selectedLanguages, id: \.self) { lang in
+                                HStack(spacing: 6) {
+                                    Text(
+                                        Locale.current.localizedString(
+                                            forLanguageCode: lang.lang.languageCode?.identifier ?? "")
+                                        ?? lang.lang.minimalIdentifier
+                                    )
+                                    .appFont(AppTextRole.caption)
+                                    
+                                    Button(action: {
+                                        viewModel.toggleLanguage(lang)
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .appFont(AppTextRole.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.accentColor.opacity(0.1))
+                                .foregroundColor(.accentColor)
+                                .cornerRadius(8)
                             }
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 8)
-                            .background(Color(.systemGray5))
-                            .cornerRadius(12)
                         }
+                        .padding(.horizontal, 1) // Prevent clipping
                     }
                 }
-            }
-            
-            if let suggestedLang = viewModel.suggestedLanguage,
-               !viewModel.selectedLanguages.contains(suggestedLang) {
-                Button(action: {
-                    viewModel.toggleLanguage(suggestedLang)
-                }) {
-                    Label(
-                        "Add \(Locale.current.localizedString(forLanguageCode: suggestedLang.lang.languageCode?.identifier ?? "") ?? suggestedLang.lang.minimalIdentifier)",
-                        systemImage: "plus.circle"
-                    )
-                    .appFont(AppTextRole.footnote)
-                }
-                .padding(.vertical, 4)
             }
         }
     }
@@ -677,87 +655,79 @@ struct PostComposerView: View {
         }
     }
     
-    // Modified bottom toolbar to include reply controls
-    private var bottomToolbar: some View {
+    // Clean, modern keyboard toolbar with essential actions
+    private var keyboardToolbarContent: some View {
         VStack(spacing: 0) {
-            // Character count indicator at top
+            // Character count at top right
             HStack {
                 Spacer()
                 HStack(spacing: 6) {
-                    // Visual indicator circle
                     Circle()
                         .fill(characterCountColor)
-                        .frame(width: 8, height: 8)
-                    
-                    // Countdown display
+                        .frame(width: 6, height: 6)
                     Text("\(remainingCharacters)")
-                        .appFont(AppTextRole.footnote)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .foregroundColor(characterCountColor)
                 }
             }
-            .padding(.horizontal)
-            .padding(.top, 8)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
             
-            // Main toolbar
-            HStack(spacing: 16) {
-                // Media upload group
-                HStack(spacing: 12) {
+            // Main toolbar - essential actions only
+            HStack(spacing: 24) {
+                // Primary media actions
+                HStack(spacing: 24) {
                     Button(action: {
                         photoPickerVisible = true
                     }) {
                         Image(systemName: "photo")
-                            .appFont(size: 22)
-                            .foregroundStyle(.primary)
+                            .appFont(size: 24)
+                            .foregroundStyle(Color.accentColor)
                     }
                     
                     Button(action: {
                         videoPickerVisible = true
                     }) {
                         Image(systemName: "video")
-                            .appFont(size: 22)
-                            .foregroundStyle(.primary)
+                            .appFont(size: 24)
+                            .foregroundStyle(Color.accentColor)
                     }
                     
+                    // Cute monospaced GIF button (if enabled)
                     if appState.appSettings.allowTenor {
                         Button(action: {
                             viewModel.showingGifPicker = true
                         }) {
-                            Image(systemName: "gift")
-                                .appFont(size: 22)
-                                .foregroundStyle(viewModel.selectedGif != nil ? Color.accentColor : Color.primary)
+                            Text("GIF")
+                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(viewModel.selectedGif != nil ? Color.accentColor : Color.accentColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(viewModel.selectedGif != nil ? Color.accentColor : Color.accentColor, lineWidth: 1.5)
+                                )
                         }
                     }
-                    
-                    Button(action: {
-                        Task {
-                            await viewModel.handlePasteFromClipboard()
-                        }
-                    }) {
-                        Image(systemName: "doc.on.clipboard")
-                            .appFont(size: 22)
-                            .foregroundStyle(viewModel.hasClipboardMedia() ? Color.accentColor : Color.primary)
-                    }
-                    .disabled(!viewModel.hasClipboardMedia())
                 }
                 
-                // Separator
-                Rectangle()
-                    .frame(width: 1, height: 20)
-                    .foregroundColor(.gray.opacity(0.3))
+                Spacer()
                 
-                // Text enhancement group
-                HStack(spacing: 12) {
+                // Secondary actions in overflow menu
+                Menu {
+                    // Emoji picker
                     Button(action: {
                         showingEmojiPicker = true
                     }) {
-                        Image(systemName: "face.smiling")
-                            .appFont(size: 22)
-                            .foregroundStyle(.primary)
+                        Label("Add Emoji", systemImage: "face.smiling")
                     }
                     
+                    Divider()
+                    
+                    // Language selection submenu
                     Menu {
-                        ForEach(getAvailableLanguages(), id: \.self) { langContainer in
+                        ForEach(getAvailableLanguages().prefix(8), id: \.self) { langContainer in
                             Button(action: {
                                 viewModel.toggleLanguage(langContainer)
                             }) {
@@ -773,18 +743,13 @@ struct PostComposerView: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "globe")
-                            .appFont(size: 22)
-                            .foregroundStyle(.primary)
+                        Label("Language", systemImage: "globe")
                     }
-                }
-                
-                Spacer()
-                
-                // Post settings group (right side)
-                HStack(spacing: 12) {
-                    // Thread toggle button (only show if not replying)
+                    
+                    // Thread controls (if not replying)
                     if viewModel.parentPost == nil {
+                        Divider()
+                        
                         Button(action: {
                             if viewModel.isThreadMode {
                                 viewModel.disableThreadMode()
@@ -792,44 +757,40 @@ struct PostComposerView: View {
                                 viewModel.enableThreadMode()
                             }
                         }) {
-                            Image(
-                                systemName: viewModel.isThreadMode
-                                ? "minus.circle.fill" : "plus.circle.fill"
+                            Label(
+                                viewModel.isThreadMode ? "Exit Thread Mode" : "Create Thread",
+                                systemImage: viewModel.isThreadMode ? "minus.circle" : "plus.circle"
                             )
-                            .appFont(size: 22)
-                            .foregroundStyle(viewModel.isThreadMode ? Color.orange : Color.accentColor)
                         }
-                    }
-                    
-                    // Add reply controls button (threadgate)
-                    if viewModel.parentPost == nil {
+                        
                         Button(action: {
                             viewModel.showThreadgateOptions = true
                         }) {
-                            Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
-                                .appFont(size: 22)
-                                .foregroundStyle(.primary)
+                            Label("Reply Controls", systemImage: "bubble.left.and.exclamationmark.bubble.right")
                         }
                     }
                     
-                    // Labels button
+                    // Content labels
                     Button(action: {
                         viewModel.showLabelSelector = true
                     }) {
-                        Image(systemName: "tag")
-                            .appFont(size: 22)
-                            .foregroundStyle(.primary)
+                        Label("Content Labels", systemImage: "tag")
                     }
+                    
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .appFont(size: 24)
+                        .foregroundStyle(.primary)
                 }
             }
-            .padding(.horizontal)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
         }
         .background(Color(.systemBackground))
         .overlay(
             Rectangle()
                 .frame(height: 0.5)
-                .foregroundColor(.gray.opacity(0.3)),
+                .foregroundColor(.gray.opacity(0.2)),
             alignment: .top
         )
     }
@@ -871,6 +832,10 @@ struct PostComposerView: View {
             }
         }
     }
+    
+    // ✅ CLEANED: Removed legacy handleImagePaste() and handleVideoPaste() methods
+    // All paste handling is now unified through viewModel.handleMediaPaste()
+    
 }
 
 struct ReplyingToView: View {
@@ -1012,32 +977,67 @@ struct ComposeURLCardView: View {
 
 // MARK: - Thread Components
 
-struct ThreadPreviewPostView: View {
+struct ThreadPostEditorView: View {
     let entry: ThreadEntry
+    let entryIndex: Int
     let isCurrentPost: Bool
+    let isEditing: Bool
+    @Bindable var viewModel: PostComposerViewModel
     let onTap: () -> Void
+    let onDelete: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @FocusState private var isTextFocused: Bool
     
     var body: some View {
-        Button(action: onTap) {
-            postContentView
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-    
-    private var postContentView: some View {
-        HStack(alignment: .top, spacing: 12) {
-            avatarView
-            VStack(alignment: .leading, spacing: 8) {
-                authorInfoView
-                textContentView
-                mediaIndicatorsView
-                characterCountView
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                avatarView
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    authorInfoView
+                    
+                    if isEditing {
+                        editingTextView
+                    } else {
+                        previewTextView
+                    }
+                    
+                    if isEditing {
+                        editingMediaView
+                    } else {
+                        previewMediaView
+                    }
+                    
+                    characterCountView
+                }
+                
+                Spacer()
+                
+                if !isEditing && viewModel.threadEntries.count > 1 {
+                    deleteButton
+                }
             }
-            Spacer()
+            .padding(16)
+            .background(backgroundView)
+            .overlay(borderView)
+            .onTapGesture {
+                if !isEditing {
+                    onTap()
+                }
+            }
         }
-        .padding(12)
-        .background(backgroundView)
-        .overlay(borderView)
+        .onChange(of: isEditing) {
+            if isEditing {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isTextFocused = true
+                }
+            }
+        }
+        .onChange(of: viewModel.postText) {
+            if isEditing {
+                viewModel.updatePostContent()
+            }
+        }
     }
     
     private var avatarView: some View {
@@ -1063,7 +1063,7 @@ struct ThreadPreviewPostView: View {
             
             Spacer()
             
-            if isCurrentPost {
+            if isEditing {
                 editingIndicatorView
             }
         }
@@ -1080,45 +1080,98 @@ struct ThreadPreviewPostView: View {
         }
     }
     
-    private var textContentView: some View {
+    private var editingTextView: some View {
+        TextField("What's happening?", text: $viewModel.postText, axis: .vertical)
+            .textFieldStyle(PlainTextFieldStyle())
+            .appFont(AppTextRole.body)
+            .lineLimit(3...10)
+            .focused($isTextFocused)
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.systemGray6))
+            )
+    }
+    
+    private var previewTextView: some View {
         Group {
-            if !entry.text.isEmpty {
+            if !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(entry.text)
                     .appFont(AppTextRole.body)
-                    .lineLimit(4)
                     .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text("Empty post")
+                Text("Tap to add content")
                     .appFont(AppTextRole.body)
                     .foregroundColor(.secondary)
                     .italic()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
     
-    private var mediaIndicatorsView: some View {
+    private var editingMediaView: some View {
         Group {
-            if !entry.mediaItems.isEmpty || entry.videoItem != nil {
+            if !viewModel.mediaItems.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(viewModel.mediaItems, id: \.id) { item in
+                            if let image = item.image {
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 60, height: 60)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            
+            if let videoItem = viewModel.videoItem, let image = videoItem.image {
+                HStack {
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 60, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            Image(systemName: "play.circle.fill")
+                                .appFont(size: 20)
+                                .foregroundColor(.white)
+                        )
+                    Spacer()
+                }
+            }
+        }
+    }
+    
+    private var previewMediaView: some View {
+        Group {
+            if !entry.mediaItems.isEmpty {
                 HStack(spacing: 8) {
-                    if !entry.mediaItems.isEmpty {
-                        HStack(spacing: 4) {
-                            Image(systemName: "photo")
-                                .appFont(size: 12)
-                            Text("\(entry.mediaItems.count)")
-                                .appFont(AppTextRole.caption2)
-                        }
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        Image(systemName: "photo")
+                            .appFont(size: 12)
+                        Text("\(entry.mediaItems.count)")
+                            .appFont(AppTextRole.caption2)
                     }
-                    
-                    if entry.videoItem != nil {
-                        HStack(spacing: 4) {
-                            Image(systemName: "video")
-                                .appFont(size: 12)
-                            Text("1")
-                                .appFont(AppTextRole.caption2)
-                        }
-                        .foregroundColor(.secondary)
+                    .foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
+            
+            if entry.videoItem != nil {
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "video")
+                            .appFont(size: 12)
+                        Text("Video")
+                            .appFont(AppTextRole.caption2)
                     }
+                    .foregroundColor(.secondary)
+                    Spacer()
                 }
             }
         }
@@ -1127,22 +1180,32 @@ struct ThreadPreviewPostView: View {
     private var characterCountView: some View {
         HStack {
             Spacer()
-            Text("\(entry.text.count)/300")
+            let count = isEditing ? viewModel.postText.count : entry.text.count
+            Text("\(count)/300")
                 .appFont(AppTextRole.caption2)
-                .foregroundColor(entry.text.count > 300 ? .red : .secondary)
+                .foregroundColor(count > 300 ? .red : .secondary)
         }
+    }
+    
+    private var deleteButton: some View {
+        Button(action: onDelete) {
+            Image(systemName: "xmark.circle.fill")
+                .appFont(size: 20)
+                .foregroundStyle(.white, Color(.systemGray3))
+        }
+        .padding(.top, 4)
     }
     
     private var backgroundView: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(isCurrentPost ? Color.orange.opacity(0.1) : Color(.systemGray6))
+            .fill(isCurrentPost ? Color.accentColor.opacity(0.05) : Color(.systemBackground))
     }
     
     private var borderView: some View {
         RoundedRectangle(cornerRadius: 12)
             .stroke(
-                isCurrentPost ? Color.orange.opacity(0.5) : Color.clear,
-                lineWidth: 2
+                isCurrentPost ? Color.accentColor.opacity(0.3) : Color(.systemGray5),
+                lineWidth: isCurrentPost ? 2 : 1
             )
     }
 }

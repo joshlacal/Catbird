@@ -27,19 +27,24 @@ class PiPManager {
 
 // MARK: - PiP Video WebView
 
-struct PiPVideoWebView: UIViewRepresentable {
+struct PiPVideoWebView: UIViewRepresentable, Equatable {
     let url: URL
     let embedType: ExternalMediaType
     let shouldBlur: Bool
     let viewId: String = UUID().uuidString
-    @State private var isLoading = true
-    @State private var hasError = false
+    @Binding var isLoading: Bool
+    @Binding var hasError: Bool
     @State private var isInPiP = false
     @Environment(\.dismiss) private var dismiss
     
     // PiP gesture state
     @State private var dragOffset: CGSize = .zero
     @State private var lastDragPosition: CGSize = .zero
+    
+    // Add equatable conformance to prevent unnecessary recreation
+    static func == (lhs: PiPVideoWebView, rhs: PiPVideoWebView) -> Bool {
+        return lhs.url == rhs.url && lhs.embedType == rhs.embedType && lhs.shouldBlur == rhs.shouldBlur
+    }
     
     var isPiPSupported: Bool {
         switch embedType {
@@ -157,22 +162,51 @@ struct PiPVideoWebView: UIViewRepresentable {
             self.parent = parent
         }
         
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            DispatchQueue.main.async {
+                self.parent.isLoading = true
+                self.parent.hasError = false
+            }
+        }
+        
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            parent.isLoading = false
-            parent.hasError = false
+            DispatchQueue.main.async {
+                self.parent.isLoading = false
+                self.parent.hasError = false
+            }
         }
         
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            parent.isLoading = false
-            parent.hasError = true
+            DispatchQueue.main.async {
+                self.parent.isLoading = false
+                self.parent.hasError = true
+            }
+        }
+        
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            DispatchQueue.main.async {
+                self.parent.isLoading = false
+                self.parent.hasError = true
+            }
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            // Only allow initial load and iframe content
-            if navigationAction.navigationType == .other || navigationAction.targetFrame?.isMainFrame == false {
+            // Allow all embed content and user interactions within the frame
+            if navigationAction.targetFrame?.isMainFrame == false {
+                // Always allow iframe content (embeds)
                 decisionHandler(.allow)
-            } else {
+            } else if navigationAction.navigationType == .other {
+                // Allow initial load and programmatic navigation
+                decisionHandler(.allow)
+            } else if navigationAction.navigationType == .linkActivated {
+                // Handle external link clicks by opening in Safari
+                if let url = navigationAction.request.url {
+                    UIApplication.shared.open(url)
+                }
                 decisionHandler(.cancel)
+            } else {
+                // Allow other types of navigation (like user interactions within embeds)
+                decisionHandler(.allow)
             }
         }
         
@@ -194,6 +228,7 @@ struct EnhancedEmbeddedMediaWebView: View {
     @State private var isBlurred: Bool
     @State private var isLoading = true
     @State private var hasError = false
+    @State private var hasLoadedOnce = false
     @State private var showControls = false
     @State private var controlsTimer: Timer?
     
@@ -250,7 +285,7 @@ struct EnhancedEmbeddedMediaWebView: View {
                     }
             }
             
-            if isLoading {
+            if isLoading && !hasLoadedOnce {
                 loadingView
             }
         }
@@ -258,7 +293,18 @@ struct EnhancedEmbeddedMediaWebView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .onAppear {
             if isPiPSupported {
-                pipWebView = PiPVideoWebView(url: embedURL, embedType: embedType, shouldBlur: shouldBlur)
+                pipWebView = PiPVideoWebView(
+                    url: embedURL, 
+                    embedType: embedType, 
+                    shouldBlur: shouldBlur,
+                    isLoading: $isLoading,
+                    hasError: $hasError
+                )
+            }
+        }
+        .onChange(of: isLoading) { _, newValue in
+            if !newValue && !hasError {
+                hasLoadedOnce = true
             }
         }
     }
@@ -267,22 +313,15 @@ struct EnhancedEmbeddedMediaWebView: View {
     private var webViewContent: some View {
         if let pipWebView = pipWebView {
             pipWebView
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WebViewLoaded"))) { _ in
-                    isLoading = false
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WebViewError"))) { _ in
-                    hasError = true
-                    isLoading = false
-                }
+                .id(embedURL.absoluteString) // Stable identity
         } else {
-            ExternalMediaWebView(url: embedURL, shouldBlur: shouldBlur)
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WebViewLoaded"))) { _ in
-                    isLoading = false
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("WebViewError"))) { _ in
-                    hasError = true
-                    isLoading = false
-                }
+            ExternalMediaWebView(
+                url: embedURL, 
+                shouldBlur: shouldBlur,
+                isLoading: $isLoading,
+                hasError: $hasError
+            )
+            .id(embedURL.absoluteString) // Stable identity
         }
     }
     
@@ -448,13 +487,18 @@ struct EnhancedEmbeddedMediaWebView: View {
     private var loadingView: some View {
         VStack(spacing: 8) {
             ProgressView()
-                .scaleEffect(1.2)
-            Text("Loading embed...")
-                .font(.caption)
+                .scaleEffect(0.8)
+                .progressViewStyle(CircularProgressViewStyle(tint: .secondary))
+            Text("Loading...")
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
+        .padding(12)
+        .background(Color(UIColor.systemBackground).opacity(0.9))
+        .cornerRadius(8)
+        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.gray.opacity(0.1))
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
     }
     
     private var errorView: some View {
@@ -478,4 +522,3 @@ struct EnhancedEmbeddedMediaWebView: View {
         }
     }
 }
-

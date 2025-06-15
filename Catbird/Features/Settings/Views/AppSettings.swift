@@ -111,7 +111,7 @@ import OSLog
         pendingChanges = true
     }
     
-    /// Save critical theme settings to UserDefaults as backup
+    /// Save critical settings to UserDefaults as backup
     private func saveThemeSettingsToUserDefaults() {
         let defaults = UserDefaults.standard
         
@@ -127,12 +127,26 @@ import OSLog
         defaults.set(dynamicTypeEnabled, forKey: "dynamicTypeEnabled")
         defaults.set(maxDynamicTypeSize, forKey: "maxDynamicTypeSize")
         
+        // Save webview settings for persistence
+        defaults.set(useWebViewEmbeds, forKey: "useWebViewEmbeds")
+        defaults.set(enablePictureInPicture, forKey: "enablePictureInPicture")
+        defaults.set(allowYouTube, forKey: "allowYouTube")
+        defaults.set(allowYouTubeShorts, forKey: "allowYouTubeShorts")
+        defaults.set(allowVimeo, forKey: "allowVimeo")
+        defaults.set(allowTwitch, forKey: "allowTwitch")
+        defaults.set(allowGiphy, forKey: "allowGiphy")
+        defaults.set(allowTenor, forKey: "allowTenor")
+        defaults.set(allowSpotify, forKey: "allowSpotify")
+        defaults.set(allowAppleMusic, forKey: "allowAppleMusic")
+        defaults.set(allowSoundCloud, forKey: "allowSoundCloud")
+        defaults.set(allowFlickr, forKey: "allowFlickr")
+        
         // Also save to app group for widgets
         let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
         groupDefaults?.set(theme, forKey: "theme")
         groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
         
-        logger.debug("Theme and font settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), fontStyle=\(self.fontStyle), fontSize=\(self.fontSize), letterSpacing=\(self.letterSpacing)")
+        logger.debug("Settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), webViewEmbeds=\(self.useWebViewEmbeds), allowYouTube=\(self.allowYouTube)")
     }
     
     /// Load theme settings from UserDefaults if SwiftData is not available
@@ -163,6 +177,39 @@ import OSLog
             letterSpacing: savedLetterSpacing,
             dynamicTypeEnabled: savedDynamicTypeEnabled,
             maxDynamicTypeSize: savedMaxDynamicTypeSize
+        )
+    }
+    
+    /// Load webview settings from UserDefaults if SwiftData is not available
+    private func loadWebViewSettingsFromUserDefaults() -> (useWebViewEmbeds: Bool, enablePictureInPicture: Bool, allowYouTube: Bool, allowYouTubeShorts: Bool, allowVimeo: Bool, allowTwitch: Bool, allowGiphy: Bool, allowTenor: Bool, allowSpotify: Bool, allowAppleMusic: Bool, allowSoundCloud: Bool, allowFlickr: Bool) {
+        let defaults = UserDefaults.standard
+        
+        let savedUseWebViewEmbeds = defaults.object(forKey: "useWebViewEmbeds") != nil ? defaults.bool(forKey: "useWebViewEmbeds") : true
+        let savedEnablePictureInPicture = defaults.object(forKey: "enablePictureInPicture") != nil ? defaults.bool(forKey: "enablePictureInPicture") : true
+        let savedAllowYouTube = defaults.object(forKey: "allowYouTube") != nil ? defaults.bool(forKey: "allowYouTube") : true
+        let savedAllowYouTubeShorts = defaults.object(forKey: "allowYouTubeShorts") != nil ? defaults.bool(forKey: "allowYouTubeShorts") : true
+        let savedAllowVimeo = defaults.object(forKey: "allowVimeo") != nil ? defaults.bool(forKey: "allowVimeo") : true
+        let savedAllowTwitch = defaults.object(forKey: "allowTwitch") != nil ? defaults.bool(forKey: "allowTwitch") : true
+        let savedAllowGiphy = defaults.object(forKey: "allowGiphy") != nil ? defaults.bool(forKey: "allowGiphy") : true
+        let savedAllowTenor = defaults.object(forKey: "allowTenor") != nil ? defaults.bool(forKey: "allowTenor") : true
+        let savedAllowSpotify = defaults.object(forKey: "allowSpotify") != nil ? defaults.bool(forKey: "allowSpotify") : true
+        let savedAllowAppleMusic = defaults.object(forKey: "allowAppleMusic") != nil ? defaults.bool(forKey: "allowAppleMusic") : true
+        let savedAllowSoundCloud = defaults.object(forKey: "allowSoundCloud") != nil ? defaults.bool(forKey: "allowSoundCloud") : true
+        let savedAllowFlickr = defaults.object(forKey: "allowFlickr") != nil ? defaults.bool(forKey: "allowFlickr") : true
+        
+        return (
+            useWebViewEmbeds: savedUseWebViewEmbeds,
+            enablePictureInPicture: savedEnablePictureInPicture,
+            allowYouTube: savedAllowYouTube,
+            allowYouTubeShorts: savedAllowYouTubeShorts,
+            allowVimeo: savedAllowVimeo,
+            allowTwitch: savedAllowTwitch,
+            allowGiphy: savedAllowGiphy,
+            allowTenor: savedAllowTenor,
+            allowSpotify: savedAllowSpotify,
+            allowAppleMusic: savedAllowAppleMusic,
+            allowSoundCloud: savedAllowSoundCloud,
+            allowFlickr: savedAllowFlickr
         )
     }
     
@@ -482,7 +529,12 @@ import OSLog
     
     // External Media Preferences
     var allowYouTube: Bool {
-        get { settingsModel?.allowYouTube ?? defaults.allowYouTube }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowYouTube
+            }
+            return loadWebViewSettingsFromUserDefaults().allowYouTube
+        }
         set {
             settingsModel?.allowYouTube = newValue
             saveChanges()
@@ -490,7 +542,12 @@ import OSLog
     }
     
     var allowYouTubeShorts: Bool {
-        get { settingsModel?.allowYouTubeShorts ?? defaults.allowYouTubeShorts }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowYouTubeShorts
+            }
+            return loadWebViewSettingsFromUserDefaults().allowYouTubeShorts
+        }
         set {
             settingsModel?.allowYouTubeShorts = newValue
             saveChanges()
@@ -498,7 +555,12 @@ import OSLog
     }
     
     var allowVimeo: Bool {
-        get { settingsModel?.allowVimeo ?? defaults.allowVimeo }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowVimeo
+            }
+            return loadWebViewSettingsFromUserDefaults().allowVimeo
+        }
         set {
             settingsModel?.allowVimeo = newValue
             saveChanges()
@@ -506,7 +568,12 @@ import OSLog
     }
     
     var allowTwitch: Bool {
-        get { settingsModel?.allowTwitch ?? defaults.allowTwitch }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowTwitch
+            }
+            return loadWebViewSettingsFromUserDefaults().allowTwitch
+        }
         set {
             settingsModel?.allowTwitch = newValue
             saveChanges()
@@ -514,7 +581,12 @@ import OSLog
     }
     
     var allowGiphy: Bool {
-        get { settingsModel?.allowGiphy ?? defaults.allowGiphy }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowGiphy
+            }
+            return loadWebViewSettingsFromUserDefaults().allowGiphy
+        }
         set {
             settingsModel?.allowGiphy = newValue
             saveChanges()
@@ -522,7 +594,12 @@ import OSLog
     }
     
     var allowSpotify: Bool {
-        get { settingsModel?.allowSpotify ?? defaults.allowSpotify }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowSpotify
+            }
+            return loadWebViewSettingsFromUserDefaults().allowSpotify
+        }
         set {
             settingsModel?.allowSpotify = newValue
             saveChanges()
@@ -530,7 +607,12 @@ import OSLog
     }
     
     var allowAppleMusic: Bool {
-        get { settingsModel?.allowAppleMusic ?? defaults.allowAppleMusic }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowAppleMusic
+            }
+            return loadWebViewSettingsFromUserDefaults().allowAppleMusic
+        }
         set {
             settingsModel?.allowAppleMusic = newValue
             saveChanges()
@@ -538,7 +620,12 @@ import OSLog
     }
     
     var allowSoundCloud: Bool {
-        get { settingsModel?.allowSoundCloud ?? defaults.allowSoundCloud }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowSoundCloud
+            }
+            return loadWebViewSettingsFromUserDefaults().allowSoundCloud
+        }
         set {
             settingsModel?.allowSoundCloud = newValue
             saveChanges()
@@ -546,7 +633,12 @@ import OSLog
     }
     
     var allowFlickr: Bool {
-        get { settingsModel?.allowFlickr ?? defaults.allowFlickr }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowFlickr
+            }
+            return loadWebViewSettingsFromUserDefaults().allowFlickr
+        }
         set {
             settingsModel?.allowFlickr = newValue
             saveChanges()
@@ -554,7 +646,12 @@ import OSLog
     }
 
     var allowTenor: Bool {
-        get { settingsModel?.allowTenor ?? defaults.allowTenor }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.allowTenor
+            }
+            return loadWebViewSettingsFromUserDefaults().allowTenor
+        }
         set {
             settingsModel?.allowTenor = newValue
             saveChanges()
@@ -563,7 +660,12 @@ import OSLog
     
     // WebView Embeds
     var useWebViewEmbeds: Bool {
-        get { settingsModel?.useWebViewEmbeds ?? defaults.useWebViewEmbeds }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.useWebViewEmbeds
+            }
+            return loadWebViewSettingsFromUserDefaults().useWebViewEmbeds
+        }
         set {
             settingsModel?.useWebViewEmbeds = newValue
             saveChanges()
@@ -571,7 +673,12 @@ import OSLog
     }
     
     var enablePictureInPicture: Bool {
-        get { settingsModel?.enablePictureInPicture ?? defaults.enablePictureInPicture }
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.enablePictureInPicture
+            }
+            return loadWebViewSettingsFromUserDefaults().enablePictureInPicture
+        }
         set {
             settingsModel?.enablePictureInPicture = newValue
             saveChanges()

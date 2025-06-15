@@ -28,7 +28,7 @@ final class ThreadManager: StateInvalidationSubscriber {
   var error: Error?
 
   // Logger for debugging thread loading issues
-  private let logger = Logger(subsystem: "com.joshlacalamito.Catbird", category: "ThreadManager")
+  private let logger = Logger(subsystem: "blue.catbird", category: "ThreadManager")
 
   // MARK: - Private Properties
 

@@ -5,6 +5,7 @@ import Petrel
 import SwiftUI
 import LazyPager
 import Nuke
+import TipKit
 /// A unified profile view that handles both current user and other user profiles
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
@@ -70,8 +71,9 @@ struct UnifiedProfileView: View {
 //          }
 //                .padding(0)
 
-          // List contains all content
-          List {
+          // List contains all content with responsive padding
+          GeometryReader { geometry in
+            List {
             // Profile header as first section
               
               Section {
@@ -80,13 +82,10 @@ struct UnifiedProfileView: View {
                       viewModel: viewModel,
                       appState: appState,
                       isEditingProfile: $isEditingProfile,
-                      path: $navigationPath
+                      path: $navigationPath,
+                      screenWidth: geometry.size.width
                   )
                   .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-                  // 1. Define specific insets for the header row
-                  .listRowInsets(EdgeInsets())
-                  // 2. Apply padding below the header if needed
-                  .padding(.bottom, 8)
                   // 3. Define the background shape for tap consumption
 //                  .contentShape(Rectangle())
                   // 4. Consume taps on the background shape
@@ -98,6 +97,32 @@ struct UnifiedProfileView: View {
               // --- Modifiers applied ONLY to the Section ---
               .listRowSeparator(.hidden)
               .buttonStyle(.plain) // <--- Prevent List from treating row as button
+              .listRowInsets(EdgeInsets(
+                  top: 0, 
+                  leading: 0, // Banner should extend full width
+                  bottom: 8, 
+                  trailing: 0
+              ))
+              
+              // Followed by section (only for other users)
+              if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
+                  Section {
+                      FollowedByView(
+                          knownFollowers: viewModel.knownFollowers,
+                          totalFollowersCount: profile.followersCount ?? 0,
+                          profileDID: profile.did.didString(),
+                          path: $navigationPath
+                      )
+                      .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+                  }
+                  .listRowSeparator(.hidden)
+                  .listRowInsets(EdgeInsets(
+                      top: 0, 
+                      leading: max(16, (geometry.size.width - 600) / 2), 
+                      bottom: 0, 
+                      trailing: max(16, (geometry.size.width - 600) / 2)
+                  ))
+              }
               
             // Tab selector section
             Section {
@@ -126,19 +151,24 @@ struct UnifiedProfileView: View {
             .listRowSeparator(.hidden)
             .padding(.vertical, 0)
             .listSectionSpacing(0)
-            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            .listRowInsets(EdgeInsets(
+                top: 0, 
+                leading: max(16, (geometry.size.width - 600) / 2), 
+                bottom: 0, 
+                trailing: max(16, (geometry.size.width - 600) / 2)
+            ))
               
             // Content section based on selected tab
             currentTabContentSection
-          }
-          .environment(\.defaultMinListHeaderHeight, 0) // <--- Try enforcing min header height
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            }
+            .environment(\.defaultMinListHeaderHeight, 0)
             .listSectionSpacing(0)
-          .listStyle(.plain)
-          .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-          .refreshable {
-            // Pull to refresh all content - using a single task
-            await refreshAllContent()
+            .listStyle(.plain)
+            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+            .refreshable {
+              // Pull to refresh all content - using a single task
+              await refreshAllContent()
+            }
           }
         
         .sheet(isPresented: $isShowingReportSheet) {
@@ -258,10 +288,22 @@ struct UnifiedProfileView: View {
     }
   }
 
+  // MARK: - Responsive Layout Helper
+  private func responsivePadding(for width: CGFloat) -> CGFloat {
+    // Calculate padding for optimal reading width (~600px on larger screens)
+    // Minimum 16px padding on phones, increasing on tablets
+    return max(16, (width - 600) / 2)
+  }
+
   // MARK: - New helper function for refreshing content
   private func refreshAllContent() async {
     // First refresh profile
     await viewModel.loadProfile()
+    
+    // Load known followers for other users
+    if !viewModel.isCurrentUser {
+      await viewModel.loadKnownFollowers()
+    }
     
     // Then refresh current tab content
     switch viewModel.selectedProfileTab {
@@ -552,6 +594,9 @@ struct UnifiedProfileView: View {
     if let did = viewModel.profile?.did.didString(), !viewModel.isCurrentUser {
       self.isBlocking = await appState.isBlocking(did: did)
       self.isMuting = await appState.isMuting(did: did)
+      
+      // Load known followers for other users
+      await viewModel.loadKnownFollowers()
     }
   }
 
@@ -699,6 +744,7 @@ struct ProfileHeader: View {
     let appState: AppState  // Added AppState to use GraphManager
     @Binding var isEditingProfile: Bool
     @Binding var path: NavigationPath
+    let screenWidth: CGFloat
     
     @State private var showingFollowersSheet = false
     @State private var showingFollowingSheet = false
@@ -711,6 +757,13 @@ struct ProfileHeader: View {
     private let avatarSize: CGFloat = 80
     private let bannerHeight: CGFloat = 150
     
+    // Responsive padding function
+    private var responsivePadding: CGFloat {
+        max(16, (screenWidth - 600) / 2)
+    }
+    
+    private let logger = Logger(subsystem: "blue.catbird", category: "ProfileHeader")
+    
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.none) {
             // Banner and Avatar
@@ -721,7 +774,7 @@ struct ProfileHeader: View {
             
             // Divider()
         }
-        .frame(width: UIScreen.main.bounds.width)  // Use exact screen width for consistency
+        .frame(maxWidth: .infinity)  // Use responsive width for better iPad support
 //        .sheet(isPresented: $showingFollowersSheet) {
 //            followersSheet
 //        }
@@ -760,7 +813,7 @@ struct ProfileHeader: View {
                     Rectangle().fill(Color.accentColor.opacity(0.3))
                 }
             }
-            .frame(width: UIScreen.main.bounds.width, height: bannerHeight)
+            .frame(maxWidth: .infinity, minHeight: bannerHeight, maxHeight: bannerHeight)
             .clipped()
             
             HStack(alignment: .bottom) {
@@ -785,11 +838,11 @@ struct ProfileHeader: View {
                         .scaleEffect((avatarSize + 4) / avatarSize)
                 )
                 .offset(y: avatarSize / 2)
-                .padding(.leading, 12)
+                .padding(.leading, responsivePadding)
                 
                 Spacer()
             }
-            .frame(width: UIScreen.main.bounds.width)
+            .frame(maxWidth: .infinity)
         }
     }
     
@@ -811,6 +864,7 @@ struct ProfileHeader: View {
                         .allowsHitTesting(true)
                 }
             }
+            .padding(.horizontal, responsivePadding)
             
             // Display name and handle
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
@@ -819,7 +873,7 @@ struct ProfileHeader: View {
                         .enhancedAppHeadline()
                         .fontWeight(.bold)
                         .lineLimit(nil)
-                        .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     
             HStack(spacing: DesignTokens.Spacing.none) {
 
@@ -833,16 +887,18 @@ struct ProfileHeader: View {
                         .spacingXS(.leading)
                 }
             }
-            .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             }
+            .padding(.horizontal, responsivePadding)
             
             // Bio
             if let description = profile.description, !description.isEmpty {
                 Text(description)
                     .enhancedAppBody()
                     .lineLimit(nil)
-                    .frame(width: UIScreen.main.bounds.width - 32, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, responsivePadding)
             }
             
             // Stats
@@ -887,9 +943,9 @@ struct ProfileHeader: View {
                 
                 Spacer()
             }
-            .frame(width: UIScreen.main.bounds.width - 32)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, responsivePadding)
         }
-        .padding(.horizontal)
         .padding(.bottom, 12)
     }
     
@@ -909,7 +965,6 @@ struct ProfileHeader: View {
         .overlay {
             Capsule().stroke(Color.accentColor, lineWidth: 1.5)
         }
-        
     }
     
     @ViewBuilder
@@ -1201,7 +1256,7 @@ struct FeedRowView: View {
                 .foregroundStyle(.secondary)
                 .appFont(AppTextRole.caption)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
     }
 }

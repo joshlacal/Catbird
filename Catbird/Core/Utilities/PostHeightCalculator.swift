@@ -66,7 +66,7 @@ class PostHeightCalculator {
     }
     
     private let config: Config
-    private let logger = Logger(subsystem: "com.joshlacalamito.Catbird", category: "PostHeightCalculator")
+    private let logger = Logger(subsystem: "blue.catbird", category: "PostHeightCalculator")
     
     // Enhanced height cache with better memory management
     private var heightCache = NSCache<NSString, NSNumber>()

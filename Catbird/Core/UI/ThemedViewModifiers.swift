@@ -308,12 +308,14 @@ struct ThemedNavigationBarModifier: ViewModifier {
                 for: .navigationBar
             )
             .toolbarBackground(
-                themeManager.tabBarBackgroundColor,
+                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
                 for: .tabBar
             )
+            .toolbarBackgroundVisibility(.visible, for: .tabBar)
             .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
             .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .tabBar)
-            .preferredColorScheme(themeManager.effectiveColorScheme(for: colorScheme))
+            // Ensure tab bar icons use the correct tint color
+            .tint(isDarkMode && isBlackMode ? Color.blue.opacity(0.9) : nil)
     }
     
     private func applyNavigationBarTheme() {

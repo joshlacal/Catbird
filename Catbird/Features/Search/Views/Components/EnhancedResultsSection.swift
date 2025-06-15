@@ -54,6 +54,8 @@ struct EnhancedResultsSection<Content: View>: View {
             }
             
             content()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
         }
         .background(Color(.systemBackground))
         .cornerRadius(12)

@@ -12,6 +12,7 @@ import OSLog
 /// Enhanced feed discovery with personalized recommendations and trending feeds
 struct SmartFeedDiscoveryView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
     @State private var recommendationEngine: SmartFeedRecommendationEngine?
     @State private var socialAnalyzer: SocialConnectionAnalyzer?
     @State private var previewService: FeedPreviewService?
@@ -29,6 +30,7 @@ struct SmartFeedDiscoveryView: View {
     // UI state
     @State private var selectedTab: DiscoveryTab = .personalized
     @State private var showingInterestPicker = false
+    @State private var animateTabChange = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "SmartFeedDiscoveryView")
     
@@ -47,28 +49,60 @@ struct SmartFeedDiscoveryView: View {
     }
     
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                // Header
-                headerView
+        NavigationStack {
+            ZStack {
+                // Background gradient
+                LinearGradient(
+                    colors: [
+                        Color(.systemBackground),
+                        Color(.secondarySystemBackground).opacity(0.3)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
                 
-                // Tab Selector
-                tabSelectorView
-                
-                // Content based on selected tab
-                switch selectedTab {
-                case .personalized:
-                    personalizedRecommendationsView
-                case .trending:
-                    trendingFeedsView
-                case .interests:
-                    interestBasedView
+                ScrollView {
+                    LazyVStack(spacing: 20) {
+                        // Enhanced Header
+                        enhancedHeaderView
+                        
+                        // Enhanced Tab Selector
+                        enhancedTabSelectorView
+                        
+                        // Content based on selected tab with animation
+                        Group {
+                            switch selectedTab {
+                            case .personalized:
+                                enhancedPersonalizedRecommendationsView
+                            case .trending:
+                                enhancedTrendingFeedsView
+                            case .interests:
+                                enhancedInterestBasedView
+                            }
+                        }
+                        .animation(.easeInOut(duration: 0.3), value: selectedTab)
+                        
+                        // Bottom spacing
+                        Spacer(minLength: 100)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                }
+                .refreshable {
+                    await refreshContent()
                 }
             }
-            .padding()
-        }
-        .refreshable {
-            await refreshContent()
+            .navigationTitle("Discover Feeds")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Settings") {
+                        showingInterestPicker = true
+                    }
+                    .foregroundColor(.accentColor)
+                }
+            }
         }
         .task {
             await setupServices()
@@ -87,141 +121,296 @@ struct SmartFeedDiscoveryView: View {
         }
     }
     
-    // MARK: - Header View
+    // MARK: - Enhanced Header View
     
-    private var headerView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Discover Feeds")
-                        .appFont(AppTextRole.title1)
-                        .fontWeight(.bold)
-                    
-                    Text("Find feeds tailored to your interests")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.secondary)
-                }
+    private var enhancedHeaderView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Main header info
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Find Your Perfect Feeds")
+                    .appFont(AppTextRole.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
                 
-                Spacer()
-                
-                Button(action: { showingInterestPicker = true }) {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundColor(.accentColor)
-                }
-                .accessibilityLabel("Edit interests")
+                Text("Discover personalized content based on your interests and social connections")
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
             }
             
-            // Interest tags preview
+            // Interest tags preview with enhanced styling
             if !userInterests.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(userInterests.prefix(5), id: \.self) { interest in
-                            Text(interest)
-                                .appFont(AppTextRole.caption)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color.accentColor.opacity(0.1))
-                                .foregroundColor(.accentColor)
-                                .clipShape(Capsule())
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Your Interests")
+                        .appFont(AppTextRole.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                        .textCase(.uppercase)
+                        .tracking(0.5)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(userInterests.prefix(5), id: \.self) { interest in
+                                Text(interest)
+                                    .appFont(AppTextRole.caption)
+                                    .fontWeight(.medium)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        LinearGradient(
+                                            colors: [Color.accentColor.opacity(0.15), Color.accentColor.opacity(0.1)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .foregroundColor(.accentColor)
+                                    .clipShape(Capsule())
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+                                    )
+                            }
+                            
+                            if userInterests.count > 5 {
+                                Button(action: { showingInterestPicker = true }) {
+                                    Text("+\(userInterests.count - 5) more")
+                                        .appFont(AppTextRole.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(Color(.tertiarySystemBackground))
+                                        .clipShape(Capsule())
+                                }
+                            }
                         }
-                        
-                        if userInterests.count > 5 {
-                            Text("+\(userInterests.count - 5) more")
-                                .appFont(AppTextRole.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                        }
+                        .padding(.horizontal, 2)
                     }
-                    .padding(.horizontal, 2)
                 }
+            } else {
+                // Show prompt to add interests
+                Button(action: { showingInterestPicker = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle")
+                        Text("Add your interests")
+                    }
+                    .appFont(AppTextRole.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.accentColor)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor.opacity(0.1))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+        )
     }
     
-    // MARK: - Tab Selector
+    // MARK: - Enhanced Tab Selector
     
-    private var tabSelectorView: some View {
-        HStack(spacing: 0) {
+    private var enhancedTabSelectorView: some View {
+        HStack(spacing: 4) {
             ForEach(DiscoveryTab.allCases, id: \.self) { tab in
-                Button(action: { selectedTab = tab }) {
-                    VStack(spacing: 6) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        selectedTab = tab
+                    }
+                }) {
+                    VStack(spacing: 8) {
                         HStack(spacing: 6) {
                             Image(systemName: tab.systemImage)
                                 .font(.system(size: 14, weight: .medium))
                             Text(tab.rawValue)
                                 .appFont(AppTextRole.subheadline)
-                                .fontWeight(.medium)
+                                .fontWeight(.semibold)
                         }
-                        
-                        Rectangle()
-                            .frame(height: 2)
-                            .opacity(selectedTab == tab ? 1 : 0)
+                        .foregroundColor(selectedTab == tab ? .white : .secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(
+                            Group {
+                                if selectedTab == tab {
+                                    LinearGradient(
+                                        colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                } else {
+                                    Color.clear
+                                }
+                            }
+                        )
+                        .clipShape(Capsule())
                     }
                 }
-                .foregroundColor(selectedTab == tab ? .accentColor : .secondary)
+                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
             }
         }
-        .padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .animation(.easeInOut(duration: 0.2), value: selectedTab)
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+        )
     }
     
-    // MARK: - Content Views
+    // MARK: - Enhanced Content Views
     
-    private var personalizedRecommendationsView: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private var enhancedPersonalizedRecommendationsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Section header
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("For You")
+                        .appFont(AppTextRole.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("Curated based on your activity and interests")
+                        .appFont(AppTextRole.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            
             if isLoadingRecommendations {
-                loadingView
+                enhancedLoadingView
             } else if personalizedRecommendations.isEmpty {
-                emptyRecommendationsView
+                enhancedEmptyRecommendationsView
             } else {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: 16) {
                     ForEach(personalizedRecommendations.indices, id: \.self) { index in
                         let recommendation = personalizedRecommendations[index]
                         
-                        RecommendationCard(
+                        EnhancedRecommendationCard(
                             recommendation: recommendation,
+                            rank: index + 1,
+                            showRank: false,
                             onSubscribe: {
                                 await subscribeTo(recommendation.feed)
                             }
                         )
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .bottom)),
+                            removal: .opacity.combined(with: .scale)
+                        ))
                     }
                 }
             }
         }
     }
     
-    private var trendingFeedsView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Trending Now")
-                    .appFont(AppTextRole.headline)
-                    .fontWeight(.semibold)
+    private var enhancedTrendingFeedsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Enhanced section header
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    HStack(spacing: 8) {
+                        Image(systemName: "flame.fill")
+                            .foregroundColor(.orange)
+                        Text("Trending Now")
+                            .appFont(AppTextRole.title2)
+                            .fontWeight(.bold)
+                    }
+                    
+                    Spacer()
+                    
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 8, height: 8)
+                        Text("Live")
+                            .appFont(AppTextRole.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 
-                Spacer()
-                
-                Text("Updated hourly")
+                Text("Popular feeds across the platform right now")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             
             if isLoadingTrending {
-                loadingView
+                enhancedLoadingView
             } else if trendingFeeds.isEmpty {
-                emptyTrendingView
+                enhancedEmptyTrendingView
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(trendingFeeds.indices, id: \.self) { index in
                         let recommendation = trendingFeeds[index]
                         
-                        TrendingFeedCard(
+                        EnhancedRecommendationCard(
                             recommendation: recommendation,
                             rank: index + 1,
+                            showRank: true,
                             onSubscribe: {
                                 await subscribeTo(recommendation.feed)
+                            }
+                        )
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .scale)
+                        ))
+                    }
+                }
+            }
+        }
+    }
+    
+    private var enhancedInterestBasedView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Enhanced section header
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tag.fill")
+                            .foregroundColor(.purple)
+                        Text("Your Interests")
+                            .appFont(AppTextRole.title2)
+                            .fontWeight(.bold)
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Edit") {
+                        showingInterestPicker = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                
+                Text("Feeds matching your selected interests")
+                    .appFont(AppTextRole.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            if userInterests.isEmpty {
+                enhancedNoInterestsView
+            } else {
+                // Enhanced interest sections
+                LazyVStack(spacing: 20) {
+                    ForEach(userInterests.prefix(3), id: \.self) { interest in
+                        EnhancedInterestFeedSection(
+                            interest: interest,
+                            recommendations: personalizedRecommendations.filter { recommendation in
+                                recommendation.reasons.contains { reason in
+                                    if case .interestMatch(let tags) = reason {
+                                        return tags.contains(interest)
+                                    }
+                                    return false
+                                }
+                            },
+                            onSubscribe: { feed in
+                                await subscribeTo(feed)
                             }
                         )
                     }
@@ -230,117 +419,196 @@ struct SmartFeedDiscoveryView: View {
         }
     }
     
-    private var interestBasedView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Based on Your Interests")
-                .appFont(AppTextRole.headline)
-                .fontWeight(.semibold)
-            
-            if userInterests.isEmpty {
-                noInterestsView
-            } else {
-                // Show feeds grouped by interests
-                ForEach(userInterests.prefix(3), id: \.self) { interest in
-                    InterestFeedSection(
-                        interest: interest,
-                        recommendations: personalizedRecommendations.filter { recommendation in
-                            recommendation.reasons.contains { reason in
-                                if case .interestMatch(let tags) = reason {
-                                    return tags.contains(interest)
-                                }
-                                return false
+    // MARK: - Enhanced Helper Views
+    
+    private var enhancedLoadingView: some View {
+        VStack(spacing: 16) {
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(spacing: 0) {
+                    // Skeleton card
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            // Skeleton avatar
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(width: 48, height: 48)
+                                .shimmering()
+                            
+                            VStack(alignment: .leading, spacing: 6) {
+                                // Skeleton title
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 150, height: 16)
+                                    .shimmering()
+                                
+                                // Skeleton subtitle
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 100, height: 12)
+                                    .shimmering()
                             }
-                        },
-                        onSubscribe: { feed in
-                            await subscribeTo(feed)
+                            
+                            Spacer()
+                            
+                            // Skeleton button
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(width: 80, height: 32)
+                                .shimmering()
                         }
+                        
+                        // Skeleton description
+                        VStack(alignment: .leading, spacing: 4) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(height: 12)
+                                .shimmering()
+                            
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(width: 200, height: 12)
+                                .shimmering()
+                        }
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color(.systemBackground))
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                     )
                 }
             }
         }
     }
     
-    // MARK: - Helper Views
-    
-    private var loadingView: some View {
-        VStack(spacing: 12) {
-            ForEach(0..<3, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.gray.opacity(0.1))
-                    .frame(height: 120)
-                    .shimmering()
+    private var enhancedEmptyRecommendationsView: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [Color.accentColor.opacity(0.1), Color.accentColor.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 80, height: 80)
+                
+                Image(systemName: "sparkles")
+                    .font(.system(size: 32, weight: .medium))
+                    .foregroundColor(.accentColor)
             }
-        }
-    }
-    
-    private var emptyRecommendationsView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 48))
-                .foregroundColor(.secondary)
             
-            Text("No recommendations yet")
-                .appFont(AppTextRole.headline)
+            VStack(spacing: 8) {
+                Text("No recommendations yet")
+                    .appFont(AppTextRole.title3)
+                    .fontWeight(.semibold)
+                
+                Text("Add some interests to get personalized feed recommendations based on your preferences")
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+            }
             
-            Text("Add some interests to get personalized feed recommendations")
-                .appFont(AppTextRole.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            
-            Button("Add Interests") {
+            Button("Add Your Interests") {
                 showingInterestPicker = true
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
-        .padding()
+        .padding(24)
         .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+        )
     }
     
-    private var emptyTrendingView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "chart.line.uptrend.xyaxis")
-                .font(.system(size: 48))
-                .foregroundColor(.secondary)
+    private var enhancedEmptyTrendingView: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [Color.orange.opacity(0.1), Color.orange.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 80, height: 80)
+                
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 32, weight: .medium))
+                    .foregroundColor(.orange)
+            }
             
-            Text("No trending feeds")
-                .appFont(AppTextRole.headline)
+            VStack(spacing: 8) {
+                Text("No trending feeds right now")
+                    .appFont(AppTextRole.title3)
+                    .fontWeight(.semibold)
+                
+                Text("Trending feeds update throughout the day. Check back soon for the latest popular content")
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+            }
             
-            Text("Check back later for trending feeds")
-                .appFont(AppTextRole.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+            Button("Refresh") {
+                Task {
+                    await loadTrendingFeeds()
+                }
+            }
+            .buttonStyle(.bordered)
         }
-        .padding()
+        .padding(24)
         .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+        )
     }
     
-    private var noInterestsView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "tag")
-                .font(.system(size: 48))
-                .foregroundColor(.secondary)
+    private var enhancedNoInterestsView: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [Color.purple.opacity(0.1), Color.purple.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 80, height: 80)
+                
+                Image(systemName: "tag.fill")
+                    .font(.system(size: 32, weight: .medium))
+                    .foregroundColor(.purple)
+            }
             
-            Text("No interests selected")
-                .appFont(AppTextRole.headline)
+            VStack(spacing: 8) {
+                Text("No interests selected")
+                    .appFont(AppTextRole.title3)
+                    .fontWeight(.semibold)
+                
+                Text("Tell us what topics you're passionate about to discover feeds you'll love")
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+            }
             
-            Text("Tell us what you're interested in to get better recommendations")
-                .appFont(AppTextRole.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            
-            Button("Choose Interests") {
+            Button("Choose Your Interests") {
                 showingInterestPicker = true
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
-        .padding()
+        .padding(24)
         .frame(maxWidth: .infinity)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+        )
     }
     
     // MARK: - Actions
@@ -459,160 +727,373 @@ struct SmartFeedDiscoveryView: View {
     }
 }
 
-// MARK: - Supporting Views
+// MARK: - Enhanced Supporting Views
 
-struct RecommendationCard: View {
+struct EnhancedRecommendationCard: View {
     let recommendation: SmartFeedRecommendationEngine.FeedRecommendation
+    let rank: Int
+    let showRank: Bool
     let onSubscribe: () async -> Void
     
     @State private var isSubscribing = false
+    @State private var showingFullFeed = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                // Feed avatar
-                AsyncImage(url: URL(string: recommendation.feed.avatar?.uriString() ?? "")) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    feedPlaceholder
-                }
-                .frame(width: 48, height: 48)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recommendation.feed.displayName)
-                        .appFont(AppTextRole.headline)
-                        .fontWeight(.semibold)
-                    
-                    Text("by @\(recommendation.feed.creator.handle)")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    Text(recommendation.displayReason)
-                        .appFont(AppTextRole.caption)
-                        .foregroundColor(.accentColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.1))
-                        .clipShape(Capsule())
-                }
-                
-                Spacer()
-                
-                Button(action: {
-                    Task {
-                        isSubscribing = true
-                        await onSubscribe()
-                        isSubscribing = false
+        cardView
+            .sheet(isPresented: $showingFullFeed) {
+                feedPreviewSheet
+            }
+    }
+    
+    private var cardView: some View {
+        mainContentView
+            .padding(20)
+            .background(cardBackground)
+            .overlay(cardBorder)
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 20)
+            .fill(Color(.systemBackground))
+            .shadow(color: .black.opacity(0.06), radius: 12, x: 0, y: 4)
+            .shadow(color: .black.opacity(0.04), radius: 1, x: 0, y: 1)
+    }
+    
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 20)
+            .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+    }
+    
+    private var feedPreviewSheet: some View {
+        NavigationStack {
+            FeedView(
+                appState: AppState.shared,
+                fetch: .feed(recommendation.feed.uri),
+                path: .constant(NavigationPath()),
+                selectedTab: .constant(0)
+            )
+            .navigationTitle(recommendation.feed.displayName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") {
+                        showingFullFeed = false
                     }
-                }) {
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Subscribe") {
+                        Task {
+                            await onSubscribe()
+                            showingFullFeed = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+    @ViewBuilder
+    private var mainContentView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            headerSectionView
+            
+            // Enhanced description
+            if let description = recommendation.feed.description, !description.isEmpty {
+                Text(description)
+                    .appFont(AppTextRole.body)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            
+            // Stats row
+            if let likeCount = recommendation.feed.likeCount {
+                statsRowView(likeCount: likeCount)
+            }
+        }
+    }
+    
+    private var headerSectionView: some View {
+        HStack(alignment: .top, spacing: 16) {
+            // Rank badge (for trending)
+            if showRank {
+                rankBadgeView
+            }
+            
+            // Enhanced feed avatar
+            feedAvatarView
+            
+            feedInfoView
+            
+            Spacer()
+            
+            // Action buttons
+            actionButtonsView
+        }
+    }
+    
+    private var rankBadgeView: some View {
+        ZStack {
+            Circle()
+                .fill(rankGradient)
+                .frame(width: 32, height: 32)
+            
+            Text("\(rank)")
+                .appFont(AppTextRole.caption)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+        }
+    }
+    
+    private var feedInfoView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(recommendation.feed.displayName)
+                .appFont(AppTextRole.headline)
+                .fontWeight(.bold)
+                .lineLimit(2)
+            
+            Text("by @\(recommendation.feed.creator.handle)")
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.secondary)
+            
+            // Enhanced reason badge
+            reasonBadgeView
+        }
+    }
+    
+    private func statsRowView(likeCount: Int) -> some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 4) {
+                Image(systemName: "heart.fill")
+                    .foregroundColor(.pink)
+                Text(formatCount(likeCount))
+            }
+            .appFont(AppTextRole.caption)
+            .foregroundColor(.secondary)
+            
+            Spacer()
+            
+            // Quality indicator
+            if likeCount > 10000 {
+                Text("Top Rated")
+                    .appFont(AppTextRole.caption2)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.green)
+                    .clipShape(Capsule())
+            }
+        }
+    }
+    
+    private var rankGradient: LinearGradient {
+        switch rank {
+        case 1:
+            return LinearGradient(colors: [.yellow, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case 2:
+            return LinearGradient(colors: [.gray, .white], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case 3:
+            return LinearGradient(colors: [.orange, .brown], startPoint: .topLeading, endPoint: .bottomTrailing)
+        default:
+            return LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+    }
+    
+    private var enhancedFeedPlaceholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color.accentColor.opacity(0.8),
+                    Color.accentColor.opacity(0.6),
+                    Color.accentColor.opacity(0.4)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            
+            Text(recommendation.feed.displayName.prefix(1).uppercased())
+                .appFont(AppTextRole.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
+        }
+    }
+    
+    private var feedAvatarView: some View {
+        AsyncImage(url: URL(string: recommendation.feed.avatar?.uriString() ?? "")) { image in
+            image.resizable().scaledToFill()
+        } placeholder: {
+            enhancedFeedPlaceholder
+        }
+        .frame(width: 56, height: 56)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+    }
+    
+    private var reasonBadgeView: some View {
+        Text(recommendation.displayReason)
+            .appFont(AppTextRole.caption2)
+            .fontWeight(.medium)
+            .foregroundColor(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                LinearGradient(
+                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .clipShape(Capsule())
+    }
+    
+    private var actionButtonsView: some View {
+        VStack(spacing: 8) {
+            Button(action: {
+                Task {
+                    isSubscribing = true
+                    await onSubscribe()
+                    isSubscribing = false
+                }
+            }) {
+                HStack(spacing: 4) {
                     if isSubscribing {
                         ProgressView()
                             .scaleEffect(0.8)
                     } else {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .bold))
                         Text("Subscribe")
-                            .appFont(AppTextRole.subheadline)
+                            .appFont(AppTextRole.caption)
                             .fontWeight(.semibold)
                     }
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.accentColor)
+                .background(
+                    LinearGradient(
+                        colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
                 .clipShape(Capsule())
-                .disabled(isSubscribing)
             }
+            .disabled(isSubscribing)
+            .buttonStyle(.plain)
             
-            if let description = recommendation.feed.description {
-                Text(description)
-                    .appFont(AppTextRole.body)
-                    .foregroundColor(.primary)
-                    .lineLimit(3)
+            Button("Preview") {
+                showingFullFeed = true
             }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
         }
-        .padding()
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
-    private var feedPlaceholder: some View {
-        ZStack {
-            Color.accentColor.opacity(0.6)
-            Text(recommendation.feed.displayName.prefix(1).uppercased())
-                .appFont(AppTextRole.headline)
-                .foregroundColor(.white)
+    private func formatCount(_ count: Int) -> String {
+        if count >= 1000000 {
+            return String(format: "%.1fM", Double(count) / 1000000)
+        } else if count >= 1000 {
+            return String(format: "%.1fK", Double(count) / 1000)
+        } else {
+            return "\(count)"
         }
     }
 }
 
-struct TrendingFeedCard: View {
-    let recommendation: SmartFeedRecommendationEngine.FeedRecommendation
-    let rank: Int
-    let onSubscribe: () async -> Void
-    
-    @State private var isSubscribing = false
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Rank badge
-            Text("#\(rank)")
-                .appFont(AppTextRole.caption)
-                .fontWeight(.bold)
-                .foregroundColor(.accentColor)
-                .frame(width: 28, height: 28)
-                .background(Color.accentColor.opacity(0.1))
-                .clipShape(Circle())
-            
-            RecommendationCard(
-                recommendation: recommendation,
-                onSubscribe: onSubscribe
-            )
-        }
-    }
-}
+// TrendingFeedCard is now integrated into EnhancedRecommendationCard with showRank parameter
 
-struct InterestFeedSection: View {
+struct EnhancedInterestFeedSection: View {
     let interest: String
     let recommendations: [SmartFeedRecommendationEngine.FeedRecommendation]
     let onSubscribe: (AppBskyFeedDefs.GeneratorView) async -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
+            // Enhanced section header
             HStack {
-                Text(interest.capitalized)
-                    .appFont(AppTextRole.headline)
-                    .fontWeight(.semibold)
+                HStack(spacing: 8) {
+                    Text("#")
+                        .appFont(AppTextRole.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.accentColor)
+                    
+                    Text(interest.capitalized)
+                        .appFont(AppTextRole.headline)
+                        .fontWeight(.bold)
+                }
                 
                 Spacer()
                 
                 Text("\(recommendations.count) feed\(recommendations.count == 1 ? "" : "s")")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(.tertiarySystemBackground))
+                    .clipShape(Capsule())
             }
             
             if recommendations.isEmpty {
-                Text("No feeds found for this interest")
-                    .appFont(AppTextRole.body)
-                    .foregroundColor(.secondary)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                VStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 24))
+                        .foregroundColor(.secondary)
+                    
+                    Text("No feeds found for \(interest.lowercased())")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color(.secondarySystemBackground))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+                        )
+                )
             } else {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 12) {
                     ForEach(recommendations.prefix(3).indices, id: \.self) { index in
                         let recommendation = recommendations[index]
                         
-                        RecommendationCard(
+                        EnhancedRecommendationCard(
                             recommendation: recommendation,
+                            rank: index + 1,
+                            showRank: false,
                             onSubscribe: {
                                 await onSubscribe(recommendation.feed)
                             }
                         )
                     }
+                    
+                    if recommendations.count > 3 {
+                        Button("View \(recommendations.count - 3) more") {
+                            // Could expand or show more in sheet
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+        )
     }
 }
 
@@ -709,3 +1190,12 @@ struct InterestTag: View {
 }
 
 // Note: FlowLayout is defined in PostStatsView.swift
+
+// MARK: - Preview
+
+#Preview {
+    NavigationStack {
+        SmartFeedDiscoveryView()
+            .environment(AppState.shared)
+    }
+}

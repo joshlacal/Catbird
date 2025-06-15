@@ -10,7 +10,6 @@ struct MessageBubble: View {
   @Environment(AppState.self) private var appState
   @Binding var path: NavigationPath
   
-  
   // Get the conversation ID from the current navigation context
   private var convoId: String {
     // This is a bit hacky - we should pass convoId as a parameter

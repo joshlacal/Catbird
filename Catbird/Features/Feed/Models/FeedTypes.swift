@@ -9,7 +9,8 @@ import Foundation
 import Petrel
 
 /// Types of feeds that can be displayed
-enum FetchType: Hashable {
+enum FetchType: Hashable, Sendable, CustomStringConvertible {
+    
     /// Home timeline feed with chronological posts
     case timeline
     
@@ -38,6 +39,21 @@ enum FetchType: Hashable {
             return "author:\(did)"
         case .likes(let did):
             return "likes:\(did)"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .timeline:
+            return "Timeline"
+        case .list(let uri):
+            return "List Feed (\(uri.uriString()))"
+        case .feed(let uri):
+            return "Custom Feed (\(uri.uriString()))"
+        case .author(let did):
+            return "Author Feed (\(did))"
+        case .likes(let did):
+            return "Likes Feed (\(did))"
         }
     }
     

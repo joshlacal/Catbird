@@ -125,7 +125,15 @@ struct FeedListView: View {
   // Specific ID for the top anchor that's consistently used
   private let topAnchorID = "feed-top-anchor"
   
-  // State for scroll position tracking
+  // State for scroll position tracking and preservation
+  @State private var scrollAnchor: ScrollAnchor?
+  @State private var postsCountBeforeRefresh: Int = 0
+  
+  // Helper struct for scroll position preservation
+  private struct ScrollAnchor {
+    let postId: String
+    let postIndex: Int
+  }
 
   // Helper struct to ensure unique IDs for ForEach
   private struct IndexedPost: Identifiable {

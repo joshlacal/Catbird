@@ -12,6 +12,7 @@
 	<string>Catbird needs permission to send you notifications about mentions, replies, and interactions with your posts.</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>remote-notification</string>
 	</array>
 	<key>com.apple.developer.associated-domains</key>

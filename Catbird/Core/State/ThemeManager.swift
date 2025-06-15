@@ -5,11 +5,12 @@ import OSLog
 /// Manages theme application throughout the app
 @Observable final class ThemeManager {
     private let logger = Logger(subsystem: "blue.catbird", category: "ThemeManager")
+    private let fontManager: FontManager
     
     // MARK: - Properties
     
     /// Current color scheme override (nil means follow system)
-    var colorSchemeOverride: ColorScheme? = nil
+    var colorSchemeOverride: ColorScheme?
     
     /// Current dark theme mode (dim or black)
     var darkThemeMode: DarkThemeMode = .dim
@@ -29,6 +30,12 @@ import OSLog
     enum DarkThemeMode {
         case dim     // Standard dark mode with grays
         case black   // True black with proper hierarchy
+    }
+    
+    // MARK: - Initialization
+    
+    init(fontManager: FontManager) {
+        self.fontManager = fontManager
     }
     
     // MARK: - Methods
@@ -96,13 +103,16 @@ import OSLog
                     window.overrideUserInterfaceStyle = .unspecified
                 }
                 
-                // Set window tint color based on theme if dark mode
+                // Set window tint color based on theme
                 Task {
                     let isDarkMode = await getCurrentEffectiveDarkMode()
                     await MainActor.run {
                         if isDarkMode && darkThemeMode == .black {
                             // Slightly brighter accent for better visibility on black
                             window.tintColor = UIColor.systemBlue.withAlphaComponent(1.0)
+                        } else {
+                            // Reset to system default for all other cases
+                            window.tintColor = nil
                         }
                     }
                 }
@@ -162,10 +172,10 @@ import OSLog
                         compactAppearance.configureWithOpaqueBackground()      // compact = opaque
                     }
                     
-                    // Apply custom fonts to all appearances
-                    NavigationFontConfig.applyFonts(to: standardAppearance)
-                    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance)
-                    NavigationFontConfig.applyFonts(to: compactAppearance)
+                    // Apply custom fonts to all appearances with FontManager integration
+                    NavigationFontConfig.applyFonts(to: standardAppearance, fontManager: fontManager)
+                    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance, fontManager: fontManager)
+                    NavigationFontConfig.applyFonts(to: compactAppearance, fontManager: fontManager)
                     
                     // Apply text color based on theme
                     let textColor = isDarkMode
@@ -227,7 +237,7 @@ import OSLog
         
         // Force apply custom fonts to all navigation bars after theme change
         // This ensures width=120 fonts are respected consistently
-        NavigationFontConfig.forceApplyToAllNavigationBars()
+        NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
         
         // Do the force update with minimal recursion
         await performOptimizedForceUpdate()
@@ -585,7 +595,7 @@ import OSLog
         }
         
         // Apply fonts
-        NavigationFontConfig.applyFonts(to: appearance)
+        NavigationFontConfig.applyFonts(to: appearance, fontManager: fontManager)
         
         // Apply text color
         let textColor = isDark 

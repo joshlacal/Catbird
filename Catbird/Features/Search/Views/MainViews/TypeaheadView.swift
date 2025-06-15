@@ -59,101 +59,28 @@ struct TypeaheadView: View {
     
     private var suggestionsList: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: 0, pinnedViews: []) {
                 // Profiles Section
                 if !viewModel.typeaheadProfiles.isEmpty {
-                    sectionHeader(title: "Profiles", icon: "person")
-                    
                     ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
                         Button {
                             // Save to recent profiles and navigate
-                            // Save recent profile search
                             viewModel.addRecentProfileSearchBasic(profile: profile)
                             path.append(NavigationDestination.profile(profile.did.didString()))
                         } label: {
-                            // Use the profile directly
                             ProfileRowView(profile: profile)
+                                .padding(.horizontal)
                         }
                         .buttonStyle(.plain)
                         
                         if profile != viewModel.typeaheadProfiles.last {
-                            EnhancedDivider()
-                        }
-                    }
-                    
-                    Divider()
-                        .padding(.vertical, 8)
-                }
-                
-                // Feeds Section
-                if !viewModel.typeaheadFeeds.isEmpty {
-                    sectionHeader(title: "Feeds", icon: "rectangle.on.rectangle.angled")
-                    
-                    ForEach(viewModel.typeaheadFeeds, id: \.uri) { feed in
-                        Button {
-                            // Navigate to feed
-                            path.append(NavigationDestination.feed(feed.uri))
-                        } label: {
-                            EnhancedFeedRowView(feed: feed)
-                        }
-                        .buttonStyle(.plain)
-                        
-                        if feed != viewModel.typeaheadFeeds.last {
-                            EnhancedDivider()
-                        }
-                    }
-                    
-                    Divider()
-                        .padding(.vertical, 8)
-                }
-                
-                // Search Term Suggestions
-                if !viewModel.typeaheadSuggestions.isEmpty {
-                    sectionHeader(title: "Suggestions", icon: "text.magnifyingglass")
-                    
-                    ForEach(viewModel.typeaheadSuggestions, id: \.self) { suggestion in
-                        Button {
-                            // Update search text and commit search
-                            searchText = suggestion
-                            viewModel.searchQuery = suggestion
-                            guard let client = appState.atProtoClient else {
-                                logger.error("Empty client")
-                                return
-                            }
-                            
-                            viewModel.commitSearch(client: client)
-                        } label: {
-                            HStack {
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 24, height: 24)
-                                    .padding(.trailing, 8)
-                                
-                                Text(suggestion)
-                                    .foregroundColor(.primary)
-                                
-                                Spacer()
-                                
-                                Image(systemName: "arrow.up.left")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.vertical, 12)
-                            .padding(.horizontal)
-                        }
-                        .buttonStyle(.plain)
-                        
-                        if suggestion != viewModel.typeaheadSuggestions.last {
                             Divider()
-                                .padding(.leading, 56)
+                                .padding(.leading, 68) // Align with profile content
                         }
                     }
-                    
-                    Divider()
-                        .padding(.vertical, 8)
                 }
                 
-                // Search directly button
+                // Search directly button - always show
                 Button {
                     // Commit search with current text
                     guard let client = appState.atProtoClient else {
@@ -163,79 +90,26 @@ struct TypeaheadView: View {
 
                     viewModel.commitSearch(client: client)
                 } label: {
-                    HStack {
+                    HStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.accentColor)
+                            .frame(width: 44, height: 44)
                         
                         Text("Search for \"\(searchText)\"")
                             .foregroundColor(.accentColor)
                             .fontWeight(.medium)
+                            .appFont(AppTextRole.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 8)
+                .padding(.top, viewModel.typeaheadProfiles.isEmpty ? 0 : 8)
             }
             .background(Color(.systemBackground))
         }
     }
     
-    // Helper to create section headers
-    private func sectionHeader(title: String, icon: String) -> some View {
-        HStack {
-            Image(systemName: icon)
-                .foregroundColor(.accentColor)
-                .appFont(AppTextRole.subheadline)
-            
-            Text(title)
-                .appFont(AppTextRole.headline)
-            
-            Spacer()
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal)
-        .background(Color(.systemBackground))
-    }
-}
-
-// Model representing a search suggestion
-struct TypeaheadSuggestion: Identifiable, Hashable {
-    let id = UUID()
-    let text: String
-    let type: SuggestionType
-    
-    enum SuggestionType {
-        case hashtag
-        case term
-        case handle
-    }
-    
-    // Generate suggestions based on query text
-    static func generateSuggestions(for query: String) -> [String] {
-        guard !query.isEmpty else { return [] }
-        
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Generate potential variations based on query text
-        var suggestions: [String] = []
-        
-        // Add hashtag version if not already a hashtag
-        if !trimmed.hasPrefix("#") && !trimmed.contains(" ") {
-            suggestions.append("#\(trimmed)")
-        }
-        
-        // Add handle version if applicable
-        if !trimmed.hasPrefix("@") && !trimmed.contains(" ") && trimmed.count >= 3 {
-            suggestions.append("@\(trimmed)")
-        }
-        
-        // Add some common context terms
-        let contextTerms = ["trending", "popular", "latest", "recommended"]
-        for term in contextTerms where term.contains(trimmed.lowercased()) || trimmed.lowercased().contains(term) {
-            suggestions.append(term)
-        }
-        
-        return suggestions
-    }
 }

@@ -1,69 +1,90 @@
-# Catbird - A Modern Bluesky Client
+# Catbird
 
-Catbird is a native iOS client for [Bluesky](https://bsky.app), built with SwiftUI and modern Swift features.
+A modern iOS client for [Bluesky](https://bsky.app), built with SwiftUI and the AT Protocol.
+
+![iOS 18+](https://img.shields.io/badge/iOS-18%2B-blue)
+![Swift 6](https://img.shields.io/badge/Swift-6.0-orange)
+![SwiftUI](https://img.shields.io/badge/SwiftUI-5.0-blue)
+
+## Features
+
+- 🚀 **Fast & Native**: Built entirely in SwiftUI for optimal iOS performance
+- 📱 **Modern Design**: Clean interface following iOS design guidelines
+- 🔄 **Real-time Updates**: Live timeline updates and notifications
+- 🖼️ **Rich Media**: Full support for images, videos, and embeds
+- 💬 **Direct Messaging**: Full chat functionality with emoji reactions
+- 🎨 **Themes**: Light, dark, and dim theme options
+- ♿ **Accessibility**: Full Dynamic Type and VoiceOver support
+- 🔐 **Secure**: Biometric authentication and secure credential storage
+
+## Requirements
+
+- iOS 18.0+
+- Xcode 16.0+
+- Swift 6.0+
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/joshlacal/Catbird.git
+cd Catbird
+```
+
+2. Open the project in Xcode:
+```bash
+open Catbird.xcodeproj
+```
+
+3. Build and run the project (⌘R)
 
 ## Architecture
 
-Catbird follows a modern SwiftUI architecture with Observable state management:
+Catbird uses modern Swift patterns and SwiftUI best practices:
 
-```
-AppState (Observable)
-   │
-   ├── Authentication & User Session
-   │
-   ├── PostShadowManager (Actor)
-   │    └── Post Interaction State
-   │
-   └── Feed Management
-        └── Loading & Pagination
-```
-
-### Core Components
-
-1. **AppState**: Central state container using the `@Observable` macro for SwiftUI integration
-2. **PostShadowManager**: Actor for thread-safe management of post interaction state
-3. **FeedModel**: Observable model for managing feed data with pagination
-4. **PostViewModel**: Handles individual post interactions (likes, reposts, etc.)
-
-### Features
-
-- Timeline feed with optimized scrolling
-- Post interaction (like, repost, reply, quote)
-- Image and video embedding
-- Thread views
-- Profile browsing
-
-## Technologies
-
-- SwiftUI for UI
-- Swift 6 Observation & Structured Concurrency
-- Actor model for thread safety
-- Image & video caching and prefetching
-- SwiftData for local caching
-
-## Building the Project
-
-1. Clone the repository
-2. Open `Catbird.xcodeproj` in Xcode 15 or later
-3. Build and run the `Catbird` scheme
+- **State Management**: `@Observable` macro for reactive state
+- **Concurrency**: Swift 6 structured concurrency with actors
+- **Networking**: [Petrel](https://github.com/joshlacal/Petrel) AT Protocol library
+- **Navigation**: Type-safe navigation with SwiftUI's navigation APIs
 
 ## Project Structure
 
-- `/Catbird`: Main app code
-  - `/Core`: Core architecture components
-    - `/State`: State management
-    - `/Models`: Data models
-    - `/Navigation`: Navigation handling
-  - `/Features`: Feature modules
-    - `/Auth`: Authentication
-    - `/Feed`: Feed display
-    - `/Video`: Video handling
-  - `/Extensions`: Swift extensions
+```
+Catbird/
+├── App/                    # App entry point and configuration
+├── Core/                   # Core infrastructure
+│   ├── Extensions/         # Swift and SwiftUI extensions
+│   ├── Models/            # Data models
+│   ├── Navigation/        # Navigation system
+│   ├── State/             # State management
+│   └── UI/                # Reusable UI components
+├── Features/              # Feature modules
+│   ├── Auth/              # Authentication
+│   ├── Chat/              # Direct messaging
+│   ├── Feed/              # Timeline and feeds
+│   ├── Profile/           # User profiles
+│   └── Settings/          # App settings
+└── Resources/             # Assets and resources
+```
 
-## Development Status
+## Contributing
 
-This project is under active development. See [project_status.md](project_status.md) for current status.
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## Dependencies
+
+- [Petrel](https://github.com/joshlacal/Petrel) - Swift library for the AT Protocol
 
 ## License
 
-[MIT License](LICENSE.md)
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Built with [Petrel](https://github.com/joshlacal/Petrel), a Swift implementation of the AT Protocol
+- Thanks to the Bluesky team for creating an open social protocol
+
+## Contact
+
+- Bluesky: [@josh.tel](https://bsky.app/profile/josh.tel)
+- GitHub: [@joshlacal](https://github.com/joshlacal)

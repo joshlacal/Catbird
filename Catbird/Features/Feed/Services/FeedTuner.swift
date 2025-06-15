@@ -11,6 +11,8 @@ struct FeedTunerSettings {
     let hideQuotePosts: Bool
     let hideNonPreferredLanguages: Bool
     let preferredLanguages: [String]
+    let mutedUsers: Set<String>
+    let blockedUsers: Set<String>
     
     static let `default` = FeedTunerSettings(
         hideReplies: false,
@@ -18,7 +20,9 @@ struct FeedTunerSettings {
         hideReposts: false,
         hideQuotePosts: false,
         hideNonPreferredLanguages: false,
-        preferredLanguages: []
+        preferredLanguages: [],
+        mutedUsers: [],
+        blockedUsers: []
     )
 }
 
@@ -405,6 +409,47 @@ final class FeedTuner {
     var filteredPosts: [AppBskyFeedDefs.FeedViewPost] = []
     
     for post in posts {
+      // Check if post author is blocked (blocks are stronger than mutes)
+      let authorDID = post.post.author.did.didString()
+      if settings.blockedUsers.contains(authorDID) {
+        logger.debug("Filtering out post from blocked user: \(post.post.author.handle)")
+        continue
+      }
+      
+      // Check if post author is muted
+      if settings.mutedUsers.contains(authorDID) {
+        logger.debug("Filtering out post from muted user: \(post.post.author.handle)")
+        continue
+      }
+      
+      // Check if root post author is blocked (for replies to blocked users)
+      if let reply = post.reply,
+         case .appBskyFeedDefsPostView(let rootPost) = reply.root {
+        let rootAuthorDID = rootPost.author.did.didString()
+        if settings.blockedUsers.contains(rootAuthorDID) {
+          logger.debug("Filtering out reply to blocked user: \(rootPost.author.handle)")
+          continue
+        }
+        if settings.mutedUsers.contains(rootAuthorDID) {
+          logger.debug("Filtering out reply to muted user: \(rootPost.author.handle)")
+          continue
+        }
+      }
+      
+      // Check if parent post author is blocked/muted (for replies in threads)
+      if let reply = post.reply,
+         case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
+        let parentAuthorDID = parentPost.author.did.didString()
+        if settings.blockedUsers.contains(parentAuthorDID) {
+          logger.debug("Filtering out reply to blocked parent: \(parentPost.author.handle)")
+          continue
+        }
+        if settings.mutedUsers.contains(parentAuthorDID) {
+          logger.debug("Filtering out reply to muted parent: \(parentPost.author.handle)")
+          continue
+        }
+      }
+      
       // Check if this is a reply
       let isReply = post.reply != nil
       if settings.hideReplies && isReply {
@@ -414,9 +459,25 @@ final class FeedTuner {
       
       // Check if this is a repost (has reason)
       let isRepost = post.reason != nil
-      if settings.hideReposts && isRepost {
-        logger.debug("Filtering out repost: \(post.post.uri.uriString())")
-        continue
+      if isRepost {
+        // Check if the reposter is blocked/muted
+        if case .appBskyFeedDefsReasonRepost(let repostReason) = post.reason {
+          let reposterDID = repostReason.by.did.didString()
+          if settings.blockedUsers.contains(reposterDID) {
+            logger.debug("Filtering out repost by blocked user: \(repostReason.by.handle)")
+            continue
+          }
+          if settings.mutedUsers.contains(reposterDID) {
+            logger.debug("Filtering out repost by muted user: \(repostReason.by.handle)")
+            continue
+          }
+        }
+        
+        // Check if user wants to hide all reposts
+        if settings.hideReposts {
+          logger.debug("Filtering out repost: \(post.post.uri.uriString())")
+          continue
+        }
       }
       
       // Apply language filtering if enabled

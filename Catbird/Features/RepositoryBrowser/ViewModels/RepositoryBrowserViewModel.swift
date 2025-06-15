@@ -351,7 +351,7 @@ final class RepositoryBrowserViewModel {
         }
         
         let posts = try await fetchPosts(for: repositoryRecord, using: repositoryActor)
-        let _ = try await fetchProfiles(for: repositoryRecord, using: repositoryActor)
+        _ = try await fetchProfiles(for: repositoryRecord, using: repositoryActor)
         
         var htmlContent = """
         <!DOCTYPE html>

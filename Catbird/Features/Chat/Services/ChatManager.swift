@@ -43,11 +43,6 @@ final class ChatManager: StateInvalidationSubscriber {
   // Message delivery tracking
   private var pendingMessages: [String: PendingMessage] = [:]  // [tempId: PendingMessage]
   private var messageDeliveryStatus: [String: MessageDeliveryStatus] = [:]  // [messageId: status]
-  
-  // Typing indicators
-  private(set) var typingIndicators: [String: Set<String>] = [:]  // [convoId: Set<userDID>]
-  private var typingTimers: [String: [String: Timer]] = [:]  // [convoId: [userDID: Timer]]
-  private var isCurrentlyTyping: [String: Bool] = [:]  // [convoId: isTyping]
 
   // Pagination control
   var conversationsCursor: String?
@@ -63,6 +58,9 @@ final class ChatManager: StateInvalidationSubscriber {
   private let activeListPollInterval: TimeInterval = 10.0  // 10 seconds when viewing conversation list (faster)
   private let backgroundPollInterval: TimeInterval = 60.0  // 1 minute when backgrounded (more responsive)
   private let inactivePollInterval: TimeInterval = 180.0  // 3 minutes when inactive (reduced)
+  
+  // Callback for when unread count changes
+  var onUnreadCountChanged: (() -> Void)?
 
   init(client: ATProtoClient? = nil, appState: AppState? = nil) {
     self.client = client
@@ -185,15 +183,25 @@ final class ChatManager: StateInvalidationSubscriber {
         }
       }
       
-    case .postCreated(_), .replyCreated(_, _), .threadUpdated(_):
+    case .authenticationCompleted:
+      // Authentication completed - reload conversations if needed
+      await MainActor.run {
+        if client != nil {
+          Task {
+            await loadConversations(refresh: true)
+          }
+        }
+      }
+      
+    case .postCreated, .replyCreated, .threadUpdated:
       // These don't affect chat content
       break
       
-    case .feedUpdated(_), .profileUpdated(_), .notificationsUpdated:
+    case .feedUpdated, .profileUpdated, .notificationsUpdated:
       // These don't affect chat content
       break
       
-    case .postLiked(_), .postUnliked(_), .postReposted(_), .postUnreposted(_):
+    case .postLiked, .postUnliked, .postReposted, .postUnreposted:
       // These don't affect chat content
       break
     case .feedListChanged:
@@ -286,6 +294,9 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug(
         "Loaded \(convosData.convos.count) conversations. New cursor: \(convosData.cursor ?? "nil")"
       )
+      
+      // Notify that unread count may have changed
+      onUnreadCountChanged?()
 
     } catch {
       logger.error("Error loading conversations: \(error.localizedDescription)")
@@ -627,33 +638,8 @@ final class ChatManager: StateInvalidationSubscriber {
       return false
     }
 
-    // Create temporary message for optimistic UI update
-    let tempId = UUID().uuidString
-    let pendingMessage = PendingMessage(
-      tempId: tempId,
-      convoId: convoId,
-      text: text,
-      timestamp: Date()
-    )
-    
-    // Add optimistic message to UI immediately
-    let optimisticMessage = await createOptimisticMessage(
-      tempId: tempId,
-      text: text,
-      convoId: convoId
-    )
-    
-    // Update local state with optimistic message
-    if var existing = messagesMap[convoId] {
-      existing.append(optimisticMessage)
-      messagesMap[convoId] = existing
-    } else {
-      messagesMap[convoId] = [optimisticMessage]
-    }
-    
-    // Track pending message
-    pendingMessages[tempId] = pendingMessage
-    messageDeliveryStatus[tempId] = .sending
+    // Note: ExyteChat handles optimistic UI updates, so we don't create them here
+    // This prevents message duplication where both ExyteChat and ChatManager create optimistic messages
 
     do {
       let messageInput = ChatBskyConvoDefs.MessageInput(
@@ -668,58 +654,32 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       logger.debug("Sending message to conversation \(convoId)\(embed != nil ? " with embed" : "")")
-
    
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
-
  
-      guard responseCode >= 200 && responseCode < 300 else {
+      guard responseCode >= 200 && responseCode < 300, let messageView = response else {
         logger.error("Error sending message to \(convoId): HTTP \(responseCode)")
-        
-        // Update delivery status to failed
-        messageDeliveryStatus[tempId] = .failed(ChatError.networkError(code: responseCode))
-        
-        // Remove from pending and retry logic can be added here
-        pendingMessages.removeValue(forKey: tempId)
-        
         errorState = .networkError(code: responseCode)
         return false
       }
 
-      guard let messageView = response else {
-        logger.error("No message view returned after sending to \(convoId)")
-        
-        // Update delivery status to failed
-        messageDeliveryStatus[tempId] = .failed(ChatError.emptyResponse)
-        pendingMessages.removeValue(forKey: tempId)
-        
-        errorState = .emptyResponse
-        return false
-      }
-
-      // Replace optimistic message with real message
+      // Add the real message to our local state (ExyteChat handles optimistic UI)
       let realMessage = await createChatMessage(from: messageView)
       
       if var existing = messagesMap[convoId] {
-        // Find and replace the optimistic message
-        if let index = existing.firstIndex(where: { $0.id == tempId }) {
-          existing[index] = realMessage
-          messagesMap[convoId] = existing
-        }
+        existing.append(realMessage)
+        messagesMap[convoId] = existing
+      } else {
+        messagesMap[convoId] = [realMessage]
       }
 
-      // Store original message view
+      // Store original message view for reactions and other features
       if var existingOriginals = originalMessagesMap[convoId] {
         existingOriginals[messageView.id] = messageView
         originalMessagesMap[convoId] = existingOriginals
       } else {
         originalMessagesMap[convoId] = [messageView.id: messageView]
       }
-
-      // Update delivery status and clean up
-      messageDeliveryStatus[messageView.id] = .sent
-      messageDeliveryStatus.removeValue(forKey: tempId)
-      pendingMessages.removeValue(forKey: tempId)
 
       // Update conversation list's last message preview
       await updateConversationLastMessage(convoId: convoId, messageView: messageView)
@@ -729,11 +689,6 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error sending message to \(convoId): \(error.localizedDescription)")
-      
-      // Update delivery status to failed
-      messageDeliveryStatus[tempId] = .failed(error)
-      pendingMessages.removeValue(forKey: tempId)
-      
       setErrorState(error)
       return false
     }
@@ -759,7 +714,6 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Marking conversation \(convoId) as read")
    
       let (responseCode, response) = try await client.chat.bsky.convo.updateRead(input: input)
-
  
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error marking conversation \(convoId) as read: HTTP \(responseCode)")
@@ -773,6 +727,8 @@ final class ChatManager: StateInvalidationSubscriber {
           conversations[index] = updatedConvoView
           logger.debug(
             "Successfully marked conversation \(convoId) as read and updated local state.")
+          // Notify that unread count has changed
+          onUnreadCountChanged?()
         }
       } else {
         // Fallback if response doesn't contain the updated convo view
@@ -975,8 +931,18 @@ final class ChatManager: StateInvalidationSubscriber {
   @MainActor
   func toggleReaction(convoId: String, messageId: String, emoji: String) async throws {
     do {
-      // Check if the user has already reacted with this emoji
-      guard let messageView = originalMessagesMap[convoId]?[messageId] else { return }
+      // Validate input parameters to prevent crashes
+      guard !convoId.isEmpty, !messageId.isEmpty, !emoji.isEmpty else {
+        logger.error("Invalid parameters for toggleReaction: convoId='\(convoId)', messageId='\(messageId)', emoji='\(emoji)'")
+        return
+      }
+      
+      // Safely check if the user has already reacted with this emoji
+      guard let convoMessages = originalMessagesMap[convoId],
+            let messageView = convoMessages[messageId] else { 
+        logger.warning("Message not found in originalMessagesMap for convoId='\(convoId)', messageId='\(messageId)'")
+        return 
+      }
 
       // Get the current user's DID first
       let currentUserDid = try await client?.getDid()
@@ -1658,99 +1624,10 @@ final class ChatManager: StateInvalidationSubscriber {
   var messageRequestsCount: Int {
     messageRequests.count
   }
-
-  // MARK: - Typing Indicators
   
-  /// Start typing indicator for a conversation
-  @MainActor
-  func startTyping(in convoId: String) {
-    // Only send typing indicator if we're not already typing
-    guard isCurrentlyTyping[convoId] != true else { return }
-    
-    isCurrentlyTyping[convoId] = true
-    
-    // Send typing notification (simulated - would use AT Protocol typing events)
-    Task {
-      await sendTypingNotification(convoId: convoId, isTyping: true)
-    }
-    
-    logger.debug("Started typing in conversation \(convoId)")
-  }
-  
-  /// Stop typing indicator for a conversation
-  @MainActor
-  func stopTyping(in convoId: String) {
-    guard isCurrentlyTyping[convoId] == true else { return }
-    
-    isCurrentlyTyping[convoId] = false
-    
-    // Send stop typing notification
-    Task {
-      await sendTypingNotification(convoId: convoId, isTyping: false)
-    }
-    
-    logger.debug("Stopped typing in conversation \(convoId)")
-  }
-  
-  /// Simulated typing notification (would be replaced with actual AT Protocol implementation)
-  private func sendTypingNotification(convoId: String, isTyping: Bool) async {
-    // This would be implemented when AT Protocol supports typing indicators
-    // For now, we simulate local typing indicators
-    logger.debug("Typing notification sent for \(convoId): \(isTyping)")
-  }
-  
-  /// Add typing indicator for another user
-  @MainActor
-  func addTypingIndicator(convoId: String, userDID: String) {
-    if typingIndicators[convoId] == nil {
-      typingIndicators[convoId] = Set<String>()
-    }
-    typingIndicators[convoId]?.insert(userDID)
-    
-    // Set timer to auto-remove after 5 seconds
-    if typingTimers[convoId] == nil {
-      typingTimers[convoId] = [:]
-    }
-    
-    // Cancel existing timer for this user
-    typingTimers[convoId]?[userDID]?.invalidate()
-    
-    // Set new timer
-    typingTimers[convoId]?[userDID] = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-      Task { @MainActor in
-        self?.removeTypingIndicator(convoId: convoId, userDID: userDID)
-      }
-    }
-    
-    logger.debug("Added typing indicator for \(userDID) in \(convoId)")
-  }
-  
-  /// Remove typing indicator for a user
-  @MainActor
-  func removeTypingIndicator(convoId: String, userDID: String) {
-    typingIndicators[convoId]?.remove(userDID)
-    typingTimers[convoId]?[userDID]?.invalidate()
-    typingTimers[convoId]?[userDID] = nil
-    
-    if typingIndicators[convoId]?.isEmpty == true {
-      typingIndicators[convoId] = nil
-      typingTimers[convoId] = nil
-    }
-    
-    logger.debug("Removed typing indicator for \(userDID) in \(convoId)")
-  }
-  
-  /// Get typing users for a conversation (excluding current user)
-  func getTypingUsers(for convoId: String) async -> Set<String> {
-    let currentUserDID = try? await client?.getDid()
-    var typingUsers = typingIndicators[convoId] ?? Set<String>()
-    
-    // Remove current user from typing indicators
-    if let currentDID = currentUserDID {
-      typingUsers.remove(currentDID)
-    }
-    
-    return typingUsers
+  /// Gets the total count of unread messages across all conversations
+  var totalUnreadCount: Int {
+    conversations.reduce(0) { $0 + $1.unreadCount }
   }
   
   // MARK: - Polling Methods

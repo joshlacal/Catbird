@@ -21,7 +21,7 @@ actor ImageLoadingManager {
     private let prefetcher: ImagePrefetcher
     
     /// The configured image pipeline
-    let pipeline: ImagePipeline
+    nonisolated let pipeline: ImagePipeline
     
     /// Cache of prefetched image URLs to avoid duplicate prefetching
     private var prefetchedURLs = Set<URL>()
@@ -134,6 +134,8 @@ actor ImageLoadingManager {
         
         // Critical: defer image decompression to background
         config.isStoringPreviewsInMemoryCache = true
+        
+        // Enable animated image support (GIFs) - handled automatically by Nuke
         
         // Return the configured pipeline
         return ImagePipeline(configuration: config)

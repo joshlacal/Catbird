@@ -224,7 +224,7 @@ struct ConversationInfoRow: View {
 }
 
 /// Helper view for displaying detail rows
-struct DetailRow: View {
+private struct DetailRow: View {
   let label: String
   let value: String
   

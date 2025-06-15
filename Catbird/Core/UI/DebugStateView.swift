@@ -258,29 +258,31 @@ struct DebugStateView: View {
   
   private func eventDescription(_ event: StateInvalidationEvent) -> String {
     switch event {
-    case .postCreated(_):
+    case .postCreated:
       return "Post Created"
-    case .replyCreated(_, _):
+    case .replyCreated:
       return "Reply Created"
     case .accountSwitched:
       return "Account Switched"
+    case .authenticationCompleted:
+      return "Authentication Completed"
     case .feedUpdated(let fetchType):
       return "Feed Updated: \(fetchType.identifier)"
-    case .profileUpdated(_):
+    case .profileUpdated:
       return "Profile Updated"
-    case .threadUpdated(_):
+    case .threadUpdated:
       return "Thread Updated"
     case .chatMessageReceived:
       return "Chat Message"
     case .notificationsUpdated:
       return "Notifications Updated"
-    case .postLiked(_):
+    case .postLiked:
       return "Post Liked"
-    case .postUnliked(_):
+    case .postUnliked:
       return "Post Unliked"
-    case .postReposted(_):
+    case .postReposted:
       return "Post Reposted"
-    case .postUnreposted(_):
+    case .postUnreposted:
       return "Post Unreposted"
     case .feedListChanged:
       return "Feed List Changed"
@@ -290,29 +292,31 @@ struct DebugStateView: View {
   private func eventIcon(for event: StateInvalidationEvent) -> some View {
     let (icon, color): (String, Color) = {
       switch event {
-      case .postCreated(_):
+      case .postCreated:
         return ("plus.circle.fill", .green)
-      case .replyCreated(_, _):
+      case .replyCreated:
         return ("bubble.left.fill", .blue)
       case .accountSwitched:
         return ("person.2.fill", .orange)
-      case .feedUpdated(_):
+      case .authenticationCompleted:
+        return ("checkmark.shield.fill", .green)
+      case .feedUpdated:
         return ("list.bullet", .purple)
-      case .profileUpdated(_):
+      case .profileUpdated:
         return ("person.fill", .blue)
-      case .threadUpdated(_):
+      case .threadUpdated:
         return ("bubble.middle.bottom.fill", .indigo)
       case .chatMessageReceived:
         return ("message.fill", .green)
       case .notificationsUpdated:
         return ("bell.fill", .red)
-      case .postLiked(_):
+      case .postLiked:
         return ("heart.fill", .red)
-      case .postUnliked(_):
+      case .postUnliked:
         return ("heart", .gray)
-      case .postReposted(_):
+      case .postReposted:
         return ("repeat", .green)
-      case .postUnreposted(_):
+      case .postUnreposted:
         return ("repeat", .gray)
       case .feedListChanged:
         return ("list.dash", .blue)

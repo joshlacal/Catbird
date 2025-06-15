@@ -1,7 +1,6 @@
 import SwiftUI
 import Petrel
 import OSLog
-import NukeUI
 
 struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
@@ -9,228 +8,238 @@ struct FeedDiscoveryHeaderView: View {
   let isSubscribed: Bool
   let onSubscriptionToggle: () async -> Void
   
-  @State private var showingDescription = false
   @State private var isTogglingSubscription = false
-  @State private var previewPosts: [AppBskyFeedDefs.FeedViewPost] = []
-  @State private var isLoadingPreview = false
-  @State private var previewError: String?
-  @State private var showFullPreview = false
-  @State private var previewService: FeedPreviewService?
+  @State private var showingDescription = false
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryHeaderView")
   
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      // Header Row
-      HStack(alignment: .top, spacing: 12) {
-        // Feed Avatar
-        AsyncImage(url: URL(string: feed.avatar?.uriString() ?? "")) { image in
-          image
-            .resizable()
-            .scaledToFill()
-        } placeholder: {
-          feedPlaceholder(for: feed.displayName)
-        }
-        .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        
-        // Feed Info
-        VStack(alignment: .leading, spacing: 4) {
-          Text(feed.displayName)
-            .appFont(AppTextRole.headline)
-            .foregroundColor(.primary)
-          
-          Text("by @\(feed.creator.handle.description)")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.secondary)
-          
-          HStack(spacing: 12) {
-            if let likeCount = feed.likeCount {
-              Label("\(formatCount(likeCount))", systemImage: "heart")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(.secondary)
-            }
-            
-            // Quality indicators
-            if let likeCount = feed.likeCount, likeCount > 1000 {
-              Text("Popular")
-                .appFont(AppTextRole.caption2)
-                .fontWeight(.medium)
-                .foregroundColor(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.orange)
-                .clipShape(Capsule())
-            }
-          }
-        }
-        
-        Spacer()
-        
-        // Subscribe Button
-        Button(action: {
-          Task {
-            await toggleSubscription()
-          }
-        }) {
-          HStack(spacing: 6) {
-            if isTogglingSubscription {
-              ProgressView()
-                .scaleEffect(0.8)
-            } else {
-              Text(isSubscribed ? "Subscribed" : "Subscribe")
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.semibold)
-            }
-          }
-          .foregroundColor(isSubscribed ? .primary : .white)
-          .padding(.horizontal, 16)
-          .padding(.vertical, 8)
-          .background(
-            RoundedRectangle(cornerRadius: 20)
-              .fill(isSubscribed ? 
-                    Color.gray.opacity(0.2) : 
-                    Color.accentColor)
-          )
-        }
-        .disabled(isTogglingSubscription)
-      }
-      
-      // Description (expandable)
-      if let description = feed.description {
-        VStack(alignment: .leading, spacing: 8) {
-          Text(description)
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.secondary)
-            .lineLimit(showingDescription ? nil : 2)
-            .animation(.easeInOut, value: showingDescription)
-          
-          if description.count > 100 {
-            Button(action: { showingDescription.toggle() }) {
-              Text(showingDescription ? "Show less" : "Show more")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(.accentColor)
-            }
-          }
-        }
-      }
-      
-      // Preview posts section - simplified and performance optimized
-      if !previewPosts.isEmpty {
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Text("Recent posts")
-              .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            Button("See all") {
-              showFullPreview = true
-            }
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.accentColor)
-          }
-          
-          ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-              ForEach(previewPosts.prefix(3), id: \.post.uri) { feedViewPost in
-                SimplifiedMiniPostCard(feedViewPost: feedViewPost)
-                  .frame(width: 160, height: 60)
-              }
-            }
-            .padding(.horizontal, 2)
-          }
-        }
-        .padding(.top, 4)
-      } else if isLoadingPreview {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Loading preview...")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-          
-          HStack(spacing: 8) {
-            ForEach(0..<3, id: \.self) { _ in
-              RoundedRectangle(cornerRadius: 6)
-                .fill(Color.gray.opacity(0.2))
-                .frame(width: 160, height: 60)
-                .shimmering()
-            }
-          }
-        }
-      } else if previewError != nil {
-        HStack {
-          Image(systemName: "exclamationmark.triangle")
-            .foregroundColor(.orange)
-          Text("Preview unavailable")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-        }
-        .padding(.top, 4)
-      }
-      
-      // Action Row - simplified
-      HStack(spacing: 20) {
-        Button(action: { 
-          let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-          impactFeedback.impactOccurred()
-          showFullPreview = true 
-        }) {
-          Label("View Feed", systemImage: "eye")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.accentColor)
-        }
-        
-        Button(action: { 
-          let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-          impactFeedback.impactOccurred()
-          shareFeed() 
-        }) {
-          Label("Share", systemImage: "square.and.arrow.up")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-        }
-        
-        Spacer()
-      }
+    VStack(alignment: .leading, spacing: 16) {
+      headerRow
+      descriptionSection
+      actionButtons
     }
-    .padding()
-    .background(Color(.secondarySystemBackground))
-    .clipShape(RoundedRectangle(cornerRadius: 12))
-    .accessibilityElement(children: .contain)
-    .accessibilityLabel("Feed: \(feed.displayName) by \(feed.creator.handle)")
-    .accessibilityHint("Double tap to view feed details and preview posts")
-    .task {
-      await setupPreviewService()
-      // Delay preview loading slightly to improve perceived performance
-      try? await Task.sleep(for: .milliseconds(300))
-      await loadPreviewPosts()
-    }
-    .sheet(isPresented: $showFullPreview) {
-      FeedPreviewSheet(
-        feed: feed,
-        previewPosts: previewPosts,
-        isSubscribed: isSubscribed,
-        onSubscriptionToggle: onSubscriptionToggle
-      )
+    .padding(20)
+    .background(
+      // Simplified background for debugging - removed shadow that might block touches
+      Rectangle()
+        .fill(Color(.systemBackground))
+    )
+    .overlay(
+      Rectangle()
+        .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+    )
+    // Removed explicit hit testing configurations - let SwiftUI handle naturally
+  }
+  
+  private var headerRow: some View {
+    HStack(alignment: .top, spacing: 16) {
+      feedAvatar
+      feedInfo
+      Spacer()
+      subscribeButton
     }
   }
   
-  // MARK: - Helper Views
+  private var feedAvatar: some View {
+    AsyncImage(url: URL(string: feed.avatar?.uriString() ?? "")) { image in
+      image
+        .resizable()
+        .scaledToFill()
+    } placeholder: {
+      feedPlaceholder
+    }
+    .frame(width: 56, height: 56)
+    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .overlay(
+      RoundedRectangle(cornerRadius: 12)
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+    )
+  }
   
-  @ViewBuilder
-  private func feedPlaceholder(for title: String) -> some View {
+  private var feedPlaceholder: some View {
     ZStack {
       LinearGradient(
-        gradient: Gradient(colors: [Color.accentColor.opacity(0.7), Color.accentColor.opacity(0.5)]),
+        colors: [Color.accentColor.opacity(0.7), Color.accentColor.opacity(0.5)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
       
-      Text(title.prefix(1).uppercased())
-        .appFont(AppTextRole.headline)
+      Text(feed.displayName.prefix(1).uppercased())
+        .appFont(AppTextRole.title2)
+        .fontWeight(.bold)
         .foregroundColor(.white)
     }
+  }
+  
+  private var feedInfo: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(feed.displayName)
+        .appFont(AppTextRole.headline)
+        .fontWeight(.semibold)
+        .lineLimit(2)
+      
+      Text("by @\(feed.creator.handle.description)")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.secondary)
+      
+      if let likeCount = feed.likeCount {
+        HStack(spacing: 4) {
+          Image(systemName: "heart.fill")
+            .foregroundColor(.pink)
+            .appFont(AppTextRole.caption)
+          Text(formatCount(likeCount))
+            .appFont(AppTextRole.caption)
+            .foregroundColor(.secondary)
+        }
+      }
+    }
+  }
+  
+  private var subscribeButton: some View {
+    Button(action: {
+      Task { await toggleSubscription() }
+    }) {
+      HStack(spacing: 6) {
+        if isTogglingSubscription {
+          ProgressView()
+            .scaleEffect(0.8)
+        } else {
+          Text(isSubscribed ? "Subscribed" : "Subscribe")
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
+        }
+      }
+      .foregroundColor(isSubscribed ? .green : .white)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      .background(
+        RoundedRectangle(cornerRadius: 20)
+          .fill(isSubscribed ? 
+                Color.green.opacity(0.15) : 
+                Color.accentColor)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 20)
+          .stroke(isSubscribed ? Color.green.opacity(0.3) : Color.clear, lineWidth: 1)
+      )
+    }
+    .disabled(isTogglingSubscription)
+    .buttonStyle(.plain)
+  }
+  
+  private var descriptionSection: some View {
+    Group {
+      if let description = feed.description, !description.isEmpty {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(description)
+            .appFont(AppTextRole.body)
+            .lineLimit(showingDescription ? nil : 3)
+            .animation(.easeInOut(duration: 0.2), value: showingDescription)
+          
+          if description.count > 120 {
+            Button(showingDescription ? "Show less" : "Show more") {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                showingDescription.toggle()
+              }
+            }
+            .appFont(AppTextRole.caption)
+            .foregroundColor(.accentColor)
+            .buttonStyle(.plain)
+          }
+        }
+      }
+    }
+  }
+  
+  private var actionButtons: some View {
+    HStack(spacing: 24) {
+      // Test button with explicit debugging and visual confirmation
+      Button {
+        logger.info("🔥 DEBUG: Test button action started!")
+        print("🔥 DEBUG: Test button action started!")
+        
+        // Add haptic feedback to confirm touch is received
+        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+        impactFeedback.impactOccurred()
+        
+        logger.info("🔥 DEBUG: Test button action completed!")
+        print("🔥 DEBUG: Test button action completed!")
+      } label: {
+        Text("TEST")
+          .foregroundColor(.red)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(Color.red.opacity(0.4)) // More visible background for debugging
+          .cornerRadius(6)
+      }
+      .buttonStyle(.plain) // Individual button style
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle()) // Explicit touch shape
+      
+      // Like button with debugging and visual background
+      Button {
+        logger.info("🔥 BUTTON TAP: Like button action started!")
+        print("🔥 BUTTON TAP: Like button action started!")
+        likeFeed()
+      } label: {
+        HStack(spacing: 4) {
+          Image(systemName: "heart")
+          Text("Like")
+        }
+        .appFont(AppTextRole.caption)
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.blue.opacity(0.2)) // Visual debugging background
+      }
+      .buttonStyle(.plain) // Individual button style
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle()) // Explicit touch shape
+      
+      // Share button with debugging and visual background
+      Button {
+        logger.info("🔥 BUTTON TAP: Share button action started!")
+        print("🔥 BUTTON TAP: Share button action started!")
+        shareFeed()
+      } label: {
+        HStack(spacing: 4) {
+          Image(systemName: "square.and.arrow.up")
+          Text("Share")
+        }
+        .appFont(AppTextRole.caption)
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.green.opacity(0.2)) // Visual debugging background
+      }
+      .buttonStyle(.plain) // Individual button style
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle()) // Explicit touch shape
+      
+      // Report button with debugging and visual background
+      Button {
+        logger.info("🔥 BUTTON TAP: Report button action started!")
+        print("🔥 BUTTON TAP: Report button action started!")
+        reportFeed()
+      } label: {
+        HStack(spacing: 4) {
+          Image(systemName: "exclamationmark.circle")
+          Text("Report")
+        }
+        .appFont(AppTextRole.caption)
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.2)) // Visual debugging background
+      }
+      .buttonStyle(.plain) // Individual button style
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle()) // Explicit touch shape
+      
+      Spacer() // Push buttons to the left
+    }
+    // Removed .buttonStyle(.plain) from HStack - this was the key issue!
   }
   
   // MARK: - Actions
@@ -241,15 +250,60 @@ struct FeedDiscoveryHeaderView: View {
     isTogglingSubscription = true
     defer { isTogglingSubscription = false }
     
-    do {
-      await onSubscriptionToggle()
-    } catch {
-      logger.error("Failed to toggle subscription: \(error)")
+    await onSubscriptionToggle()
+    
+    // Notify state invalidation bus that feeds have changed
+    await appState.stateInvalidationBus.notify(.feedListChanged)
+  }
+  
+  private func likeFeed() {
+    logger.info("🔥 BUTTON TAP: Like button tapped for feed: \(feed.uri)")
+    Task {
+      do {
+        guard let client = appState.atProtoClient else { 
+          logger.warning("No AT Protocol client available for like action")
+          return 
+        }
+        
+        logger.info("Like feed: \(feed.uri)")
+        
+        let postRef = ComAtprotoRepoStrongRef(
+          uri: feed.uri,
+          cid: feed.cid
+        )
+        
+        let likeRecord = AppBskyFeedLike(
+          subject: postRef,
+          createdAt: ATProtocolDate(date: Date()),
+          via: nil
+        )
+        
+        let did = try await client.getDid()
+        let input = ComAtprotoRepoCreateRecord.Input(
+          repo: try ATIdentifier(string: did),
+          collection: try NSID(nsidString: "app.bsky.feed.like"),
+          record: .knownType(likeRecord)
+        )
+        
+        let (responseCode, _) = try await client.com.atproto.repo.createRecord(input: input)
+        
+        if responseCode == 200 {
+          logger.info("Successfully liked feed: \(feed.uri)")
+        } else {
+          logger.error("Failed to like feed: HTTP \(responseCode)")
+        }
+      } catch {
+        logger.error("Error liking feed: \(error)")
+      }
     }
   }
   
   private func shareFeed() {
-    guard let url = URL(string: feed.uri.uriString()) else { return }
+    logger.info("🔥 BUTTON TAP: Share button tapped for feed: \(feed.uri)")
+    guard let url = URL(string: feed.uri.uriString()) else { 
+      logger.error("Failed to create URL from feed URI: \(feed.uri.uriString())")
+      return 
+    }
     
     let activityVC = UIActivityViewController(
       activityItems: [url],
@@ -259,36 +313,38 @@ struct FeedDiscoveryHeaderView: View {
     if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
        let window = windowScene.windows.first {
       window.rootViewController?.present(activityVC, animated: true)
+      logger.info("Presented share sheet for feed")
+    } else {
+      logger.error("Could not find window to present share sheet")
     }
   }
   
   private func reportFeed() {
-    logger.info("Report feed: \(feed.uri)")
-    
+    logger.info("🔥 BUTTON TAP: Report button tapped for feed: \(feed.uri)")
     Task {
       do {
-        guard let client = appState.atProtoClient else {
-          logger.error("No AT Protocol client available for reporting")
-          return
+        guard let client = appState.atProtoClient else { 
+          logger.warning("No AT Protocol client available for report action")
+          return 
         }
         
-        // Create report for the feed generator
         let reportInput = ComAtprotoModerationCreateReport.Input(
-            reasonType: .comatprotomoderationdefsreasonspam, // Default to spam, could be configurable
-          reason: "Inappropriate feed content", // Could be user-provided
-          subject: .comAtprotoAdminDefsRepoRef(.init(did: try DID(didString: feed.creator.did.didString())))
+          reasonType: .comatprotomoderationdefsreasonspam,
+          reason: "User reported inappropriate feed content",
+          subject: .comAtprotoAdminDefsRepoRef(.init(
+            did: try DID(didString: feed.creator.did.didString())
+          ))
         )
         
         let (responseCode, _) = try await client.com.atproto.moderation.createReport(input: reportInput)
         
         if responseCode == 200 {
           logger.info("Successfully reported feed: \(feed.uri)")
-          // Could show a success message to user
         } else {
           logger.error("Failed to report feed: HTTP \(responseCode)")
         }
       } catch {
-        logger.error("Error reporting feed: \(error.localizedDescription)")
+        logger.error("Error reporting feed: \(error)")
       }
     }
   }
@@ -302,526 +358,4 @@ struct FeedDiscoveryHeaderView: View {
       return "\(count)"
     }
   }
-  
-  private func setupPreviewService() async {
-    if previewService == nil {
-      previewService = FeedPreviewService(appState: appState)
-    }
-  }
-  
-  private func loadPreviewPosts() async {
-    guard previewPosts.isEmpty, !isLoadingPreview else { return }
-    
-    isLoadingPreview = true
-    previewError = nil
-    
-    do {
-      if let service = previewService {
-        let posts = try await service.fetchPreview(for: feed.uri)
-        await MainActor.run {
-          previewPosts = posts
-          isLoadingPreview = false
-        }
-      }
-    } catch {
-      logger.error("Failed to load preview posts: \(error.localizedDescription)")
-      await MainActor.run {
-        previewError = error.localizedDescription
-        isLoadingPreview = false
-      }
-    }
-  }
-}
-
-// MARK: - Preview
-
-// MARK: - Mini Post Card
-
-/// A simplified, compact post preview card for horizontal scrolling
-struct SimplifiedMiniPostCard: View {
-  let feedViewPost: AppBskyFeedDefs.FeedViewPost
-  
-  var body: some View {
-    HStack(spacing: 6) {
-      // Author avatar - smaller
-      if let avatarUrl = feedViewPost.post.author.avatar?.uriString() {
-        LazyImage(url: URL(string: avatarUrl)) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-          } else {
-            Circle()
-              .fill(Color.gray.opacity(0.3))
-          }
-        }
-        .frame(width: 16, height: 16)
-        .clipShape(Circle())
-      } else {
-        Circle()
-          .fill(Color.gray.opacity(0.3))
-          .frame(width: 16, height: 16)
-      }
-      
-      VStack(alignment: .leading, spacing: 2) {
-        // Author name - truncated
-        Text(feedViewPost.post.author.displayName ?? feedViewPost.post.author.handle.description)
-          .appFont(AppTextRole.caption2)
-          .fontWeight(.medium)
-          .foregroundColor(.primary)
-          .lineLimit(1)
-        
-        // Post content - first line only
-        if case .knownType(let record) = feedViewPost.post.record,
-           let feedPost = record as? AppBskyFeedPost {
-          Text(feedPost.text)
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-            .lineLimit(2)
-            .multilineTextAlignment(.leading)
-        }
-      }
-      
-      Spacer(minLength: 0)
-    }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 6)
-    .background(Color(UIColor.tertiarySystemBackground))
-    .clipShape(RoundedRectangle(cornerRadius: 6))
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("Post by \(feedViewPost.post.author.displayName ?? feedViewPost.post.author.handle.description)")
-  }
-}
-
-/// Original mini post card for reference - more detailed
-struct MiniPostCard: View {
-  let feedViewPost: AppBskyFeedDefs.FeedViewPost
-  
-  var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      // Author info
-      HStack(spacing: 6) {
-        // Author avatar
-        if let avatarUrl = feedViewPost.post.author.avatar?.uriString() {
-          LazyImage(url: URL(string: avatarUrl)) { state in
-            if let image = state.image {
-              image
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-            } else {
-              Circle()
-                .fill(Color.gray.opacity(0.3))
-            }
-          }
-          .frame(width: 20, height: 20)
-          .clipShape(Circle())
-        } else {
-          Circle()
-            .fill(Color.gray.opacity(0.3))
-            .frame(width: 20, height: 20)
-        }
-        
-        Text(feedViewPost.post.author.displayName ?? feedViewPost.post.author.handle.description)
-          .appFont(AppTextRole.caption)
-          .foregroundColor(.secondary)
-          .lineLimit(1)
-        
-        Spacer()
-      }
-      
-      // Post content
-      if case .knownType(let record) = feedViewPost.post.record,
-         let feedPost = record as? AppBskyFeedPost {
-        Text(feedPost.text)
-          .appFont(AppTextRole.body)
-          .foregroundColor(.primary)
-          .lineLimit(3)
-          .multilineTextAlignment(.leading)
-      }
-      
-      Spacer()
-      
-      // Engagement stats
-      HStack(spacing: 12) {
-        HStack(spacing: 2) {
-          Image(systemName: "heart")
-            .appFont(AppTextRole.caption2)
-          Text("\(feedViewPost.post.likeCount ?? 0)")
-            .appFont(AppTextRole.caption2)
-        }
-        
-        HStack(spacing: 2) {
-          Image(systemName: "arrow.2.squarepath")
-            .appFont(AppTextRole.caption2)
-          Text("\(feedViewPost.post.repostCount ?? 0)")
-            .appFont(AppTextRole.caption2)
-        }
-      }
-      .foregroundColor(.secondary)
-    }
-    .padding(8)
-    .background(Color(UIColor.tertiarySystemBackground))
-    .cornerRadius(8)
-  }
-}
-
-// MARK: - Feed Preview Sheet
-
-/// Full-screen feed preview with scrollable posts
-struct FeedPreviewSheet: View {
-  let feed: AppBskyFeedDefs.GeneratorView
-  let previewPosts: [AppBskyFeedDefs.FeedViewPost]
-  let isSubscribed: Bool
-  let onSubscriptionToggle: () async -> Void
-  
-  @Environment(\.dismiss) private var dismiss
-  @Environment(AppState.self) private var appState
-  @State private var allPosts: [AppBskyFeedDefs.FeedViewPost] = []
-  @State private var isLoading = false
-  @State private var cursor: String?
-  
-  var body: some View {
-    NavigationStack {
-      ScrollView {
-        LazyVStack(spacing: 0) {
-          // Feed header
-          feedHeaderView
-            .padding()
-          
-          Divider()
-          
-          // Posts list
-          ForEach(allPosts.isEmpty ? previewPosts : allPosts, id: \.post.uri) { feedViewPost in
-            VStack(spacing: 0) {
-              PreviewPostRow(feedViewPost: feedViewPost)
-                .padding()
-                .onAppear {
-                  // Load more when near the end
-                  if feedViewPost == (allPosts.isEmpty ? previewPosts : allPosts).last {
-                    Task {
-                      await loadMorePosts()
-                    }
-                  }
-                }
-              
-              Divider()
-            }
-          }
-          
-          // Load more indicator
-          if isLoading {
-            ProgressView("Loading more posts...")
-              .padding()
-          }
-          
-          // End of posts indicator
-          if !isLoading && !(allPosts.isEmpty ? previewPosts : allPosts).isEmpty {
-            Text("No more posts")
-              .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
-              .padding()
-          }
-        }
-      }
-      .refreshable {
-        // Pull to refresh
-        await refreshFeed()
-      }
-      .navigationTitle("Feed Preview")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
-          Button("Close") {
-            dismiss()
-          }
-        }
-        
-        ToolbarItem(placement: .navigationBarTrailing) {
-          Button(action: {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-            impactFeedback.impactOccurred()
-            Task {
-              await onSubscriptionToggle()
-            }
-          }) {
-            Text(isSubscribed ? "Unsubscribe" : "Subscribe")
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.small)
-          .tint(isSubscribed ? .gray : .accentColor)
-          .accessibilityLabel(isSubscribed ? "Unsubscribe from feed" : "Subscribe to feed")
-        }
-      }
-    }
-    .task {
-      if allPosts.isEmpty {
-        allPosts = previewPosts
-        await loadMorePosts()
-      }
-    }
-  }
-  
-  private var feedHeaderView: some View {
-    VStack(alignment: .center, spacing: 12) {
-      // Avatar
-      AsyncImage(url: URL(string: feed.avatar?.uriString() ?? "")) { image in
-        image
-          .resizable()
-          .scaledToFill()
-      } placeholder: {
-        feedAvatarPlaceholder
-      }
-      .frame(width: 80, height: 80)
-      .clipShape(RoundedRectangle(cornerRadius: 12))
-      
-      // Feed info
-      VStack(spacing: 4) {
-        Text(feed.displayName)
-          .appFont(AppTextRole.title2)
-          .fontWeight(.bold)
-        
-        Text("by @\(feed.creator.handle.description)")
-          .appFont(AppTextRole.subheadline)
-          .foregroundColor(.secondary)
-      }
-      
-      // Description
-      if let description = feed.description, !description.isEmpty {
-        Text(description)
-          .appFont(AppTextRole.body)
-          .foregroundColor(.primary)
-          .multilineTextAlignment(.center)
-          .padding(.horizontal)
-      }
-      
-      // Stats
-      HStack(spacing: 24) {
-        if let likeCount = feed.likeCount {
-          VStack {
-            Text(formatCount(likeCount))
-              .appFont(AppTextRole.headline)
-            Text("Likes")
-              .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
-          }
-        }
-        
-        VStack {
-          Text(formatCount(allPosts.count))
-            .appFont(AppTextRole.headline)
-          Text("Posts shown")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-        }
-      }
-    }
-  }
-  
-  private var feedAvatarPlaceholder: some View {
-    ZStack {
-      LinearGradient(
-        gradient: Gradient(colors: [
-          Color.accentColor.opacity(0.7),
-          Color.accentColor.opacity(0.5)
-        ]),
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-      
-      Text(feed.displayName.prefix(1).uppercased())
-        .appFont(AppTextRole.title1)
-        .foregroundColor(.white)
-    }
-  }
-  
-  private func refreshFeed() async {
-    cursor = nil
-    allPosts = []
-    await loadMorePosts()
-  }
-  
-  private func loadMorePosts() async {
-    guard !isLoading, cursor != nil || allPosts.isEmpty else { return }
-    isLoading = true
-    
-    do {
-      guard let client = appState.atProtoClient else { 
-        await MainActor.run { isLoading = false }
-        return 
-      }
-      
-      let params = AppBskyFeedGetFeed.Parameters(
-        feed: feed.uri,
-        limit: 20,
-        cursor: cursor
-      )
-      
-      let (responseCode, response) = try await client.app.bsky.feed.getFeed(input: params)
-      
-      if responseCode == 200, let feedResponse = response {
-        await MainActor.run {
-          if cursor == nil {
-            // First load or refresh
-            allPosts = feedResponse.feed
-          } else {
-            // Append more posts
-            allPosts.append(contentsOf: feedResponse.feed)
-          }
-          cursor = feedResponse.cursor
-          isLoading = false
-        }
-      } else {
-        await MainActor.run { isLoading = false }
-      }
-    } catch {
-      await MainActor.run { isLoading = false }
-    }
-  }
-  
-  private func formatCount(_ count: Int) -> String {
-    if count >= 1000000 {
-      return String(format: "%.1fM", Double(count) / 1000000)
-    } else if count >= 1000 {
-      return String(format: "%.1fK", Double(count) / 1000)
-    } else {
-      return "\(count)"
-    }
-  }
-}
-
-// MARK: - Preview Post Row
-
-/// Simplified post row for feed preview
-struct PreviewPostRow: View {
-  let feedViewPost: AppBskyFeedDefs.FeedViewPost
-  
-  var body: some View {
-    HStack(alignment: .top, spacing: 12) {
-      // Author avatar
-      if let avatarUrl = feedViewPost.post.author.avatar?.uriString() {
-        LazyImage(url: URL(string: avatarUrl)) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-          } else {
-            Circle()
-              .fill(Color.gray.opacity(0.3))
-          }
-        }
-        .frame(width: 40, height: 40)
-        .clipShape(Circle())
-      } else {
-        Circle()
-          .fill(Color.gray.opacity(0.3))
-          .frame(width: 40, height: 40)
-      }
-      
-      VStack(alignment: .leading, spacing: 4) {
-        // Author info
-        HStack {
-          Text(feedViewPost.post.author.displayName ?? feedViewPost.post.author.handle.description)
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.medium)
-          
-          Text("@\(feedViewPost.post.author.handle.description)")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-          
-          Spacer()
-        }
-        
-        // Post content
-        if case .knownType(let record) = feedViewPost.post.record,
-           let feedPost = record as? AppBskyFeedPost {
-          Text(feedPost.text)
-            .appFont(AppTextRole.body)
-            .foregroundColor(.primary)
-            .multilineTextAlignment(.leading)
-        }
-        
-        // Media preview indicator
-        if feedViewPost.post.embed != nil {
-          HStack {
-            Image(systemName: "photo")
-              .foregroundColor(.secondary)
-            Text("Media attached")
-              .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
-          }
-          .padding(.top, 2)
-        }
-        
-        // Engagement stats
-        HStack(spacing: 16) {
-          HStack(spacing: 2) {
-            Image(systemName: "heart")
-              .appFont(AppTextRole.caption)
-            Text("\(feedViewPost.post.likeCount ?? 0)")
-              .appFont(AppTextRole.caption)
-          }
-          
-          HStack(spacing: 2) {
-            Image(systemName: "arrow.2.squarepath")
-              .appFont(AppTextRole.caption)
-            Text("\(feedViewPost.post.repostCount ?? 0)")
-              .appFont(AppTextRole.caption)
-          }
-          
-          HStack(spacing: 2) {
-            Image(systemName: "bubble.left")
-              .appFont(AppTextRole.caption)
-            Text("\(feedViewPost.post.replyCount ?? 0)")
-              .appFont(AppTextRole.caption)
-          }
-        }
-        .foregroundColor(.secondary)
-        .padding(.top, 4)
-      }
-    }
-  }
-}
-
-// MARK: - Shimmer Effect
-// Note: shimmering() extension is defined elsewhere in the codebase
-
-// MARK: - Preview
-
-#Preview {
-  let sampleFeed = AppBskyFeedDefs.GeneratorView(
-    uri: try! ATProtocolURI(uriString: "at://did:plc:sample/app.bsky.feed.generator/sample"),
-    cid: try! CID.parse("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"),
-    did: try! DID(didString: "did:plc:sample"),
-    creator: AppBskyActorDefs.ProfileView(
-        did: try! DID(didString: "did:plc:sample"),
-        handle: try! Handle(handleString: "creator.bsky.social"),
-      displayName: "Feed Creator",
-      description: nil,
-      avatar: nil,
-      associated: nil,
-      indexedAt: nil,
-      createdAt: try! ATProtocolDate(date: Date()),
-      viewer: nil,
-      labels: [],
-      verification: nil,
-      status: nil
-    ),
-    displayName: "Sample Feed",
-    description: "This is a sample feed for testing the header view component.",
-    descriptionFacets: nil,
-    avatar: nil,
-    likeCount: 1250,
-    acceptsInteractions: true,
-    labels: [],
-    viewer: nil,
-    contentMode: nil,
-    indexedAt: try! ATProtocolDate(date: Date())
-  )
-  
-  FeedDiscoveryHeaderView(
-    feed: sampleFeed,
-    isSubscribed: false,
-    onSubscriptionToggle: {}
-  )
-  .padding()
 }

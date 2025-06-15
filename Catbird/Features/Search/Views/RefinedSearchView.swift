@@ -8,6 +8,7 @@
 import SwiftUI
 import Petrel
 import OSLog
+import TipKit
 
 /// A modernized search view that leverages iOS 18 features for a better search experience
 struct RefinedSearchView: View {
@@ -72,9 +73,11 @@ struct RefinedSearchView: View {
     }
     
     private var mainContentContainer: some View {
-        VStack(spacing: 0) {
-            contentTypeSegment
-            mainContentArea
+        ResponsiveContentView {
+            VStack(spacing: 0) {
+                contentTypeSegment
+                mainContentArea
+            }
         }
         .navigationTitle("Search")
         .navigationBarTitleDisplayMode(.large)
@@ -103,8 +106,8 @@ struct RefinedSearchView: View {
         Group {
             if viewModel.searchState == .results, viewModel.hasMultipleResultTypes {
                 ContentTypeSegmentControl(selectedContentType: $viewModel.selectedContentType)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                     .background(Material.bar)
                     .animation(.smooth, value: viewModel.hasMultipleResultTypes)
                     .zIndex(1) // Ensure control stays on top
@@ -216,16 +219,15 @@ struct RefinedSearchView: View {
                         Text("Profiles")
                             .appHeadline()
                             .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .padding(.horizontal)
-                            .padding(.top, 8)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
                         
                         ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
                             Button {
                                 handleProfileSelection(profile)
                             } label: {
                                 profileSuggestionRow(profile)
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 6)
+                                    .padding(.vertical, 8)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -240,16 +242,15 @@ struct RefinedSearchView: View {
                         Text("Feeds")
                             .appHeadline()
                             .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .padding(.horizontal)
-                            .padding(.top, 8)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
                         
                         ForEach(viewModel.typeaheadFeeds, id: \.uri) { feed in
                             Button {
                                 handleFeedSelection(feed)
                             } label: {
                                 feedSuggestionRow(feed)
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 6)
+                                    .padding(.vertical, 8)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -259,38 +260,43 @@ struct RefinedSearchView: View {
                 }
                 
                 // Term suggestions
-                if !viewModel.typeaheadSuggestions.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Suggestions")
-                            .appHeadline()
-                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                        
-                        ForEach(viewModel.typeaheadSuggestions, id: \.self) { suggestion in
-                            Button {
-                                handleSuggestionSelection(suggestion)
-                            } label: {
-                                Label(suggestion, systemImage: "magnifyingglass")
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 6)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.bottom, 12)
-                }
+//                if !viewModel.typeaheadSuggestions.isEmpty {
+//                    VStack(alignment: .leading, spacing: 10) {
+//                        Text("Suggestions")
+//                            .appHeadline()
+//                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+//                            .padding(.horizontal)
+//                            .padding(.top, 8)
+//                        
+//                        ForEach(viewModel.typeaheadSuggestions, id: \.self) { suggestion in
+//                            Button {
+//                                handleSuggestionSelection(suggestion)
+//                            } label: {
+//                                Label(suggestion, systemImage: "magnifyingglass")
+//                                    .padding(.horizontal)
+//                                    .padding(.vertical, 6)
+//                                    .contentShape(Rectangle())
+//                            }
+//                            .buttonStyle(PlainButtonStyle())
+//                        }
+//                    }
+//                    .padding(.bottom, 12)
+//                }
                 
                 // Direct search button
                 Button {
                     commitSearch()
                 } label: {
-                    Label("Search for \"\(searchText)\"", systemImage: "magnifyingglass")
-                        .foregroundColor(.accentColor)
-                        .padding(.horizontal)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.accentColor)
+                            .frame(width: 44, height: 44)
+                        Text("Search for \"\(searchText)\"")
+                            .foregroundColor(.accentColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -315,6 +321,7 @@ struct RefinedSearchView: View {
                 RecentSearchesSection(
                     searches: viewModel.recentSearches,
                     onSelect: { search in
+                        searchText = search
                         viewModel.searchQuery = search
                         viewModel.commitSearch(client: client)
                     },
@@ -338,6 +345,7 @@ struct RefinedSearchView: View {
             }
             Spacer()
         }
+        .padding(.horizontal, 16)
     }
     
     private func feedSuggestionRow(_ feed: AppBskyFeedDefs.GeneratorView) -> some View {
@@ -347,6 +355,7 @@ struct RefinedSearchView: View {
                 .appHeadline()
             Spacer()
         }
+        .padding(.horizontal, 16)
     }
     
     // MARK: - Navigation Handling

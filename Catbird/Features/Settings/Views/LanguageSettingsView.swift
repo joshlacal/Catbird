@@ -2,7 +2,6 @@ import SwiftUI
 import Petrel
 import OSLog
 
-
 // MARK: - Language Model
 
 struct Language: Identifiable, Hashable, Codable {

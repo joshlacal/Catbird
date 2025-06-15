@@ -108,6 +108,8 @@ struct ResultsView: View {
                                     path.append(NavigationDestination.profile(profile.did.didString()))
                                 } label: {
                                     ProfileRowView(profile: profile)
+                                        .padding(.vertical, 8)
+                                        .padding(.horizontal, 16)
                                 }
                                 .buttonStyle(.plain)
                                 
@@ -281,6 +283,8 @@ struct ResultsView: View {
                     path.append(NavigationDestination.profile(profile.did.didString()))
                 } label: {
                     ProfileRowView(profile: profile)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
                 }
                 .buttonStyle(.plain)
                 
@@ -306,6 +310,9 @@ struct ResultsView: View {
                 } label: {
 //                    PostPreview(post: post)
                     PostView(post: post, grandparentAuthor: nil, isParentPost: false, isSelectable: false, path: $path, appState: appState)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+
                 }
                 .buttonStyle(.plain)
                 

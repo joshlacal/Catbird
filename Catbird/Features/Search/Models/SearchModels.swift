@@ -372,48 +372,7 @@ enum SearchSuggestion {
             .prefix(2)
         suggestions.append(contentsOf: trendingSuggestions)
         
-        // Add smart completions
-        let smartSuggestions = generateSmartCompletions(for: query)
-            .filter { !suggestions.contains($0) }
-            .prefix(3)
-        suggestions.append(contentsOf: smartSuggestions)
-        
-        return Array(suggestions.prefix(8))
-    }
-    
-    private static func generateSmartCompletions(for query: String) -> [String] {
-        var completions: [String] = []
-        
-        // Handle hashtag completions
-        if query.starts(with: "#") {
-            let tag = String(query.dropFirst())
-            completions.append(contentsOf: [
-                "#\(tag)art",
-                "#\(tag)news",
-                "#\(tag)today",
-                "#\(tag)tech"
-            ].filter { $0.count > query.count })
-        }
-        
-        // Handle handle completions
-        else if query.starts(with: "@") {
-            // Would typically connect to user suggestion API
-            completions.append(contentsOf: [
-                "\(query).bsky.social"
-            ])
-        }
-        
-        // Handle general query expansions
-        else if !query.isEmpty {
-            completions.append(contentsOf: [
-                "\(query) news",
-                "\(query) today",
-                "\(query) discussion",
-                "latest \(query)"
-            ])
-        }
-        
-        return completions
+        return Array(suggestions.prefix(5))
     }
 }
 

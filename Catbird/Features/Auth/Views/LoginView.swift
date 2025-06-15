@@ -50,11 +50,11 @@ struct LoginView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Deep fall blue sky background
+                /// Deep fall blue sky background
 //                deepBlueSkyBackground
                 
-                // Hyperrealistic clouds based on "Clouds" by drift
-                // https://www.shadertoy.com/view/4tdSWr
+                /// Hyperrealistic clouds based on "Clouds" by drift
+                /// https://www.shadertoy.com/view/4tdSWr
                 CloudView(
                     opacity: 1.0,          // Full opacity since shader handles blending
                     cloudScale: 1.0,       // Use shader's default scale (1.1 in shader)
@@ -261,9 +261,53 @@ struct LoginView: View {
                     }
                     
                     Spacer(minLength: adaptiveSize(geometry, base: 40, min: 20))
+                    
+                    // Subtle credit for shader artist
+                    HStack {
+                        Spacer()
+                        Text("Sky by drift")
+                            .appFont(AppTextRole.caption2)
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .padding(.trailing, 8)
+                            .padding(.bottom, 4)
+                    }
                 }
                 .frame(minHeight: geometry.size.height)
                 .padding(.horizontal)
+                
+                // Looking up at sky distortion effect
+                Rectangle()
+                    .fill(.clear)
+                    .background(
+                        RadialGradient(
+                            colors: [
+                                Color.clear,
+                                Color.black.opacity(0.02)
+                            ],
+                            center: UnitPoint(x: 0.5, y: 0.8),
+                            startRadius: 100,
+                            endRadius: min(geometry.size.width, geometry.size.height) * 0.8
+                        )
+                    )
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
+                
+                // Subtle radial shadow for depth
+                Rectangle()
+                    .fill(.clear)
+                    .background(
+                        RadialGradient(
+                            colors: [
+                                Color.clear,
+                                Color.black.opacity(colorScheme == .dark ? 0.08 : 0.04)
+                            ],
+                            center: UnitPoint(x: 0.5, y: 0.2),
+                            startRadius: 50,
+                            endRadius: min(geometry.size.width, geometry.size.height) * 0.6
+                        )
+                    )
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea()
             }
             .navigationBarTitleDisplayMode(.inline)
             }

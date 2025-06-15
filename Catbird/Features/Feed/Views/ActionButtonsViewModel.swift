@@ -65,15 +65,31 @@ import SwiftUI
         // Create custom activity for sharing to chat
         let shareToChat = ShareToChatActivity(post: post, appState: appState)
         
+        // Only pass ShareablePost which handles both URL and post data
         let activityViewController = UIActivityViewController(
-            activityItems: [url, ShareablePost(post: post)],
+            activityItems: [ShareablePost(post: post)],
             applicationActivities: [shareToChat]
         )
         
+        // Customize the order of activities to show Share to Chat first
+        activityViewController.completionWithItemsHandler = { activityType, completed, returnedItems, error in
+            // Handle completion if needed
+        }
+        
         // Get the current active window scene to present the share sheet
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootViewController = windowScene.windows.first?.rootViewController {
-            rootViewController.present(activityViewController, animated: true)
+        if let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+           let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+           let rootViewController = window.rootViewController {
+            
+            // Find the topmost presented view controller
+            var topController = rootViewController
+            while let presented = topController.presentedViewController {
+                topController = presented
+            }
+            
+            topController.present(activityViewController, animated: true)
         }
         #endif
     }

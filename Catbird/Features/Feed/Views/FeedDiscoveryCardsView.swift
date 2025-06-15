@@ -69,7 +69,7 @@ struct FeedDiscoveryCardsView: View {
   // MARK: - Card Stack View
   
   private var cardStackView: some View {
-    GeometryReader { geometry in
+    GeometryReader { _ in
       ZStack {
         // Background cards (next 2 cards for depth)
         ForEach(nextCardIndices, id: \.self) { index in
@@ -480,34 +480,101 @@ struct FeedDiscoveryCard: View {
   @State private var previewPosts: [AppBskyFeedDefs.FeedViewPost] = []
   @State private var isLoadingPreview = false
   @State private var previewService: FeedPreviewService?
+  @State private var showingFullFeed = false
+  
+  private let cardHeight: CGFloat = 600
+  private let headerHeight: CGFloat = 140
+  private let actionHeight: CGFloat = 80
   
   var body: some View {
     GeometryReader { geometry in
       VStack(spacing: 0) {
-        // Feed header
+        // Feed header - fixed height
         feedHeader
-          .padding()
-          .background(Color(.secondarySystemBackground))
+          .frame(height: headerHeight)
+          .padding(.horizontal, 24)
+          .padding(.vertical, 20)
+          .background(
+            LinearGradient(
+              colors: [Color(.systemBackground), Color(.secondarySystemBackground).opacity(0.3)],
+              startPoint: .top,
+              endPoint: .bottom
+            )
+          )
         
-        // Preview posts section
-        if !previewPosts.isEmpty {
-          previewPostsSection
-        } else if isLoadingPreview {
-          loadingPreviewSection
-        } else {
-          emptyPreviewSection
+        // Divider
+        Divider()
+          .opacity(0.3)
+        
+        // Preview posts section - fixed height to prevent layout shifts
+        ZStack {
+          if isLoadingPreview {
+            skeletonPreviewSection
+          } else if !previewPosts.isEmpty {
+            enhancedPreviewPostsSection
+          } else {
+            enhancedEmptyPreviewSection
+          }
         }
+        .frame(height: cardHeight - headerHeight - actionHeight - 40)
+        .clipped()
         
-        // Action indicators at bottom
-        actionIndicators
-          .padding()
-          .background(Color(.secondarySystemBackground))
+        // Divider
+        Divider()
+          .opacity(0.3)
+        
+        // Action indicators at bottom - fixed height
+        enhancedActionIndicators
+          .frame(height: actionHeight)
+          .padding(.horizontal, 24)
+          .background(Color(.systemBackground))
       }
-      .background(Color(.systemBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 20))
-      .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-      .padding(.horizontal, 20)
-      .frame(width: geometry.size.width, height: geometry.size.height * 0.8)
+      .background(
+        RoundedRectangle(cornerRadius: 24)
+          .fill(Color(.systemBackground))
+          .shadow(color: .black.opacity(0.08), radius: 20, x: 0, y: 8)
+          .shadow(color: .black.opacity(0.04), radius: 1, x: 0, y: 1)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 24)
+          .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+      )
+      .padding(.horizontal, 16)
+      .frame(width: geometry.size.width, height: cardHeight)
+    }
+    .sheet(isPresented: $showingFullFeed) {
+      NavigationStack {
+        if let feedUri = try? ATProtocolURI(uriString: feed.uri.uriString()) {
+          FeedView(
+            appState: appState,
+            fetch: .feed(feedUri),
+            path: .constant(NavigationPath()),
+            selectedTab: .constant(0)
+          )
+          .navigationTitle(feed.displayName)
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+              Button("Close") {
+                showingFullFeed = false
+              }
+            }
+            
+            ToolbarItem(placement: .navigationBarTrailing) {
+              Button(isSubscribed ? "Unsubscribe" : "Subscribe") {
+                Task {
+                  await onSubscriptionToggle()
+                }
+              }
+              .buttonStyle(.borderedProminent)
+              .controlSize(.small)
+            }
+          }
+        } else {
+          Text("Unable to load feed")
+            .foregroundColor(.secondary)
+        }
+      }
     }
     .task {
       await setupPreviewService()
@@ -515,189 +582,270 @@ struct FeedDiscoveryCard: View {
     }
   }
   
-  // MARK: - Feed Header
+  // MARK: - Enhanced Feed Header
   
   private var feedHeader: some View {
     VStack(spacing: 16) {
       // Avatar and basic info
-      HStack(spacing: 12) {
+      HStack(spacing: 16) {
+        // Enhanced avatar with better styling
         AsyncImage(url: URL(string: feed.avatar?.uriString() ?? "")) { image in
           image
             .resizable()
             .scaledToFill()
         } placeholder: {
-          feedPlaceholder(for: feed.displayName)
+          enhancedFeedPlaceholder(for: feed.displayName)
         }
-        .frame(width: 60, height: 60)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: 64, height: 64)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16)
+            .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+        )
         
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
           Text(feed.displayName)
             .appFont(AppTextRole.title2)
             .fontWeight(.bold)
-            .lineLimit(1)
+            .lineLimit(2)
+            .multilineTextAlignment(.leading)
           
           Text("by @\(feed.creator.handle)")
             .appFont(AppTextRole.subheadline)
             .foregroundColor(.secondary)
             .lineLimit(1)
           
-          if let likeCount = feed.likeCount {
-            HStack(spacing: 4) {
-              Image(systemName: "heart.fill")
-              Text(formatCount(likeCount))
+          // Enhanced stats row
+          HStack(spacing: 16) {
+            if let likeCount = feed.likeCount {
+              HStack(spacing: 4) {
+                Image(systemName: "heart.fill")
+                  .foregroundColor(.pink)
+                Text(formatCount(likeCount))
+              }
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.secondary)
             }
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
+            
+            // Quality badge
+            if let likeCount = feed.likeCount, likeCount > 5000 {
+              Text("Popular")
+                .appFont(AppTextRole.caption2)
+                .fontWeight(.medium)
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                  Capsule()
+                    .fill(LinearGradient(
+                      colors: [.orange, .red],
+                      startPoint: .leading,
+                      endPoint: .trailing
+                    ))
+                )
+            }
           }
         }
         
         Spacer()
         
-        // Subscription status indicator
-        if isSubscribed {
-          Image(systemName: "checkmark.circle.fill")
-            .appFont(AppTextRole.title2)
-            .foregroundColor(.green)
+        // Enhanced subscription status
+        VStack(spacing: 4) {
+          if isSubscribed {
+            Image(systemName: "checkmark.circle.fill")
+              .appFont(AppTextRole.title2)
+              .foregroundColor(.green)
+          }
+          
+          Button("Preview") {
+            showingFullFeed = true
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
         }
       }
       
-      // Description
+      // Enhanced description
       if let description = feed.description, !description.isEmpty {
         Text(description)
           .appFont(AppTextRole.body)
           .foregroundColor(.primary)
           .multilineTextAlignment(.leading)
-          .lineLimit(3)
+          .lineLimit(2)
           .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.top, 4)
       }
     }
   }
   
-  // MARK: - Preview Posts Section
+  // MARK: - Enhanced Preview Posts Section
   
-  private var previewPostsSection: some View {
-    VStack(alignment: .leading, spacing: 12) {
+  private var enhancedPreviewPostsSection: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      // Section header
       HStack {
         Text("Recent posts")
           .appFont(AppTextRole.headline)
           .fontWeight(.semibold)
+        
         Spacer()
+        
+        Text("\(previewPosts.count) posts")
+          .appFont(AppTextRole.caption)
+          .foregroundColor(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color(.tertiarySystemBackground))
+          .clipShape(Capsule())
       }
-      .padding(.horizontal)
-      .padding(.top)
+      .padding(.horizontal, 20)
+      .padding(.top, 16)
       
+      // Enhanced posts scroll view
       ScrollView {
-        LazyVStack(spacing: 12) {
+        LazyVStack(spacing: 8) {
           ForEach(previewPosts.prefix(4), id: \.post.uri) { feedViewPost in
-            CardPreviewPost(feedViewPost: feedViewPost)
-              .padding(.horizontal)
+            EnhancedCardPreviewPost(feedViewPost: feedViewPost)
+              .padding(.horizontal, 20)
           }
         }
+        .padding(.bottom, 16)
       }
     }
-    .frame(maxHeight: .infinity)
   }
   
-  private var loadingPreviewSection: some View {
-    VStack(spacing: 12) {
+  private var skeletonPreviewSection: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      // Skeleton header
       HStack {
-        Text("Recent posts")
-          .appFont(AppTextRole.headline)
-          .fontWeight(.semibold)
+        RoundedRectangle(cornerRadius: 6)
+          .fill(Color.gray.opacity(0.2))
+          .frame(width: 120, height: 20)
+          .shimmering()
+        
         Spacer()
+        
+        RoundedRectangle(cornerRadius: 12)
+          .fill(Color.gray.opacity(0.2))
+          .frame(width: 60, height: 24)
+          .shimmering()
       }
-      .padding(.horizontal)
-      .padding(.top)
+      .padding(.horizontal, 20)
+      .padding(.top, 16)
       
-      VStack(spacing: 12) {
+      // Skeleton posts
+      VStack(spacing: 8) {
         ForEach(0..<3, id: \.self) { _ in
-          RoundedRectangle(cornerRadius: 8)
-            .fill(Color.gray.opacity(0.2))
-            .frame(height: 80)
-            .shimmering()
-            .padding(.horizontal)
+          SkeletonPostCard()
+            .padding(.horizontal, 20)
         }
       }
       
       Spacer()
     }
-    .frame(maxHeight: .infinity)
   }
   
-  private var emptyPreviewSection: some View {
+  private var enhancedEmptyPreviewSection: some View {
     VStack {
       Spacer()
       
-      VStack(spacing: 12) {
-        Image(systemName: "doc.text")
-          .appFont(AppTextRole.title1)
-          .foregroundColor(.secondary)
+      VStack(spacing: 16) {
+        ZStack {
+          Circle()
+            .fill(LinearGradient(
+              colors: [Color.accentColor.opacity(0.1), Color.accentColor.opacity(0.05)],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            ))
+            .frame(width: 80, height: 80)
+          
+          Image(systemName: "doc.text")
+            .appFont(AppTextRole.title1)
+            .foregroundColor(.accentColor.opacity(0.7))
+        }
         
-        Text("No preview available")
-          .appFont(AppTextRole.headline)
-          .foregroundColor(.secondary)
-        
-        Text("Swipe to explore this feed")
-          .appFont(AppTextRole.body)
-          .foregroundColor(.secondary)
-          .multilineTextAlignment(.center)
+        VStack(spacing: 8) {
+          Text("No preview available")
+            .appFont(AppTextRole.headline)
+            .foregroundColor(.primary)
+          
+          Text("Tap Preview above to explore this feed")
+            .appFont(AppTextRole.body)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+        }
       }
       
       Spacer()
     }
-    .frame(maxHeight: .infinity)
   }
   
-  // MARK: - Action Indicators
+  // MARK: - Enhanced Action Indicators
   
-  private var actionIndicators: some View {
-    HStack(spacing: 24) {
-      actionIndicator(
+  private var enhancedActionIndicators: some View {
+    HStack(spacing: 0) {
+      // Skip action
+      enhancedActionIndicator(
         icon: "arrow.left",
         text: "Skip",
-        color: .orange
+        color: .orange,
+        backgroundColor: .orange.opacity(0.1)
       )
       
       Spacer()
       
-      actionIndicator(
+      // Next action
+      enhancedActionIndicator(
         icon: "arrow.up",
         text: "Next",
-        color: .blue
+        color: .blue,
+        backgroundColor: .blue.opacity(0.1)
       )
       
       Spacer()
       
-      actionIndicator(
-        icon: "arrow.right",
+      // Subscribe action
+      enhancedActionIndicator(
+        icon: isSubscribed ? "checkmark" : "arrow.right",
         text: isSubscribed ? "Subscribed" : "Subscribe",
-        color: isSubscribed ? .green : .green
+        color: .green,
+        backgroundColor: .green.opacity(isSubscribed ? 0.2 : 0.1)
       )
     }
+    .padding(.vertical, 16)
   }
   
-  private func actionIndicator(icon: String, text: String, color: Color) -> some View {
-    VStack(spacing: 4) {
-      Image(systemName: icon)
-        .appFont(AppTextRole.title3)
-        .foregroundColor(color)
+  private func enhancedActionIndicator(icon: String, text: String, color: Color, backgroundColor: Color) -> some View {
+    VStack(spacing: 8) {
+      ZStack {
+        Circle()
+          .fill(backgroundColor)
+          .frame(width: 40, height: 40)
+        
+        Image(systemName: icon)
+          .appFont(AppTextRole.body)
+          .fontWeight(.medium)
+          .foregroundColor(color)
+      }
       
       Text(text)
         .appFont(AppTextRole.caption)
+        .fontWeight(.medium)
         .foregroundColor(color)
+        .lineLimit(1)
     }
   }
   
-  // MARK: - Helper Views
+  // MARK: - Enhanced Helper Views
   
   @ViewBuilder
-  private func feedPlaceholder(for title: String) -> some View {
+  private func enhancedFeedPlaceholder(for title: String) -> some View {
     ZStack {
       LinearGradient(
         gradient: Gradient(colors: [
-          Color.accentColor.opacity(0.7),
-          Color.accentColor.opacity(0.5)
+          Color.accentColor.opacity(0.8),
+          Color.accentColor.opacity(0.6),
+          Color.accentColor.opacity(0.4)
         ]),
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -705,7 +853,9 @@ struct FeedDiscoveryCard: View {
       
       Text(title.prefix(1).uppercased())
         .appFont(AppTextRole.title1)
+        .fontWeight(.bold)
         .foregroundColor(.white)
+        .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
     }
   }
   
@@ -748,14 +898,14 @@ struct FeedDiscoveryCard: View {
   }
 }
 
-// MARK: - Card Preview Post
+// MARK: - Enhanced Card Preview Post
 
-struct CardPreviewPost: View {
+struct EnhancedCardPreviewPost: View {
   let feedViewPost: AppBskyFeedDefs.FeedViewPost
   
   var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      // Author avatar
+    HStack(alignment: .top, spacing: 12) {
+      // Enhanced author avatar
       if let avatarUrl = feedViewPost.post.author.avatar?.uriString() {
         LazyImage(url: URL(string: avatarUrl)) { state in
           if let image = state.image {
@@ -764,59 +914,177 @@ struct CardPreviewPost: View {
               .aspectRatio(contentMode: .fill)
           } else {
             Circle()
-              .fill(Color.gray.opacity(0.3))
+              .fill(LinearGradient(
+                colors: [Color.accentColor.opacity(0.3), Color.accentColor.opacity(0.1)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              ))
           }
         }
-        .frame(width: 32, height: 32)
+        .frame(width: 36, height: 36)
         .clipShape(Circle())
+        .overlay(
+          Circle()
+            .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+        )
       } else {
         Circle()
-          .fill(Color.gray.opacity(0.3))
-          .frame(width: 32, height: 32)
+          .fill(LinearGradient(
+            colors: [Color.accentColor.opacity(0.3), Color.accentColor.opacity(0.1)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          ))
+          .frame(width: 36, height: 36)
+          .overlay(
+            Circle()
+              .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+          )
       }
       
-      VStack(alignment: .leading, spacing: 2) {
-        // Author info
-        Text(feedViewPost.post.author.displayName ?? feedViewPost.post.author.handle.description)
-          .appFont(AppTextRole.subheadline)
-          .fontWeight(.medium)
-          .lineLimit(1)
+      VStack(alignment: .leading, spacing: 6) {
+        // Enhanced author info
+        HStack {
+          Text(feedViewPost.post.author.displayName ?? feedViewPost.post.author.handle.description)
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
+            .lineLimit(1)
+          
+          Spacer()
+          
+          // Time indicator (placeholder)
+          Text("2h")
+            .appFont(AppTextRole.caption2)
+            .foregroundColor(.secondary)
+        }
         
-        // Post content
+        // Enhanced post content
         if case .knownType(let record) = feedViewPost.post.record,
            let feedPost = record as? AppBskyFeedPost {
             Text(feedPost.text)
             .appFont(AppTextRole.body)
             .foregroundColor(.primary)
-            .lineLimit(2)
+            .lineLimit(3)
             .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
         }
         
-        // Engagement stats
-        HStack(spacing: 12) {
-          HStack(spacing: 2) {
+        // Enhanced engagement stats
+        HStack(spacing: 16) {
+          HStack(spacing: 4) {
             Image(systemName: "heart")
-              .appFont(AppTextRole.caption2)
-            Text("\(feedViewPost.post.likeCount ?? 0)")
-              .appFont(AppTextRole.caption2)
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.pink.opacity(0.7))
+            Text(formatEngagementCount(feedViewPost.post.likeCount ?? 0))
+              .appFont(AppTextRole.caption)
           }
           
-          HStack(spacing: 2) {
+          HStack(spacing: 4) {
             Image(systemName: "arrow.2.squarepath")
-              .appFont(AppTextRole.caption2)
-            Text("\(feedViewPost.post.repostCount ?? 0)")
-              .appFont(AppTextRole.caption2)
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.blue.opacity(0.7))
+            Text(formatEngagementCount(feedViewPost.post.repostCount ?? 0))
+              .appFont(AppTextRole.caption)
           }
+          
+          HStack(spacing: 4) {
+            Image(systemName: "bubble.left")
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.green.opacity(0.7))
+            Text(formatEngagementCount(feedViewPost.post.replyCount ?? 0))
+              .appFont(AppTextRole.caption)
+          }
+          
+          Spacer()
         }
         .foregroundColor(.secondary)
-        .padding(.top, 2)
+        .padding(.top, 4)
       }
-      
-      Spacer(minLength: 0)
     }
-    .padding(8)
-    .background(Color(.tertiarySystemBackground))
-    .cornerRadius(8)
+    .padding(12)
+    .background(
+      RoundedRectangle(cornerRadius: 12)
+        .fill(Color(.tertiarySystemBackground))
+        .overlay(
+          RoundedRectangle(cornerRadius: 12)
+            .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+        )
+    )
+  }
+  
+  private func formatEngagementCount(_ count: Int) -> String {
+    if count >= 1000 {
+      return String(format: "%.1fK", Double(count) / 1000)
+    } else {
+      return "\(count)"
+    }
+  }
+}
+
+// MARK: - Skeleton Post Card
+
+struct SkeletonPostCard: View {
+  var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      // Skeleton avatar
+      Circle()
+        .fill(Color.gray.opacity(0.2))
+        .frame(width: 36, height: 36)
+        .shimmering()
+      
+      VStack(alignment: .leading, spacing: 8) {
+        // Skeleton author name
+        HStack {
+          RoundedRectangle(cornerRadius: 4)
+            .fill(Color.gray.opacity(0.2))
+            .frame(width: 120, height: 16)
+            .shimmering()
+          
+          Spacer()
+          
+          RoundedRectangle(cornerRadius: 4)
+            .fill(Color.gray.opacity(0.2))
+            .frame(width: 30, height: 12)
+            .shimmering()
+        }
+        
+        // Skeleton post content
+        VStack(alignment: .leading, spacing: 4) {
+          RoundedRectangle(cornerRadius: 4)
+            .fill(Color.gray.opacity(0.2))
+            .frame(height: 14)
+            .shimmering()
+          
+          RoundedRectangle(cornerRadius: 4)
+            .fill(Color.gray.opacity(0.2))
+            .frame(width: 180, height: 14)
+            .shimmering()
+        }
+        
+        // Skeleton engagement stats
+        HStack(spacing: 16) {
+          ForEach(0..<3, id: \.self) { _ in
+            HStack(spacing: 4) {
+              Circle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 12, height: 12)
+                .shimmering()
+              
+              RoundedRectangle(cornerRadius: 4)
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 20, height: 12)
+                .shimmering()
+            }
+          }
+          
+          Spacer()
+        }
+      }
+    }
+    .padding(12)
+    .background(
+      RoundedRectangle(cornerRadius: 12)
+        .fill(Color(.tertiarySystemBackground))
+    )
   }
 }
 
@@ -824,4 +1092,5 @@ struct CardPreviewPost: View {
 
 #Preview {
   FeedDiscoveryCardsView()
+        .environment(AppState.shared)
 }

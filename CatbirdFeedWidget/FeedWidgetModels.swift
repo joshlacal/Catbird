@@ -37,6 +37,14 @@ struct FeedWidgetEntry: TimelineEntry {
   let date: Date
   let posts: [WidgetPost]
   let configuration: ConfigurationAppIntent
+  let isPlaceholder: Bool
+  
+  init(date: Date, posts: [WidgetPost], configuration: ConfigurationAppIntent, isPlaceholder: Bool = false) {
+    self.date = date
+    self.posts = posts
+    self.configuration = configuration
+    self.isPlaceholder = isPlaceholder
+  }
 }
 
 // Shared constants

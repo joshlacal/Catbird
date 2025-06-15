@@ -1,6 +1,8 @@
 import SwiftUI
 import NukeUI
 import Petrel
+import AVFoundation
+import AVKit
 
 // MARK: - Tenor API Models
 
@@ -134,7 +136,13 @@ struct GifPickerView: View {
     
     private var categoriesSection: some View {
         ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 12) {
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 12),
+                    GridItem(.flexible(), spacing: 12)
+                ],
+                spacing: 16
+            ) {
                 ForEach(categories) { category in
                     CategoryCardView(category: category) {
                         Task {
@@ -144,7 +152,8 @@ struct GifPickerView: View {
                     }
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
     }
     
@@ -222,7 +231,7 @@ struct GifPickerView: View {
     
     private var gifGridSection: some View {
         ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 2), spacing: 4) {
+            MasonryLayout(columns: 2, spacing: 8) {
                 ForEach(gifs) { gif in
                     GifGridItemView(gif: gif) {
                         onGifSelected(gif)
@@ -326,37 +335,212 @@ struct GifPickerView: View {
 struct CategoryCardView: View {
     let category: TenorCategory
     let onTap: () -> Void
+    @State private var featuredGif: TenorGif?
+    @State private var isLoadingFeaturedGif = false
     
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 8) {
-                LazyImage(url: URL(string: category.image)) { state in
-                    if let image = state.image {
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(height: 80)
-                            .clipped()
-                    } else if state.isLoading {
-                        ProgressView()
-                            .frame(height: 80)
+                Group {
+                    if let featuredGif = featuredGif {
+                        // Show animated GIF for the category
+                        AnimatedCategoryGifView(gif: featuredGif)
+                    } else if isLoadingFeaturedGif {
+                        loadingView
                     } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.systemGray5))
-                            .frame(height: 80)
+                        // Fallback to static image
+                        staticImageView
                     }
                 }
-                .cornerRadius(8)
+                .frame(height: 100) // Slightly taller for better proportions
+                .cornerRadius(12)
+                .clipped()
                 
                 Text(category.name)
                     .appFont(AppTextRole.caption)
                     .fontWeight(.medium)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
+                    .foregroundColor(.primary)
             }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PlainButtonStyle())
+        .task {
+            await loadFeaturedGif()
+        }
+    }
+    
+    @ViewBuilder
+    private var staticImageView: some View {
+        LazyImage(url: URL(string: category.image)) { state in
+            if let image = state.image {
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 100)
+                    .clipped()
+            } else if state.isLoading {
+                loadingView
+            } else {
+                placeholderView
+            }
+        }
+        .pipeline(ImageLoadingManager.shared.pipeline)
+        .priority(.normal)
+    }
+    
+    @ViewBuilder
+    private var loadingView: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color(.systemGray6))
+            .frame(height: 100)
+            .overlay(
+                ProgressView()
+                    .controlSize(.regular)
+            )
+    }
+    
+    @ViewBuilder
+    private var placeholderView: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color(.systemGray5))
+            .frame(height: 100)
+            .overlay(
+                VStack(spacing: 4) {
+                    Image(systemName: "photo")
+                        .appFont(size: 24)
+                        .foregroundColor(.secondary)
+                    Text("GIF")
+                        .appFont(AppTextRole.caption2)
+                        .foregroundColor(.secondary)
+                }
+            )
+    }
+    
+    // Load a featured GIF for this category to show as animated preview
+    private func loadFeaturedGif() async {
+        isLoadingFeaturedGif = true
+        
+        do {
+            let encodedQuery = category.searchterm.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let url = URL(string: "https://catbird.blue/tenor/v2/search?q=\(encodedQuery)&limit=1")!
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
+            
+            await MainActor.run {
+                if let firstGif = response.results.first {
+                    self.featuredGif = firstGif
+                }
+                self.isLoadingFeaturedGif = false
+            }
+        } catch {
+            await MainActor.run {
+                self.isLoadingFeaturedGif = false
+            }
+            // Silently fail and use static image
+        }
+    }
+}
+
+// MARK: - Animated Category GIF View
+
+struct AnimatedCategoryGifView: View {
+    let gif: TenorGif
+    @State private var player: AVPlayer?
+    @State private var hasError = false
+    
+    var body: some View {
+        Group {
+            if hasError {
+                // Fallback to SimpleGifView if video fails
+                SimpleGifView(gif: gif, onTap: {})
+                    .disabled(true) // Disable tap for category preview
+            } else if let player = player {
+                // Use video player for smooth animation like other GIF views
+                PlayerLayerView(
+                    player: player,
+                    gravity: .resizeAspectFill,
+                    size: CGSize(width: 200, height: 100),
+                    shouldLoop: true
+                )
+                .aspectRatio(2.0, contentMode: .fill) // Good category aspect ratio
+                .clipped()
+            } else {
+                // Loading state
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray6))
+                    .overlay(
+                        ProgressView()
+                            .controlSize(.regular)
+                    )
+            }
+        }
+        .onAppear {
+            setupVideoPlayer()
+        }
+        .onDisappear {
+            cleanupPlayer()
+        }
+    }
+    
+    private func setupVideoPlayer() {
+        guard let videoURL = bestVideoURL else {
+            hasError = true
+            return
+        }
+        
+        let playerItem = AVPlayerItem(url: videoURL)
+        let avPlayer = AVPlayer(playerItem: playerItem)
+        
+        // Configure for GIF-like behavior
+        avPlayer.isMuted = true // GIFs are silent
+        avPlayer.actionAtItemEnd = .none
+        
+        // Set up looping notification
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { _ in
+            avPlayer.seek(to: .zero)
+            avPlayer.play()
+        }
+        
+        // Monitor for player errors
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: playerItem,
+            queue: .main
+        ) { _ in
+            self.hasError = true
+        }
+        
+        self.player = avPlayer
+        
+        // Start playing immediately
+        avPlayer.play()
+    }
+    
+    private func cleanupPlayer() {
+        player?.pause()
+        player = nil
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    /// Get the best video URL for category animation (prefer smaller sizes for performance)
+    private var bestVideoURL: URL? {
+        // For categories, prefer smaller video formats for better performance
+        if let nanoMP4 = gif.media_formats.nanomp4 {
+            return URL(string: nanoMP4.url)
+        } else if let tinyMP4 = gif.media_formats.tinymp4 {
+            return URL(string: tinyMP4.url)
+        } else if let loopedMP4 = gif.media_formats.loopedmp4 {
+            return URL(string: loopedMP4.url)
+        } else if let mp4 = gif.media_formats.mp4 {
+            return URL(string: mp4.url)
+        }
+        return nil
     }
 }
 
@@ -367,64 +551,7 @@ struct GifGridItemView: View {
     let onTap: () -> Void
     
     var body: some View {
-        Button(action: onTap) {
-            LazyImage(url: gifPreviewURL) { state in
-                if let image = state.image {
-                    image
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 200)
-                        .clipped()
-                } else if state.isLoading {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemGray6))
-                        .frame(height: 120)
-                        .overlay(
-                            ProgressView()
-                        )
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemGray5))
-                        .frame(height: 120)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .foregroundColor(.secondary)
-                        )
-                }
-            }
-            .cornerRadius(8)
-            .overlay(
-                // GIF indicator
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Text("GIF")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.7))
-                            .cornerRadius(4)
-                            .padding(6)
-                    }
-                }
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-    
-    private var gifPreviewURL: URL? {
-        // Use the best animated GIF URL for preview - prioritize medium quality for better animation
-        if let mediumgif = gif.media_formats.mediumgif {
-            return URL(string: mediumgif.url)
-        } else if let gif = gif.media_formats.gif {
-            return URL(string: gif.url)
-        } else if let tinygif = gif.media_formats.tinygif {
-            return URL(string: tinygif.url)
-        } else if let nanogif = gif.media_formats.nanogif {
-            return URL(string: nanogif.url)
-        }
-        return nil
+        GifVideoView(gif: gif, onTap: onTap)
     }
 }
+

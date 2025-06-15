@@ -353,6 +353,24 @@ final class PreferencesManager {
     return preferences.first
   }
 
+  /// Gets local preferences synchronously from cache or SwiftData (non-async version)
+  func getLocalPreferences() throws -> Preferences? {
+    // First try cached server preferences
+    if let cachedPrefs = cachedServerPreferences {
+      return cachedPrefs
+    }
+    
+    // Fall back to SwiftData (synchronous fetch)
+    guard let modelContext = modelContext else {
+      logger.error("ModelContext not available for synchronous preferences load")
+      throw PreferencesManagerError.modelContextNotInitialized
+    }
+    
+    let descriptor = FetchDescriptor<Preferences>()
+    let preferences = try modelContext.fetch(descriptor)
+    return preferences.first
+  }
+
   /// Gets current preferences, creating default if none exist
   /// - Now prioritizes cached server preferences to ensure consistency
   @MainActor

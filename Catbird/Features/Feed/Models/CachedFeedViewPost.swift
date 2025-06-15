@@ -1,6 +1,9 @@
 import Foundation
 import SwiftData
 import Petrel
+import OSLog
+
+private let cachedPostLogger = Logger(subsystem: "blue.catbird.Catbird", category: "CachedFeedViewPost")
 
 /// A model class for caching feed posts in SwiftData
 @Model
@@ -40,7 +43,12 @@ final class CachedFeedViewPost: Identifiable {
     init(feedViewPost: AppBskyFeedDefs.FeedViewPost) {
         self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
         self.feedType = "timeline" // Default feed type for compatibility
-        self.serializedPost = try! JSONEncoder().encode(feedViewPost)
+        do {
+            self.serializedPost = try JSONEncoder().encode(feedViewPost)
+        } catch {
+            cachedPostLogger.error("Failed to encode feedViewPost: \(error)")
+            self.serializedPost = Data()
+        }
         self.cursor = nil
         self.cachedAt = Date()
         
@@ -59,13 +67,20 @@ final class CachedFeedViewPost: Identifiable {
         self.isPartOfThread = false
         self.isIncompleteThread = false
         self.serializedSliceItems = nil
+        self.isTemporary = false // Default to false for cached posts
+        
     }
     
     /// Full initializer with all parameters
     init(from feedViewPost: AppBskyFeedDefs.FeedViewPost, cursor: String? = nil, feedType: String) {
         self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
         self.feedType = feedType
-        self.serializedPost = try! JSONEncoder().encode(feedViewPost)
+        do {
+            self.serializedPost = try JSONEncoder().encode(feedViewPost)
+        } catch {
+            cachedPostLogger.error("Failed to encode feedViewPost: \(error)")
+            self.serializedPost = Data()
+        }
         self.cursor = cursor
         self.cachedAt = Date()
         
@@ -84,6 +99,7 @@ final class CachedFeedViewPost: Identifiable {
         self.isPartOfThread = false
         self.isIncompleteThread = false
         self.serializedSliceItems = nil
+        self.isTemporary = false
     }
     
     /// Initializer with thread metadata
@@ -91,7 +107,12 @@ final class CachedFeedViewPost: Identifiable {
         let feedViewPost = enhanced.feedViewPost
         self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
         self.feedType = feedType
-        self.serializedPost = try! JSONEncoder().encode(feedViewPost)
+        do {
+            self.serializedPost = try JSONEncoder().encode(feedViewPost)
+        } catch {
+            cachedPostLogger.error("Failed to encode feedViewPost: \(error)")
+            self.serializedPost = Data()
+        }
         self.cursor = nil
         self.cachedAt = Date()
         
@@ -127,6 +148,8 @@ final class CachedFeedViewPost: Identifiable {
             self.threadPostCount = nil
             self.threadHiddenCount = nil
         }
+        self.serializedSliceItems = nil
+        self.isTemporary = false
     }
     
     /// Initializer from FeedSlice (following React Native pattern)
@@ -147,7 +170,12 @@ final class CachedFeedViewPost: Identifiable {
         
         self.id = "\(mainItem.post.uri.uriString())-\(mainItem.post.cid)"
         self.feedType = feedType
-        self.serializedPost = try! JSONEncoder().encode(feedViewPost)
+        do {
+            self.serializedPost = try JSONEncoder().encode(feedViewPost)
+        } catch {
+            cachedPostLogger.error("Failed to encode feedViewPost: \(error)")
+            self.serializedPost = Data()
+        }
         self.cursor = nil
         self.cachedAt = Date()
         
@@ -167,13 +195,13 @@ final class CachedFeedViewPost: Identifiable {
                 self.threadDisplayMode = "collapsed"
                 self.threadPostCount = slice.items.count
                 self.threadHiddenCount = max(0, slice.items.count - 3)
-                logger.debug("🔍 CachedFeedViewPost: \(mainItem.post.uri.uriString()) -> COLLAPSED (\(slice.items.count) items, incomplete=\(slice.isIncompleteThread))")
+                cachedPostLogger.debug("🔍 CachedFeedViewPost: \(mainItem.post.uri.uriString()) -> COLLAPSED (\(slice.items.count) items, incomplete=\(slice.isIncompleteThread))")
             } else {
                 // Expanded thread mode
                 self.threadDisplayMode = "expanded"
                 self.threadPostCount = slice.items.count
                 self.threadHiddenCount = 0
-                logger.debug("🔍 CachedFeedViewPost: \(mainItem.post.uri.uriString()) -> EXPANDED (\(slice.items.count) items, incomplete=\(slice.isIncompleteThread))")
+                cachedPostLogger.debug("🔍 CachedFeedViewPost: \(mainItem.post.uri.uriString()) -> EXPANDED (\(slice.items.count) items, incomplete=\(slice.isIncompleteThread))")
             }
         } else {
             // Standard mode
@@ -181,6 +209,8 @@ final class CachedFeedViewPost: Identifiable {
             self.threadPostCount = 1
             self.threadHiddenCount = 0
         }
+        
+        self.isTemporary = false
     }
     
     /// Creates ReplyRef from slice items (reconstructing the thread structure)
@@ -212,6 +242,7 @@ final class CachedFeedViewPost: Identifiable {
             do {
                 return try JSONDecoder().decode(AppBskyFeedDefs.FeedViewPost.self, from: serializedPost)
             } catch {
+                cachedPostLogger.error("Failed to decode cached post: \(error)")
                 fatalError("Failed to decode cached post: \(error)")
             }
         }
@@ -232,4 +263,33 @@ final class CachedFeedViewPost: Identifiable {
         guard let data = serializedSliceItems else { return nil }
         return try? JSONDecoder().decode([FeedSliceItem].self, from: data)
     }
+    
+    /// Computed property to check if this cached post represents a thread slice
+    var isThreadSlice: Bool {
+        return sliceItems != nil && (sliceItems?.count ?? 0) > 1
+    }
+    
+    /// Computed property to get the thread slice representation
+    var threadSlice: FeedSlice? {
+        guard let items = sliceItems, !items.isEmpty else { return nil }
+        
+        // Reconstruct FeedSlice from cached data
+        let rootUri: String
+        if let reply = feedViewPost.reply,
+           case .appBskyFeedDefsPostView(let rootPost) = reply.root {
+            rootUri = rootPost.uri.uriString()
+        } else {
+            rootUri = feedViewPost.post.uri.uriString()
+        }
+        
+        return FeedSlice(
+            items: items,
+            isIncompleteThread: isIncompleteThread,
+            rootUri: rootUri,
+            feedPostUri: feedViewPost.post.uri.uriString(),
+            reason: feedViewPost.reason,
+            feedContext: feedViewPost.feedContext
+        )
+    }
+    
 }

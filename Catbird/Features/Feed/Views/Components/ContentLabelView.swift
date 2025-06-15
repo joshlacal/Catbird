@@ -120,21 +120,21 @@ struct ContentLabelView: View {
 }
 
 /// A view that handles display decisions for labeled content
-struct ContentLabelManager: View {
+struct ContentLabelManager<Content: View>: View {
     let labels: [ComAtprotoLabelDefs.Label]?
     let contentType: String
     @State private var isBlurred: Bool
     @State private var contentVisibility: ContentVisibility
     @Environment(AppState.self) private var appState
-    let content: () -> AnyView
+    let content: Content
     
-    init(labels: [ComAtprotoLabelDefs.Label]?, contentType: String = "content", @ViewBuilder content: @escaping () -> some View) {
+    init(labels: [ComAtprotoLabelDefs.Label]?, contentType: String = "content", @ViewBuilder content: () -> Content) {
         self.labels = labels
         self.contentType = contentType
         let initialVisibility = ContentLabelManager.getContentVisibility(labels: labels)
         self._contentVisibility = State(initialValue: initialVisibility)
         self._isBlurred = State(initialValue: initialVisibility == .warn)
-        self.content = { AnyView(content()) }
+        self.content = content()
     }
     
     static func getContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
@@ -157,15 +157,15 @@ struct ContentLabelManager: View {
     }
     
     private var strongBlurOverlay: some View {
-        let blurredContent = content()
-            .blur(radius: 50)
-            .scaleEffect(1.2)
+        let blurredContent = content
+            .blur(radius: 100)
+            .scaleEffect(1.5)
             .clipped()
         
         return Rectangle()
             .fill(Color.clear)
             .background(blurredContent)
-            .overlay(Color.black.opacity(0.4))
+            .overlay(Color.black.opacity(0.8))
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
                 VStack {
@@ -227,7 +227,7 @@ struct ContentLabelManager: View {
                     // Content with conditional blur
                     if isBlurred {
                         ZStack {
-                            content()
+                            content
                             
                             // Strong blur overlay that completely obscures content
                             strongBlurOverlay
@@ -239,7 +239,7 @@ struct ContentLabelManager: View {
                             }
                         }
                     } else {
-                        content()
+                        content
                             .overlay(alignment: .topTrailing) {
                                 if labels != nil && !labels!.isEmpty {
                                     // Reblur button
@@ -267,7 +267,7 @@ struct ContentLabelManager: View {
                         ContentLabelView(labels: labels)
                             .padding(.bottom, 6)
                     }
-                    content()
+                    content
                 }
             }
         }

@@ -10,7 +10,8 @@ struct ChatProfileRowView: View {
     var onSelect: (() -> Void)?
 
     @Environment(AppState.self) private var appState
-    @State private var isMessageable: Bool = true
+    @State private var isMessageable: Bool?
+    @State private var isCheckingAvailability: Bool = false
 
     var body: some View {
         Button {
@@ -31,7 +32,7 @@ struct ChatProfileRowView: View {
                             .foregroundColor(.secondary)
                             .lineLimit(1)
 
-                        if !isMessageable {
+                        if isMessageable == false {
                             Text("• Chat Restricted")
                                 .appFont(AppTextRole.caption)
                                 .foregroundColor(.red)
@@ -45,64 +46,130 @@ struct ChatProfileRowView: View {
                 if isStartingConversation {
                     ProgressView()
                         .padding(.trailing, 4)
-                } else if showMessageIcon && isMessageable {
+                } else if isCheckingAvailability {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .padding(.trailing, 4)
+                } else if showMessageIcon && (isMessageable ?? true) {
                     Image(systemName: "message")
                         .foregroundColor(.accentColor)
-                } else if !isMessageable {
+                } else if isMessageable == false {
                     Image(systemName: "lock.fill")
                         .foregroundColor(.secondary)
                         .appFont(AppTextRole.caption)
                 }
             }
             .contentShape(Rectangle())
-            .opacity(isMessageable ? 1.0 : 0.6)
+            .opacity((isMessageable ?? true) ? 1.0 : 0.6)
         }
         .buttonStyle(.plain)
-        .disabled(isStartingConversation || !isMessageable)
+        .disabled(isStartingConversation || isMessageable == false)
         .task {
-            checkMessageability()
+            await checkMessageability()
         }
     }
 
-    /// Checks if the user can be messaged based on their settings and relationship with current user
-    private func checkMessageability() {
-        // Extract chat settings from profile's associated field
-        if let profileView = profile as? AppBskyActorDefs.ProfileView {
-            updateMessageabilityStatus(profileView: profileView)
-        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
-            updateMessageabilityStatus(profileViewBasic: profileViewBasic)
-        } else {
-            // Default to not messageable if we can't determine
+    /// Checks if the user can be messaged using authoritative server-side check
+    private func checkMessageability() async {
+        // First do a quick local check to avoid unnecessary server calls
+        let localCheck = performLocalMessageabilityCheck()
+        
+        // If local check says definitely not messageable, don't bother with server check
+        if localCheck == false {
             isMessageable = false
+            return
         }
+        
+        // For potential messageability, verify with server
+        await performServerMessageabilityCheck()
+    }
+    
+    /// Performs local heuristic check for obvious non-messageability cases
+    private func performLocalMessageabilityCheck() -> Bool? {
+        // Check if chat is explicitly disabled for this profile
+        if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            // Check if chat is available via associated chat settings
+            
+            let chatSetting = profileView.associated?.chat?.allowIncoming ?? "all"
+            let profileFollowsMe = profileView.viewer?.followedBy != nil
+            
+            return canMessageLocally(chatSetting: chatSetting, profileFollowsMe: profileFollowsMe)
+            
+        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            // Check if chat is available via associated chat settings
+            
+            let chatSetting = profileViewBasic.associated?.chat?.allowIncoming ?? "all"
+            let profileFollowsMe = profileViewBasic.viewer?.followedBy != nil
+            
+            return canMessageLocally(chatSetting: chatSetting, profileFollowsMe: profileFollowsMe)
+            
+        } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
+            // Chat disabled takes precedence
+            if chatProfile.chatDisabled == true {
+                return false
+            }
+            
+            let chatSetting = chatProfile.associated?.chat?.allowIncoming ?? "all"
+            let profileFollowsMe = chatProfile.viewer?.followedBy != nil
+            
+            return canMessageLocally(chatSetting: chatSetting, profileFollowsMe: profileFollowsMe)
+        }
+        
+        // If we can't determine from profile type, assume messageable but verify with server
+        return nil
+    }
+    
+    /// Performs authoritative server-side messageability check
+    private func performServerMessageabilityCheck() async {
+        guard let chatManager = appState.chatManager as ChatManager?,
+              let currentUserDID = try? await chatManager.client?.getDid() else {
+            // If no chat manager or client, assume not messageable
+            isMessageable = false
+            return
+        }
+        
+        // Extract profile DID
+        let profileDID: String
+        if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            profileDID = profileView.did.didString()
+        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            profileDID = profileViewBasic.did.didString()
+        } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
+            profileDID = chatProfile.did.didString()
+        } else {
+            isMessageable = false
+            return
+        }
+        
+        // Don't check messaging yourself
+        if profileDID == currentUserDID {
+            isMessageable = false
+            return
+        }
+        
+        isCheckingAvailability = true
+        
+        // Use the authoritative server check
+        let (canChat, _) = await chatManager.checkConversationAvailability(members: [currentUserDID, profileDID])
+        
+        isCheckingAvailability = false
+        isMessageable = canChat
     }
 
-    private func updateMessageabilityStatus(profileView: AppBskyActorDefs.ProfileView) {
-        // Get chat settings
-        let chatSetting = profileView.associated?.chat?.allowIncoming ?? "none"
-        let isFollowingMe = profileView.viewer?.followedBy != nil
-        let amFollowing = profileView.viewer?.following != nil
-
-        isMessageable = canMessage(chatSetting: chatSetting, isFollowingMe: isFollowingMe, amFollowing: amFollowing)
-    }
-
-    private func updateMessageabilityStatus(profileViewBasic: AppBskyActorDefs.ProfileViewBasic) {
-        // Get chat settings
-        let chatSetting = profileViewBasic.associated?.chat?.allowIncoming ?? "none"
-        let isFollowingMe = profileViewBasic.viewer?.followedBy != nil
-        let amFollowing = profileViewBasic.viewer?.following != nil
-
-        isMessageable = canMessage(chatSetting: chatSetting, isFollowingMe: isFollowingMe, amFollowing: amFollowing)
-    }
-
-    private func canMessage(chatSetting: String, isFollowingMe: Bool, amFollowing: Bool) -> Bool {
+    /// Local heuristic check based on chat settings and follow relationships
+    private func canMessageLocally(chatSetting: String, profileFollowsMe: Bool) -> Bool? {
         switch chatSetting {
         case "all":
             return true
         case "following":
-            return isFollowingMe
-        case "none", _:
+            // User's setting is "following" - only people they follow can message them
+            // So we need to check if this profile follows the current user
+            return profileFollowsMe
+        case "none":
             return false
+        default:
+            // Unknown setting, let server decide
+            return nil
         }
     }
 }

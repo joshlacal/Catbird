@@ -265,7 +265,7 @@ struct InteractionButton: View {
     Button(action: action) {
       HStack(spacing: 4) {
         Image(systemName: iconName)
-          .fontWeight(isBig ? .regular : .semibold)
+              .fontWeight(isBig ? .medium : .semibold)
           // Use identity transition on first appear to prevent initial animation
           .contentTransition(isFirstAppear ? .identity : .symbolEffect(.replace))
           .imageScale(isBig ? .large : .medium)

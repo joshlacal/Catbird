@@ -14,6 +14,7 @@ struct TappableTextView: View {
     @Environment(\.openURL) private var openURL
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.fontManager) private var fontManager
 
   // State to track if the string contains only emojis
   @State private var containsOnlyEmojis: Bool = false
@@ -67,24 +68,27 @@ struct TappableTextView: View {
                     .appFont(size: effectiveTextSize ?? 24, weight: textWeight, relativeTo: textStyle)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
-                    .tracking(letterSpacing)
-                    .lineSpacing(lineSpacing)
+                    .tracking(fontManager.letterSpacingValue)
+                    .lineSpacing(fontManager.getLineSpacing(for: effectiveTextSize ?? 24))
                     .lineLimit(nil)
                     .allowsTightening(true)
                     .minimumScaleFactor(0.9)
             } else {
-                // Regular text handling - preserve AttributedString formatting
+                // Regular text handling with FontManager integration
                 Text(attributedString)
+                    .appFont(size: effectiveTextSize ?? Typography.Size.body, weight: textWeight, relativeTo: textStyle)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
-                    .tracking(letterSpacing)
-                    .lineSpacing(lineSpacing)
+                    .tracking(fontManager.letterSpacingValue)
+                    .lineSpacing(fontManager.getLineSpacing(for: effectiveTextSize ?? Typography.Size.body))
                     .lineLimit(nil)
                     .allowsTightening(true)
                     .minimumScaleFactor(0.9)
                     .textSelectionAffinity(.automatic)
                     .textSelection(.enabled)
                     .animation(.spring(duration: 0.3), value: dynamicTypeSize)
+                    .animation(.spring(duration: 0.3), value: fontManager.sizeScale)
+                    .animation(.spring(duration: 0.3), value: fontManager.fontDesign)
                     .environment(
                         \.openURL,
                          OpenURLAction { url in
@@ -92,6 +96,7 @@ struct TappableTextView: View {
                          })
             }
         }
+        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
         .onAppear {
             checkIfOnlyEmojis()
         }

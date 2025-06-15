@@ -23,6 +23,9 @@ struct FeedView: View {
   @State private var lastNavigationTime = Date.distantPast
   @State private var navigationDirection = 0  // -1: back, 0: none, 1: forward
   
+  // Scroll offset tracking for navigation bar behavior
+  @State private var scrollOffset: CGFloat = 0
+
   // Environment
   @Environment(\.colorScheme) private var colorScheme
 
@@ -78,7 +81,9 @@ struct FeedView: View {
         }
       }
       .accessibleAnimation(.easeInOut(duration: 0.3), value: isInitialLoad, appState: appState)
-      .accessibleAnimation(.easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty, appState: appState)
+      .accessibleAnimation(
+        .easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty, appState: appState
+      )
       .appDisplayScale(appState: appState)
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
 
@@ -90,6 +95,7 @@ struct FeedView: View {
             .accessibleTransition(.scale.combined(with: .opacity), appState: appState)
         }
       }
+
     }
     .onChange(of: path.count) { oldCount, newCount in
       lastNavigationTime = Date()
@@ -148,14 +154,15 @@ struct FeedView: View {
           appState.triggerScrollToTop(for: selectedTab)
         }
       }
+
     }
     .environment(\.defaultMinListRowHeight, 0)
     .environment(\.defaultMinListHeaderHeight, 0)
     .id("\(fetch.identifier)-feed-view")
   }
-  
+
   // MARK: - Helper Methods
-  
+
   /// Retry loading the feed after an error
   @MainActor
   private func retryLoadFeed() async {
@@ -170,7 +177,7 @@ struct FeedView: View {
     // Get filtered posts directly from the model
     let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
 
-    return FeedContentView(
+    return NativeFeedContentView(
       posts: filteredPosts,
       appState: appState,
       path: $path,
@@ -185,8 +192,15 @@ struct FeedView: View {
           filterSettings: appState.feedFilterSettings
         )
       },
-      feedType: fetch
+      feedType: fetch,
+      onScrollOffsetChanged: { offset in
+        scrollOffset = offset
+      }
     )
+    .id(fetch.identifier)  // Add stable identity here too
+    // Enable navigation bar scroll edge behavior
+    .toolbarBackground(.automatic, for: .navigationBar)
+    .navigationBarTitleDisplayMode(.large)
   }
 
   /// Loading state when first loading the feed
@@ -197,7 +211,8 @@ struct FeedView: View {
         .padding()
 
       Text("Loading feed...")
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -207,14 +222,17 @@ struct FeedView: View {
     VStack(spacing: DesignTokens.Spacing.sectionLarge) {
       Image(systemName: "text.bubble")
         .appFont(size: 60)
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
 
       Text("No posts to show")
         .enhancedAppHeadline()
 
       Text("Pull down to refresh or check back later.")
         .enhancedAppSubheadline()
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme)
+        )
         .multilineTextAlignment(.center)
         .spacingBase(.horizontal)
 
@@ -240,7 +258,9 @@ struct FeedView: View {
     }) {
       Image(systemName: "arrow.up")
         .appFont(AppTextRole.headline)
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: .light))
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .primary, currentScheme: .light)
+        )
         .spacingBase()
         .background(Circle().fill(Color.accentColor))
         .shadow(radius: 4)

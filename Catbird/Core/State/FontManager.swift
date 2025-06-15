@@ -569,7 +569,6 @@ enum AppTextRole: CaseIterable {
     }
 }
 
-
 // MARK: - View Modifiers
 
 struct AppFontModifier: ViewModifier {
@@ -744,7 +743,6 @@ extension View {
         }
     }
     
-    
     /// Provide font manager to the environment
     func fontManager(_ manager: FontManager) -> some View {
         self.environment(\.fontManager, manager)
@@ -815,7 +813,6 @@ func system(
     return .systemSize(size, weight: weight, design: design)
 }
 
-
 // MARK: - Font Builder for System Calls
 
 /// A builder that can handle various system font calls and convert them to app font specifications
@@ -873,7 +870,7 @@ struct SystemFontBuilder {
         switch spec {
         case .textStyle(let textStyle, _, _):
             return AppTextRole.from(textStyle)
-        case .size(_, _, _):
+        case .size:
             return .body // Default for size-based fonts
         }
     }
@@ -915,4 +912,3 @@ extension FontManager {
         )
     }
 }
-

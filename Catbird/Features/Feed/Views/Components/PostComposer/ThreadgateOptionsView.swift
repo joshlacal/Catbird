@@ -4,6 +4,7 @@ import SwiftUI
 struct ThreadgateOptionsView: View {
   @Binding var settings: ThreadgateSettings
   @Environment(\.dismiss) private var dismiss
+  @Environment(AppState.self) private var appState
 
   // For UI state
   @State private var selectedOption: ThreadgateSettings.ReplyOption

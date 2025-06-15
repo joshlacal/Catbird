@@ -143,3 +143,85 @@ iOSInjectionProject/
 # End of https://www.toptal.com/developers/gitignore/api/macos,xcode,swift
 
 **/.claude/settings.local.json
+
+# === PUBLIC RELEASE EXCLUSIONS ===
+
+# Development artifacts
+*.log
+*.tmp
+logs/
+screenshots/
+.claude/
+*_test.png
+*_screenshot.png
+current_*.png
+debug_*.png
+screenshot*.png
+test_*.png
+
+# Personal notes and development docs
+CLAUDE.md
+TODO*.md
+BUGS*.md
+CURRENT_TODO_LIST.md
+*_PLAN.md
+*_IMPLEMENTATION.md
+*_GUIDE.md
+*_COOKBOOK.md
+*_SUMMARY.md
+BACKUP_*.md
+EXPERIMENTAL_*.md
+FEED_*.md
+MCP_*.md
+RELEASE_*.md
+REPOSITORY_*.md
+SETTINGS_*.md
+SIMULATOR_*.md
+TESTING_*.md
+WORKTREE*.md
+TEST_*.md
+
+# Test scripts and helpers
+*_helper.sh
+setup-*.sh
+test_*.swift
+TEST_*.swift
+catbird_sim_helper.sh
+
+# Log files with dates
+logs*.txt
+
+# Cleanup scripts (don't commit these)
+cleanup-*.sh
+update-gitignore-*.sh
+
+# Keep only essential docs
+!README.md
+!CONTRIBUTING.md
+!LICENSE
+!LICENSE.md
+# Development and documentation files (kept locally but not committed)
+BACKUP_INFRASTRUCTURE_IMPLEMENTATION.md
+BUGS_AND_ISSUES.md
+BUG_FIX_PLAN.md
+DOCUMENTATION_CLEANUP_SUMMARY.md
+MCP_SIMULATOR_SETUP.md
+RELEASE_IMPLEMENTATION_GUIDE.md
+REPOSITORY_BROWSER_IMPLEMENTATION.md
+SIMULATOR_AUTOMATION_GUIDE.md
+TESTING_COOKBOOK.md
+WORKTREE_PLAN.md
+# Test files and scripts
+# Screenshots and temporary images
+*.png
+*.jpg
+*.jpeg
+# Log files
+*.txt
+# Claude-specific files
+# Cleanup scripts (don't commit these either)
+cleanup-for-public.sh
+prepare-for-public.sh
+PUBLIC_RELEASE_CHECKLIST.md
+PUBLIC_RELEASE_SUMMARY.md
+# Keep only essential public docs

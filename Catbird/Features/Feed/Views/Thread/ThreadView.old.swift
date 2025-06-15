@@ -23,7 +23,7 @@
 //  private static let mainPostID = "main-post-id"
 //
 //  // Logger for debugging thread loading issues
-//  private let logger = Logger(subsystem: "com.joshlacalamito.Catbird", category: "ThreadView")
+//  private let logger = Logger(subsystem: "blue.catbird", category: "ThreadView")
 //
 //  var body: some View {
 //    ZStack {

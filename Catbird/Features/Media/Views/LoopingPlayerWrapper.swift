@@ -20,38 +20,57 @@ final class LoopingPlayerWrapper {
     
     // Initialize with an existing AVPlayer to preserve its configuration
     init?(fromPlayer originalPlayer: AVPlayer) {
-        // We need the original player's item to set up looping
-        guard let originalItem = originalPlayer.currentItem else {
-            return nil
-        }
-        
-        // Create a new item from the same asset
-         let asset = originalItem.asset
-                guard let newItem = ((asset as? AVURLAsset) != nil) ?
-              AVPlayerItem(asset: asset) : nil else {
-            return nil
-        }
-        
-        // Copy important player settings
+        // Store the current time and settings before we potentially lose the item
         let currentTime = originalPlayer.currentTime()
         let rate = originalPlayer.rate
         let isMuted = originalPlayer.isMuted
         let volume = originalPlayer.volume
+        let automaticallyWaits = originalPlayer.automaticallyWaitsToMinimizeStalling
         
-        // Create queue player with a copy of the current item
+        // Get the current item immediately - if not available, this wrapper cannot be created
+        guard let originalItem = originalPlayer.currentItem else {
+            return nil
+        }
+        
+        // Get the asset - handle both URL and composition assets
+        let asset = originalItem.asset
+        
+        // Create new player item with the same configuration
+        let newItem = AVPlayerItem(asset: asset)
+        
+        // Copy audio mix settings from original
+        if let audioMix = originalItem.audioMix {
+            newItem.audioMix = audioMix
+        }
+        
+        // Copy buffer settings optimized for GIF looping
+        newItem.preferredForwardBufferDuration = min(originalItem.preferredForwardBufferDuration, 2.0)
+        newItem.canUseNetworkResourcesForLiveStreamingWhilePaused = originalItem.canUseNetworkResourcesForLiveStreamingWhilePaused
+        
+        // Copy other important item settings for GIFs
+        newItem.seekingWaitsForVideoCompositionRendering = originalItem.seekingWaitsForVideoCompositionRendering
+        newItem.preferredPeakBitRate = originalItem.preferredPeakBitRate
+        
+        // Create queue player with the new item
         self.queuePlayer = AVQueuePlayer(playerItem: newItem)
         
         // Apply the original settings
-        self.queuePlayer.seek(to: currentTime)
         self.queuePlayer.isMuted = isMuted
         self.queuePlayer.volume = volume
+        self.queuePlayer.automaticallyWaitsToMinimizeStalling = automaticallyWaits
+        self.queuePlayer.actionAtItemEnd = .none // Prevent default behavior, let looper handle it
         
-        // Create the looper with the queue player
+        // Create the looper with the queue player - this handles seamless looping
         self.playerLooper = AVPlayerLooper(player: queuePlayer, templateItem: newItem)
+        
+        // Seek to current position if needed
+        if currentTime.seconds > 0 {
+            queuePlayer.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
         
         // If the original was playing, start playing
         if rate > 0 {
-            queuePlayer.play()
+            queuePlayer.rate = rate
         }
     }
     
