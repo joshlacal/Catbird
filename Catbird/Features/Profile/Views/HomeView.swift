@@ -17,6 +17,7 @@ struct HomeView: View {
 
   // Local state
   @State private var showingSettings = false
+  @State private var feedModel: FeedModel?
 
   // For logging
   let id = UUID().uuidString.prefix(6)
@@ -29,13 +30,22 @@ struct HomeView: View {
     NavigationStack(path: navigationPath) {
       Group {
         if #available(iOS 18.0, *) {
+          // Get posts reactively from feedModel
+          let posts = feedModel?.applyFilters(withSettings: appState.feedFilterSettings) ?? []
+          
           FullUIKitFeedWrapper(
-            posts: [], // Will be loaded by the controller
+            posts: posts,
             appState: appState,
             fetchType: selectedFeed,
             path: navigationPath,
             onScrollOffsetChanged: { _ in }
           )
+          .task {
+            // Initialize feedModel if needed
+            if feedModel == nil {
+              feedModel = FeedModelContainer.shared.getModel(for: selectedFeed, appState: appState)
+            }
+          }
         } else {
           FeedView(
             appState: appState,
@@ -45,7 +55,7 @@ struct HomeView: View {
           )
         }
       }
-      .id(selectedFeed.identifier)  // Add stable identity to prevent double initialization
+      // Removed .id() modifier - view identity is managed by the wrapper
       .navigationTitle(currentFeedName)
       .navigationBarTitleDisplayMode(.large)
       .ensureNavigationFonts()
@@ -102,9 +112,9 @@ struct HomeView: View {
 
   private func handleSelectedFeedChange(oldValue: FetchType, newValue: FetchType) {
     if oldValue != newValue {
-      // Clear the feed cache when switching feeds
+      // Update feedModel when switching feeds
       Task { @MainActor in
-        FeedModelContainer.shared.clearCache()
+        feedModel = FeedModelContainer.shared.getModel(for: newValue, appState: appState)
       }
     }
   }

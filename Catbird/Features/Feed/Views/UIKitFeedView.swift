@@ -2415,6 +2415,16 @@ struct FullUIKitFeedWrapper: UIViewControllerRepresentable {
   func updateUIViewController(_ uiViewController: UIKitFeedWrapperController, context: Context) {
     // Update scroll offset callback
     uiViewController.feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    
+    // Update posts when they change
+    Task { @MainActor in
+      await uiViewController.feedController.loadPostsDirectly(posts)
+    }
+    
+    // Handle fetch type changes
+    if uiViewController.feedController.fetchType.identifier != fetchType.identifier {
+      uiViewController.feedController.handleFetchTypeChange(to: fetchType)
+    }
 
     // Handle tab tap to scroll to top
     if let tapped = appState.tabTappedAgain, tapped == 0 {
@@ -2625,7 +2635,6 @@ struct NativeFeedContentView: View {
         modelContext: modelContext,
         onScrollOffsetChanged: onScrollOffsetChanged
       )
-      .id(feedType.identifier)
     } else {
       // Fallback to existing SwiftUI implementation
       FeedContentView(

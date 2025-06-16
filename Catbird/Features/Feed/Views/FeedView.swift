@@ -47,17 +47,8 @@ struct FeedView: View {
   // MARK: - Body
   var body: some View {
     ZStack {
-      Group {
-        if feedModel == nil {
-          Color.clear.onAppear {
-            Task {
-              let model = FeedModelContainer.shared.getModel(for: fetch, appState: appState)
-              self.feedModel = model
-              await loadInitialFeed()
-            }
-          }
-          ProgressView("Loading feed...")
-        } else if let error = feedModel!.error {
+      if let model = feedModel {
+        if let error = model.error {
           ErrorStateView(
             error: error,
             context: "Failed to load feed",
@@ -68,17 +59,23 @@ struct FeedView: View {
             }
           )
           .accessibleTransition(.opacity, appState: appState)
-        } else if isInitialLoad && feedModel!.posts.isEmpty {
+        } else if isInitialLoad && model.posts.isEmpty {
           loadingView
             .accessibleTransition(.opacity, appState: appState)
-        } else if !isInitialLoad && feedModel!.posts.isEmpty {
+        } else if !isInitialLoad && model.posts.isEmpty {
           emptyStateView
             .accessibleTransition(.opacity, appState: appState)
         } else {
-          contentView(model: feedModel!)
-            .id(fetch.identifier)
+          contentView(model: model)
             .accessibleTransition(.opacity, appState: appState)
         }
+      } else {
+        ProgressView("Loading feed...")
+          .task {
+            let model = FeedModelContainer.shared.getModel(for: fetch, appState: appState)
+            self.feedModel = model
+            await loadInitialFeed()
+          }
       }
       .accessibleAnimation(.easeInOut(duration: 0.3), value: isInitialLoad, appState: appState)
       .accessibleAnimation(
@@ -113,16 +110,16 @@ struct FeedView: View {
         }
 
         Task {
-          try? await Task.sleep(nanoseconds: 150_000_000)  // 0.15 seconds
-
-          let model = FeedModelContainer.shared.getModel(for: newValue, appState: appState)
-
-          await MainActor.run {
-            model.posts = []
+          // Use existing model if possible, just update fetch type
+          if let existingModel = feedModel {
+            existingModel.feedManager.updateFetchType(newValue)
+            await loadInitialFeed()
+          } else {
+            // Only create new model if we don't have one
+            let model = FeedModelContainer.shared.getModel(for: newValue, appState: appState)
             self.feedModel = model
+            await loadInitialFeed()
           }
-
-          await loadInitialFeed()
         }
       }
     }
@@ -158,7 +155,6 @@ struct FeedView: View {
     }
     .environment(\.defaultMinListRowHeight, 0)
     .environment(\.defaultMinListHeaderHeight, 0)
-    .id("\(fetch.identifier)-feed-view")
   }
 
   // MARK: - Helper Methods
@@ -225,7 +221,6 @@ struct FeedView: View {
         scrollOffset = offset
       }
     )
-    .id(fetch.identifier)  // Add stable identity here too
     // Enable navigation bar scroll edge behavior
     .toolbarBackground(.automatic, for: .navigationBar)
     .navigationBarTitleDisplayMode(.large)
