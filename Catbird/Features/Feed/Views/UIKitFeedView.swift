@@ -257,7 +257,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     case loadMoreIndicator
   }
 
-  enum Item: Hashable, Sendable {
+  enum Item: Hashable {
     case header(FetchType)  // Feed type for conditional header
     case post(CachedFeedViewPost)
     case loadMoreIndicator
@@ -341,10 +341,10 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     tabTapObserverTimer?.invalidate()
 
     // Clean up enhanced components on main actor
-    Task { @MainActor in
-      smartTabCoordinator.resetAllHandlers()
-      newPostsIndicatorManager.hideIndicator()
-      continuityManager.hideBanner()
+      Task.detached { @MainActor [self] in
+           smartTabCoordinator.resetAllHandlers()
+           newPostsIndicatorManager.hideIndicator()
+       continuityManager.hideBanner()
     }
 
     // Clean up hosting controllers

@@ -176,7 +176,35 @@ struct FeedView: View {
   private func contentView(model: FeedModel) -> some View {
     // Get filtered posts directly from the model
     let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
+      
+//return FullUIKitNavigationWrapper(appState: <#T##AppState#>, fetchType: <#T##FetchType#>, feedName: <#T##String#>, path: <#T##NavigationPath#>, onScrollOffsetChanged: <#T##((CGFloat) -> Void)?#>, isDrawerOpenBinding: <#T##Binding<Bool>#>, showingSettingsBinding: <#T##Binding<Bool>#>, modelContext: <#T##arg#>)
 
+      //      return UIKitFeedViewRepresentable(
+//        posts: filteredPosts,
+//        appState: appState,
+//        fetchType: model.feedManager.fetchType,
+//        path: $path,
+//        loadMoreAction: {
+//          await model.loadMoreWithFiltering(filterSettings: appState.feedFilterSettings)
+//        },
+//        refreshAction: {
+//          await model.loadFeedWithFiltering(
+//            fetch: fetch,
+//            forceRefresh: true,
+//            strategy: .fullRefresh,
+//            filterSettings: appState.feedFilterSettings
+//          )
+//        },
+//        onScrollOffsetChanged: { offset in
+//          scrollOffset = offset
+//          showScrollToTop = offset > 200  // Show button when scrolled down enough
+//        }
+//)
+
+      
+      //      return FullUIKitFeedWrapper(posts: model.posts, appState: appState, fetchType: model.feedManager.fetchType, path: $path, onScrollOffsetChanged: {_ in })
+      
+      
     return NativeFeedContentView(
       posts: filteredPosts,
       appState: appState,
