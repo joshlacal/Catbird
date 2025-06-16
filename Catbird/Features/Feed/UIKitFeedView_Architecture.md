@@ -312,3 +312,32 @@ The "Loading feed..." issue is simply a data binding problem in HomeView where:
 3. The fix is to make HomeView properly observe FeedModel changes
 
 The architecture itself is sound - it just needs proper reactive data flow from SwiftUI to UIKit.
+
+## View Identity Fixes Implemented
+
+The following fixes were implemented to prevent multiple FeedViewController instances:
+
+1. **Removed redundant `.id()` modifiers**:
+   - HomeView: Removed `.id(selectedFeed.identifier)`
+   - FeedView: Removed all three `.id()` modifiers
+   - NativeFeedContentView: Removed `.id(feedType.identifier)`
+
+2. **Fixed FeedModel management**:
+   - FeedView now reuses existing FeedModel when switching feeds
+   - Updates fetch type on existing model instead of recreating
+
+3. **Made HomeView reactive**:
+   - Added `@State private var feedModel: FeedModel?`
+   - Posts are now computed reactively from feedModel
+   - Feed type changes update the feedModel reference
+
+4. **Updated FullUIKitFeedWrapper**:
+   - Added post updates in `updateUIViewController`
+   - Properly handles fetch type changes without recreation
+   - Passes reactive posts to UIKit layer
+
+5. **Simplified conditional logic**:
+   - FeedView's body now has cleaner conditional structure
+   - Avoids unnecessary view recreation from complex Group nesting
+
+These changes ensure stable view identity and prevent the multiple FeedViewController instance issue that was causing network request cancellations and the persistent "Loading feed..." spinner.
