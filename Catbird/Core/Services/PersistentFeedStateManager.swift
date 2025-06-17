@@ -13,7 +13,7 @@ final class PersistedScrollPosition {
   var feedIdentifier: String
   
   var isStale: Bool {
-    Date().timeIntervalSince(timestamp) > 300 // 5 minutes
+    Date().timeIntervalSince(timestamp) > 1800 // 30 minutes
   }
   
   init(postId: String, offsetFromPost: CGFloat, feedIdentifier: String) {
@@ -34,11 +34,11 @@ final class PersistedFeedState {
   var postIds: [String]
   
   var isStale: Bool {
-    Date().timeIntervalSince(timestamp) > 300 // 5 minutes
+    Date().timeIntervalSince(timestamp) > 1800 // 30 minutes
   }
   
   var isRecentlyFresh: Bool {
-    Date().timeIntervalSince(timestamp) < 60 // 1 minute
+    Date().timeIntervalSince(timestamp) < 300 // 5 minutes
   }
   
   init(feedIdentifier: String, postIds: [String]) {
@@ -369,21 +369,21 @@ final class PersistentFeedStateManager {
         return true
       }
       
-      // Don't refresh if data is very fresh (< 1 minute)
+      // Don't refresh if data is very fresh (< 5 minutes)
       if feedState.isRecentlyFresh {
         logger.debug("Feed data is very fresh for \(feedIdentifier), skipping refresh")
         return false
       }
       
-      // Refresh if data is stale (> 5 minutes)
+      // Refresh if data is stale (> 30 minutes)
       if feedState.isStale {
         logger.debug("Feed data is stale for \(feedIdentifier), should refresh")
         return true
       }
       
-      // Refresh if app became active after being backgrounded for >30 seconds
+      // Refresh if app became active after being backgrounded for >10 minutes
       if let appActiveTime = appBecameActiveTime,
-         Date().timeIntervalSince(appActiveTime) > 30 {
+         Date().timeIntervalSince(appActiveTime) > 600 {
         logger.debug("App was backgrounded long enough, should refresh \(feedIdentifier)")
         return true
       }

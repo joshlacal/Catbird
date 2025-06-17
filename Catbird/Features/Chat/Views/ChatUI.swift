@@ -10,48 +10,65 @@ import TipKit
 
 struct ChatTabView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
-  @State private var selectedConvoId: String?  // Track navigation state locally if needed
+  @State private var selectedConvoId: String?
   @State private var searchText = ""
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
+  @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
   // Ensure NavigationManager path binding uses the correct tab index (4)
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
+  
+  // Determine if we should use split view based on device and orientation
+  private var shouldUseSplitView: Bool {
+    DeviceInfo.isIPad || horizontalSizeClass == .regular
+  }
 
   var body: some View {
     ZStack {
-      NavigationStack(path: chatNavigationPath) {
-        ResponsiveContentView {
+      if shouldUseSplitView {
+        // iPad and large screens: Use NavigationSplitView
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+          // Sidebar: Conversation List
           ConversationListView(
-          // Pass the ChatManager instance directly
-          chatManager: appState.chatManager,
-          searchText: searchText,
-          onSelectConvo: { id in
-            selectedConvoId = id  // Keep track if needed
-            // Use the correct tab index (4) for navigation
-            appState.navigationManager.navigate(
-              to: .conversation(id),
-              in: 4  // Explicitly navigate within the chat tab
-            )
-          },
-          onSelectSearchResult: { profile in
-            startConversation(with: profile)
-          }
+            chatManager: appState.chatManager,
+            searchText: searchText,
+            onSelectConvo: { id in
+              selectedConvoId = id
+            },
+            onSelectSearchResult: { profile in
+              startConversation(with: profile)
+            }
           )
+          .navigationTitle("Messages")
+          .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 400)
+        } detail: {
+          // Detail also needs NavigationStack for navigation within
+            if let convoId = selectedConvoId {
+              ConversationView(convoId: convoId)
+                .id(convoId)
+                .navigationDestination(for: NavigationDestination.self) { destination in
+                  NavigationHandler.viewForDestination(
+                    destination,
+                    path: chatNavigationPath,
+                    appState: appState,
+                    selectedTab: $selectedTab
+                  )
+                }
+            } else {
+              EmptyConversationView()
+            }
         }
-        .navigationTitle("Direct Messages")
+        .navigationSplitViewStyle(.automatic)
         .searchable(text: $searchText, prompt: "Search")
         .onChange(of: searchText) { _, newValue in
-          Task {
-            await MainActor.run {
-              appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
-            }
-          }
+          appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
         }
         .toolbar {
           ToolbarItem(placement: .navigationBarLeading) {
@@ -62,15 +79,46 @@ struct ChatTabView: View {
             ChatToolbarMenu()
           }
         }
-        .navigationDestination(for: NavigationDestination.self) { destination in
-          // Ensure NavigationHandler uses the correct path and tab index
-          NavigationHandler.viewForDestination(
-            destination,
-            path: chatNavigationPath,  
-            appState: appState,
-            selectedTab: $selectedTab  
+          
+      } else {
+          ConversationListView(
+            chatManager: appState.chatManager,
+            searchText: searchText,
+            onSelectConvo: { id in
+              selectedConvoId = id
+              // Use the correct tab index (4) for navigation
+              appState.navigationManager.navigate(
+                to: .conversation(id),
+                in: 4
+              )
+            },
+            onSelectSearchResult: { profile in
+              startConversation(with: profile)
+            }
           )
-        }
+          .navigationTitle("Messages")
+          .searchable(text: $searchText, prompt: "Search")
+          .onChange(of: searchText) { _, newValue in
+            appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
+          }
+          .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+              MessageRequestsButton()
+            }
+            
+            ToolbarItem(placement: .navigationBarTrailing) {
+              ChatToolbarMenu()
+            }
+          }
+          .navigationDestination(for: NavigationDestination.self) { destination in
+            NavigationHandler.viewForDestination(
+              destination,
+              path: chatNavigationPath,
+              appState: appState,
+              selectedTab: $selectedTab
+            )
+          }
+        
       }
       .onAppear {
         // Load conversations when the tab appears
@@ -142,11 +190,16 @@ struct ChatTabView: View {
         logger.debug("Successfully started conversation with ID: \(convoId)")
 
         await MainActor.run {
-          // Navigate to the conversation
-          appState.navigationManager.navigate(
-            to: .conversation(convoId),
-            in: 4  // Chat tab index
-          )
+          if shouldUseSplitView {
+            // For split view, just update the selected conversation
+            selectedConvoId = convoId
+          } else {
+            // For regular navigation, use the navigation manager
+            appState.navigationManager.navigate(
+              to: .conversation(convoId),
+              in: 4  // Chat tab index
+            )
+          }
         }
       } else {
         logger.error("Failed to start conversation with user: \(profile.handle.description)")
@@ -159,6 +212,7 @@ struct ChatTabView: View {
 
 struct ConversationListView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @State var chatManager: ChatManager
   var searchText: String = ""
   var onSelectConvo: (String) -> Void
@@ -334,6 +388,12 @@ struct ConversationListView: View {
     .contextMenu {
       ConversationContextMenu(conversation: convo)
     }
+    .listRowBackground(
+      // Add selection highlight for iPad split view
+      horizontalSizeClass == .regular && chatManager.conversations.first(where: { $0.id == convo.id }) != nil
+        ? Color.accentColor.opacity(0.1)
+        : Color.clear
+    )
   }
   
   @ViewBuilder
@@ -1197,6 +1257,34 @@ struct MessageRequestsButton: View {
     .sheet(isPresented: $showingRequests) {
       MessageRequestsView()
     }
+  }
+}
+
+// MARK: - Empty Conversation View
+
+struct EmptyConversationView: View {
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+  
+  var body: some View {
+    VStack(spacing: DesignTokens.Spacing.lg) {
+      Image(systemName: "bubble.left.and.bubble.right")
+        .font(.system(size: 80))
+        .foregroundStyle(.tertiary)
+        .symbolRenderingMode(.hierarchical)
+      
+      VStack(spacing: DesignTokens.Spacing.sm) {
+        Text("Select a conversation")
+          .appTitle()
+        
+        Text("Choose a conversation from the list to start messaging")
+          .appBody()
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
   }
 }
 

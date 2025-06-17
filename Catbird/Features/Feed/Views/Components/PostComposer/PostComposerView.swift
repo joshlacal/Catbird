@@ -86,7 +86,6 @@ struct PostComposerView: View {
     @State private var showThreadOptions: Bool = false
     @State private var isSubmitting = false
     @State private var showingEmojiPicker = false
-    @State private var isKeyboardVisible = false
     
     init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
         self._viewModel = State(
@@ -135,9 +134,6 @@ struct PostComposerView: View {
                     )
                 }
                 
-                ToolbarItemGroup(placement: .keyboard) {
-                    keyboardToolbarContent
-                }
             }
             .task {
                 await viewModel.loadUserLanguagePreference()
@@ -175,7 +171,7 @@ struct PostComposerView: View {
                 isPresented: $videoPickerVisible,
                 selection: $videoPickerItems,
                 maxSelectionCount: 1,
-                matching: .videos
+                matching: .any(of: [.videos, .images])
             )
             .onChange(of: videoPickerItems) {
                 Task {
@@ -237,7 +233,7 @@ struct PostComposerView: View {
     // MARK: - Main Content Views
     
     private var mainContentView: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             // Use theme background for entire view
             Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
                 .ignoresSafeArea()
@@ -245,19 +241,11 @@ struct PostComposerView: View {
             VStack(spacing: 0) {
                 parentPostReplySection
                 mainComposerArea
-                
-                // Show toolbar at bottom when keyboard is not visible
-                if !isKeyboardVisible {
-                    keyboardToolbarContent
-                }
             }
+            .padding(.bottom, 60) // Make room for toolbar
             
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            isKeyboardVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            isKeyboardVisible = false
+            // Toolbar pinned to bottom
+            keyboardToolbar
         }
     }
     
@@ -455,7 +443,7 @@ struct PostComposerView: View {
                 isTextFieldFocused = true
             }
             
-            // Show mention suggestions below the text editor  
+            // Show mention suggestions below the text editor
             mentionSuggestionsView
         }
     }
@@ -655,12 +643,13 @@ struct PostComposerView: View {
         }
     }
     
-    // Clean, modern keyboard toolbar with essential actions
-    private var keyboardToolbarContent: some View {
+    
+    private var keyboardToolbar: some View {
         VStack(spacing: 0) {
-            // Character count at top right
-            HStack {
-                Spacer()
+            Divider()
+            
+            HStack(spacing: 16) {
+                // Character count
                 HStack(spacing: 6) {
                     Circle()
                         .fill(characterCountColor)
@@ -670,53 +659,45 @@ struct PostComposerView: View {
                         .fontWeight(.medium)
                         .foregroundColor(characterCountColor)
                 }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            
-            // Main toolbar - essential actions only
-            HStack(spacing: 24) {
-                // Primary media actions
-                HStack(spacing: 24) {
-                    Button(action: {
-                        photoPickerVisible = true
-                    }) {
-                        Image(systemName: "photo")
-                            .appFont(size: 24)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    
-                    Button(action: {
-                        videoPickerVisible = true
-                    }) {
-                        Image(systemName: "video")
-                            .appFont(size: 24)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    
-                    // Cute monospaced GIF button (if enabled)
-                    if appState.appSettings.allowTenor {
-                        Button(action: {
-                            viewModel.showingGifPicker = true
-                        }) {
-                            Text("GIF")
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(viewModel.selectedGif != nil ? Color.accentColor : Color.accentColor)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(viewModel.selectedGif != nil ? Color.accentColor : Color.accentColor, lineWidth: 1.5)
-                                )
-                        }
-                    }
-                }
                 
                 Spacer()
                 
-                // Secondary actions in overflow menu
+                // Media buttons
+                Button(action: {
+                    photoPickerVisible = true
+                }) {
+                    Image(systemName: "photo")
+                        .appFont(size: 22)
+                        .foregroundStyle(Color.accentColor)
+                }
+                
+                Button(action: {
+                    videoPickerVisible = true
+                }) {
+                    Image(systemName: "video")
+                        .appFont(size: 22)
+                        .foregroundStyle(Color.accentColor)
+                }
+                
+                // GIF button
+                if appState.appSettings.allowTenor {
+                    Button(action: {
+                        viewModel.showingGifPicker = true
+                    }) {
+                        Text("GIF")
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.accentColor, lineWidth: 1.5)
+                            )
+                    }
+                }
+                
+                // Menu
                 Menu {
-                    // Emoji picker
                     Button(action: {
                         showingEmojiPicker = true
                     }) {
@@ -725,7 +706,6 @@ struct PostComposerView: View {
                     
                     Divider()
                     
-                    // Language selection submenu
                     Menu {
                         ForEach(getAvailableLanguages().prefix(8), id: \.self) { langContainer in
                             Button(action: {
@@ -746,7 +726,6 @@ struct PostComposerView: View {
                         Label("Language", systemImage: "globe")
                     }
                     
-                    // Thread controls (if not replying)
                     if viewModel.parentPost == nil {
                         Divider()
                         
@@ -770,7 +749,6 @@ struct PostComposerView: View {
                         }
                     }
                     
-                    // Content labels
                     Button(action: {
                         viewModel.showLabelSelector = true
                     }) {
@@ -779,20 +757,15 @@ struct PostComposerView: View {
                     
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .appFont(size: 24)
+                        .appFont(size: 22)
                         .foregroundStyle(.primary)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(.secondarySystemBackground))
         }
-        .background(Color(.systemBackground))
-        .overlay(
-            Rectangle()
-                .frame(height: 0.5)
-                .foregroundColor(.gray.opacity(0.2)),
-            alignment: .top
-        )
+        .background(Color(.secondarySystemBackground))
     }
     
     // Get the appropriate text for the post button

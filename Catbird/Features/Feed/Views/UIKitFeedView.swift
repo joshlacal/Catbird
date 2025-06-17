@@ -340,12 +340,8 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     newPostsCheckTimer?.invalidate()
     tabTapObserverTimer?.invalidate()
 
-    // Clean up enhanced components on main actor
-      Task.detached { @MainActor [self] in
-           smartTabCoordinator.resetAllHandlers()
-           newPostsIndicatorManager.hideIndicator()
-       continuityManager.hideBanner()
-    }
+    // Note: We cannot call @MainActor methods from deinit
+    // The UI components will be cleaned up when their hosting controllers are removed below
 
     // Clean up hosting controllers
     newPostsIndicatorHostingController?.view.removeFromSuperview()

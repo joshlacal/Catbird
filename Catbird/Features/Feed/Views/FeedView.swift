@@ -77,12 +77,6 @@ struct FeedView: View {
             await loadInitialFeed()
           }
       }
-      .accessibleAnimation(.easeInOut(duration: 0.3), value: isInitialLoad, appState: appState)
-      .accessibleAnimation(
-        .easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty, appState: appState
-      )
-      .appDisplayScale(appState: appState)
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
 
       if showScrollToTop {
         VStack {
@@ -94,6 +88,13 @@ struct FeedView: View {
       }
 
     }
+    .accessibleAnimation(.easeInOut(duration: 0.3), value: isInitialLoad, appState: appState)
+    .accessibleAnimation(
+      .easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty, appState: appState
+    )
+    .appDisplayScale(appState: appState)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+
     .onChange(of: path.count) { oldCount, newCount in
       lastNavigationTime = Date()
       navigationDirection = oldCount < newCount ? 1 : (oldCount > newCount ? -1 : 0)

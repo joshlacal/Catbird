@@ -93,7 +93,7 @@ final class SmartFeedRefreshCoordinator {
     
     if shouldRefresh {
       let timeSinceActive = Date().timeIntervalSince(lastAppBecameActive)
-      if timeSinceActive < 60 { // App recently became active
+      if timeSinceActive < 300 { // App recently became active (within 5 minutes)
         logger.debug("Background refresh for \(feedIdentifier) (app recently active)")
         return .background
       } else {

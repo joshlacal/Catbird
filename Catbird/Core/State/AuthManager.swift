@@ -410,10 +410,13 @@ final class AuthenticationManager {
     handle = nil
   }
 
-  /// Reset after an error
+  /// Reset after an error or cancellation
   @MainActor
   func resetError() {
     if case .error = state {
+      updateState(.unauthenticated)
+    } else if case .authenticating = state {
+      // Also reset if stuck in authenticating state (e.g., user cancelled)
       updateState(.unauthenticated)
     }
   }

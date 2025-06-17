@@ -791,6 +791,8 @@ struct LoginView: View {
                 authenticationCancelled = true
                 isLoggingIn = false
                 loginProgress = .idle
+                // Reset auth state to prevent getting stuck
+                appState.authManager.resetError()
             } catch {
                 // Other authentication errors
                 logger.error("Authentication error: \(error.localizedDescription)")
@@ -846,6 +848,8 @@ struct LoginView: View {
                 logger.notice("Signup was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                 authenticationCancelled = true
                 isLoggingIn = false
+                // Reset auth state to prevent getting stuck
+                appState.authManager.resetError()
             } catch {
                 // Other authentication errors
                 logger.error("Signup authentication error: \(error.localizedDescription)")

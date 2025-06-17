@@ -1,4 +1,5 @@
 import AVFoundation
+import ImageIO
 import NaturalLanguage
 import os
 import Petrel
@@ -223,6 +224,15 @@ final class PostComposerViewModel {
   func processVideoSelection(_ item: PhotosPickerItem) async {
     logger.debug("DEBUG: Processing video selection")
 
+    // Check if it's a GIF
+    let isGIF = item.supportedContentTypes.contains(where: { $0.conforms(to: .gif) })
+    
+    if isGIF {
+      logger.debug("DEBUG: Selected item is a GIF, will convert to video")
+      await processGIFAsVideo(item)
+      return
+    }
+
     // Validate content type
     let isVideo = item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) })
     logger.debug("DEBUG: Is selection a video? \(isVideo)")
@@ -251,6 +261,36 @@ final class PostComposerViewModel {
   // For processing photos (no video checks needed)
   @MainActor
   func processPhotoSelection(_ items: [PhotosPickerItem]) async {
+    // First check if any of the items are GIFs
+    for item in items {
+      logger.debug("DEBUG: Checking item content types: \(item.supportedContentTypes)")
+      
+      // Check for GIF in multiple ways
+      let isGIF = item.supportedContentTypes.contains(where: { contentType in
+        contentType.conforms(to: .gif) || 
+        contentType.identifier == "com.compuserve.gif" ||
+        contentType.identifier == UTType.gif.identifier
+      })
+      
+      if isGIF {
+        logger.debug("DEBUG: Found GIF in photo selection, converting to video")
+        await processGIFAsVideo(item)
+        return // Only process the first GIF as video
+      }
+      
+      // Also check by loading the data and examining it
+      if let data = try? await item.loadTransferable(type: Data.self) {
+        let isAnimatedGIF = isDataAnimatedGIF(data)
+        logger.debug("DEBUG: Data check - is animated GIF: \(isAnimatedGIF)")
+        
+        if isAnimatedGIF {
+          logger.debug("DEBUG: Detected animated GIF by data inspection, converting to video")
+          await processGIFAsVideoFromData(data)
+          return
+        }
+      }
+    }
+    
     // Clear any existing video
     videoItem = nil
 
@@ -321,6 +361,348 @@ final class PostComposerViewModel {
   }
 
   // MARK: - Video Management Methods
+  
+  // MARK: - GIF to Video Conversion
+  
+  /// Check if data is an animated GIF
+  private func isDataAnimatedGIF(_ data: Data) -> Bool {
+    guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
+      return false
+    }
+    
+    let frameCount = CGImageSourceGetCount(imageSource)
+    logger.debug("DEBUG: Image source has \(frameCount) frames")
+    
+    // Check if it's a GIF with multiple frames
+    guard frameCount > 1 else { return false }
+    
+    // Check the UTI type
+    if let uti = CGImageSourceGetType(imageSource) as String? {
+      logger.debug("DEBUG: Image source UTI: \(uti)")
+      return uti == UTType.gif.identifier || uti == "com.compuserve.gif"
+    }
+    
+    return false
+  }
+  
+  /// Process GIF from data
+  @MainActor
+  func processGIFAsVideoFromData(_ gifData: Data) async {
+    logger.debug("DEBUG: Processing GIF from data, size: \(gifData.count) bytes")
+    
+    // Clear existing media
+    mediaItems.removeAll()
+    
+    do {
+      // Convert GIF to video
+      let videoURL = try await convertGIFToVideo(gifData)
+      logger.debug("DEBUG: GIF converted to video at: \(videoURL)")
+      
+      // Create video media item
+      var newVideoItem = MediaItem()
+      newVideoItem.rawVideoURL = videoURL
+      newVideoItem.isLoading = true
+      
+      self.videoItem = newVideoItem
+      
+      // Load video thumbnail and metadata
+      await loadVideoThumbnail(for: newVideoItem)
+      
+    } catch {
+      logger.error("ERROR: Failed to process GIF as video: \(error)")
+      alertItem = AlertItem(
+        title: "GIF Conversion Error",
+        message: "Could not convert GIF to video: \(error.localizedDescription)"
+      )
+    }
+  }
+  
+  /// Process a GIF file as a video by converting it
+  @MainActor
+  func processGIFAsVideo(_ item: PhotosPickerItem) async {
+    logger.debug("DEBUG: Starting GIF to video conversion")
+    
+    // Clear existing media
+    mediaItems.removeAll()
+    
+    do {
+      // Load GIF data
+      guard let gifData = try await item.loadTransferable(type: Data.self) else {
+        logger.error("ERROR: Failed to load GIF data")
+        alertItem = AlertItem(
+          title: "GIF Error", 
+          message: "Could not load the selected GIF file."
+        )
+        return
+      }
+      
+      logger.debug("DEBUG: Loaded GIF data, size: \(gifData.count) bytes")
+      
+      // Convert GIF to video
+      let videoURL = try await convertGIFToVideo(gifData)
+      logger.debug("DEBUG: GIF converted to video at: \(videoURL)")
+      
+      // Create video media item
+      var newVideoItem = MediaItem()
+      newVideoItem.rawVideoURL = videoURL
+      newVideoItem.isLoading = true
+      
+      self.videoItem = newVideoItem
+      
+      // Load video thumbnail and metadata
+      await loadVideoThumbnail(for: newVideoItem)
+      
+    } catch {
+      logger.error("ERROR: Failed to process GIF as video: \(error)")
+      alertItem = AlertItem(
+        title: "GIF Conversion Error",
+        message: "Could not convert GIF to video: \(error.localizedDescription)"
+      )
+    }
+  }
+  
+  /// Convert GIF data to video file
+  private func convertGIFToVideo(_ gifData: Data) async throws -> URL {
+    logger.debug("DEBUG: Starting GIF to video conversion process")
+    logger.debug("DEBUG: GIF data size: \(gifData.count) bytes")
+    
+    // Check if this is actually a GIF
+    let gifHeader = [UInt8](gifData.prefix(6))
+    if let headerString = String(data: Data(gifHeader), encoding: .ascii) {
+      logger.debug("DEBUG: File header: \(headerString)")
+    }
+    
+    // Create CGImageSource from GIF data
+    guard let imageSource = CGImageSourceCreateWithData(gifData as CFData, nil) else {
+      throw NSError(
+        domain: "GIFConversionError",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not create image source from GIF data"]
+      )
+    }
+    
+    // Check the type
+    if let sourceType = CGImageSourceGetType(imageSource) as String? {
+      logger.debug("DEBUG: Image source type: \(sourceType)")
+    }
+    
+    let frameCount = CGImageSourceGetCount(imageSource)
+    logger.debug("DEBUG: GIF has \(frameCount) frames")
+    
+    guard frameCount > 0 else {
+      throw NSError(
+        domain: "GIFConversionError",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "GIF has no frames"]
+      )
+    }
+    
+    // If it's a single frame, it's not animated
+    if frameCount == 1 {
+      logger.debug("DEBUG: GIF has only 1 frame - treating as static image")
+      throw NSError(
+        domain: "GIFConversionError",
+        code: 10,
+        userInfo: [NSLocalizedDescriptionKey: "GIF is not animated (only 1 frame)"]
+      )
+    }
+    
+    // Get first frame to determine dimensions
+    guard let firstFrame = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+      throw NSError(
+        domain: "GIFConversionError",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Could not extract first frame from GIF"]
+      )
+    }
+    
+    let width = firstFrame.width
+    let height = firstFrame.height
+    logger.debug("DEBUG: GIF dimensions: \(width)x\(height)")
+    
+    // Get GIF duration and frame delays
+    let gifDuration = getGIFDuration(from: imageSource)
+    logger.debug("DEBUG: Total GIF duration: \(gifDuration) seconds")
+    
+    // Create output URL
+    let tempDir = FileManager.default.temporaryDirectory
+    let outputFileName = "converted_gif_\(UUID().uuidString).mp4"
+    let outputURL = tempDir.appendingPathComponent(outputFileName)
+    
+    // Remove existing file if any
+    try? FileManager.default.removeItem(at: outputURL)
+    
+    // Create AVAssetWriter
+    let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+    
+    // Configure video settings
+    let videoSettings: [String: Any] = [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: width,
+      AVVideoHeightKey: height,
+      AVVideoCompressionPropertiesKey: [
+        AVVideoAverageBitRateKey: 2_000_000, // 2 Mbps
+        AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+      ]
+    ]
+    
+    let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+    writerInput.expectsMediaDataInRealTime = false
+    
+    let sourcePixelBufferAttributes: [String: Any] = [
+      kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+      kCVPixelBufferWidthKey as String: width,
+      kCVPixelBufferHeightKey as String: height
+    ]
+    
+    let pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: writerInput,
+      sourcePixelBufferAttributes: sourcePixelBufferAttributes
+    )
+    
+    writer.add(writerInput)
+    
+    // Start writing
+    guard writer.startWriting() else {
+      throw NSError(
+        domain: "GIFConversionError",
+        code: 4,
+        userInfo: [NSLocalizedDescriptionKey: "Could not start video writer"]
+      )
+    }
+    
+    writer.startSession(atSourceTime: .zero)
+    
+    // Write frames
+    try await withCheckedThrowingContinuation { continuation in
+      writerInput.requestMediaDataWhenReady(on: DispatchQueue(label: "gif.conversion.queue")) {
+        do {
+          var frameIndex = 0
+          var presentationTime = CMTime.zero
+          
+          while frameIndex < frameCount {
+            if writerInput.isReadyForMoreMediaData {
+              // Get frame duration
+              let frameDuration = self.getFrameDuration(at: frameIndex, from: imageSource)
+              
+              // Create pixel buffer from CGImage
+              guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, frameIndex, nil),
+                    let pixelBuffer = self.createPixelBuffer(from: cgImage, adaptor: pixelBufferAdaptor) else {
+                self.logger.error("ERROR: Failed to create pixel buffer for frame \(frameIndex)")
+                frameIndex += 1
+                continue
+              }
+              
+              // Append the frame
+              if !pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
+                self.logger.error("ERROR: Failed to append frame \(frameIndex)")
+              }
+              
+              // Update presentation time
+              presentationTime = CMTimeAdd(presentationTime, frameDuration)
+              frameIndex += 1
+              
+              self.logger.debug("DEBUG: Processed frame \(frameIndex)/\(frameCount)")
+            }
+          }
+          
+          // Mark input as finished
+          writerInput.markAsFinished()
+          
+          // Finish writing
+          writer.finishWriting {
+            if writer.status == .completed {
+              self.logger.debug("DEBUG: Video writing completed successfully")
+              continuation.resume(returning: ())
+            } else {
+              let error = writer.error ?? NSError(
+                domain: "GIFConversionError",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Video writer failed"]
+              )
+              continuation.resume(throwing: error)
+            }
+          }
+        }
+      }
+    }
+    
+    return outputURL
+  }
+  
+  /// Get total GIF duration
+  private func getGIFDuration(from imageSource: CGImageSource) -> Double {
+    let frameCount = CGImageSourceGetCount(imageSource)
+    var totalDuration = 0.0
+    
+    for i in 0..<frameCount {
+      totalDuration += getFrameDuration(at: i, from: imageSource).seconds
+    }
+    
+    return totalDuration
+  }
+  
+  /// Get frame duration for a specific frame
+  private func getFrameDuration(at index: Int, from imageSource: CGImageSource) -> CMTime {
+    guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, index, nil) as? [String: Any],
+          let gifProperties = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any] else {
+      // Default frame duration if not specified
+      return CMTime(value: 1, timescale: 10) // 0.1 seconds
+    }
+    
+    // Try to get unclamped delay time first, then regular delay time
+    var delay = gifProperties[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double ?? 0
+    if delay == 0 {
+      delay = gifProperties[kCGImagePropertyGIFDelayTime as String] as? Double ?? 0.1
+    }
+    
+    // Ensure minimum delay (GIF spec recommends 0.01s minimum)
+    if delay < 0.01 {
+      delay = 0.1
+    }
+    
+    return CMTime(seconds: delay, preferredTimescale: 600)
+  }
+  
+  /// Create pixel buffer from CGImage
+  private func createPixelBuffer(from image: CGImage, adaptor: AVAssetWriterInputPixelBufferAdaptor) -> CVPixelBuffer? {
+    let width = image.width
+    let height = image.height
+    
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &pixelBuffer)
+    
+    guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+      return nil
+    }
+    
+    CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
+    let pixelData = CVPixelBufferGetBaseAddress(buffer)
+    
+    let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(
+      data: pixelData,
+      width: width,
+      height: height,
+      bitsPerComponent: 8,
+      bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+      space: rgbColorSpace,
+      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+    ) else {
+      CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
+      return nil
+    }
+    
+    // Clear the context with a white background to handle transparency properly
+    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    
+    // Draw the image on the clean background
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
+    
+    return buffer
+  }
 
   @MainActor
   private func loadVideoThumbnail(for item: MediaItem) async {
@@ -711,6 +1093,29 @@ final class PostComposerViewModel {
   // Method to add new media items from picker selection
   @MainActor
   func addMediaItems(_ items: [PhotosPickerItem]) async {
+    logger.debug("DEBUG: addMediaItems called with \(items.count) items")
+    
+    // Check each item for GIFs before processing as regular images
+    for (index, item) in items.enumerated() {
+      logger.debug("DEBUG: Checking item \(index) for GIF content")
+      
+      // Try to load the data and check if it's an animated GIF
+      if let data = try? await item.loadTransferable(type: Data.self) {
+        logger.debug("DEBUG: Loaded data for item \(index), size: \(data.count) bytes")
+        
+        if isDataAnimatedGIF(data) {
+          logger.debug("DEBUG: Item \(index) is an animated GIF! Converting to video")
+          await processGIFAsVideoFromData(data)
+          return // Stop processing other items
+        } else {
+          logger.debug("DEBUG: Item \(index) is not an animated GIF")
+        }
+      }
+    }
+    
+    // If no GIFs found, process as regular images
+    logger.debug("DEBUG: No animated GIFs found, processing as regular images")
+    
     // Limit to maximum allowed
     let availableSlots = maxImagesAllowed - mediaItems.count
     guard availableSlots > 0 else { return }
@@ -748,6 +1153,20 @@ final class PostComposerViewModel {
           width: uiImage.size.width, height: uiImage.size.height)
         mediaItems[index].rawData = data
       }
+    } catch let error as NSError {
+      logger.debug("Error loading image: \(error)")
+      
+      // Check if this is our special animated GIF error
+      if error.code == 100, let gifData = error.userInfo["gifData"] as? Data {
+        logger.debug("DEBUG: Caught animated GIF error, converting to video")
+        // Remove this item from mediaItems
+        mediaItems.remove(at: index)
+        // Process as GIF video
+        await processGIFAsVideoFromData(gifData)
+      } else {
+        // Remove failed item
+        mediaItems.remove(at: index)
+      }
     } catch {
       logger.debug("Error loading image: \(error)")
       // Remove failed item
@@ -757,10 +1176,26 @@ final class PostComposerViewModel {
 
   // Helper to load image data
   private func loadImageData(from item: PhotosPickerItem) async throws -> (Data, UIImage?) {
+    logger.debug("DEBUG: Loading image data from PhotosPickerItem")
+    
     guard let data = try await item.loadTransferable(type: Data.self) else {
       throw NSError(
         domain: "ImageLoadingError", code: 0,
         userInfo: [NSLocalizedDescriptionKey: "Failed to load image data"])
+    }
+    
+    logger.debug("DEBUG: Loaded \(data.count) bytes of image data")
+    
+    // Check if this is actually an animated GIF that slipped through
+    if isDataAnimatedGIF(data) {
+      logger.debug("DEBUG: Detected animated GIF in loadImageData! Throwing error to trigger GIF conversion")
+      throw NSError(
+        domain: "ImageLoadingError", 
+        code: 100,
+        userInfo: [
+          NSLocalizedDescriptionKey: "This is an animated GIF",
+          "gifData": data
+        ])
     }
 
     let uiImage = UIImage(data: data)
@@ -1331,6 +1766,23 @@ final class PostComposerViewModel {
     if let itemProvider = pasteboard.itemProviders.first {
       logger.debug("🎯 Found item provider, checking types...")
       
+      // Check for GIF first
+      if itemProvider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) {
+        logger.debug("🎯 Found GIF in pasteboard, converting to video")
+        
+        do {
+          let result = try await itemProvider.loadItem(forTypeIdentifier: UTType.gif.identifier)
+          
+          if let gifData = result as? Data {
+            logger.debug("🎯 Loaded GIF data, size: \(gifData.count) bytes")
+            await processPastedGIFAsVideo(gifData)
+            return
+          }
+        } catch {
+          logger.error("🎯 Error loading GIF: \(error)")
+        }
+      }
+      
       let imageTypes = [UTType.image.identifier, UTType.png.identifier, UTType.jpeg.identifier, UTType.tiff.identifier]
       
       for imageType in imageTypes {
@@ -1410,6 +1862,38 @@ final class PostComposerViewModel {
     
     self.mediaItems.append(mediaItem)
     logger.debug("🎯 SUCCESS: Added pasted image, total count now: \(self.mediaItems.count)")
+  }
+  
+  /// Process pasted GIF as video
+  @MainActor
+  private func processPastedGIFAsVideo(_ gifData: Data) async {
+    logger.debug("DEBUG: Processing pasted GIF as video")
+    
+    // Clear existing media
+    mediaItems.removeAll()
+    
+    do {
+      // Convert GIF to video
+      let videoURL = try await convertGIFToVideo(gifData)
+      logger.debug("DEBUG: Pasted GIF converted to video at: \(videoURL)")
+      
+      // Create video media item
+      var newVideoItem = MediaItem()
+      newVideoItem.rawVideoURL = videoURL
+      newVideoItem.isLoading = true
+      
+      self.videoItem = newVideoItem
+      
+      // Load video thumbnail and metadata
+      await loadVideoThumbnail(for: newVideoItem)
+      
+    } catch {
+      logger.error("ERROR: Failed to process pasted GIF as video: \(error)")
+      alertItem = AlertItem(
+        title: "GIF Conversion Error",
+        message: "Could not convert pasted GIF to video: \(error.localizedDescription)"
+      )
+    }
   }
   
   /// Handle pasted video URL from text editor paste

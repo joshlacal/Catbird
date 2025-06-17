@@ -268,7 +268,10 @@ struct MainContentView18: View {
             .offset(y: -80)  // Position FAB above tab bar
           }
         } else if selectedTab == 4 {
-            if appState.navigationManager.pathBinding(for: 4).wrappedValue.isEmpty {
+            // Show chat FAB when on chat tab and either:
+            // - Navigation stack is empty (iPhone)
+            // - Or we're on iPad (always show in split view)
+            if appState.navigationManager.pathBinding(for: 4).wrappedValue.isEmpty || DeviceInfo.isIPad {
               ChatFAB(newMessageAction: {
                 showingNewMessageSheet = true
               })
@@ -515,8 +518,11 @@ struct MainContentView17: View {
             )
             .offset(y: -80)  // Position FAB above tab bar
           }
-        } else if selectedTab == 3 {
-            if appState.navigationManager.pathBinding(for: 4).wrappedValue.isEmpty {
+        } else if selectedTab == 4 {
+            // Show chat FAB when on chat tab and either:
+            // - Navigation stack is empty (iPhone)
+            // - Or we're on iPad (always show in split view)
+            if appState.navigationManager.pathBinding(for: 4).wrappedValue.isEmpty || DeviceInfo.isIPad {
               ChatFAB(newMessageAction: {
                 showingNewMessageSheet = true
               })

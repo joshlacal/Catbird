@@ -73,10 +73,17 @@ struct RefinedSearchView: View {
     }
     
     private var mainContentContainer: some View {
-        ResponsiveContentView {
-            VStack(spacing: 0) {
-                contentTypeSegment
-                mainContentArea
+        ZStack {
+            // Full-width background layer
+            Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme)
+                .ignoresSafeArea()
+            
+            // Content with responsive constraints
+            ResponsiveContentView {
+                VStack(spacing: 0) {
+                    contentTypeSegment
+                    mainContentArea
+                }
             }
         }
         .navigationTitle("Search")
@@ -116,18 +123,6 @@ struct RefinedSearchView: View {
     }
     
     private var mainContentArea: some View {
-        ZStack {
-            backgroundLayer
-            contentLayer
-        }
-    }
-    
-    private var backgroundLayer: some View {
-        Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme)
-            .ignoresSafeArea()
-    }
-    
-    private var contentLayer: some View {
         Group {
             switch viewModel.searchState {
             case .idle:
