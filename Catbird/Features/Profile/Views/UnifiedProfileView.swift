@@ -62,6 +62,25 @@ struct UnifiedProfileView: View {
 
   var body: some View {
     Group {
+      // Use UIKit implementation on iOS 18+
+      if #available(iOS 18.0, *) {
+        UIKitProfileView(
+          viewModel: viewModel,
+          appState: appState,
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab,
+          path: $navigationPath
+        )
+      } else {
+        // Fallback to SwiftUI implementation for iOS 17 and below
+        swiftUIImplementation
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var swiftUIImplementation: some View {
+    Group {
       if viewModel.isLoading && viewModel.profile == nil {
         loadingView
       } else if let profile = viewModel.profile {
@@ -799,6 +818,7 @@ struct ProfileHeader: View {
     
     private var bannerView: some View {
         ZStack(alignment: .bottom) {
+            /*
             // Banner
             Group {
                 if let bannerURL = profile.banner?.uriString() {
@@ -815,7 +835,7 @@ struct ProfileHeader: View {
             }
             .frame(maxWidth: .infinity, minHeight: bannerHeight, maxHeight: bannerHeight)
             .clipped()
-            
+            */
             HStack(alignment: .bottom) {
                 // Avatar
                 LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
@@ -847,13 +867,14 @@ struct ProfileHeader: View {
     }
     
     private var profileInfoContent: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             // Add space for the avatar overflow and position follow button
-            ZStack(alignment: .trailing) {
+            HStack(alignment: .top) {
                 // Space for avatar overflow
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(height: avatarSize / 2 + 4)
+                Color.clear
+                    .frame(width: avatarSize, height: avatarSize / 2)
+                
+                Spacer()
                 
                 // Follow/Edit button at the trailing edge
                 if viewModel.isCurrentUser {
@@ -946,7 +967,7 @@ struct ProfileHeader: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, responsivePadding)
         }
-        .padding(.bottom, 12)
+        .padding(.bottom, DesignTokens.Spacing.sm)
     }
     
     private var editProfileButton: some View {
@@ -1108,18 +1129,18 @@ struct ProfileHeader: View {
 }
 
 // MARK: - Preview
-#Preview {
-  let appState = AppState.shared
-    NavigationStack {
-    UnifiedProfileView(
-      appState: appState,
-      selectedTab: .constant(3),
-      lastTappedTab: .constant(nil),
-      path: .constant(NavigationPath())
-    )
-  }
-  .environment(appState)
-}
+//#Preview {
+//  let appState = AppState.shared
+//    NavigationStack {
+//    UnifiedProfileView(
+//      appState: appState,
+//      selectedTab: .constant(3),
+//      lastTappedTab: .constant(nil),
+//      path: .constant(NavigationPath())
+//    )
+//  }
+//  .environment(appState)
+//}
 
 struct ProfileImageViewerView: View {
     let avatar: URI?
@@ -1260,3 +1281,4 @@ struct FeedRowView: View {
         .contentShape(Rectangle())
     }
 }
+
