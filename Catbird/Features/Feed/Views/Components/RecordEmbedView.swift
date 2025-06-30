@@ -50,8 +50,6 @@ struct RecordEmbedView: View {
                                 image
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
-                            } else if state.isLoading {
-                                ProgressView()
                             } else {
                                 Image(systemName: "person.circle.fill")
                                     .foregroundStyle(.secondary)
@@ -68,6 +66,7 @@ struct RecordEmbedView: View {
                     
                     PostHeaderView(displayName: post.author.displayName ?? post.author.handle.description, handle: post.author.handle.description, timeAgo: post.indexedAt.date)
                         .textScale(.secondary)
+                        .foregroundStyle(.primary)
                     
                     Spacer()
                 }
@@ -77,7 +76,8 @@ struct RecordEmbedView: View {
                    let feedPost = record as? AppBskyFeedPost {
                     if !feedPost.text.isEmpty {
                         Text(feedPost.text)
-                                            .appFont(AppTextRole.body)
+                            .appFont(AppTextRole.body)
+                            .foregroundStyle(.primary)
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -106,33 +106,65 @@ struct RecordEmbedView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
     
+    // MARK: - Embedded Content
+    
+    /// Displays embedded content within a quoted post with proper content warnings
+    /// 
+    /// This method wraps all embedded media (images, videos, external links) with ContentLabelManager
+    /// to ensure proper content moderation based on user preferences and content labels.
+    /// 
+    /// - Parameter post: The record containing embeds to display
+    /// - Returns: A view containing the embedded content with appropriate content warnings
     @ViewBuilder
     private func embeddedContent(for post: AppBskyEmbedRecord.ViewRecord) -> some View {
         if let embeds = post.embeds, !embeds.isEmpty {
             ForEach(embeds.indices, id: \.self) { index in
                 switch embeds[index] {
                 case .appBskyEmbedImagesView(let imageView):
-                    ViewImageGridView(viewImages: imageView.images, shouldBlur: hasAdultContentLabel(labels))
-                        .padding(.top, 6)
+                    ContentLabelManager(
+                        labels: labels,
+                        contentType: "image"
+                    ) {
+                        ViewImageGridView(
+                            viewImages: imageView.images,
+                            shouldBlur: false // ContentLabelManager handles blurring
+                        )
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 6)
                     
                 case .appBskyEmbedExternalView(let external):
-                    ExternalEmbedView(
-                        external: external.external,
-                        shouldBlur: hasAdultContentLabel(labels),
-                        postID: postID
-                    )
+                    ContentLabelManager(
+                        labels: labels,
+                        contentType: "link"
+                    ) {
+                        ExternalEmbedView(
+                            external: external.external,
+                            shouldBlur: false, // ContentLabelManager handles content decisions
+                            postID: postID
+                        )
+                    }
                     .padding(.top, 6)
                     
                 case .appBskyEmbedVideoView(let video):
-                    if let playerView = ModernVideoPlayerView18(
-                        bskyVideo: video,
-                        postID: postID
+                    ContentLabelManager(
+                        labels: labels,
+                        contentType: "video"
                     ) {
-                        playerView
-                            .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .padding(.top, 6)
+                        if let playerView = ModernVideoPlayerView(
+                            bskyVideo: video,
+                            postID: postID
+                        ) {
+                            playerView
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Unable to load video")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 6)
                     
                 case .appBskyEmbedRecordView(let record):
                     // For a record within a record, we'll just show a minimal reference
@@ -199,31 +231,50 @@ struct RecordEmbedView: View {
                         // Display the media portion
                         switch recordWithMediaView.media {
                         case .appBskyEmbedImagesView(let imagesView):
-                            ViewImageGridView(
-                                viewImages: imagesView.images,
-                                shouldBlur: hasAdultContentLabel(labels)
-                            )
+                            ContentLabelManager(
+                                labels: labels,
+                                contentType: "image"
+                            ) {
+                                ViewImageGridView(
+                                    viewImages: imagesView.images,
+                                    shouldBlur: false // ContentLabelManager handles blurring
+                                )
+                            }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
                             
                         case .appBskyEmbedExternalView(let externalView):
-                            ExternalEmbedView(
-                                external: externalView.external,
-                                shouldBlur: hasAdultContentLabel(labels),
-                                postID: "\(postID)-embedded"
-                            )
+                            ContentLabelManager(
+                                labels: labels,
+                                contentType: "link"
+                            ) {
+                                ExternalEmbedView(
+                                    external: externalView.external,
+                                    shouldBlur: false, // ContentLabelManager handles content decisions
+                                    postID: "\(postID)-embedded"
+                                )
+                            }
                             .padding(.top, 6)
                             
                         case .appBskyEmbedVideoView(let videoView):
-                            if let playerView = ModernVideoPlayerView18(
-                                bskyVideo: videoView,
-                                postID: "\(postID)-embedded-\(videoView.cid)"
+                            ContentLabelManager(
+                                labels: labels,
+                                contentType: "video"
                             ) {
-                                playerView
-                                    .frame(maxWidth: .infinity)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    .padding(.top, 6)
+                                if let playerView = ModernVideoPlayerView(
+                                    bskyVideo: videoView,
+                                    postID: "\(postID)-embedded-\(videoView.cid)"
+                                ) {
+                                    playerView
+                                        .frame(maxWidth: .infinity)
+                                } else {
+                                    Text("Unable to load video")
+                                        .appFont(AppTextRole.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .padding(.top, 6)
                             
                         case .unexpected:
                             EmptyView()
@@ -354,11 +405,6 @@ struct RecordEmbedView: View {
     
     // MARK: - Helper Methods
     
-    /// Determines if the post has adult content labels.
-    private func hasAdultContentLabel(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
-        return labels?.contains { label in
-            let value = label.val.lowercased()
-            return value == "porn" || value == "nsfw" || value == "nudity"
-        } ?? false
-    }
+    // Note: Content label handling is now managed by ContentLabelManager
+    // which provides proper user preference integration and age-based restrictions
 }
