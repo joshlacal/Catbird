@@ -2097,6 +2097,7 @@ struct ThreadView: View {
 
   var body: some View {
     ThreadViewControllerRepresentable(postURI: postURI, path: $path)
+      .frame(maxWidth: 600)  // Ensure 600pt maximum width for better iPad experience
 //      .themedNavigationBar(appState.themeManager)
 //      .applyTheme(appState.themeManager)
   }

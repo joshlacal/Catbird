@@ -129,7 +129,7 @@ struct PrivacySecuritySettingsView: View {
                     .foregroundStyle(.secondary)
             }
             
-            Section("Graph Management") {
+            Section("Social Graph Management") {
                 NavigationLink {
                     BlockedAccountsView()
                 } label: {

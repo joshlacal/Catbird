@@ -5,27 +5,38 @@ import Petrel
 import SwiftUI
 import UIKit
 
-@Observable final class ProfileViewModel: StateInvalidationSubscriber {
+@Observable final class ProfileViewModel: StateInvalidationSubscriber, Hashable, Equatable {
   // MARK: - Properties
 
-  // Profile data
+  // CRITICAL: Reduced observable properties to prevent Swift metadata cache corruption
+  // Only the most essential properties are observable
   private(set) var profile: AppBskyActorDefs.ProfileViewDetailed?
-    private(set) var posts: [AppBskyFeedDefs.FeedViewPost] = []
+  private(set) var posts: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var replies: [AppBskyFeedDefs.FeedViewPost] = []
   private(set) var postsWithMedia: [AppBskyFeedDefs.FeedViewPost] = []
-    private(set) var likes: [AppBskyFeedDefs.FeedViewPost] = []
-    private(set) var otherUserLikes: [AppBskyFeedDefs.PostView] = []
-  private(set) var lists: [AppBskyGraphDefs.ListView] = []
-  private(set) var starterPacks: [AppBskyGraphDefs.StarterPackViewBasic] = []
-  private(set) var feeds: [AppBskyFeedDefs.GeneratorView] = []
-  private(set) var knownFollowers: [AppBskyActorDefs.ProfileView] = []
-
-  // UI state
   private(set) var isLoading = false
-  private(set) var isLoadingMorePosts = false
-  private(set) var isLoadingKnownFollowers = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
+
+  // Non-observable properties to reduce metadata cache pressure
+  private var _likes: [AppBskyFeedDefs.FeedViewPost] = []
+  private var _otherUserLikes: [AppBskyFeedDefs.PostView] = []
+  private var _lists: [AppBskyGraphDefs.ListView] = []
+  private var _starterPacks: [AppBskyGraphDefs.StarterPackViewBasic] = []
+  private var _feeds: [AppBskyFeedDefs.GeneratorView] = []
+  private var _knownFollowers: [AppBskyActorDefs.ProfileView] = []
+  private var _isLoadingMorePosts = false
+  private var _isLoadingKnownFollowers = false
+  
+  // Computed properties for non-observable data
+  var likes: [AppBskyFeedDefs.FeedViewPost] { _likes }
+  var otherUserLikes: [AppBskyFeedDefs.PostView] { _otherUserLikes }
+  var lists: [AppBskyGraphDefs.ListView] { _lists }
+  var starterPacks: [AppBskyGraphDefs.StarterPackViewBasic] { _starterPacks }
+  var feeds: [AppBskyFeedDefs.GeneratorView] { _feeds }
+  var knownFollowers: [AppBskyActorDefs.ProfileView] { _knownFollowers }
+  var isLoadingMorePosts: Bool { _isLoadingMorePosts }
+  var isLoadingKnownFollowers: Bool { _isLoadingKnownFollowers }
 
   // Pagination tracking
   private(set) var hasMoreStarterPacks = false
@@ -42,10 +53,19 @@ import UIKit
 
   // Dependencies
   private let client: ATProtoClient?
-  private let userDID: String  // This is the DID of the profile we're viewing
+  let userDID: String  // This is the DID of the profile we're viewing (made public for stable view ID)
   private let currentUserDID: String?  // This is the logged-in user's DID
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
   private weak var stateInvalidationBus: StateInvalidationBus?
+  
+  // Task management to prevent crashes
+  private var activeLoadTasks: Set<Task<Void, Never>> = []
+  
+  // Unique instance identifier to prevent metadata cache conflicts
+  private let instanceId = UUID().uuidString
+  
+  // Serial queue for synchronized property access to prevent metadata cache corruption
+  private let propertyQueue = DispatchQueue(label: "ProfileViewModel.properties", qos: .userInitiated)
 
   // Check if this is the current user's profile - comparing correctly
   var isCurrentUser: Bool {
@@ -61,28 +81,62 @@ import UIKit
     self.currentUserDID = currentUserDID
     self.stateInvalidationBus = stateInvalidationBus
     
-    // Subscribe to state invalidation events if bus is provided
-    stateInvalidationBus?.subscribe(self)
+      logger.debug("ProfileViewModel[\(self.instanceId)]: Initializing for userDID: \(userDID)")
+    
+    // Subscribe to state invalidation events if bus is provided with safety check
+    // Use a completely deferred subscription to avoid any metadata cache conflicts during init
+    if let bus = stateInvalidationBus {
+      Task.detached { [weak self, weak bus] in
+        // Wait longer to ensure object is fully initialized
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
+        
+        await MainActor.run {
+          guard let self = self, let bus = bus else { return }
+          bus.subscribe(self)
+          self.logger.debug("ProfileViewModel[\(self.instanceId)]: Deferred subscription completed")
+        }
+      }
+    }
   }
   
   deinit {
+      logger.debug("ProfileViewModel[\(self.instanceId)]: Deinitializing")
+    
+    // Cancel all active tasks to prevent crashes
+    for task in activeLoadTasks {
+      task.cancel()
+    }
+    activeLoadTasks.removeAll()
+    
     // Unsubscribe from state invalidation events
     stateInvalidationBus?.unsubscribe(self)
   }
 
   // MARK: - Public Methods
 
-  /// Loads the user profile
+  /// Loads the user profile with enhanced crash protection
   func loadProfile() async {
     guard let client = client else {
-      self.error = NSError(
-        domain: "ProfileViewModel", code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Client not available"])
+      await MainActor.run {
+        self.error = ProfileError.clientNotAvailable
+        self.isLoading = false
+      }
+      return
+    }
+    
+    // Validate userDID to prevent AT Protocol errors
+    guard !userDID.isEmpty && userDID != "fallback" && userDID != "unknown" else {
+      await MainActor.run {
+        self.error = ProfileError.invalidUserDID
+        self.isLoading = false
+      }
       return
     }
 
-    isLoading = true
-    error = nil
+    await MainActor.run {
+      self.isLoading = true
+      self.error = nil
+    }
 
     do {
       let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
@@ -90,21 +144,34 @@ import UIKit
       )
 
       await MainActor.run {
+        // Double-check that we're still valid and not cancelled
+        guard !Task.isCancelled else { 
+          logger.debug("ProfileViewModel[\(self.instanceId)]: Task cancelled during profile load")
+          return 
+        }
+        
         if responseCode == 200, let profile = profileData {
           self.profile = profile
+          self.error = nil
+          logger.debug("ProfileViewModel[\(self.instanceId)]: Successfully loaded profile for \(profile.handle)")
         } else {
-          self.error = NSError(
-            domain: "ProfileViewModel",
-            code: responseCode,
-            userInfo: [NSLocalizedDescriptionKey: "Failed to load profile: HTTP \(responseCode)"]
-          )
+          let profileError = ProfileError.httpError(responseCode)
+          self.error = profileError
+          logger.error("ProfileViewModel[\(self.instanceId)]: Failed to load profile - HTTP \(responseCode)")
         }
         self.isLoading = false
       }
     } catch {
       await MainActor.run {
+        // Check if object is still valid to prevent crash during deallocation
+        guard !Task.isCancelled else { 
+          logger.debug("ProfileViewModel[\(self.instanceId)]: Task cancelled during error handling")
+          return 
+        }
+        
         self.error = error
         self.isLoading = false
+        logger.error("ProfileViewModel[\(self.instanceId)]: Error loading profile: \(error.localizedDescription)")
       }
     }
   }
@@ -133,7 +200,7 @@ import UIKit
   func loadKnownFollowers() async {
     guard let client = client, let profile = profile, !self.isCurrentUser, !isLoadingKnownFollowers else { return }
 
-    isLoadingKnownFollowers = true
+    _isLoadingKnownFollowers = true
 
     do {
       let params = AppBskyGraphGetKnownFollowers.Parameters(
@@ -146,24 +213,29 @@ import UIKit
 
       if responseCode == 200, let followers = output?.followers {
         await MainActor.run {
+          // Check if object is still valid to prevent crash during deallocation
+          guard !Task.isCancelled else { return }
+          
           if self.knownFollowersCursor == nil {
-            self.knownFollowers = followers
+            self._knownFollowers = followers
           } else {
-            self.knownFollowers.append(contentsOf: followers)
+            self._knownFollowers.append(contentsOf: followers)
           }
           self.knownFollowersCursor = output?.cursor
-          self.isLoadingKnownFollowers = false
+          self._isLoadingKnownFollowers = false
         }
       } else {
         logger.warning("Failed to load known followers: HTTP \(responseCode)")
         await MainActor.run { 
-          self.isLoadingKnownFollowers = false 
+          guard !Task.isCancelled else { return }
+          self._isLoadingKnownFollowers = false 
         }
       }
     } catch {
       logger.error("Error loading known followers: \(error.localizedDescription)")
       await MainActor.run { 
-        self.isLoadingKnownFollowers = false 
+        guard !Task.isCancelled else { return }
+        self._isLoadingKnownFollowers = false 
       }
     }
   }
@@ -172,7 +244,7 @@ import UIKit
   func loadStarterPacks() async {
     guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
 
-    isLoadingMorePosts = true
+    _isLoadingMorePosts = true
 
     do {
       let params = AppBskyGraphGetActorStarterPacks.Parameters(
@@ -187,25 +259,25 @@ import UIKit
       if responseCode == 200, let packs = output?.starterPacks {
         await MainActor.run {
           if self.starterPacksCursor == nil {
-            self.starterPacks = packs
+            self._starterPacks = packs
           } else {
-            self.starterPacks.append(contentsOf: packs)
+            self._starterPacks.append(contentsOf: packs)
           }
           self.starterPacksCursor = output?.cursor
           self.hasMoreStarterPacks = output?.cursor != nil
-          self.isLoadingMorePosts = false
+          self._isLoadingMorePosts = false
         }
       } else {
         logger.warning("Failed to load starter packs: HTTP \(responseCode)")
         await MainActor.run {
-          self.isLoadingMorePosts = false
+          self._isLoadingMorePosts = false
           self.hasMoreStarterPacks = false
         }
       }
     } catch {
       logger.error("Error loading starter packs: \(error.localizedDescription)")
       await MainActor.run {
-        self.isLoadingMorePosts = false
+        self._isLoadingMorePosts = false
         self.hasMoreStarterPacks = false
       }
     }
@@ -215,7 +287,7 @@ import UIKit
   func loadLists() async {
     guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
 
-    isLoadingMorePosts = true
+    _isLoadingMorePosts = true
 
     do {
       let params = AppBskyGraphGetLists.Parameters(
@@ -229,20 +301,20 @@ import UIKit
       if responseCode == 200, let lists = output?.lists {
         await MainActor.run {
           if self.listsCursor == nil {
-            self.lists = lists
+            self._lists = lists
           } else {
-            self.lists.append(contentsOf: lists)
+            self._lists.append(contentsOf: lists)
           }
           self.listsCursor = output?.cursor
-          self.isLoadingMorePosts = false
+          self._isLoadingMorePosts = false
         }
       } else {
         logger.warning("Failed to load lists: HTTP \(responseCode)")
-        await MainActor.run { self.isLoadingMorePosts = false }
+        await MainActor.run { self._isLoadingMorePosts = false }
       }
     } catch {
       logger.error("Error loading lists: \(error.localizedDescription)")
-      await MainActor.run { self.isLoadingMorePosts = false }
+      await MainActor.run { self._isLoadingMorePosts = false }
     }
   }
 
@@ -252,7 +324,7 @@ import UIKit
   private func loadFeed(type: FeedType, resetCursor: Bool) async {
     guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
 
-    isLoadingMorePosts = true
+    _isLoadingMorePosts = true
 
     do {
       switch type {
@@ -365,9 +437,9 @@ import UIKit
               if responseCode == 200, let feed = output?.feed {
                   await MainActor.run {
                       if resetCursor {
-                          self.likes = feed
+                          self._likes = feed
                       } else {
-                          self.likes.append(contentsOf: feed)
+                          self._likes.append(contentsOf: feed)
                       }
                       self.likesCursor = output?.cursor
                   }
@@ -443,9 +515,9 @@ import UIKit
                   let likedPosts = fetchedPosts
                   await MainActor.run {
                       if resetCursor {
-                          self.otherUserLikes = likedPosts
+                          self._otherUserLikes = likedPosts
                       } else {
-                          self.otherUserLikes.append(contentsOf: likedPosts)
+                          self._otherUserLikes.append(contentsOf: likedPosts)
                       }
                       
                       // Store cursor for next pagination
@@ -456,14 +528,14 @@ import UIKit
       }
 
       await MainActor.run {
-        self.isLoadingMorePosts = false
+        self._isLoadingMorePosts = false
       }
 
     } catch {
       logger.error(
         "Error loading feed (\(String(describing: type))): \(error.localizedDescription)")
       await MainActor.run {
-        self.isLoadingMorePosts = false
+        self._isLoadingMorePosts = false
       }
     }
   }
@@ -478,7 +550,7 @@ import UIKit
   func loadFeeds() async {
     guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
 
-    isLoadingMorePosts = true
+    _isLoadingMorePosts = true
 
     do {
       let params = AppBskyFeedGetActorFeeds.Parameters(
@@ -492,23 +564,23 @@ import UIKit
       if responseCode == 200, let fetchedFeeds = output?.feeds {
         await MainActor.run {
           if self.feedsCursor == nil {
-            self.feeds = fetchedFeeds
+            self._feeds = fetchedFeeds
           } else {
-            self.feeds.append(contentsOf: fetchedFeeds)
+            self._feeds.append(contentsOf: fetchedFeeds)
           }
           self.feedsCursor = output?.cursor
-          self.isLoadingMorePosts = false
+          self._isLoadingMorePosts = false
         }
       } else {
         logger.warning("Failed to load feeds: HTTP \(responseCode)")
         await MainActor.run {
-          self.isLoadingMorePosts = false
+          self._isLoadingMorePosts = false
         }
       }
     } catch {
       logger.error("Error loading feeds: \(error.localizedDescription)")
       await MainActor.run {
-        self.isLoadingMorePosts = false
+        self._isLoadingMorePosts = false
       }
     }
   }
@@ -773,17 +845,46 @@ import UIKit
       posts = []
       replies = []
       postsWithMedia = []
-      likes = []
-      otherUserLikes = []
-      lists = []
-      starterPacks = []
-      feeds = []
-      knownFollowers = []
+      _likes = []
+      _otherUserLikes = []
+      _lists = []
+      _starterPacks = []
+      _feeds = []
+      _knownFollowers = []
       error = nil
       
     default:
       break
     }
   }
+  
+  // MARK: - Hashable & Equatable conformance to prevent Swift metadata cache conflicts
+  
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(instanceId)
+    hasher.combine(userDID)
+  }
+  
+  static func == (lhs: ProfileViewModel, rhs: ProfileViewModel) -> Bool {
+    return lhs.instanceId == rhs.instanceId && lhs.userDID == rhs.userDID
+  }
 
+}
+
+// MARK: - Profile Error Types
+enum ProfileError: LocalizedError {
+  case clientNotAvailable
+  case invalidUserDID
+  case httpError(Int)
+  
+  var errorDescription: String? {
+    switch self {
+    case .clientNotAvailable:
+      return "Network client not available"
+    case .invalidUserDID:
+      return "Invalid user identifier"
+    case .httpError(let code):
+      return "HTTP error: \(code)"
+    }
+  }
 }

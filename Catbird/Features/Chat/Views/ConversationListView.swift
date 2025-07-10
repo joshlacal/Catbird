@@ -9,6 +9,7 @@ struct ConversationListView: View {
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @State var chatManager: ChatManager
   var searchText: String = ""
+  var selectedConvoId: String?
   var onSelectConvo: (String) -> Void
   var onSelectSearchResult: ((ProfileDisplayable) -> Void)?
 
@@ -52,7 +53,10 @@ struct ConversationListView: View {
   @ViewBuilder
   private var conversationListContent: some View {
     ForEach(chatManager.acceptedConversations) { convo in
-      conversationRowView(for: convo, showMuteOption: true)
+//      NavigationLink(value: convo.id) {
+        conversationRowView(for: convo, showMuteOption: true)
+//      }
+//      .buttonStyle(.plain) // Remove default NavigationLink styling
     }
     
     paginationContent
@@ -72,7 +76,10 @@ struct ConversationListView: View {
   private var filteredConversationsSection: some View {
     Section("Conversations") {
       ForEach(chatManager.filteredConversations) { convo in
-        conversationRowView(for: convo, showMuteOption: false)
+        NavigationLink(value: convo.id) {
+          conversationRowView(for: convo, showMuteOption: false)
+        }
+        .buttonStyle(.plain)
       }
     }
   }
@@ -88,11 +95,11 @@ struct ConversationListView: View {
   
   @ViewBuilder
   private var paginationContent: some View {
-    let shouldShowLoadMore = !chatManager.acceptedConversations.isEmpty && 
-                            chatManager.conversationsCursor != nil && 
+    let shouldShowLoadMore = !chatManager.acceptedConversations.isEmpty &&
+                            chatManager.conversationsCursor != nil &&
                             !chatManager.loadingConversations
     
-    let shouldShowProgress = chatManager.loadingConversations && 
+    let shouldShowProgress = chatManager.loadingConversations &&
                             !chatManager.acceptedConversations.isEmpty
     
     if shouldShowLoadMore {
@@ -171,23 +178,19 @@ struct ConversationListView: View {
       convo: convo,
       did: appState.currentUserDID ?? ""
     )
-    .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-    .contentShape(Rectangle())
-    .onTapGesture {
-      onSelectConvo(convo.id)
-    }
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       swipeActionsContent(for: convo, showMuteOption: showMuteOption)
     }
     .contextMenu {
       ConversationContextMenu(conversation: convo)
     }
-    .listRowBackground(
-      // Add selection highlight for iPad split view
-      horizontalSizeClass == .regular && chatManager.conversations.first(where: { $0.id == convo.id }) != nil
-        ? Color.accentColor.opacity(0.1)
-        : Color.clear
-    )
+//    .listRowBackground(
+//      // Show selection state
+//      selectedConvoId == convo.id
+//        ? Color.accentColor.opacity(0.1)
+//        : Color.clear
+//    )
+//    .listRowInsets(EdgeInsets()) // Remove default list row insets to allow our custom row to fill the space
   }
   
   @ViewBuilder

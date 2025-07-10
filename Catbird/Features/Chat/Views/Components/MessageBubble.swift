@@ -77,9 +77,12 @@ struct MessageBubble: View {
         
         VStack(alignment: .leading, spacing: 4) {
           if let embed = embed {
-            RecordEmbedView(record: embed, labels: nil, path: $path)
-              .foregroundStyle(.primary)
-              .padding(8)
+            // Wrap embed to reset text color
+            ZStack {
+              RecordEmbedView(record: embed, labels: nil, path: $path)
+            }
+            .foregroundStyle(Color.primary) // Reset text color for embed content
+            .padding(8)
           }
 
           Text(message.text)
@@ -87,6 +90,9 @@ struct MessageBubble: View {
                 .padding(.horizontal, 14)
             .padding(.vertical, 10)
           
+          // Bluesky chat doesn't support image attachments - they use embeds instead
+          // Comment out attachment handling to prevent spinners
+          /*
           if !message.attachments.isEmpty {
             ForEach(message.attachments) { attachment in
               AttachmentView(attachment: attachment, path: $path)
@@ -94,6 +100,7 @@ struct MessageBubble: View {
                 .padding(.bottom, 4)
             }
           }
+          */
           
           if let recording = message.recording {
             AudioRecordingView(recording: recording)
@@ -146,8 +153,9 @@ struct AttachmentView: View {
             RoundedRectangle(cornerRadius: 12)
               .fill(Color.gray.opacity(0.2))
               .frame(maxWidth: 200, maxHeight: 200)
-            ProgressView()
-              .progressViewStyle(CircularProgressViewStyle(tint: .gray))
+            Image(systemName: "photo")
+              .foregroundColor(.gray)
+              .font(.system(size: 40))
           }
         }
         .frame(maxWidth: 200, maxHeight: 200)
@@ -201,8 +209,9 @@ struct MediaFullScreenView: View {
               .resizable()
               .aspectRatio(contentMode: .fit)
           } placeholder: {
-            ProgressView()
-              .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            Image(systemName: "photo")
+              .foregroundColor(.white.opacity(0.8))
+              .font(.system(size: 30))
           }
           
         case .video:
@@ -269,6 +278,7 @@ struct ChatPostEmbedView: View {
             Text(displayName)
               .appFont(AppTextRole.footnote)
               .fontWeight(.medium)
+              .foregroundStyle(.primary)
               .lineLimit(1)
           }
           
@@ -288,6 +298,7 @@ struct ChatPostEmbedView: View {
       // Post content
       Text(postEmbedData.displayText)
         .appFont(AppTextRole.body)
+        .foregroundStyle(.primary)
         .lineLimit(3)
       
       // Post metadata
@@ -340,8 +351,9 @@ struct ChatVideoThumbnailView: View {
           RoundedRectangle(cornerRadius: 12)
             .fill(Color.gray.opacity(0.2))
             .overlay(
-              ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .gray))
+              Image(systemName: "video.fill")
+                .foregroundColor(.gray)
+                .font(.system(size: 30))
             )
         }
         .frame(maxWidth: 200, maxHeight: 200)
@@ -400,8 +412,9 @@ struct ChatInlineVideoPlayerView: View {
             togglePlayback()
           }
       } else {
-        ProgressView()
-          .progressViewStyle(CircularProgressViewStyle(tint: .white))
+        Image(systemName: "video.fill")
+          .foregroundColor(.white.opacity(0.8))
+          .font(.system(size: 30))
       }
       
       // Controls overlay
@@ -531,8 +544,9 @@ struct ChatVideoPlayerView: View {
             showControls.toggle()
           }
       } else {
-        ProgressView()
-          .progressViewStyle(CircularProgressViewStyle(tint: .white))
+        Image(systemName: "video.fill")
+          .foregroundColor(.white.opacity(0.8))
+          .font(.system(size: 30))
       }
       
       // Controls overlay

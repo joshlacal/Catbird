@@ -1223,16 +1223,8 @@ final class ChatManager: StateInvalidationSubscriber {
             let postTextSnippet = "Post from @\(postAuthorHandle)" // Simplified for now
             let postDisplayText = postTextSnippet
             
-            // Create a custom attachment for the post
-            // Use the post URI as a unique identifier
-            if let postURL = URL(string: "at://\(recordViewRecord.uri)") {
-              let attachment = Attachment(
-                id: recordViewRecord.uri.uriString(),
-                url: postURL,
-                type: .image // Using image type for post embeds
-              )
-              attachments.append(attachment)
-            }
+            // Don't create attachments for post embeds - they're handled by RecordEmbedView
+            // The embed is already passed to MessageBubble separately
           }
 
         case .appBskyGraphDefsListView(let listView):

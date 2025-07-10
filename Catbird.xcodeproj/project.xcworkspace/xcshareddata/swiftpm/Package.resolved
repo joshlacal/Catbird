@@ -1,5 +1,5 @@
 {
-  "originHash" : "cdc50335391e11143f77d2b2da5d694bb27533960a69851f8b2a9a1e40cf7cc3",
+  "originHash" : "7bd8a0dafffb79489b44e5bcb25cd0ffb881ddded89d7b804f8c87425d013406",
   "pins" : [
     {
       "identity" : "activityindicatorview",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/exyte/AnchoredPopup.git",
       "state" : {
-        "revision" : "787f27027d3ef38c01469d228ce062ab4d5645f5",
-        "version" : "1.0.6"
+        "revision" : "d7478c34e761725ff06ad74e44e675d0d56a4150",
+        "version" : "1.0.7"
       }
     },
     {
@@ -35,6 +35,15 @@
       "state" : {
         "revision" : "15fc223bca9a81491193de82c33308879c5f34e6",
         "version" : "1.8.7"
+      }
+    },
+    {
+      "identity" : "flyingfox",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swhitty/FlyingFox.git",
+      "state" : {
+        "revision" : "f7829d4aca8cbfecb410a1cce872b1b045224aa1",
+        "version" : "0.16.0"
       }
     },
     {
@@ -78,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/izyumkin/MCEmojiPicker",
       "state" : {
-        "revision" : "e0b4903b75ae1cc418d276d84d1cb946b8a1d73c",
-        "version" : "1.2.3"
+        "revision" : "e5b3ed359b04370287366a7c15ffa7013cdd4eec",
+        "version" : "1.2.5"
       }
     },
     {
@@ -107,6 +116,14 @@
       "state" : {
         "revision" : "4c77c7384768acf1093d66ccaacf298d322b10b7",
         "version" : "0.15.0"
+      }
+    },
+    {
+      "identity" : "simpledebugger",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/EmergeTools/SimpleDebugger",
+      "state" : {
+        "revision" : "e0ad1cd304132efa0ab3b4707bd0eea761dbe2b5"
       }
     },
     {

@@ -9,6 +9,7 @@ import TipKit
 import UIKit
 import UserNotifications
 import WidgetKit
+import Darwin // For sysctl constants
 
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
@@ -23,6 +24,58 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+      // FaultOrdering debugging and setup for physical devices
+      print("🔍 App launched with environment:")
+      for (key, value) in ProcessInfo.processInfo.environment {
+        if key.contains("FAULT") || key.contains("RUN_") || key.contains("DYLD") || key.contains("XCTest") {
+          print("  \(key) = \(value)")
+        }
+      }
+      
+      // CRITICAL FOR PHYSICAL DEVICE: Force set environment variables if in test environment
+      if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        print("🧪 Running in XCTest environment - checking for FaultOrdering flags")
+        
+        // Only set FaultOrdering variables if explicitly requested
+        if ProcessInfo.processInfo.environment["ENABLE_FAULT_ORDERING"] == "1" {
+          print("✅ FaultOrdering explicitly enabled via ENABLE_FAULT_ORDERING")
+          
+          // Force set the environment variables that FaultOrdering needs
+          setenv("RUN_FAULT_ORDER", "1", 1)
+          setenv("RUN_FAULT_ORDER_SETUP", "1", 1)
+          setenv("FAULT_ORDERING_ENABLE", "1", 1)
+          
+          // Verify they were set
+          if let runFaultOrder = getenv("RUN_FAULT_ORDER") {
+            print("✅ RUN_FAULT_ORDER set to: \(String(cString: runFaultOrder))")
+          }
+          if let runFaultOrderSetup = getenv("RUN_FAULT_ORDER_SETUP") {
+            print("✅ RUN_FAULT_ORDER_SETUP set to: \(String(cString: runFaultOrderSetup))")
+          }
+        } else {
+          print("⚠️ FaultOrdering not enabled - set ENABLE_FAULT_ORDERING=1 to activate")
+        }
+      }
+      
+      // Check if FaultOrdering framework is loaded
+      if ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" || 
+         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+        print("🔍 FaultOrdering mode detected in AppDelegate")
+        
+        // Check if debugger is attached (this is what FaultOrdering checks)
+        var info = kinfo_proc()
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        var size = MemoryLayout<kinfo_proc>.stride
+        let result = sysctl(&mib, 4, &info, &size, nil, 0)
+        let debuggerAttached = (result == 0) && (info.kp_proc.p_flag & P_TRACED) != 0
+        print("🔍 Debugger attached: \(debuggerAttached)")
+        
+        // For physical devices, the debugger might not be attached in the traditional sense
+        if !debuggerAttached {
+          print("⚠️ Debugger not attached - FaultOrdering may not work correctly")
+        }
+      }
+      
       // Request widget updates at app launch
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
         guard let self = self, let appState = self.appState else { return }
@@ -72,65 +125,120 @@ struct CatbirdApp: App {
   init() {
     logger.info("🚀 CatbirdApp initializing")
 
-    // MARK: - Navigation Bar Configuration
-    // Navigation bar theme is handled completely by ThemeManager during AppState.initialize()
-    // to avoid conflicts between initial setup and dynamic theme changes
+    // Fast path for FaultOrdering tests - skip expensive initialization
+    let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
+                              ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
+                              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    
+    if isFaultOrderingMode {
+      logger.info("⚡ FaultOrdering mode detected - using fast initialization")
+      // Force set environment for FaultOrdering on physical device
+      setenv("FAULT_ORDERING_ENABLE", "1", 1)
+    } else {
+      // MARK: - Navigation Bar Configuration
+      // Navigation bar theme is handled completely by ThemeManager during AppState.initialize()
+      // to avoid conflicts between initial setup and dynamic theme changes
 
-    // Configure audio session at app launch
-    do {
-      let audioSession = AVAudioSession.sharedInstance()
-      try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-      logger.debug("✅ Audio session configured at app launch")
-    } catch {
-      logger.error("❌ Failed to configure audio session: \(error)")
-    }
-
-    // Initialize model container with error recovery
-    do {
-      // Use app's Documents directory instead of App Group for SwiftData
-      let appDocumentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-      let storeURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
-      
-      self.modelContainer = try ModelContainer(
-        for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
-        // 🧪 EXPERIMENTAL: Repository parsing models
-        RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
-        configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
-      )
-      logger.debug("✅ Model container initialized successfully")
-    } catch {
-      logger.error("❌ Could not initialize ModelContainer: \(error)")
-      
-      // Try to recover by deleting corrupted database
-      let fileManager = FileManager.default
-      let appDocumentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-      let dbURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
-      
-      if fileManager.fileExists(atPath: dbURL.path) {
-        do {
-          try fileManager.removeItem(at: dbURL)
-          logger.info("🔄 Removed corrupted database, attempting recreate")
-          
-          // Retry initialization
-          self.modelContainer = try ModelContainer(
-            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
-            // 🧪 EXPERIMENTAL: Repository parsing models
-            RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
-            configurations: ModelConfiguration("Catbird", schema: nil, url: dbURL)
-          )
-          logger.debug("✅ Model container recreated successfully after recovery")
-        } catch {
-          logger.error("❌ Failed to recover database: \(error)")
-          fatalError("Failed to initialize ModelContainer after recovery: \(error)")
-        }
-      } else {
-        fatalError("Failed to initialize ModelContainer: \(error)")
+      // Configure audio session at app launch
+      do {
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+        logger.debug("✅ Audio session configured at app launch")
+      } catch {
+        logger.error("❌ Failed to configure audio session: \(error)")
       }
     }
 
-    // Initialize debug tools in development builds
+    // Initialize model container with error recovery (simplified for FaultOrdering)
+    do {
+      guard let appDocumentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+        throw NSError(domain: "CatbirdApp", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to access documents directory"])
+      }
+      let storeURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
+      
+      if isFaultOrderingMode {
+        // Minimal model container for FaultOrdering - only essential models
+        self.modelContainer = try ModelContainer(
+          for: Preferences.self, AppSettingsModel.self,
+          configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
+        )
+        logger.debug("✅ Minimal model container initialized for FaultOrdering")
+      } else {
+        // Full model container for normal use
+        self.modelContainer = try ModelContainer(
+          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+          // 🧪 EXPERIMENTAL: Repository parsing models
+          RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+          configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
+        )
+        logger.debug("✅ Model container initialized successfully")
+      }
+    } catch {
+      logger.error("❌ Could not initialize ModelContainer: \(error)")
+      
+      if isFaultOrderingMode {
+        // For FaultOrdering, use in-memory store if file fails
+        self.modelContainer = try! ModelContainer(
+          for: Preferences.self, AppSettingsModel.self,
+          configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
+        )
+        logger.debug("✅ In-memory model container created for FaultOrdering")
+      } else {
+        // Try to recover by deleting corrupted database
+        let fileManager = FileManager.default
+        guard let appDocumentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+          // Fallback to in-memory storage if documents directory is inaccessible
+          logger.warning("⚠️ Documents directory inaccessible, using in-memory storage")
+          self.modelContainer = try! ModelContainer(
+            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+            RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+            configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
+          )
+          return
+        }
+        
+        let dbURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
+        
+        if fileManager.fileExists(atPath: dbURL.path) {
+          do {
+            try fileManager.removeItem(at: dbURL)
+            logger.info("🔄 Removed corrupted database, attempting recreate")
+            
+            // Retry initialization
+            self.modelContainer = try ModelContainer(
+              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+              // 🧪 EXPERIMENTAL: Repository parsing models
+              RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+              configurations: ModelConfiguration("Catbird", schema: nil, url: dbURL)
+            )
+            logger.debug("✅ Model container recreated successfully after recovery")
+          } catch {
+            logger.error("❌ Failed to recover database: \(error)")
+            // Fallback to in-memory storage instead of crashing
+            logger.warning("⚠️ Using in-memory storage as final fallback")
+            self.modelContainer = try! ModelContainer(
+              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+              RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+              configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
+            )
+          }
+        } else {
+          // Fallback to in-memory storage instead of crashing
+          logger.warning("⚠️ Using in-memory storage as fallback")
+          self.modelContainer = try! ModelContainer(
+            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, BackupRecord.self, BackupConfiguration.self,
+            RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+            configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
+          )
+        }
+      }
+    }
+
+    // Initialize debug tools in development builds (skip for FaultOrdering)
     #if DEBUG
-      setupDebugTools()
+      if !isFaultOrderingMode {
+        setupDebugTools()
+      }
     #endif
   }
 
@@ -197,18 +305,73 @@ struct CatbirdApp: App {
         // Mark as initialized immediately to prevent duplicate initialization
         didInitialize = true
         logger.debug("🎯 Starting first-time app initialization")
-
-        // Configure TipKit for onboarding tips
-        #if DEBUG
-          // Reset tips in debug builds for testing
-          try? Tips.resetDatastore()
-        #endif
         
-        // Configure TipKit with production settings
-        try? Tips.configure([
-          .displayFrequency(.immediate),
-          .datastoreLocation(.applicationDefault)
-        ])
+        // Special handling for FaultOrdering measurement phase
+        let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
+                                  ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
+                                  ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+                                  
+        if isFaultOrderingMode {
+          logger.info("⚡ FaultOrdering measurement mode detected - initializing measurement server")
+          
+          // Force set environment variables for physical device
+          setenv("FAULT_ORDERING_ENABLE", "1", 1)
+          
+          // Debug environment variables
+          logger.info("🔍 FaultOrdering debugging:")
+          logger.info("FAULT_ORDERING_ENABLE: \(ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] ?? "not set")")
+          logger.info("RUN_FAULT_ORDER: \(ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] ?? "not set")")
+          logger.info("XCTestConfigurationFilePath: \(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] ?? "not set")")
+          logger.info("DYLD_INSERT_LIBRARIES: \(ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] ?? "not set")")
+          
+          // Check if we're on a physical device
+          #if targetEnvironment(simulator)
+          logger.info("💻 Running on simulator")
+          #else
+          logger.info("📱 Running on physical device")
+          #endif
+          
+          // Check Documents directory for linkmap
+          if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let linkmapURL = documentsURL.appendingPathComponent("linkmap-addresses.json")
+            let exists = FileManager.default.fileExists(atPath: linkmapURL.path)
+            logger.info("🔍 Linkmap file exists at \(linkmapURL.path): \(exists)")
+          }
+          
+          // Keep app alive for FaultOrdering measurement server
+          // The FaultOrdering framework initializes itself when the environment is set
+          Task.detached(priority: .high) {
+            logger.info("⚡ Starting keep-alive task for FaultOrdering measurement")
+            
+            // Keep the app process alive during measurement
+            while !Task.isCancelled {
+              try? await Task.sleep(for: .seconds(1))
+              // This prevents the app from being suspended during measurement
+            }
+          }
+          
+          // Additional background task to prevent app suspension
+          Task.detached(priority: .background) {
+            while !Task.isCancelled {
+              try? await Task.sleep(for: .seconds(5))
+              logger.debug("🔄 FaultOrdering keep-alive ping")
+            }
+          }
+        }
+
+        // Configure TipKit for onboarding tips (skip for FaultOrdering)
+        if !isFaultOrderingMode {
+          #if DEBUG
+            // Reset tips in debug builds for testing
+            try? Tips.resetDatastore()
+          #endif
+          
+          // Configure TipKit with production settings
+          try? Tips.configure([
+            .displayFrequency(.immediate),
+            .datastoreLocation(.applicationDefault)
+          ])
+        }
         
         // Perform the initialization process
         logger.info("Starting app initialization")

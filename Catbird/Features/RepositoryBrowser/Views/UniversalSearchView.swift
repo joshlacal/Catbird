@@ -206,7 +206,7 @@ struct RepositoryUniversalSearchView: View {
             ForEach(viewModel.groupedResults, id: \.type) { group in
                 Section(header: SearchResultTypeHeader(type: group.type, count: group.results.count)) {
                     ForEach(group.results, id: \.id) { result in
-                        SearchResultRow(result: result) {
+                        RepoSearchResultRow(result: result) {
                             selectedSearchResult = result
                         }
                     }
@@ -831,7 +831,7 @@ private struct SearchResultTypeHeader: View {
     }
 }
 
-private struct SearchResultRow: View {
+private struct RepoSearchResultRow: View {
     let result: SearchResult
     let onTap: () -> Void
     

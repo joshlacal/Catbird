@@ -25,7 +25,7 @@ struct AddFeedSheet: View {
     @State private var pinSelected = true
     @State private var viewModel: FeedsStartPageViewModel?
     @State private var subscriptionStatus: [String: Bool] = [:]
-    @State private var showSwipeableCards = false
+//    @State private var showSwipeableCards = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "AddFeedSheet")
     
@@ -137,20 +137,20 @@ struct AddFeedSheet: View {
                                         
                                         Spacer()
                                         
-                                        Button(action: {
-                                            showSwipeableCards = true
-                                        }) {
-                                            HStack(spacing: 4) {
-                                                Image(systemName: "rectangle.stack")
-                                                Text("Card View")
-                                            }
-                                            .appFont(AppTextRole.caption)
-                                            .foregroundColor(.accentColor)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.accentColor.opacity(0.1))
-                                            .cornerRadius(6)
-                                        }
+//                                        Button(action: {
+//                                            showSwipeableCards = true
+//                                        }) {
+//                                            HStack(spacing: 4) {
+//                                                Image(systemName: "rectangle.stack")
+//                                                Text("Card View")
+//                                            }
+//                                            .appFont(AppTextRole.caption)
+//                                            .foregroundColor(.accentColor)
+//                                            .padding(.horizontal, 8)
+//                                            .padding(.vertical, 4)
+//                                            .background(Color.accentColor.opacity(0.1))
+//                                            .cornerRadius(6)
+//                                        }
                                     }
                                     .padding(.horizontal)
                                     .padding(.top)
@@ -177,16 +177,16 @@ struct AddFeedSheet: View {
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        showSwipeableCards = true
-                    }) {
-                        Image(systemName: "rectangle.stack")
-                            .font(.title3)
-                    }
-                    .accessibilityLabel("Card view")
-                    .accessibilityHint("Switch to swipeable card interface")
-                }
+//                ToolbarItem(placement: .navigationBarTrailing) {
+//                    Button(action: {
+//                        showSwipeableCards = true
+//                    }) {
+//                        Image(systemName: "rectangle.stack")
+//                            .font(.title3)
+//                    }
+//                    .accessibilityLabel("Card view")
+//                    .accessibilityHint("Switch to swipeable card interface")
+//                }
             }
             .onAppear {
                 initViewModel()
@@ -200,9 +200,9 @@ struct AddFeedSheet: View {
             .sheet(item: $selectedFeedForPinning) { feed in
                 pinConfirmationSheet(feed: feed)
             }
-            .fullScreenCover(isPresented: $showSwipeableCards) {
-                FeedDiscoveryCardsView()
-            }
+//            .fullScreenCover(isPresented: $showSwipeableCards) {
+//                FeedDiscoveryCardsView()
+//            }
         }
     }
     

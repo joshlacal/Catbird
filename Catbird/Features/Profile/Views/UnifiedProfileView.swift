@@ -18,8 +18,11 @@ struct UnifiedProfileView: View {
   @State private var isEditingProfile = false
   @State private var isShowingAccountSwitcher = false
   @State private var isShowingBlockConfirmation = false
+  @State private var isShowingAddToListSheet = false
   @State private var isBlocking = false
   @State private var isMuting = false
+  @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
+  @State private var scrollOffset: CGFloat = 0
     
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
 
@@ -28,14 +31,31 @@ struct UnifiedProfileView: View {
     appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>,
     path: Binding<NavigationPath>
   ) {
-    let currentUserDID = appState.currentUserDID ?? ""
-    _viewModel = State(
-      wrappedValue: ProfileViewModel(
-        client: appState.atProtoClient,
-        userDID: currentUserDID,
-        currentUserDID: currentUserDID,
-        stateInvalidationBus: appState.stateInvalidationBus
-      ))
+    // Gracefully handle missing user DID instead of crashing
+    guard let userDID = appState.currentUserDID else {
+      // Create a fallback view model for the case where user isn't logged in
+      let viewModel = ProfileViewModel(
+        client: nil,
+        userDID: "fallback",
+        currentUserDID: nil,
+        stateInvalidationBus: nil
+      )
+      _viewModel = State(wrappedValue: viewModel)
+      self._selectedTab = selectedTab
+      self._lastTappedTab = lastTappedTab
+      _navigationPath = path
+      return
+    }
+    
+    // Create ProfileViewModel with unique identity to prevent metadata cache conflicts
+    let viewModel = ProfileViewModel(
+      client: appState.atProtoClient,
+      userDID: userDID,
+      currentUserDID: appState.currentUserDID,
+      stateInvalidationBus: appState.stateInvalidationBus
+    )
+    
+    _viewModel = State(wrappedValue: viewModel)
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
     _navigationPath = path
@@ -48,270 +68,136 @@ struct UnifiedProfileView: View {
   private init(
     userDID: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>
   ) {
-    _viewModel = State(
-      wrappedValue: ProfileViewModel(
-        client: appState.atProtoClient,
-        userDID: userDID,
-        currentUserDID: appState.currentUserDID,
-        stateInvalidationBus: appState.stateInvalidationBus
-      ))
+    // Create ProfileViewModel with unique identity to prevent metadata cache conflicts
+    let viewModel = ProfileViewModel(
+      client: appState.atProtoClient,
+      userDID: userDID,
+      currentUserDID: appState.currentUserDID,
+      stateInvalidationBus: appState.stateInvalidationBus
+    )
+    
+    _viewModel = State(wrappedValue: viewModel)
     self._selectedTab = selectedTab
     self._lastTappedTab = .constant(nil)
     _navigationPath = path
   }
 
   var body: some View {
-    Group {
-      // Use UIKit implementation on iOS 18+
-      if #available(iOS 18.0, *) {
-        UIKitProfileView(
-          viewModel: viewModel,
-          appState: appState,
-          selectedTab: $selectedTab,
-          lastTappedTab: $lastTappedTab,
-          path: $navigationPath
-        )
-      } else {
-        // Fallback to SwiftUI implementation for iOS 17 and below
-        swiftUIImplementation
-      }
+    // Use UIKit implementation for better performance
+    if #available(iOS 18.0, *) {
+      UIKitProfileView(
+        viewModel: viewModel,
+        appState: appState,
+        selectedTab: $selectedTab,
+        lastTappedTab: $lastTappedTab,
+        path: $navigationPath
+      )
+    } else {
+      // Fallback to SwiftUI implementation
+      swiftUIImplementation
     }
   }
   
   @ViewBuilder
   private var swiftUIImplementation: some View {
-    Group {
-      if viewModel.isLoading && viewModel.profile == nil {
-        loadingView
-      } else if let profile = viewModel.profile {
-          // Show account status bar only for current user (outside of List)
-//          if viewModel.isCurrentUser {
-//            accountStatusBar
-//          }
-//                .padding(0)
-
-          // List contains all content with responsive padding
-          GeometryReader { geometry in
-            List {
-            // Profile header as first section
-              
-              Section {
-                  ProfileHeader(
-                      profile: profile,
-                      viewModel: viewModel,
-                      appState: appState,
-                      isEditingProfile: $isEditingProfile,
-                      path: $navigationPath,
-                      screenWidth: geometry.size.width
-                  )
-                  .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-                  // 3. Define the background shape for tap consumption
-//                  .contentShape(Rectangle())
-                  // 4. Consume taps on the background shape
-//                  .onTapGesture {}
-                  // 5. Explicitly allow hit testing for header content (buttons)
-                  //    (May not be strictly necessary if buttons work, but reinforces)
-//                  .allowsHitTesting(true)
-              }
-              // --- Modifiers applied ONLY to the Section ---
-              .listRowSeparator(.hidden)
-              .buttonStyle(.plain) // <--- Prevent List from treating row as button
-              .listRowInsets(EdgeInsets(
-                  top: 0, 
-                  leading: 0, // Banner should extend full width
-                  bottom: 8, 
-                  trailing: 0
-              ))
-              
-              // Followed by section (only for other users)
-              if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
-                  Section {
-                      FollowedByView(
-                          knownFollowers: viewModel.knownFollowers,
-                          totalFollowersCount: profile.followersCount ?? 0,
-                          profileDID: profile.did.didString(),
-                          path: $navigationPath
-                      )
-                      .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-                  }
-                  .listRowSeparator(.hidden)
-                  .listRowInsets(EdgeInsets(
-                      top: 0, 
-                      leading: max(16, (geometry.size.width - 600) / 2), 
-                      bottom: 0, 
-                      trailing: max(16, (geometry.size.width - 600) / 2)
-                  ))
-              }
-              
-            // Tab selector section
-            Section {
-              ProfileTabSelector(
-                path: $navigationPath,
-                selectedTab: $viewModel.selectedProfileTab,
-                onTabChange: { tab in
-                  Task {
-                    switch tab {
-                    case .posts:
-                      if viewModel.posts.isEmpty { await viewModel.loadPosts() }
-                    case .replies:
-                      if viewModel.replies.isEmpty { await viewModel.loadReplies() }
-                    case .media:
-                      if viewModel.postsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
-                    case .more:
-                      break
-                    default:
-                      break
+    profileViewConfiguration
+  }
+  
+  @ViewBuilder
+    private func profileContentView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                bannerHeaderView(profile: profile)
+                    .stretchy(with: scrollOffset)
+                    .zIndex(0)
+                
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: 200)
+                            .background(
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: ScrollOffsetPreferenceKey.self,
+                                        value: geometry.frame(in: .named("scrollView")).minY
+                                    )
+                                }
+                            )
+                        
+                        VStack(spacing: 16) {
+                            ProfileHeader(
+                                profile: profile,
+                                viewModel: viewModel,
+                                appState: appState,
+                                isEditingProfile: $isEditingProfile,
+                                path: $navigationPath,
+                                screenWidth: geometry.size.width,
+                                hideAvatar: false // Show avatar in pure SwiftUI context
+                            )
+                            
+                            followedBySection(profile: profile, geometry: geometry)
+                            tabSelectorSection(geometry: geometry)
+                            currentTabContentSection
+                        }
+                        .frame(maxWidth: min(600, geometry.size.width))
                     }
-                  }
                 }
-              )
+                .refreshable {
+                    await refreshAllContent()
+                }
+                .coordinateSpace(name: "scrollView")
+                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+                    scrollOffset = value
+                }
+                .zIndex(1)
             }
-            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-            .listRowSeparator(.hidden)
-            .padding(.vertical, 0)
-            .listSectionSpacing(0)
-            .listRowInsets(EdgeInsets(
-                top: 0, 
-                leading: max(16, (geometry.size.width - 600) / 2), 
-                bottom: 0, 
-                trailing: max(16, (geometry.size.width - 600) / 2)
-            ))
-              
-            // Content section based on selected tab
-            currentTabContentSection
-            }
-            .environment(\.defaultMinListHeaderHeight, 0)
-            .listSectionSpacing(0)
-            .listStyle(.plain)
+            .ignoresSafeArea(edges: .top)
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-            .refreshable {
-              // Pull to refresh all content - using a single task
-              await refreshAllContent()
-            }
-          }
-        
-        .sheet(isPresented: $isShowingReportSheet) {
-          if let profile = viewModel.profile,
-            let atProtoClient = appState.atProtoClient {
-            let reportingService = ReportingService(client: atProtoClient)
-
-            ReportProfileView(
-              profile: profile,
-              reportingService: reportingService,
-              onComplete: { _ in
-                isShowingReportSheet = false
-              }
-            )
-          }
         }
-        .sheet(isPresented: $isEditingProfile) {
-          EditProfileView(isPresented: $isEditingProfile, viewModel: viewModel)
-        }
-        .sheet(isPresented: $isShowingAccountSwitcher) {
-          AccountSwitcherView()
-        }
-      } else {
-        errorView
+    }
+  // MARK: - Helper Views
+  @ViewBuilder
+  private func followedBySection(profile: AppBskyActorDefs.ProfileViewDetailed, geometry: GeometryProxy) -> some View {
+    if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
+      FollowedByView(
+        knownFollowers: viewModel.knownFollowers,
+        totalFollowersCount: profile.followersCount ?? 0,
+        profileDID: profile.did.didString(),
+        path: $navigationPath
+      )
+      .padding(.horizontal, responsivePadding(for: geometry.size.width))
+    }
+  }
+  
+  @ViewBuilder
+  private func tabSelectorSection(geometry: GeometryProxy) -> some View {
+    ProfileTabSelector(
+      path: $navigationPath,
+      selectedTab: $viewModel.selectedProfileTab,
+      onTabChange: handleTabChange
+    )
+    .padding(.horizontal, responsivePadding(for: geometry.size.width))
+  }
+  
+  private func handleTabChange(_ tab: ProfileTab) {
+    Task {
+      switch tab {
+      case .posts:
+        if viewModel.posts.isEmpty { await viewModel.loadPosts() }
+      case .replies:
+        if viewModel.replies.isEmpty { await viewModel.loadReplies() }
+      case .media:
+        if viewModel.postsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
+      case .more:
+        break
+      default:
+        break
       }
-    }
-    .id(viewModel.profile?.did)
-    .navigationTitle(viewModel.profile != nil ? "@\(viewModel.profile!.handle)" : "Profile")
-    .navigationBarTitleDisplayMode(.inline)
-    .ensureDeepNavigationFonts() // Ensure width=120 fonts work in profile navigation
-    .navigationDestination(for: ProfileNavigationDestination.self) { destination in
-      switch destination {
-      case .section(let tab):
-        ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
-              .id(viewModel.profile?.did)
-      case .followers(let did):
-          FollowersView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
-              .id(did)
-      case .following(let did):
-          FollowingView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
-              .id(did)
-      }
-    }
-    .toolbar {
-      if let profile = viewModel.profile {
-        ToolbarItem(placement: .principal) {
-          Text(profile.displayName ?? profile.handle.description)
-            .appFont(AppTextRole.headline)
-        }
-
-        // Only show the report option for other users' profiles
-        if viewModel.isCurrentUser {
-          ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-              Button {
-                isShowingAccountSwitcher = true
-              } label: {
-                Label("Switch Account", systemImage: "person.crop.circle.badge.plus")
-              }
-
-              Button {
-                Task {
-                  try? await appState.handleLogout()
-                }
-              } label: {
-                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-              }
-            } label: {
-              Image(systemName: "ellipsis.circle")
-            }
-          }
-        } else {
-          ToolbarItem(placement: .primaryAction) {
-            Menu {
-              Button {
-                showReportProfileSheet()
-              } label: {
-                Label("Report User", systemImage: "flag")
-              }
-
-              Button {
-                toggleMute()
-              } label: {
-                if isMuting {
-                  Label("Unmute User", systemImage: "speaker.wave.2")
-                } else {
-                  Label("Mute User", systemImage: "speaker.slash")
-                }
-              }
-
-              Button(role: .destructive) {
-                isShowingBlockConfirmation = true
-              } label: {
-                if isBlocking {
-                  Label("Unblock User", systemImage: "person.crop.circle.badge.checkmark")
-                } else {
-                  Label("Block User", systemImage: "person.crop.circle.badge.xmark")
-                }
-              }
-            } label: {
-              Image(systemName: "ellipsis.circle")
-            }
-          }
-        }
-      }
-    }
-    .alert(isBlocking ? "Unblock User" : "Block User", isPresented: $isShowingBlockConfirmation) {
-      alertButtons
-    } message: {
-      alertMessage
-    }
-    .onChange(of: lastTappedTab) { _, newValue in
-      handleTabChange(newValue)
-    }
-    .task {
-      await initialLoad()
     }
   }
 
   // MARK: - Responsive Layout Helper
   private func responsivePadding(for width: CGFloat) -> CGFloat {
-    // Calculate padding for optimal reading width (~600px on larger screens)
-    // Minimum 16px padding on phones, increasing on tablets
-    return max(16, (width - 600) / 2)
+    max(16, (width - 600) / 2)
   }
 
   // MARK: - New helper function for refreshing content
@@ -371,45 +257,47 @@ struct UnifiedProfileView: View {
     emptyMessage: String,
     loadAction: @escaping () async -> Void
   ) -> some View {
-    if viewModel.isLoading && posts.isEmpty {
-      ProgressView("Loading...")
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .padding()
-        .listRowSeparator(.hidden)
-    } else if posts.isEmpty {
-      emptyContentView("No Content", emptyMessage)
-        .padding(.top, 40)
-        .listRowSeparator(.hidden)
-        .onAppear {
-          Task { await loadAction() }
-        }
-    } else {
-      // Post rows
-      ForEach(posts, id: \.post.uri) { post in
-        Button {
-          navigationPath.append(NavigationDestination.post(post.post.uri))
-        } label: {
-          EnhancedFeedPost(
-            cachedPost: CachedFeedViewPost(feedViewPost: post),
-            path: $navigationPath
-          )
-        }
-        .buttonStyle(.plain)
-        .applyListRowModifiers(id: post.id)
-        .onAppear {
-          // Load more when reaching the end, but only if not already loading
-          if post == posts.last && !viewModel.isLoadingMorePosts {
+    LazyVStack(spacing: 8) {
+      if viewModel.isLoading && posts.isEmpty {
+        ProgressView("Loading...")
+          .frame(maxWidth: .infinity, minHeight: 100)
+          .padding()
+      } else if posts.isEmpty {
+        emptyContentView("No Content", emptyMessage)
+          .padding(.top, 40)
+          .onAppear {
             Task { await loadAction() }
           }
+      } else {
+        // Post rows
+        ForEach(posts, id: \.post.uri) { post in
+          Button {
+            navigationPath.append(NavigationDestination.post(post.post.uri))
+          } label: {
+            VStack(spacing: 0) {
+              EnhancedFeedPost(
+                cachedPost: CachedFeedViewPost(feedViewPost: post),
+                path: $navigationPath
+              )
+              Divider()
+                .padding(.top, 8)
+            }
+          }
+          .buttonStyle(.plain)
+          .onAppear {
+            // Load more when reaching the end, but only if not already loading
+            if post == posts.last && !viewModel.isLoadingMorePosts {
+              Task { await loadAction() }
+            }
+          }
         }
-      }
-        
-      // Loading indicator for pagination
-      if viewModel.isLoadingMorePosts {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
-          .listRowSeparator(.hidden)
+          
+        // Loading indicator for pagination
+        if viewModel.isLoadingMorePosts {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: .infinity)
+        }
       }
     }
   }
@@ -540,6 +428,14 @@ struct UnifiedProfileView: View {
   private func profileContextMenu(_ profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
     if !viewModel.isCurrentUser {
       Button {
+        showAddToListSheet(profile)
+      } label: {
+        Label("Add to List", systemImage: "list.bullet.rectangle")
+      }
+
+      Divider()
+
+      Button {
         showReportProfileSheet()
       } label: {
         Label("Report User", systemImage: "flag")
@@ -625,6 +521,11 @@ struct UnifiedProfileView: View {
   private func showReportProfileSheet() {
     isShowingReportSheet = true
   }
+  
+  private func showAddToListSheet(_ profile: AppBskyActorDefs.ProfileViewDetailed) {
+    profileForAddToList = profile
+    isShowingAddToListSheet = true
+  }
 
   private func toggleMute() {
     guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return }
@@ -690,16 +591,48 @@ struct UnifiedProfileView: View {
     }
   }
 
+  // MARK: - Banner Header View
+  @ViewBuilder
+  private func bannerHeaderView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
+    GeometryReader { geometry in
+      Group {
+        if let bannerURL = profile.banner?.uriString() {
+          LazyImage(url: URL(string: bannerURL)) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .scaledToFill()
+            } else {
+              Rectangle()
+                .fill(Color.accentColor.opacity(0.3))
+            }
+          }
+        } else {
+          Rectangle()
+            .fill(Color.accentColor.opacity(0.3))
+        }
+      }
+      .frame(
+        width: geometry.size.width,
+        height: geometry.size.height + geometry.safeAreaInsets.top
+      )
+      .offset(y: -geometry.safeAreaInsets.top)
+    }
+    .frame(height: 200)
+  }
+
   // MARK: - View Components
   private var loadingView: some View {
     VStack {
       ProgressView()
         .scaleEffect(1.5)
+        .tint(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
       Text("Loading profile...")
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
+        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
         .padding(.top)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
   @ViewBuilder
@@ -715,44 +648,196 @@ struct UnifiedProfileView: View {
               VStack(spacing: 16) {
                   Image(systemName: "exclamationmark.triangle")
                       .appFont(size: 48)
-                      .foregroundColor(.orange)
+                      .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
                   
                   Text("Profile Not Found")
                       .appFont(AppTextRole.title2)
                       .fontWeight(.semibold)
+                      .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
                   
                   Text("This profile may not exist or is not accessible")
                       .appFont(AppTextRole.subheadline)
-                      .foregroundStyle(.secondary)
+                      .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
                       .multilineTextAlignment(.center)
                       .padding(.horizontal)
               }
               .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
           }
       }
   }
     
   @ViewBuilder
-  private func emptyContentView(_ title: String, _ message: String) -> some View {
-    VStack(spacing: 16) {
-      Spacer()
-
-      Image(systemName: "square.stack.3d.up.slash")
-        .appFont(size: 48)
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
-
-      Text(title)
-        .appFont(AppTextRole.title3)
-        .fontWeight(.semibold)
-
-      Text(message)
-        .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
-        .multilineTextAlignment(.center)
-        .padding(.horizontal)
-
-      Spacer()
+    private func emptyContentView(_ title: String, _ message: String) -> some View {
+        VStack(spacing: 16) {
+            Spacer()
+            
+            Image(systemName: "square.stack.3d.up.slash")
+                .appFont(size: 48)
+                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
+            
+            Text(title)
+                .appFont(AppTextRole.title3)
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
+            
+            Text(message)
+                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, minHeight: 300)
     }
-    .frame(maxWidth: .infinity, minHeight: 300)
+    
+  // MARK: - View Configuration
+  @ViewBuilder
+  private var profileViewConfiguration: some View {
+    Group {
+      if viewModel.isLoading && viewModel.profile == nil {
+        loadingView
+      } else if let profile = viewModel.profile {
+        profileContentView(profile: profile)
+      } else {
+        errorView
+      }
+    }
+    .id(viewModel.userDID) // Use stable userDID instead of profile?.did
+    .navigationTitle("")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbarBackground(.hidden, for: .navigationBar)
+    .ensureDeepNavigationFonts()
+    .navigationDestination(for: ProfileNavigationDestination.self) { destination in
+      switch destination {
+      case .section(let tab):
+        ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
+          .id("\(viewModel.userDID)_\(tab.rawValue)") // Stable composite ID
+      case .followers(let did):
+        FollowersView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
+          .id(did)
+      case .following(let did):
+        FollowingView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
+          .id(did)
+      }
+    }
+    // FIXED: Apply modifiers directly instead of using recursive computed properties
+    .sheet(isPresented: $isShowingReportSheet) {
+      if let profile = viewModel.profile,
+         let atProtoClient = appState.atProtoClient {
+        let reportingService = ReportingService(client: atProtoClient)
+        ReportProfileView(
+          profile: profile,
+          reportingService: reportingService,
+          onComplete: { _ in isShowingReportSheet = false }
+        )
+      }
+    }
+    .sheet(isPresented: $isEditingProfile) {
+      EditProfileView(isPresented: $isEditingProfile, viewModel: viewModel)
+    }
+    .sheet(isPresented: $isShowingAccountSwitcher) {
+      AccountSwitcherView()
+    }
+    .sheet(isPresented: $isShowingAddToListSheet) {
+      if let profile = profileForAddToList {
+        AddToListSheet(
+          userDID: profile.did.didString(),
+          userHandle: profile.handle.description,
+          userDisplayName: profile.displayName
+        )
+      }
+    }
+    .toolbar {
+      if let profile = viewModel.profile {
+        ToolbarItem(placement: .principal) {
+          Text(profile.displayName ?? profile.handle.description)
+            .appFont(AppTextRole.headline)
+        }
+        
+        if viewModel.isCurrentUser {
+          ToolbarItem(placement: .topBarTrailing) {
+            currentUserMenu
+          }
+        } else {
+          ToolbarItem(placement: .primaryAction) {
+            otherUserMenu
+          }
+        }
+      }
+    }
+    .alert(isBlocking ? "Unblock User" : "Block User", isPresented: $isShowingBlockConfirmation) {
+      alertButtons
+    } message: {
+      alertMessage
+    }
+    .onChange(of: lastTappedTab) { _, newValue in
+      handleTabChange(newValue)
+    }
+    .task {
+      // Wrap in error handling to prevent crashes
+      do {
+        await initialLoad()
+      } catch {
+        logger.error("Failed to load initial profile data: \(error.localizedDescription)")
+        // Let the error state be handled by the view model
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var currentUserMenu: some View {
+    Menu {
+      Button {
+        isShowingAccountSwitcher = true
+      } label: {
+        Label("Switch Account", systemImage: "person.crop.circle.badge.plus")
+      }
+      
+      Button {
+        Task { try? await appState.handleLogout() }
+      } label: {
+        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+      }
+    } label: {
+      Image(systemName: "ellipsis.circle")
+    }
+  }
+  
+  @ViewBuilder
+  private var otherUserMenu: some View {
+    Menu {
+      if let profile = viewModel.profile {
+        Button {
+          showAddToListSheet(profile)
+        } label: {
+          Label("Add to List", systemImage: "list.bullet.rectangle")
+        }
+        Divider()
+      }
+      
+      Button {
+        showReportProfileSheet()
+      } label: {
+        Label("Report User", systemImage: "flag")
+      }
+      
+      Button {
+        toggleMute()
+      } label: {
+        Label(isMuting ? "Unmute User" : "Mute User", 
+              systemImage: isMuting ? "speaker.wave.2" : "speaker.slash")
+      }
+      
+      Button(role: .destructive) {
+        isShowingBlockConfirmation = true
+      } label: {
+        Label(isBlocking ? "Unblock User" : "Block User",
+              systemImage: isBlocking ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark")
+      }
+    } label: {
+      Image(systemName: "ellipsis.circle")
+    }
   }
 }
 
@@ -764,7 +849,9 @@ struct ProfileHeader: View {
     @Binding var isEditingProfile: Bool
     @Binding var path: NavigationPath
     let screenWidth: CGFloat
+    let hideAvatar: Bool // New parameter to hide avatar when used in UIKit
     
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showingFollowersSheet = false
     @State private var showingFollowingSheet = false
     @State private var isFollowButtonLoading = false
@@ -785,8 +872,16 @@ struct ProfileHeader: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.none) {
-            // Banner and Avatar
-            bannerView
+            // Banner and Avatar (only show if not hiding avatar)
+            if !hideAvatar {
+                bannerView
+            }
+            
+            // Add padding for overlapping avatar when hidden (avatar is in UIKit header)
+            if hideAvatar {
+                Spacer()
+                    .frame(height: 40) // Half of avatar height for overlap space
+            }
             
             // Profile info content
             profileInfoContent
@@ -818,24 +913,6 @@ struct ProfileHeader: View {
     
     private var bannerView: some View {
         ZStack(alignment: .bottom) {
-            /*
-            // Banner
-            Group {
-                if let bannerURL = profile.banner?.uriString() {
-                    LazyImage(url: URL(string: bannerURL)) { state in
-                        if let image = state.image {
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        } else {
-                            Rectangle().fill(Color.accentColor.opacity(0.3))
-                        }
-                    }
-                } else {
-                    Rectangle().fill(Color.accentColor.opacity(0.3))
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: bannerHeight, maxHeight: bannerHeight)
-            .clipped()
-            */
             HStack(alignment: .bottom) {
                 // Avatar
                 LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
@@ -854,11 +931,12 @@ struct ProfileHeader: View {
                 .clipShape(Circle())
                 .background(
                     Circle()
-                        .stroke(Color(.systemBackground), lineWidth: 4)
+                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
                         .scaleEffect((avatarSize + 4) / avatarSize)
                 )
-                .offset(y: avatarSize / 2)
+                .offset(y: -avatarSize / 2)
                 .padding(.leading, responsivePadding)
+                .zIndex(1000)
                 
                 Spacer()
             }
@@ -979,13 +1057,13 @@ struct ProfileHeader: View {
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-            //        .background(Color.accentColor.opacity(0.7))
                 .foregroundColor(.accentColor)
                 .cornerRadius(16)
         }
         .overlay {
             Capsule().stroke(Color.accentColor, lineWidth: 1.5)
         }
+        .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
     }
     
     @ViewBuilder
@@ -1015,6 +1093,7 @@ struct ProfileHeader: View {
             .overlay {
                 Capsule().stroke(Color.red, lineWidth: 1.5)
             }
+            .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
         } else if profile.viewer?.muted == true {
             // Show muted state
             Button(action: {
@@ -1036,6 +1115,7 @@ struct ProfileHeader: View {
             .overlay {
                 Capsule().stroke(Color.orange, lineWidth: 1.5)
             }
+            .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
         } else if localIsFollowing {
             Button(action: {
                 Task(priority: .userInitiated) {  // Explicit priority
@@ -1081,6 +1161,7 @@ struct ProfileHeader: View {
             .overlay {
                 Capsule().stroke(Color.accentColor, lineWidth: 1.5)
             }
+            .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
             
         } else {
             Button(action: {
@@ -1281,4 +1362,115 @@ struct FeedRowView: View {
         .contentShape(Rectangle())
     }
 }
+
+// MARK: - SwiftUI Stretchy Header for UICollectionView
+//struct UICollectionViewStretchyHeader: View {
+//    let profile: AppBskyActorDefs.ProfileViewDetailed
+//    let scrollOffset: CGFloat
+//    
+//    var body: some View {
+//        ZStack {
+//            // Banner image with stretchy effect
+//            Group {
+//                if let bannerURL = profile.banner?.uriString() {
+//                    LazyImage(url: URL(string: bannerURL)) { state in
+//                        if let image = state.image {
+//                            image
+//                                .resizable()
+//                                .scaledToFill()
+//                        } else {
+//                            Rectangle()
+//                                .fill(Color.accentColor.opacity(0.3))
+//                        }
+//                    }
+//                } else {
+//                    Rectangle()
+//                        .fill(Color.accentColor.opacity(0.3))
+//                }
+//            }
+//            .stretchy(with: scrollOffset)
+//            
+//            // Profile image overlay (50% overlapping)
+//            VStack {
+//                Spacer()
+//                HStack {
+//                    LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+//                        if let image = state.image {
+//                            image
+//                                .resizable()
+//                                .scaledToFill()
+//                        } else {
+//                            Circle()
+//                                .fill(Color.secondary.opacity(0.3))
+//                        }
+//                    }
+//                    .frame(width: 80, height: 80)
+//                    .clipShape(Circle())
+//                    .background(
+//                        Circle()
+//                            .stroke(Color(.systemBackground), lineWidth: 4)
+//                    )
+//                    .shadow(radius: 8)
+//                    .padding(.leading, 16)
+//                    .offset(y: 40) // 50% overlap
+//                    
+//                    Spacer()
+//                }
+//            }
+//        }
+//        .frame(height: 200)
+//        .clipped()
+//        .ignoresSafeArea(edges: .top)
+//    }
+//}
+
+// MARK: - Stretchy Header Extensions
+// MARK: - Preference Key for Scroll Offset
+//struct ScrollOffsetPreferenceKey: PreferenceKey {
+//    static var defaultValue: CGFloat = 0
+//    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+//        value = nextValue()
+//    }
+//}
+
+extension View {
+    // this is defined elsewhere but we're keeping it for reference
+//    func stretchy() -> some View {
+//        visualEffect { effect, geometry in
+//            let currentHeight = geometry.size.height
+//            let scrollOffset = geometry.frame(in: .scrollView).minY
+//            let positiveOffset = max(0, scrollOffset)
+//            
+//            let newHeight = currentHeight + positiveOffset
+//            let scaleFactor = newHeight / currentHeight
+//            
+//            // Limit scale factor to prevent excessive stretching
+//            let clampedScaleFactor = min(scaleFactor, 1.5)
+//            
+//            return effect.scaleEffect(
+//                x: clampedScaleFactor, y: clampedScaleFactor,
+//                anchor: .bottom
+//            )
+//        }
+//    }
+    
+    func stretchy(with externalOffset: CGFloat) -> some View {
+        visualEffect { effect, geometry in
+            let currentHeight = geometry.size.height
+            let positiveOffset = max(0, externalOffset)
+            
+            let newHeight = currentHeight + positiveOffset
+            let scaleFactor = newHeight / currentHeight
+            
+            // Limit scale factor to prevent excessive stretching
+            let clampedScaleFactor = min(scaleFactor, 1.5)
+            
+            return effect.scaleEffect(
+                x: clampedScaleFactor, y: clampedScaleFactor,
+                anchor: .bottom
+            )
+        }
+    }
+}
+
 

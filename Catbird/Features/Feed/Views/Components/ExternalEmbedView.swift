@@ -11,6 +11,7 @@ struct ExternalEmbedView: View {
     @State private var isBlurred: Bool
     @State private var userOverrideBlock = false
     @Environment(AppState.self) private var appState
+    @Environment(\.openURL) private var openURL
     @State private var videoModel: VideoModel?
     @State private var gifError: String?
     
@@ -34,6 +35,11 @@ struct ExternalEmbedView: View {
                     _ = appState.urlHandler.handle(url)
                 }
             }
+            .environment(
+                \.openURL,
+                 OpenURLAction { url in
+                     return appState.urlHandler.handle(url)
+                 })
             .onAppear {
                 setupVideoIfNeeded()
             }
@@ -64,7 +70,7 @@ struct ExternalEmbedView: View {
     private func videoPlayerContent(videoModel: VideoModel) -> some View {
         if shouldBlur {
             ZStack(alignment: .topTrailing) {
-                ModernVideoPlayerView18(
+                ModernVideoPlayerView(
                     model: videoModel,
                     postID: postID
                 )
@@ -81,7 +87,7 @@ struct ExternalEmbedView: View {
                 }
             }
         } else {
-            ModernVideoPlayerView18(
+            ModernVideoPlayerView(
                 model: videoModel,
                 postID: postID
             )
@@ -159,11 +165,9 @@ struct ExternalEmbedView: View {
                                     .scaledToFill()
                                     .frame(maxWidth: .infinity)
                                     .clipped()
-                            } else if state.isLoading {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                             } else {
-                                Color.gray
+                                // Don't show spinner for chat embeds - just use empty view
+                                EmptyView()
                             }
                         }
                         .animation(.default, value: isBlurred)
@@ -486,11 +490,9 @@ struct ExternalEmbedView: View {
                                     .frame(maxWidth: .infinity)
                                     .clipped()
                                     .blur(radius: isBlurred ? 60 : 0)
-                            } else if state.isLoading {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                             } else {
-                                Color.gray
+                                // Don't show spinner for chat embeds - just use empty view
+                                EmptyView()
                             }
                         }
                             .animation(.default, value: isBlurred)
@@ -553,7 +555,7 @@ struct ExternalEmbedView: View {
             }
         } else if let url = URL(string: external.uri.uriString()) {
             // Handle URL tap when content is visible
-            _ = appState.urlHandler.handle(url)
+            openURL(url)
         }
     }
     
@@ -651,7 +653,7 @@ struct ExternalEmbedView: View {
                 
                 Button("Open Link") {
                     if let url = URL(string: external.uri.uriString()) {
-                        _ = appState.urlHandler.handle(url)
+                        openURL(url)
                     }
                 }
                 .appFont(AppTextRole.caption)

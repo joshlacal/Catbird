@@ -67,6 +67,29 @@ struct FeedsStartPage: View {
 
     return window?.safeAreaInsets.top ?? 44
   }
+  
+  private var navigationBarHeight: CGFloat {
+    // Standard navigation bar height + safe area top
+    return 44 + safeAreaTop
+  }
+  
+  // Responsive banner height based on screen size
+  private var bannerHeight: CGFloat {
+    switch screenWidth {
+    case ..<375: return 140  // Smaller iPhones
+    case ..<768: return 160  // Standard iPhones
+    default: return 200     // iPads and larger devices
+    }
+  }
+  
+  // Responsive avatar size
+  private var avatarSize: CGFloat {
+    switch screenWidth {
+    case ..<375: return 48   // Smaller for compact screens
+    case ..<768: return 54   // Standard size
+    default: return 64      // Larger for iPads
+    }
+  }
 
   // Sizing properties
   private let screenWidth = UIScreen.main.bounds.width
@@ -224,6 +247,24 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func sectionHeader(_ title: String) -> some View {
     HStack {
+        if title == "Pinned" {
+          Image(systemName: "pin.fill")
+                .font(
+                  Font.customSystemFont(
+                    size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
+                    relativeTo: .title3)
+                )
+                .foregroundColor(.primary)
+        } else if title == "Saved" {
+          Image(systemName: "bookmark.fill")
+                .font(
+                  Font.customSystemFont(
+                    size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
+                    relativeTo: .title3)
+                )
+                .foregroundColor(.primary)
+        }
+
       Text(title)
         .font(
           Font.customSystemFont(
@@ -233,16 +274,6 @@ struct FeedsStartPage: View {
         .foregroundColor(.primary)
 
       Spacer()
-
-      if title == "Pinned" {
-        Image(systemName: "pin.fill")
-          .appFont(AppTextRole.caption)
-          .foregroundColor(.secondary)
-      } else if title == "Saved" {
-        Image(systemName: "bookmark.fill")
-          .appFont(AppTextRole.caption)
-          .foregroundColor(.secondary)
-      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.top, gridSpacing)
@@ -376,12 +407,6 @@ struct FeedsStartPage: View {
                 .stroke(strokeColor, lineWidth: strokeWidth)
             )
         }
-        .shadow(
-          color: .black.opacity(0.05),
-          radius: 8,
-          x: 0,
-          y: 2
-        )
       }
     }
     .buttonStyle(PlainButtonStyle())
@@ -506,7 +531,7 @@ struct FeedsStartPage: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
 
         // Feed name
-        Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+          Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
           .appFont(AppTextRole.caption2)
           .foregroundStyle(.primary)
           .padding(.top, 4)
@@ -522,7 +547,7 @@ struct FeedsStartPage: View {
           .fill(
             dropTargetItem == feedURI
               ? Color.accentColor.opacity(0.1)
-              : (isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.08) : Color.clear)
+            : (isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.08) : Color.clear)
           )
           .overlay(
             RoundedRectangle(cornerRadius: 16)
@@ -535,9 +560,10 @@ struct FeedsStartPage: View {
           )
       )
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+
     }
     .buttonStyle(PlainButtonStyle())
-    .interactiveGlass()
+
     .overlay(
       Group {
         if editMode.isEditing {
@@ -693,218 +719,302 @@ struct FeedsStartPage: View {
     }
   }
 
-  @ViewBuilder
-  private func profileSection() -> some View {
-    VStack(spacing: 12) {
-      // User avatar - larger and centered
-      //      Button {
-      //      } label: {
-      Group {
-        if let avatarURL = profile?.avatar?.url {
-          AsyncProfileImage(url: avatarURL, size: 56)
-        } else {
-          // Fallback avatar
-          ZStack {
-            Circle()
-              .fill(Color.accentColor.opacity(0.2))
-              .frame(width: 56, height: 56)
-
-            Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
-              .appFont(size: 22)
-              .foregroundColor(.accentColor)
-          }
-        }
-      }
-      //      }
-      .onTapGesture {
-        if let userDID = appState.authManager.state.userDID {
-          appState.navigationManager.navigate(to: .profile(userDID))
-          isDrawerOpen = false
-        }
-      }
-      .onLongPressGesture {
-        impact.impactOccurred()
-        isShowingAccountSwitcher = true
-      }
-      .accessibility(label: Text("My Profile"))
-      .accessibility(hint: Text("Double tap to view your profile. Long press to switch accounts."))
-      .accessibilityAddTraits(.isButton)
-
-      // Display name using customSystemFont
-      if let displayName = profile?.displayName, !displayName.isEmpty {
-        Text(displayName)
-          .font(
-            Font.customSystemFont(
-              size: 17, weight: .medium, width: 120, opticalSize: true, design: .default,
-              relativeTo: .title3)
-          )
-          .foregroundStyle(.primary)
-          .lineLimit(1)
-          .multilineTextAlignment(.center)
-      }
+  // MARK: - Body
+  var body: some View {
+    NavigationStack {
+      mainContent
     }
-    .frame(maxWidth: .infinity)
-    .padding(.top, safeAreaTop + 8)
-    .padding(.bottom, 16)
+    .applyFeedsPageModifiers(
+      viewModel: viewModel,
+      appState: appState,
+      editMode: $editMode,
+      isDrawerOpen: $isDrawerOpen,
+      showAddFeedSheet: $showAddFeedSheet,
+      isShowingAccountSwitcher: $isShowingAccountSwitcher,
+      showProtectedSystemFeedAlert: $showProtectedSystemFeedAlert,
+      lastProtectedFeedAction: lastProtectedFeedAction,
+      showErrorAlert: $showErrorAlert,
+      errorAlertMessage: $errorAlertMessage,
+      onAppear: handleOnAppear,
+      onDisappear: handleOnDisappear
+    )
   }
-
-  // MARK: - UI Layout Sections
-
-  // @ViewBuilder
-  //  private func fixedHeaderSection() -> some View {
-  //    VStack(spacing: 0) {
-  //      // Safe area spacing
-  ////      Rectangle()
-  ////        .fill(Color.clear)
-  ////        .frame(height: safeAreaTop)
-  //
-  //      HStack {
-  //          // Profile section at the top with extra spacing
-  //
-  //        Spacer()
-  //
-  //      }
-  ////      .padding(.vertical, 12)
-  //      .padding(.horizontal, horizontalPadding)
-  //    }
-  //    .background(Color(UIColor.systemBackground))
-  //    .frame(maxWidth: .infinity)
-  //    .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-  //  }
+  
   @ViewBuilder
-  private func scrollableContent() -> some View {
+  private var mainContent: some View {
     ScrollView {
       VStack(spacing: 0) {
-        profileSection()
-          .padding(.horizontal, horizontalPadding)
-          .padding(.bottom, gridSpacing)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .shadow(
-            color: Color.black.opacity(0.05),
-            radius: 4, x: 0, y: 2
-          )
+        // Stretchy banner header
+        GeometryReader { geometry in
+          bannerHeaderView()
+            .frame(width: geometry.size.width)
+            .frame(height: max(bannerHeight, bannerHeight + geometry.frame(in: .global).minY))
+            .offset(y: geometry.frame(in: .global).minY > 0 ? -geometry.frame(in: .global).minY : 0)
+        }
+        .frame(height: bannerHeight)
+        
+        // Main content below the banner
+        feedsContent()
+      }
+    }
+    .ignoresSafeArea(edges: .top)
+    .refreshable {
+      await handleRefresh()
+    }
+    .overlay(alignment: .topTrailing) {
+      // Overlays
+      loadingOverlay()
+      initializationOverlay()
+    }
+  }
+  
+  private func handleRefresh() async {
+    await viewModel.fetchFeedGenerators()
+    await updateFilteredFeeds()
+    if appState.isAuthenticated {
+      await loadUserProfile()
+    }
+  }
+  
+  private func handleOnAppear() {
+    Task {
+      await viewModel.initializeWithModelContext(modelContext)
+      await updateFilteredFeeds()
+      isInitialized = true
+      
+      withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
+        isLoaded = true
+      }
+      
+      if appState.isAuthenticated {
+        await loadUserProfile()
+      }
+      
+      if stateInvalidationSubscriber == nil {
+        stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
+          viewModel: viewModel,
+          updateFilteredFeeds: updateFilteredFeeds
+        )
+        appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
+      }
+    }
+  }
+  
+  private func handleOnDisappear() {
+    if let subscriber = stateInvalidationSubscriber {
+      appState.stateInvalidationBus.unsubscribe(subscriber)
+      stateInvalidationSubscriber = nil
+    }
+  }
 
-        // Feeds heading
-        VStack(spacing: 0) {
-          HStack {
-            Text("Feeds")
-              .font(
-                Font.customSystemFont(
-                  size: 24, weight: .bold, width: 120, opticalSize: true, design: .default,
-                  relativeTo: .title)
+  @ViewBuilder
+  private func bannerHeaderView() -> some View {
+    ZStack(alignment: .bottomLeading) {
+      // Banner Image
+      Group {
+        if let bannerURL = profile?.banner?.url {
+          LazyImage(url: bannerURL) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+            } else {
+              // Fallback gradient banner
+              LinearGradient(
+                gradient: Gradient(colors: [
+                  Color.accentColor.opacity(0.3),
+                  Color.accentColor.opacity(0.1)
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
               )
-              .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer()
-
-            HStack(spacing: 12) {
-              // Search feeds button
-              Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                  isSearchBarVisible.toggle()
-                }
-              } label: {
-                Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
-                  .appFont(size: 16)
-                  .foregroundStyle(Color.accentColor)
-              }
-              .tint(.accentColor.opacity(0.8))
-              .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
-              .accessibilityAddTraits(.isButton)
-
-              if editMode.isEditing {
-                Button {
-                  editMode = .inactive
-                } label: {
-                  Image(systemName: "checkmark")
-                    .appFont(size: 16)
-                }
-                .tint(.accentColor.opacity(0.8))
-                .accessibilityLabel("Done Editing")
-                .accessibilityAddTraits(.isButton)
-              } else {
-                Button {
-                  editMode = .active
-                } label: {
-                  Image(systemName: "slider.horizontal.3")
-                    .appFont(size: 16)
-                }
-                .tint(.accentColor.opacity(0.8))
-                .accessibility(label: Text("Edit Feeds"))
-                .accessibility(hint: Text("Double tap to enter edit mode"))
-                .accessibilityAddTraits(.isButton)
-              }
-
-              Button("Close Feeds Menu") {
-                isDrawerOpen = false
-              }
-              .accessibilityAddTraits(.isButton)
-              .accessibilityLabel("Close Feeds Menu")
-              .accessibility(hint: Text("Double tap to close the feeds menu"))
-              .opacity(0)
-              .frame(width: 0, height: 0)
-              .accessibilityHidden(false)
             }
+          }
+        } else {
+          // Default gradient banner
+          LinearGradient(
+            gradient: Gradient(colors: [
+              Color.accentColor.opacity(0.3),
+              Color.accentColor.opacity(0.1)
+            ]),
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        }
+      }
+      .clipped()
+      
+      // Scrim overlay for text visibility
+      LinearGradient(
+        colors: [.black.opacity(0.6), .black.opacity(0.0)],
+        startPoint: .bottom,
+        endPoint: .center
+      )
+      
+      // Profile Info
+      VStack(alignment: .leading, spacing: 2) {
+        HStack {
+          // Avatar
+          Group {
+            if let avatarURL = profile?.avatar?.url {
+              AsyncProfileImage(url: avatarURL, size: avatarSize)
+            } else {
+              // Fallback avatar
+              ZStack {
+                Circle()
+                  .fill(Color.white.opacity(0.9))
+                  .frame(width: avatarSize, height: avatarSize)
+                
+                Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
+                  .appFont(size: avatarSize * 0.4) // Scale text with avatar
+                  .foregroundColor(.accentColor)
+              }
+            }
+          }
+          .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 2))
+          
+          // Display Name and Handle
+          VStack(alignment: .leading, spacing: 2) {
+            if let displayName = profile?.displayName, !displayName.isEmpty {
+              Text(displayName)
+                .font(.system(size: screenWidth < 375 ? 14 : 16, weight: .bold))
+                .foregroundStyle(.white)
+                .shadow(radius: 2)
+                .lineLimit(1)
+            }
+            if let handle = profile?.handle {
+              Text("@\(handle.description)")
+                .font(.system(size: screenWidth < 375 ? 12 : 14))
+                .foregroundStyle(.white.opacity(0.9))
+                .shadow(radius: 2)
+                .lineLimit(1)
+            }
+          }
+        }
+      }
+      .padding(.horizontal, horizontalPadding)
+      .padding(.bottom, 12)
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      if let userDID = appState.authManager.state.userDID {
+        appState.navigationManager.navigate(to: .profile(userDID))
+        isDrawerOpen = false
+      }
+    }
+    .onLongPressGesture {
+      impact.impactOccurred()
+      isShowingAccountSwitcher = true
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("My Profile")
+    .accessibilityHint("Double tap to view your profile. Long press to switch accounts.")
+  }
+
+  @ViewBuilder
+  private func feedsContent() -> some View {
+      VStack(spacing: 0) {
+          HStack {
+              Text("Feeds")
+                  .font(
+                      Font.customSystemFont(
+                          size: 24, weight: .bold, width: 120, opticalSize: true, design: .default,
+                          relativeTo: .title)
+                  )
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              Spacer()
+
+              HStack(spacing: 12) {
+                  // Search feeds button
+                  Button {
+                      withAnimation(.easeInOut(duration: 0.3)) {
+                          isSearchBarVisible.toggle()
+                      }
+                  } label: {
+                      Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
+                          .appFont(size: 16)
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  .tint(.accentColor.opacity(0.8))
+                  .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
+                  .accessibilityAddTraits(.isButton)
+
+                  if editMode.isEditing {
+                      Button {
+                          editMode = .inactive
+                      } label: {
+                          Image(systemName: "checkmark")
+                              .appFont(size: 16)
+                      }
+                      .tint(.accentColor.opacity(0.8))
+                      .accessibilityLabel("Done Editing")
+                      .accessibilityAddTraits(.isButton)
+                  } else {
+                      Button {
+                          editMode = .active
+                      } label: {
+                          Image(systemName: "slider.horizontal.3")
+                              .appFont(size: 16)
+                      }
+                      .tint(.accentColor.opacity(0.8))
+                      .accessibility(label: Text("Edit Feeds"))
+                      .accessibility(hint: Text("Double tap to enter edit mode"))
+                      .accessibilityAddTraits(.isButton)
+                  }
+              }
 
           }
           .padding(.horizontal, horizontalPadding)
+          .padding(.top, 24) // Add top padding to separate from banner
           .padding(.bottom, 24)
 
           // Search bar
           if isSearchBarVisible {
-            searchBar()
-              .padding(.horizontal, horizontalPadding)
-              .padding(.bottom, gridSpacing)
-              .transition(
-                .asymmetric(
-                  insertion: .opacity.combined(with: .move(edge: .top)),
-                  removal: .opacity.combined(with: .move(edge: .top))
-                ))
+              searchBar()
+                  .padding(.horizontal, horizontalPadding)
+                  .padding(.bottom, gridSpacing)
+                  .transition(
+                      .asymmetric(
+                          insertion: .opacity.combined(with: .move(edge: .top)),
+                          removal: .opacity.combined(with: .move(edge: .top))
+                      ))
           }
 
           VStack(spacing: gridSpacing) {
-            // Add Feed button in edit mode
-            if editMode.isEditing {
-              addFeedButton()
-                .padding(.horizontal, horizontalPadding)
-            }
+              // Add Feed button in edit mode
+              if editMode.isEditing {
+                  addFeedButton()
+                      .padding(.horizontal, horizontalPadding)
+              }
 
-            // Big default feed button as first feed in hierarchy
-            bigDefaultFeedButton
-              .padding(.horizontal, horizontalPadding)
+              // Big default feed button as first feed in hierarchy
+              bigDefaultFeedButton
+                  .padding(.horizontal, horizontalPadding)
 
-            // Pinned feeds section - continue the hierarchy
-            if !filteredPinnedFeeds.isEmpty {
-              sectionHeader("Pinned")
-                .padding(.horizontal, horizontalPadding)
-              gridSection(for: filteredPinnedFeeds, category: "pinned")
-                .padding(.horizontal, horizontalPadding)
-            }
+              // Pinned feeds section - continue the hierarchy
+              if !filteredPinnedFeeds.isEmpty {
+                  sectionHeader("Pinned")
+                      .padding(.horizontal, horizontalPadding)
+                  gridSection(for: filteredPinnedFeeds, category: "pinned")
+                      .padding(.horizontal, horizontalPadding)
+              }
 
-            // Saved feeds section
-            if !filteredSavedFeeds.isEmpty {
-              sectionHeader("Saved")
-                .padding(.horizontal, horizontalPadding)
-              gridSection(for: filteredSavedFeeds, category: "saved")
-                .padding(.horizontal, horizontalPadding)
-            }
+              // Saved feeds section
+              if !filteredSavedFeeds.isEmpty {
+                  sectionHeader("Saved")
+                      .padding(.horizontal, horizontalPadding)
+                  gridSection(for: filteredSavedFeeds, category: "saved")
+                      .padding(.horizontal, horizontalPadding)
+              }
 
-            // Extra space at bottom
-            Spacer(minLength: 200)
+              // Extra space at bottom
+              Spacer(minLength: 200)
           }
-        }
       }
-    }
-    .refreshable {
-      await viewModel.fetchFeedGenerators()
-      await updateFilteredFeeds()
-      if appState.isAuthenticated {
-        await loadUserProfile()
-      }
-    }
+      .background(Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))) // Add background to content
   }
 
   // MARK: - Overlays
-
   @ViewBuilder
   private func loadingOverlay() -> some View {
     if viewModel.isLoading {
@@ -928,107 +1038,6 @@ struct FeedsStartPage: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color(UIColor.systemBackground).opacity(0.9))
-    }
-  }
-
-  // MARK: - Body
-
-  var body: some View {
-    NavigationStack {
-      ZStack(alignment: .top) {
-        // Base background
-        Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
-          .ignoresSafeArea()
-
-        // Main scrollable content
-        scrollableContent()
-
-        //         Fixed header overlay
-        //        VStack(spacing: 0) {
-        //          fixedHeaderSection()
-        //          Spacer()
-        //        }
-
-        // Overlays
-        loadingOverlay()
-        initializationOverlay()
-      }
-      .environment(\.editMode, $editMode)
-      .onAppear {
-        // Sequential initialization
-        Task {
-          await viewModel.initializeWithModelContext(modelContext)
-          await updateFilteredFeeds()
-          isInitialized = true
-
-          // Animation delay for smoother appearance
-          withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
-            isLoaded = true
-          }
-
-          // Load user profile
-          if appState.isAuthenticated {
-            await loadUserProfile()
-          }
-
-          // Set up state invalidation subscription
-          if stateInvalidationSubscriber == nil {
-            stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
-              viewModel: viewModel,
-              updateFilteredFeeds: updateFilteredFeeds
-            )
-            appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
-          }
-        }
-      }
-      .onDisappear {
-        // Clean up state invalidation subscription
-        if let subscriber = stateInvalidationSubscriber {
-          appState.stateInvalidationBus.unsubscribe(subscriber)
-          stateInvalidationSubscriber = nil
-        }
-      }
-      .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
-        Task { await updateFilteredFeeds() }
-      }
-      .onChange(of: viewModel.cachedSavedFeeds) { _, _ in
-        Task { await updateFilteredFeeds() }
-      }
-      .task {
-        // Periodic background refresh
-        try? await Task.sleep(for: .seconds(2))
-        if isInitialized {
-          await viewModel.fetchFeedGenerators()
-          await updateFilteredFeeds()
-        }
-      }
-      .onChange(of: viewModel.feedGenerators) { _, _ in
-        Task { await updateFilteredFeeds() }
-      }
-      .onChange(of: viewModel.errorMessage) { _, newError in
-        if let errorMsg = newError {
-          errorAlertMessage = errorMsg
-          showErrorAlert = true
-        }
-      }
-      .sheet(isPresented: $showAddFeedSheet) {
-        AddFeedSheet()
-      }
-      .sheet(isPresented: $isShowingAccountSwitcher) {
-        AccountSwitcherView()
-      }
-      .alert("System Feed Protected", isPresented: $showProtectedSystemFeedAlert) {
-        Button("OK", role: .cancel) {}
-      } message: {
-        Text(
-          "\(lastProtectedFeedAction) cannot be performed on system feeds like Timeline/Following as they are required for the app to function correctly."
-        )
-      }
-      .alert("Error", isPresented: $showErrorAlert) {
-        Button("OK", role: .cancel) {}
-      } message: {
-        Text(errorAlertMessage)
-      }
     }
   }
 }
@@ -1066,7 +1075,7 @@ final class FeedsStartPageStateSubscriber: StateInvalidationSubscriber {
     }
   }
 
-  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
     switch event {
     case .feedListChanged:
       return true
@@ -1074,4 +1083,79 @@ final class FeedsStartPageStateSubscriber: StateInvalidationSubscriber {
       return false
     }
   }
+}
+
+// MARK: - Stretchy Header Extensions
+// Removed - using inline GeometryReader approach instead for better reliability
+
+// MARK: - View Modifier Extension
+extension View {
+    func applyFeedsPageModifiers(
+        viewModel: FeedsStartPageViewModel,
+        appState: AppState,
+        editMode: Binding<EditMode>,
+        isDrawerOpen: Binding<Bool>,
+        showAddFeedSheet: Binding<Bool>,
+        isShowingAccountSwitcher: Binding<Bool>,
+        showProtectedSystemFeedAlert: Binding<Bool>,
+        lastProtectedFeedAction: String,
+        showErrorAlert: Binding<Bool>,
+        errorAlertMessage: Binding<String>,
+        onAppear: @escaping () -> Void,
+        onDisappear: @escaping () -> Void
+    ) -> some View {
+        self
+            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        isDrawerOpen.wrappedValue = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+            .environment(\.editMode, editMode)
+            .onAppear(perform: onAppear)
+            .onDisappear(perform: onDisappear)
+            .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
+                Task { await viewModel.updateCaches() }
+            }
+            .onChange(of: viewModel.cachedSavedFeeds) { _, _ in
+                Task { await viewModel.updateCaches() }
+            }
+            .task {
+                try? await Task.sleep(for: .seconds(2))
+                await viewModel.fetchFeedGenerators()
+            }
+            .onChange(of: viewModel.feedGenerators) { _, _ in
+                Task { await viewModel.updateCaches() }
+            }
+            .onChange(of: viewModel.errorMessage) { _, newError in
+                if let errorMsg = newError {
+                    errorAlertMessage.wrappedValue = errorMsg
+                    showErrorAlert.wrappedValue = true
+                }
+            }
+            .sheet(isPresented: showAddFeedSheet) {
+                AddFeedSheet()
+            }
+            .sheet(isPresented: isShowingAccountSwitcher) {
+                AccountSwitcherView()
+            }
+            .alert("System Feed Protected", isPresented: showProtectedSystemFeedAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(
+                    "\(lastProtectedFeedAction) cannot be performed on system feeds like Timeline/Following as they are required for the app to function correctly."
+                )
+            }
+            .alert("Error", isPresented: showErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorAlertMessage.wrappedValue)
+            }
+    }
 }

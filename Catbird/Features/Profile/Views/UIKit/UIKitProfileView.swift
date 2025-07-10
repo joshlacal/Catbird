@@ -1,4 +1,7 @@
 import SwiftUI
+import UIKit
+import Nuke
+import NukeUI
 import Petrel
 import os
 
@@ -17,6 +20,7 @@ struct UIKitProfileView: View {
   @State private var isShowingBlockConfirmation = false
   @State private var isBlocking = false
   @State private var isMuting = false
+  @State private var scrollOffset: CGFloat = 0
   
   private let logger = Logger(subsystem: "blue.catbird", category: "UIKitProfileView")
   
@@ -41,9 +45,10 @@ struct UIKitProfileView: View {
       navigationPath: $navigationPath,
       selectedTab: $selectedTab,
       lastTappedTab: $lastTappedTab,
-      isEditingProfile: $isEditingProfile
+      isEditingProfile: $isEditingProfile,
+      scrollOffset: $scrollOffset
     )
-    .id(viewModel.profile?.did)
+    .id(viewModel.userDID) // Use stable userDID for view identity
     .navigationTitle(viewModel.profile != nil ? "@\(viewModel.profile!.handle)" : "Profile")
     .navigationBarTitleDisplayMode(.inline)
     .ensureDeepNavigationFonts()
@@ -51,7 +56,7 @@ struct UIKitProfileView: View {
       switch destination {
       case .section(let tab):
         ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
-          .id(viewModel.profile?.did)
+          .id("\(viewModel.userDID)_\(tab.rawValue)") // Stable composite ID
       case .followers(let did):
         FollowersView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
           .id(did)
@@ -267,9 +272,10 @@ struct UIKitProfileViewControllerRepresentable: UIViewControllerRepresentable {
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
   @Binding var isEditingProfile: Bool
+  @Binding var scrollOffset: CGFloat
   
   func makeUIViewController(context: Context) -> UIKitProfileViewController {
-    UIKitProfileViewController(
+    let vc = UIKitProfileViewController(
       appState: appState,
       viewModel: viewModel,
       navigationPath: $navigationPath,
@@ -277,9 +283,12 @@ struct UIKitProfileViewControllerRepresentable: UIViewControllerRepresentable {
       lastTappedTab: $lastTappedTab,
       isEditingProfile: $isEditingProfile
     )
+    return vc
   }
   
   func updateUIViewController(_ uiViewController: UIKitProfileViewController, context: Context) {
-    // Updates handled through the view model and bindings
+    // The UIKitProfileViewController manages its own scroll offset internally
   }
+  
 }
+

@@ -33,6 +33,8 @@ struct FollowersView: View {
             } else if !viewModel.followers.isEmpty {
                 ForEach(viewModel.followers, id: \.did) { follower in
                         ProfileRowView(profile: follower)
+                        .padding(12)
+
                             .applyListRowModifiers(id: follower.did.didString())
                             .onTapGesture {
                                 path.append(NavigationDestination.profile(follower.did.didString()))

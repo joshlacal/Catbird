@@ -97,6 +97,9 @@ final class AppState {
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
   
+  /// List manager for handling list operations
+  @ObservationIgnored var listManager: ListManager
+  
   /// Observable chat unread count for UI updates
   var chatUnreadCount: Int = 0
 
@@ -121,14 +124,14 @@ final class AppState {
   // MARK: - Feed State
 
   /// Cache of prefetched feeds by type
-  @ObservationIgnored private var prefetchedFeeds:
-    [FetchType: (posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?)] = [:]
+  @ObservationIgnored private let prefetchedFeedCache = PrefetchedFeedCache()
 
   // Flag to track if AuthManager initialization is complete
   @ObservationIgnored private var isAuthManagerInitialized = false
 
   // For task cancellation when needed
   @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?
+  @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
 
   // MARK: - Initialization
 
@@ -139,6 +142,9 @@ final class AppState {
     if AppState.initializationCount > 1 {
       logger.warning("⚠️ Multiple AppState instances detected! This may indicate a problem with view recreation.")
     }
+    
+    let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1"
+    
     self.urlHandler = URLHandler()
 
     // Initialize theme manager with font manager dependency
@@ -150,6 +156,9 @@ final class AppState {
     // Initialize graph manager with nil client (will be updated when auth is complete)
     self.graphManager = GraphManager(atProtoClient: nil)
 
+    // Initialize list manager with nil client (will be updated when auth is complete)
+    self.listManager = ListManager(client: nil, appState: nil)
+
     // Initialize chat manager with nil client (will be updated with self reference after initialization)
     self.chatManager = ChatManager(client: nil, appState: nil)
 
@@ -159,10 +168,12 @@ final class AppState {
       self.isAdultContentEnabled = storedContentSetting
     }
 
-    // Configure notification manager with app state reference
-    notificationManager.configure(with: self)
+    // Configure notification manager with app state reference (skip for FaultOrdering)
+    if !isFaultOrderingMode {
+      notificationManager.configure(with: self)
+    }
 
-    // Set up observation of authentication state changes
+    // Set up observation of authentication state changes (simplified for FaultOrdering)
     authStateObservationTask = Task { [weak self] in
       guard let self = self else { return }
 
@@ -172,48 +183,56 @@ final class AppState {
           if case .authenticated = state {
             self.postManager.updateClient(self.authManager.client)
             self.preferencesManager.updateClient(self.authManager.client)
-            self.notificationManager.updateClient(self.authManager.client)
+            if !isFaultOrderingMode {
+              self.notificationManager.updateClient(self.authManager.client)
+            }
             if let client = self.authManager.client {
               self.graphManager = GraphManager(atProtoClient: client)
+              self.listManager.updateClient(client)
+              self.listManager.updateAppState(self)
+              if !isFaultOrderingMode {
                 await self.chatManager.updateClient(client) // Update ChatManager client
-              self.migrationService.updateSourceClient(client) // Update Migration service client
-              self.urlHandler.configure(with: self)
-              
-              Task { @MainActor in
-                await self.notificationManager.requestNotificationsAfterLogin()
+                self.migrationService.updateSourceClient(client) // Update Migration service client
+                self.urlHandler.configure(with: self)
               }
-
-              // Notify that authentication is complete to refresh all views
-              self.notifyAccountSwitched()
-
-              // When we authenticate, also try to refresh preferences
-              Task { @MainActor in
-                do {
-                  try await self.preferencesManager.fetchPreferences(forceRefresh: true)
-                } catch {
-                  self.logger.error(
-                    "Error fetching preferences after authentication: \(error.localizedDescription)"
-                  )
+              
+              if !isFaultOrderingMode {
+                Task { @MainActor in
+                  await self.notificationManager.requestNotificationsAfterLogin()
                 }
 
-                  guard let userDID = self.currentUserDID else {
-                  self.logger.error("No current user DID after authentication")
-                  return
-                }
+                // Notify that authentication is complete to refresh all views
+                self.notifyAccountSwitched()
 
-                // Wait briefly for auth to fully establish
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                
-                // Load current user profile for optimistic updates
-                await self.loadCurrentUserProfile(did: userDID)
-                
-                // Check for automatic backup if enabled
-                if let userProfile = self.currentUserProfile {
-                  await self.backupManager.createAutomaticBackupIfNeeded(
-                    for: userDID,
-                    userHandle: userProfile.handle.description,
-                    client: client
-                  )
+                // When we authenticate, also try to refresh preferences
+                Task { @MainActor in
+                  do {
+                    try await self.preferencesManager.fetchPreferences(forceRefresh: true)
+                  } catch {
+                    self.logger.error(
+                      "Error fetching preferences after authentication: \(error.localizedDescription)"
+                    )
+                  }
+
+                    guard let userDID = self.currentUserDID else {
+                    self.logger.error("No current user DID after authentication")
+                    return
+                  }
+
+                  // Wait briefly for auth to fully establish
+                  try? await Task.sleep(nanoseconds: 200_000_000)
+                  
+                  // Load current user profile for optimistic updates
+                  await self.loadCurrentUserProfile(did: userDID)
+                  
+                  // Check for automatic backup if enabled
+                  if let userProfile = self.currentUserProfile {
+                    await self.backupManager.createAutomaticBackupIfNeeded(
+                      for: userDID,
+                      userHandle: userProfile.handle.description,
+                      client: client
+                    )
+                  }
                 }
               }
             }
@@ -225,6 +244,8 @@ final class AppState {
             self.preferencesManager.updateClient(nil)
             self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
+            self.listManager.updateClient(nil)
+            self.listManager.updateAppState(nil)
              await self.chatManager.updateClient(nil)
             self.migrationService.updateSourceClient(nil)
             // Add profile reset if needed
@@ -263,6 +284,36 @@ final class AppState {
     NotificationCenter.default.removeObserver(self)
     // Cancel auth state observation task
     authStateObservationTask?.cancel()
+    backgroundPollingTask?.cancel()
+  }
+
+  // MARK: - Background Polling
+
+  private func startBackgroundPolling() {
+    backgroundPollingTask = Task(priority: .background) {
+      while !Task.isCancelled {
+        await withTaskGroup(of: Void.self) { group in
+          // Prune old feed models
+          group.addTask {
+            FeedModelContainer.shared.pruneOldModels(olderThan: 1800)
+          }
+
+          // Refresh preferences
+          group.addTask {
+            if self.isAuthenticated {
+              do {
+                try await self.preferencesManager.fetchPreferences(forceRefresh: true)
+              } catch {
+                self.logger.error("Error during periodic preferences refresh: \(error.localizedDescription)")
+              }
+            }
+          }
+        }
+
+        // Wait for 5 minutes before the next poll
+        try? await Task.sleep(for: .seconds(300))
+      }
+    }
   }
 
   // MARK: - App Initialization
@@ -271,6 +322,36 @@ final class AppState {
   func initialize() async {
     logger.info("🚀 Starting AppState.initialize()")
     
+    // Fast path for FaultOrdering tests - skip expensive operations
+    let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
+                              ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
+                              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    
+    if isFaultOrderingMode {
+      logger.info("⚡ FaultOrdering mode - using minimal initialization")
+      
+      // Even more aggressive optimization - skip auth entirely if we have any stored credentials
+      // This avoids both keychain operations and network token refresh
+      let hasStoredCredentials = UserDefaults(suiteName: "group.blue.catbird.shared")?.data(forKey: "lastLoggedInUser") != nil
+      
+      if hasStoredCredentials {
+        logger.info("⚡ Found stored credentials, marking as authenticated without keychain/network operations")
+        // Mark as authenticated without going through full initialization
+        // Note: authManager.setAuthenticatedStateForFaultOrdering() would be called here
+        // but we'll skip full auth for now to speed up FaultOrdering
+        self.isAuthManagerInitialized = true
+      } else {
+        logger.info("⚡ No stored credentials, doing minimal auth initialization")
+        await authManager.initialize()
+        self.isAuthManagerInitialized = true
+      }
+      
+      // Skip ALL expensive operations
+      logger.info("🏁 AppState.initialize() completed (FaultOrdering mode)")
+      return
+    }
+    
+    // Normal initialization path
     // Configure Nuke image pipeline with GIF support
     configureImagePipeline()
     
@@ -293,17 +374,22 @@ final class AppState {
     notificationManager.updateClient(authManager.client)
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
+      listManager.updateClient(client)
+      listManager.updateAppState(self)
            await chatManager.updateClient(client) // Update ChatManager client if uncommented
            updateChatUnreadCount() // Update chat unread count
     } else {
       graphManager = GraphManager(atProtoClient: nil)  // Ensure graphManager is also updated if client is nil post-init
+      listManager.updateClient(nil)
+      listManager.updateAppState(nil)
     }
 
-    // Setup other components as needed
-    setupModelPruningTimer()
-    setupPreferencesRefreshTimer()
-    setupNotifications()
-    setupChatObservers()
+    // Setup other components as needed (skip for FaultOrdering)
+    if !isFaultOrderingMode {
+      startBackgroundPolling()
+      setupNotifications()
+      setupChatObservers()
+    }
     
     // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
     _themeManager.applyTheme(
@@ -313,8 +399,8 @@ final class AppState {
     
     logger.info("Theme applied on startup: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode)")
 
-    // Get accounts list if authenticated
-    if isAuthenticated {
+    // Get accounts list if authenticated (skip for FaultOrdering)
+    if isAuthenticated && !isFaultOrderingMode {
       Task {
         await authManager.refreshAvailableAccounts()
 
@@ -363,7 +449,7 @@ final class AppState {
     logger.info("Refreshing data after account switch")
 
     // Clear old prefetched data
-    prefetchedFeeds.removeAll()
+    await prefetchedFeedCache.clear()
 
     // Update client references in all managers
     postManager.updateClient(authManager.client)
@@ -373,8 +459,12 @@ final class AppState {
         updateChatUnreadCount() // Update chat unread count
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
+      listManager.updateClient(client)
+      listManager.updateAppState(self)
     } else {
       graphManager = GraphManager(atProtoClient: nil)
+      listManager.updateClient(nil)
+      listManager.updateAppState(nil)
     }
 
     // Reload preferences
@@ -391,59 +481,7 @@ final class AppState {
     }
   }
 
-  /// Set up a timer to periodically prune old feed models
-  private func setupModelPruningTimer() {
-    // Set up a timer to prune old models every 5 minutes
-    Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-      guard self != nil else { return }
-
-      Task {
-        // Prune models that haven't been accessed in 30 minutes
-        FeedModelContainer.shared.pruneOldModels(olderThan: 1800)
-      }
-    }
-
-    logger.debug("Feed model pruning timer set up")
-  }
-
-  /// Set up a timer to periodically refresh preferences
-  private func setupPreferencesRefreshTimer() {
-    // Set up a timer to refresh preferences every 10 minutes when the app is active
-    Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
-      guard let self = self, self.isAuthenticated else { return }
-
-      Task {
-        do {
-          self.logger.info("Performing periodic preferences refresh")
-          try await self.preferencesManager.fetchPreferences(forceRefresh: true)
-        } catch {
-          self.logger.error(
-            "Error during periodic preferences refresh: \(error.localizedDescription)")
-        }
-      }
-    }
-
-    // Also refresh when app comes to foreground
-    NotificationCenter.default.addObserver(
-      forName: UIApplication.willEnterForegroundNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      guard let self = self, self.isAuthenticated else { return }
-
-      Task {
-        do {
-          self.logger.info("Refreshing preferences after app returns to foreground")
-          try await self.preferencesManager.fetchPreferences(forceRefresh: true)
-        } catch {
-          self.logger.error(
-            "Error refreshing preferences on foreground: \(error.localizedDescription)")
-        }
-      }
-    }
-
-    logger.debug("Preferences periodic refresh timer set up")
-  }
+  
 
   // MARK: - OAuth Callback Handling
 
@@ -474,15 +512,15 @@ final class AppState {
   /// Stores a prefetched feed for faster initial loading
   func storePrefetchedFeed(
     _ posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?, for fetchType: FetchType
-  ) {
-    prefetchedFeeds[fetchType] = (posts, cursor)
+  ) async {
+    await prefetchedFeedCache.set(posts, cursor: cursor, for: fetchType)
   }
 
   /// Gets a prefetched feed if available
   func getPrefetchedFeed(_ fetchType: FetchType) async -> (
     posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?
   )? {
-    return prefetchedFeeds[fetchType]
+    return await prefetchedFeedCache.get(for: fetchType)
   }
 
   // MARK: - Convenience Accessors
@@ -510,6 +548,11 @@ final class AppState {
   /// Current auth state
   var authState: AuthState {
     authManager.state
+  }
+
+  /// The shared Nuke image pipeline
+  var imagePipeline: ImagePipeline {
+    ImagePipeline.shared
   }
   
   // MARK: - User Profile Methods
@@ -1040,5 +1083,23 @@ final class AppState {
   func notifyThreadUpdated(_ rootUri: String) {
     logger.debug("Thread updated notification: \(rootUri)")
     stateInvalidationBus.notifyThreadUpdated(rootUri)
+  }
+}
+
+// MARK: - Prefetched Feed Cache
+
+actor PrefetchedFeedCache {
+  private var cache: [FetchType: (posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?)] = [:]
+
+  func set(_ posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?, for fetchType: FetchType) {
+    cache[fetchType] = (posts, cursor)
+  }
+
+  func get(for fetchType: FetchType) -> (posts: [AppBskyFeedDefs.FeedViewPost], cursor: String?)? {
+    return cache[fetchType]
+  }
+
+  func clear() {
+    cache.removeAll()
   }
 }

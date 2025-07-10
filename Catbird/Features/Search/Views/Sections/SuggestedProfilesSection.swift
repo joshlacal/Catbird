@@ -22,7 +22,7 @@ struct SuggestedProfilesSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Suggested For You", systemImage: "person.2")
+                Label("Suggested Profiles", systemImage: "person.2")
                     .appFont(.customSystemFont(size: 17, weight: .medium, width: 120, relativeTo: .headline))
                 
                 Spacer()
@@ -67,58 +67,102 @@ struct SuggestedProfilesSection: View {
     }
     
     private var profilesCardView: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 20) {
-                ForEach(profiles.prefix(6), id: \.did) { profile in
-                    profileCard(profile: profile)
-                        .padding(.vertical, 12)
-                }
+        VStack(spacing: 12) {
+            ForEach(profiles.prefix(5), id: \.did) { profile in
+                profileCard(profile: profile)
             }
-            .padding(.horizontal, 20)
         }
+        .padding(.horizontal, 16)
     }
     
     private func profileCard(profile: AppBskyActorDefs.ProfileView) -> some View {
         Button {
             onSelect(profile)
         } label: {
-            VStack(alignment: .center, spacing: 14) {
-                AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 64)
+            HStack(alignment: .top, spacing: 14) {
+                AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 56)
                 
-                VStack(spacing: 8) {
-                    Text(profile.displayName ?? "@\(profile.handle)")
-                        .appFont(AppTextRole.subheadline.weight(.semibold))
-                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
+                        Text(profile.displayName ?? profile.handle.description)
+                            .appFont(AppTextRole.body.weight(.semibold))
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        
+//                        if let verification = profile.verification, verification.verifiedStatus {
+//                            Image(systemName: "checkmark.seal.fill")
+//                                .font(.system(size: 14))
+//                                .foregroundColor(.accentColor)
+//                        }
+                    }
                     
                     Text("@\(profile.handle)")
-                        .appFont(AppTextRole.footnote)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     
                     if let description = profile.description, !description.isEmpty {
                         Text(description)
-                            .appFont(AppTextRole.caption)
+                            .appFont(AppTextRole.footnote)
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .tertiary, currentScheme: colorScheme))
                             .lineLimit(2)
-                            .multilineTextAlignment(.center)
-                            .padding(.top, 4)
+                            .multilineTextAlignment(.leading)
+                            .padding(.top, 2)
                     }
+                    
+                    HStack(spacing: 12) {
+                        if let viewer = profile.viewer, let knownFollowers = viewer.knownFollowers, knownFollowers.count > 0 {
+                            Label {
+                                Text("\(knownFollowers.count) mutual")
+                                    .appFont(AppTextRole.caption)
+                            } icon: {
+                                Image(systemName: "person.2.fill")
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                        }
+                        
+                        if let createdAt = profile.createdAt {
+                            Label {
+                                Text("Joined \(formatJoinDate(createdAt))")
+                                    .appFont(AppTextRole.caption)
+                            } icon: {
+                                Image(systemName: "calendar")
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                        }
+                    }
+                    .padding(.top, 4)
                 }
                 
-                Spacer(minLength: 8)
+                Spacer()
                 
                 followButtonView(profile: profile)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 18)
-            .padding(.bottom, 20)
-            .frame(width: 160, height: 220)
-            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
-            .cornerRadius(16)
-            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 8, y: 4)
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(
+                Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme)
+                    
+//                Group {
+//                    switch appState.themeManager.currentTheme {
+//                    case .light:
+//                        Color.white
+//                    case .dark:
+//                        Color(uiColor: UIColor.secondarySystemGroupedBackground)
+//                    case .dim:
+//                        Color(white: 0.08)
+//                    }
+//                }
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme).opacity(0.3), lineWidth: 0.5)
+            )
+            .cornerRadius(14)
         }
         .buttonStyle(.plain)
     }
@@ -130,29 +174,29 @@ struct SuggestedProfilesSection: View {
                 // Follow action
             } label: {
                 Text("Follow")
-                    .appFont(AppTextRole.footnote.weight(.medium))
+                    .appFont(AppTextRole.footnote.weight(.semibold))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 10)
                             .fill(Color.accentColor)
                     )
             }
+            .buttonStyle(.plain)
         } else {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark")
-                    .appFont(AppTextRole.caption2)
+                    .font(.system(size: 11, weight: .medium))
                 Text("Following")
                     .appFont(AppTextRole.footnote.weight(.medium))
             }
-            .foregroundColor(.accentColor)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.accentColor, lineWidth: 1)
-                    .fill(Color.accentColor.opacity(0.08))
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), lineWidth: 1)
             )
         }
     }
@@ -166,6 +210,20 @@ struct SuggestedProfilesSection: View {
             return String(format: "%.1fK", formatted)
         } else {
             return "\(count)"
+        }
+    }
+    
+    private func formatJoinDate(_ date: ATProtocolDate) -> String {
+        let now = Date()
+        let joinDate = date.toDate
+        let components = Calendar.current.dateComponents([.year, .month], from: joinDate, to: now)
+        
+        if let years = components.year, years > 0 {
+            return "\(years)y ago"
+        } else if let months = components.month, months > 0 {
+            return "\(months)mo ago"
+        } else {
+            return "recently"
         }
     }
 }

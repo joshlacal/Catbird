@@ -111,6 +111,13 @@ final class AuthenticationManager {
       }
     }
     
+  /// Special method for FaultOrdering to skip expensive initialization
+  @MainActor
+  func setAuthenticatedStateForFaultOrdering() {
+    logger.info("⚡ FaultOrdering: Setting authenticated state without full initialization")
+      updateState(.authenticated(userDID: AppState.shared.currentUserDID ?? ""))
+  }
+    
   // MARK: - Public API
 
   /// Initialize the client and check authentication state
@@ -163,6 +170,19 @@ final class AuthenticationManager {
     }
 
     logger.debug("Checking authentication state")
+
+    // Fast path for FaultOrdering - skip token refresh to prevent network timeout
+    if ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" {
+      logger.info("⚡ FaultOrdering mode - skipping token refresh, using existing session")
+      if await client.hasValidSession() {
+          updateState(.authenticated(userDID: AppState.shared.currentUserDID ?? ""))
+        logger.info("✅ Using existing valid session for FaultOrdering")
+      } else {
+        updateState(.unauthenticated)
+        logger.info("❌ No valid session found for FaultOrdering")
+      }
+      return
+    }
 
     // First, try to refresh token if it exists with retry logic
     if await client.hasValidSession() {

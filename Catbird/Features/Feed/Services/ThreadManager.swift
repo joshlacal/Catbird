@@ -39,24 +39,9 @@ final class ThreadManager: StateInvalidationSubscriber {
   private var currentThreadURI: ATProtocolURI?
 
   /// The ATPROTO client for API calls
-  private var client: ATProtoClient {
-    guard let client = appState.atProtoClient else {
-//      #if DEBUG
-        fatalError("ATProtoClient not available in ThreadManager. This should never happen.")
-//      #else
-//        // Handle in production with error state
-//        isLoading = false
-//        error = NSError(
-//          domain: "ThreadManager",
-//          code: -1,
-//          userInfo: [
-//            NSLocalizedDescriptionKey: "Network client unavailable. Please restart the app."
-//          ]
-//        )
-//        return ATProtoClient(configuration: .init(host: ""))
-//      #endif
-    }
-    return client
+  private var client: ATProtoClient? {
+    // Safe handling to prevent fatalError during FaultOrdering
+    return appState.atProtoClient
   }
 
   // MARK: - Initialization
@@ -85,6 +70,15 @@ final class ThreadManager: StateInvalidationSubscriber {
     logger.debug("Loading thread: \(uri.uriString())")
 
     do {
+      guard let client = client else {
+        self.error = NSError(
+          domain: "ThreadManager", code: -1,
+          userInfo: [NSLocalizedDescriptionKey: "Network client unavailable. Please check your connection."]
+        )
+        isLoading = false
+        return
+      }
+      
       let params = AppBskyFeedGetPostThread.Parameters(
         uri: uri,
         depth: 10,  // Let API decide depth for replies
@@ -179,6 +173,12 @@ final class ThreadManager: StateInvalidationSubscriber {
     logger.debug("Loading more parents for post: \(oldestParentURI.uriString())")
 
     do {
+      guard let client = client else {
+        logger.error("Network client unavailable for loadMoreParents")
+        isLoadingMoreParents = false
+        return false
+      }
+      
       // Request a thread with focus on parent posts
       let params = AppBskyFeedGetPostThread.Parameters(
         uri: oldestParentURI,

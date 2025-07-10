@@ -59,7 +59,7 @@ struct EnhancedNewPostsIndicator: View {
   }
   
   private func authorAvatar(author: AppBskyActorDefs.ProfileViewBasic, index: Int) -> some View {
-    AsyncImage(url: author.avatar?.url) { image in
+    AsyncImage(url: author.finalAvatarURL()) { image in
       image
         .resizable()
         .aspectRatio(contentMode: .fill)
@@ -272,7 +272,8 @@ final class NewPostsIndicatorManager: ObservableObject {
     authors: [AppBskyActorDefs.ProfileViewBasic],
     feedType: FetchType,
     userActivity: UserActivityTracker,
-    scrollView: UIScrollView
+    scrollView: UIScrollView,
+    forceShow: Bool = false
   ) {
     // Cancel any pending show task
     showTask?.cancel()
@@ -283,14 +284,19 @@ final class NewPostsIndicatorManager: ObservableObject {
       return
     }
     
-    // Check if we should show based on user activity and position
-    guard userActivity.shouldShowNewContentIndicator(
-      scrollView: scrollView,
-      distanceFromTop: minimumDisplayThreshold,
-      minimumIdleTime: minimumIdleTime
-    ) else {
-      logger.debug("Not showing indicator: user activity check failed")
-      return
+    // If forceShow is true, skip user activity checks
+    if !forceShow {
+      // Check if we should show based on user activity and position
+      guard userActivity.shouldShowNewContentIndicator(
+        scrollView: scrollView,
+        distanceFromTop: minimumDisplayThreshold,
+        minimumIdleTime: minimumIdleTime
+      ) else {
+        logger.debug("Not showing indicator: user activity check failed")
+        return
+      }
+    } else {
+      logger.debug("Force showing enhanced indicator")
     }
     
     // Create indicator state
@@ -301,30 +307,36 @@ final class NewPostsIndicatorManager: ObservableObject {
       feedType: feedType
     )
     
-    // Schedule showing with debounce
-    showTask = Task { @MainActor in
-      do {
-        try await Task.sleep(for: .seconds(debounceDelay))
-        
-        if !Task.isCancelled {
-          // Re-check conditions after debounce
-          if userActivity.shouldShowNewContentIndicator(
-            scrollView: scrollView,
-            distanceFromTop: minimumDisplayThreshold,
-            minimumIdleTime: minimumIdleTime
-          ) {
-            currentIndicator = indicatorState
-            logger.info("Showing new posts indicator: \(newPostCount) posts from \(authors.count) authors")
-          } else {
-            logger.debug("Indicator conditions changed during debounce, not showing")
+    // Show immediately if forced, otherwise use debounce
+    if forceShow {
+      currentIndicator = indicatorState
+      logger.info("Force showing new posts indicator: \(newPostCount) posts from \(authors.count) authors")
+    } else {
+      // Schedule showing with debounce
+      showTask = Task { @MainActor in
+        do {
+          try await Task.sleep(for: .seconds(debounceDelay))
+          
+          if !Task.isCancelled {
+            // Re-check conditions after debounce
+            if userActivity.shouldShowNewContentIndicator(
+              scrollView: scrollView,
+              distanceFromTop: minimumDisplayThreshold,
+              minimumIdleTime: minimumIdleTime
+            ) {
+              currentIndicator = indicatorState
+              logger.info("Showing new posts indicator: \(newPostCount) posts from \(authors.count) authors")
+            } else {
+              logger.debug("Indicator conditions changed during debounce, not showing")
+            }
           }
+        } catch {
+          // Task was cancelled
+          logger.debug("Show indicator task cancelled")
         }
-      } catch {
-        // Task was cancelled
-        logger.debug("Show indicator task cancelled")
+        
+        showTask = nil
       }
-      
-      showTask = nil
     }
   }
   

@@ -16,6 +16,9 @@ final class PostContextMenuViewModel {
     
     // Reporting callback - will be set by PostView
     var onReportPost: (() -> Void)?
+    
+    // Add to list callback - will be set by PostView
+    var onAddAuthorToList: (() -> Void)?
 
     init(appState: AppState, post: AppBskyFeedDefs.PostView) {
         self.appState = appState
@@ -90,6 +93,11 @@ final class PostContextMenuViewModel {
     func reportPost() {
         // Trigger the reporting callback
         onReportPost?()
+    }
+    
+    func addAuthorToList() {
+        // Trigger the add to list callback
+        onAddAuthorToList?()
     }
     
     /// Creates a report subject for this post

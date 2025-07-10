@@ -309,6 +309,7 @@ struct LoginView: View {
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
             }
+                .scrollBounceBehavior(.basedOnSize)
             .navigationBarTitleDisplayMode(.inline)
             }
         }

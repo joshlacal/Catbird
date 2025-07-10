@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import Petrel
 
 // MARK: - Chat Tab View
 
@@ -13,192 +14,343 @@ struct ChatTabView: View {
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+  @State private var showingNewMessageSheet = false
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
-  // Ensure NavigationManager path binding uses the correct tab index (4)
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
   
-  // Determine if we should use split view based on device and orientation
   private var shouldUseSplitView: Bool {
     DeviceInfo.isIPad || horizontalSizeClass == .regular
   }
 
   var body: some View {
-    ZStack {
-      if shouldUseSplitView {
-        // iPad and large screens: Use NavigationSplitView
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-          // Sidebar: Conversation List
-          ConversationListView(
-            chatManager: appState.chatManager,
-            searchText: searchText,
-            onSelectConvo: { id in
-              selectedConvoId = id
-            },
-            onSelectSearchResult: { profile in
-              startConversation(with: profile)
-            }
-          )
-          .navigationTitle("Messages")
-          .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 400)
-        } detail: {
-          // Detail also needs NavigationStack for navigation within
-            if let convoId = selectedConvoId {
-              ConversationView(convoId: convoId)
-                .id(convoId)
-                .navigationDestination(for: NavigationDestination.self) { destination in
-                  NavigationHandler.viewForDestination(
-                    destination,
-                    path: chatNavigationPath,
-                    appState: appState,
-                    selectedTab: $selectedTab
-                  )
-                }
-            } else {
-              EmptyConversationView()
-            }
-        }
-        .navigationSplitViewStyle(.automatic)
-        .searchable(text: $searchText, prompt: "Search")
-        .onChange(of: searchText) { _, newValue in
-          appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
-        }
-        .toolbar {
-          ToolbarItem(placement: .navigationBarLeading) {
-            MessageRequestsButton()
-          }
-          
-          ToolbarItem(placement: .navigationBarTrailing) {
-            ChatToolbarMenu()
-          }
-        }
-          
-      } else {
-          ConversationListView(
-            chatManager: appState.chatManager,
-            searchText: searchText,
-            onSelectConvo: { id in
-              selectedConvoId = id
-              // Use the correct tab index (4) for navigation
-              appState.navigationManager.navigate(
-                to: .conversation(id),
-                in: 4
-              )
-            },
-            onSelectSearchResult: { profile in
-              startConversation(with: profile)
-            }
-          )
-          .navigationTitle("Messages")
-          .searchable(text: $searchText, prompt: "Search")
-          .onChange(of: searchText) { _, newValue in
-            appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
-          }
-          .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-              MessageRequestsButton()
-            }
-            
-            ToolbarItem(placement: .navigationBarTrailing) {
-              ChatToolbarMenu()
-            }
-          }
-          .navigationDestination(for: NavigationDestination.self) { destination in
-            NavigationHandler.viewForDestination(
-              destination,
-              path: chatNavigationPath,
-              appState: appState,
-              selectedTab: $selectedTab
-            )
-          }
-        
-      }
-      .onAppear {
-        // Load conversations when the tab appears
-        Task {
-          // Check if conversations are already loaded or loading to avoid redundant calls
-          if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
-            logger.debug("ChatTabView appeared, loading conversations.")
-            await appState.chatManager.loadConversations(refresh: true)
-          } else {
-            logger.debug("ChatTabView appeared, conversations already loaded or loading.")
-          }
-        }
-        // Start polling for conversation updates
-        appState.chatManager.startConversationsPolling()
-      }
-      .onDisappear {
-        // Stop polling when leaving the chat tab
-        appState.chatManager.stopConversationsPolling()
-      }
-      // Handle potential errors from ChatManager with debouncing
-      .alert(
-        isPresented: $isShowingErrorAlert
-      ) {
-        Alert(
-          title: Text("Chat Error"),
-          message: Text(lastErrorMessage ?? "An unknown error occurred."),
-          dismissButton: .default(Text("OK")) {
-            // Clear the error state when alert is dismissed
-            appState.chatManager.errorState = nil
-            lastErrorMessage = nil
-          }
-        )
-      }
-      .onChange(of: appState.chatManager.errorState) { _, newError in
-        // Only show alert if there's a new error and we're not already showing one
-        if let error = newError, !isShowingErrorAlert {
-          let errorMessage = error.localizedDescription
-          
-          // Prevent showing the same error message repeatedly
-          if lastErrorMessage != errorMessage {
-            lastErrorMessage = errorMessage
-            isShowingErrorAlert = true
-          }
-        } else if newError == nil {
-          // Clear alert state when error is cleared
-          isShowingErrorAlert = false
-          lastErrorMessage = nil
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      chatSidebarContent
+    } detail: {
+      chatDetailContent
+    }
+    .navigationSplitViewStyle(.automatic)
+    .onAppear(perform: handleOnAppear)
+    .onDisappear(perform: handleOnDisappear)
+    .onChange(of: selectedConvoId) { oldValue, newValue in
+      handleConversationChange(oldValue: oldValue, newValue: newValue)
+      
+      // On iPhone, manage column visibility based on selection
+      if !shouldUseSplitView {
+        if newValue != nil {
+          columnVisibility = .detailOnly
+        } else {
+            columnVisibility = .doubleColumn
         }
       }
-
-      // Add the ChatFAB with a new message action, but only if we're not already in a conversation
-      // Commenting out for now - uncomment when NewMessageSheet is implemented
-      // if chatNavigationPath.wrappedValue.isEmpty {
-      //   ChatFAB(newMessageAction: {
-      //     showingNewMessageSheet = true
-      //   })
-      //   .offset(y: -80)  // Match the offset of the main FAB
-      // }
+    }
+    .onChange(of: appState.chatManager.errorState) { oldError, newError in
+      handleErrorStateChange(oldError: oldError, newError: newError)
+    }
+    .alert(isPresented: $isShowingErrorAlert, content: createErrorAlert)
+    .sheet(isPresented: $showingNewMessageSheet) {
+      NewMessageView()
     }
   }
+  
+  // MARK: - Sidebar Content
+  
+  @ViewBuilder
+  private var chatSidebarContent: some View {
+    ZStack(alignment: .bottom) {
+      conversationList
+      chatFABContainer
+    }
+  }
+  
+  @ViewBuilder
+  private var conversationList: some View {
+    List(selection: $selectedConvoId) {
+      if !searchText.isEmpty {
+        searchResultsContent
+      } else {
+        mainConversationListContent
+      }
+    }
+    .listStyle(.plain)
+    .navigationTitle("Messages")
+    .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 400)
+    .searchable(text: $searchText, prompt: "Search")
+    .onChange(of: searchText) { _, newValue in
+      appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
+    }
+    .toolbar {
+      ToolbarItem(placement: .navigationBarLeading) {
+        MessageRequestsButton()
+      }
+      ToolbarItem(placement: .navigationBarTrailing) {
+        ChatToolbarMenu()
+      }
+    }
+    .refreshable {
+      await appState.chatManager.loadConversations(refresh: true)
+    }
+    .overlay {
+      conversationListOverlay
+    }
+  }
+  
+  @ViewBuilder
+  private var searchResultsContent: some View {
+    if !appState.chatManager.filteredProfiles.isEmpty {
+      Section("Contacts") {
+        ForEach(appState.chatManager.filteredProfiles, id: \.did) { profileBasic in
+          contactRow(for: profileBasic)
+        }
+      }
+    }
+    
+    if !appState.chatManager.filteredConversations.isEmpty {
+      Section("Conversations") {
+        ForEach(appState.chatManager.filteredConversations) { convo in
+          conversationRow(for: convo, withSwipeActions: true)
+        }
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var mainConversationListContent: some View {
+    ForEach(appState.chatManager.acceptedConversations) { convo in
+      conversationRow(for: convo, withSwipeActions: true)
+    }
+    
+    if shouldShowPagination {
+      paginationView
+    }
+  }
+  
+  @ViewBuilder
+  private var conversationListOverlay: some View {
+    if appState.chatManager.loadingConversations && appState.chatManager.acceptedConversations.isEmpty {
+      ProgressView("Loading Chats...")
+    } else if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
+      emptyConversationsView
+    }
+  }
+  
+  @ViewBuilder
+  private var emptyConversationsView: some View {
+    ContentUnavailableView {
+      Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
+    } description: {
+      VStack(spacing: DesignTokens.Spacing.sm) {
+        Text("You haven't started any chats yet.")
+          .enhancedAppBody()
+        if appState.chatManager.messageRequestsCount > 0 {
+          Text("Check your message requests above to see if anyone wants to chat with you.")
+            .enhancedAppCaption()
+            .foregroundColor(.secondary)
+        }
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var paginationView: some View {
+    ProgressView("Loading more...")
+      .frame(maxWidth: .infinity)
+      .padding()
+      .onAppear {
+        Task {
+          await appState.chatManager.loadConversations(refresh: false)
+        }
+      }
+  }
+  
+  @ViewBuilder
+  private var chatFABContainer: some View {
+    ZStack(alignment: .trailing) {
+      Color.clear.frame(height: 49)
+      ChatFAB(newMessageAction: {
+        showingNewMessageSheet = true
+      })
+      .offset(y: -80)
+    }
+    .ignoresSafeArea()
+    .safeAreaInset(edge: .bottom) {
+      EmptyView()
+    }
+  }
+  
+  // MARK: - Detail Content
+  
+  @ViewBuilder
+  private var chatDetailContent: some View {
+    NavigationStack(path: chatNavigationPath) {
+      if let convoId = selectedConvoId {
+        ConversationView(convoId: convoId)
+          .id(convoId)
+      } else {
+        EmptyConversationView()
+      }
+    }
+    .navigationDestination(for: NavigationDestination.self) { destination in
+      NavigationHandler.viewForDestination(
+        destination,
+        path: chatNavigationPath,
+        appState: appState,
+        selectedTab: $selectedTab
+      )
+    }
+  }
+  
+  // MARK: - Row Components
+  
+  @ViewBuilder
+  private func contactRow(for profileBasic: ChatBskyActorDefs.ProfileViewBasic) -> some View {
+    Button {
+      startConversation(with: profileBasic)
+    } label: {
+      HStack {
+        ChatProfileAvatarView(profile: profileBasic, size: 40)
+        VStack(alignment: .leading) {
+          Text(profileBasic.displayName ?? "")
+            .appHeadline()
+            .foregroundColor(.primary)
+          Text("@\(profileBasic.handle.description)")
+            .appSubheadline()
+            .foregroundColor(.secondary)
+        }
+      }
+      .spacingSM(.vertical)
+    }
+    .buttonStyle(.plain)
+    .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+    .listRowInsets(EdgeInsets())
+  }
+  
+  @ViewBuilder
+  private func conversationRow(for convo: ChatBskyConvoDefs.ConvoView, withSwipeActions: Bool) -> some View {
+    ConversationRow(
+      convo: convo,
+      did: appState.currentUserDID ?? ""
+    )
+    .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+    .modifier(ConditionalSwipeActions(conversation: convo, enabled: withSwipeActions))
+    .contextMenu {
+      ConversationContextMenu(conversation: convo)
+    }
+    .tag(convo.id)
+  }
+  
+  // MARK: - Helper Properties
+  
+  private var shouldShowChatFAB: Bool {
+    if DeviceInfo.isIPad {
+      return true
+    } else {
+      return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
+    }
+  }
+  
+  private var shouldShowPagination: Bool {
+    !appState.chatManager.acceptedConversations.isEmpty &&
+    appState.chatManager.conversationsCursor != nil &&
+    !appState.chatManager.loadingConversations
+  }
+  
+  // MARK: - Event Handlers
+  
+  private func handleOnAppear() {
+    Task {
+      if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
+        logger.debug("ChatTabView appeared, loading conversations.")
+        await appState.chatManager.loadConversations(refresh: true)
+      } else {
+        logger.debug("ChatTabView appeared, conversations already loaded or loading.")
+      }
+    }
+    appState.chatManager.startConversationsPolling()
+  }
+  
+  private func handleOnDisappear() {
+    appState.chatManager.stopConversationsPolling()
+  }
+  
+  private func handleConversationChange(oldValue: String?, newValue: String?) {
+    if oldValue != newValue && newValue != nil {
+      chatNavigationPath.wrappedValue = NavigationPath()
+    }
+  }
+  
+  private func handleErrorStateChange(oldError: ChatManager.ChatError?, newError: ChatManager.ChatError?) {
+    if let error = newError, !isShowingErrorAlert {
+      let errorMessage = error.localizedDescription
+      if lastErrorMessage != errorMessage {
+        lastErrorMessage = errorMessage
+        isShowingErrorAlert = true
+      }
+    } else if newError == nil {
+      isShowingErrorAlert = false
+      lastErrorMessage = nil
+    }
+  }
+  
+  private func createErrorAlert() -> Alert {
+    Alert(
+      title: Text("Chat Error"),
+      message: Text(lastErrorMessage ?? "An unknown error occurred."),
+      dismissButton: .default(Text("OK")) {
+        appState.chatManager.errorState = nil
+        lastErrorMessage = nil
+      }
+    )
+  }
 
-  // Search is now handled by ChatManager's searchLocal method
-
-  private func startConversation(with profile: ProfileDisplayable) {
+  private func startConversation(with profile: ChatBskyActorDefs.ProfileViewBasic) {
     Task {
       logger.debug("Starting conversation with user: \(profile.handle.description)")
 
       if let convoId = await appState.chatManager.startConversationWith(userDID: profile.did.didString()) {
         logger.debug("Successfully started conversation with ID: \(convoId)")
-
         await MainActor.run {
-          if shouldUseSplitView {
-            // For split view, just update the selected conversation
-            selectedConvoId = convoId
-          } else {
-            // For regular navigation, use the navigation manager
-            appState.navigationManager.navigate(
-              to: .conversation(convoId),
-              in: 4  // Chat tab index
-            )
-          }
+          selectedConvoId = convoId
         }
       } else {
         logger.error("Failed to start conversation with user: \(profile.handle.description)")
       }
+    }
+  }
+}
+
+// MARK: - Supporting Views
+
+private struct ConditionalSwipeActions: ViewModifier {
+  let conversation: ChatBskyConvoDefs.ConvoView
+  let enabled: Bool
+  @Environment(AppState.self) private var appState
+  
+  func body(content: Content) -> some View {
+    if enabled {
+      content
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+          Button(role: .destructive) {
+            Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+          } label: {
+            Label("Delete", systemImage: "trash")
+          }
+          
+          Button {
+            if conversation.muted {
+              Task { await appState.chatManager.unmuteConversation(convoId: conversation.id) }
+            } else {
+              Task { await appState.chatManager.muteConversation(convoId: conversation.id) }
+            }
+          } label: {
+            Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
+          }
+          .tint(conversation.muted ? .blue : .orange)
+        }
+    } else {
+      content
     }
   }
 }

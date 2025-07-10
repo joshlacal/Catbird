@@ -43,6 +43,14 @@ struct ContentView: View {
               }
             }
           }
+      } else if case .error(let message) = currentAuthState {
+        // Handle authentication errors that require user intervention
+        AuthErrorView(errorMessage: message, onRetry: {
+          Task {
+            appState.authManager.resetError()
+            await appState.authManager.checkAuthenticationState()
+          }
+        })
       } else {
         LoginView()
       }
@@ -56,11 +64,14 @@ struct ContentView: View {
             appState.onboardingManager.checkForWelcomeOnboarding()
           }
         }
+      } else if case .error(let message) = newValue {
+        // Log authentication errors for debugging
+        print("[ContentView] Authentication error: \(message)")
       }
     }
     .applyTheme(appState.themeManager)
     .fontManager(appState.fontManager)
-    .themedNavigationBar(appState.themeManager)
+//    .themedNavigationBar(appState.themeManager)
     // Theme and font changes are handled efficiently by the modifiers above
   }
 }
@@ -84,6 +95,90 @@ struct ContentViewLoadingView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(.background)
+  }
+}
+
+// MARK: - Authentication Error View
+
+struct AuthErrorView: View {
+  let errorMessage: String
+  let onRetry: () -> Void
+  
+  private var errorInfo: (type: AuthenticationErrorHandler.AuthErrorType, message: String, shouldReAuthenticate: Bool) {
+    // Create a mock error to use the handler
+    let mockError = NSError(domain: "AuthError", code: 401, userInfo: [
+      NSLocalizedDescriptionKey: errorMessage
+    ])
+    return AuthenticationErrorHandler.categorizeError(mockError)
+  }
+  
+  var body: some View {
+    VStack(spacing: 24) {
+      VStack(spacing: 16) {
+        Image(systemName: iconForErrorType(errorInfo.type))
+          .font(.system(size: 60))
+          .foregroundStyle(colorForErrorType(errorInfo.type))
+        
+        VStack(spacing: 8) {
+          Text(AuthenticationErrorHandler.titleForErrorType(errorInfo.type))
+            .appFont(AppTextRole.title2)
+            .fontWeight(.semibold)
+          
+          Text(errorInfo.message)
+            .appFont(AppTextRole.body)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+        }
+      }
+      
+      VStack(spacing: 12) {
+        Button(AuthenticationErrorHandler.actionButtonTitle(errorInfo.type)) {
+          onRetry()
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        
+        if !errorMessage.isEmpty && errorInfo.type == .unknown {
+          Text("Technical details: \(errorMessage)")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.tertiary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(.background)
+    .padding()
+  }
+  
+  private func iconForErrorType(_ type: AuthenticationErrorHandler.AuthErrorType) -> String {
+    switch type {
+    case .sessionExpired, .unauthorized, .tokenRefreshFailed:
+      return "person.crop.circle.badge.exclamationmark"
+    case .invalidCredentials:
+      return "key.slash.fill"
+    case .networkError:
+      return "wifi.exclamationmark"
+    case .serverError:
+      return "server.rack"
+    case .unknown:
+      return "exclamationmark.triangle.fill"
+    }
+  }
+  
+  private func colorForErrorType(_ type: AuthenticationErrorHandler.AuthErrorType) -> Color {
+    switch type {
+    case .sessionExpired, .unauthorized, .tokenRefreshFailed, .invalidCredentials:
+      return .orange
+    case .networkError:
+      return .blue
+    case .serverError:
+      return .red
+    case .unknown:
+      return .gray
+    }
   }
 }
 
@@ -198,7 +293,8 @@ struct MainContentView18: View {
         }
         .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
       }
-      .themedNavigationBar(appState.themeManager)
+//      .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+//      .themedNavigationBar(appState.themeManager)
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
@@ -267,16 +363,6 @@ struct MainContentView18: View {
             )
             .offset(y: -80)  // Position FAB above tab bar
           }
-        } else if selectedTab == 4 {
-            // Show chat FAB when on chat tab and either:
-            // - Navigation stack is empty (iPhone)
-            // - Or we're on iPad (always show in split view)
-            if appState.navigationManager.pathBinding(for: 4).wrappedValue.isEmpty || DeviceInfo.isIPad {
-              ChatFAB(newMessageAction: {
-                showingNewMessageSheet = true
-              })
-              .offset(y: -80)  // Match the offset of the main FAB
-            }
         } else {
           // If no FAB, still provide space for tab bar
           Color.clear.frame(height: 49)
@@ -453,7 +539,8 @@ struct MainContentView17: View {
         .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
         .tag(4)
       }
-      .themedNavigationBar(appState.themeManager)
+//      .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+//      .themedNavigationBar(appState.themeManager)
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
 
@@ -518,16 +605,6 @@ struct MainContentView17: View {
             )
             .offset(y: -80)  // Position FAB above tab bar
           }
-        } else if selectedTab == 4 {
-            // Show chat FAB when on chat tab and either:
-            // - Navigation stack is empty (iPhone)
-            // - Or we're on iPad (always show in split view)
-            if appState.navigationManager.pathBinding(for: 4).wrappedValue.isEmpty || DeviceInfo.isIPad {
-              ChatFAB(newMessageAction: {
-                showingNewMessageSheet = true
-              })
-              .offset(y: -80)  // Match the offset of the main FAB
-            }
         } else {
           // If no FAB, still provide space for tab bar
           Color.clear.frame(height: 49)

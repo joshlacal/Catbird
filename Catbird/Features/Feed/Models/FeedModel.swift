@@ -106,7 +106,7 @@ final class FeedModel: StateInvalidationSubscriber {
     do {
       let (fetchedPosts, newCursor) = try await feedManager.fetchFeed(fetchType: fetch, cursor: nil)
 
-      appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: fetch)
+      await appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: fetch)
 
       // Process posts using FeedTuner (following React Native pattern)
       logger.debug("🔍 About to call feedTuner.tune() with \(fetchedPosts.count) posts")
@@ -254,6 +254,13 @@ final class FeedModel: StateInvalidationSubscriber {
       return true
     }
     return false
+  }
+
+  // MARK: - Public Loading State Management
+  
+  @MainActor
+  func markAsNeedingInitialLoad() {
+    isLoading = true
   }
 
   // MARK: - Helper Methods for MainActor properties
@@ -469,7 +476,7 @@ final class FeedModel: StateInvalidationSubscriber {
       let (fetchedPosts, newCursor) = try await feedManager.fetchFeed(fetchType: fetch, cursor: nil)
 
       // Store in prefetch cache
-      appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: fetch)
+        await appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: fetch)
 
       // Process and filter posts (this now includes deduplication logic)
       let filteredPosts = await processAndFilterPosts(

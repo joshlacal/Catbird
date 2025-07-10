@@ -58,18 +58,14 @@ struct AccountSettingsView: View {
             default:
                 errorMessage = "Network error occurred. Please try again."
             }
-        } else if error.localizedDescription.contains("401") || error.localizedDescription.contains("Unauthorized") {
-            errorMessage = "Authentication error. Please log in again."
-        } else if error.localizedDescription.contains("403") || error.localizedDescription.contains("Forbidden") {
-            errorMessage = "Access denied. You don't have permission to \(operation.lowercased())."
-        } else if error.localizedDescription.contains("404") || error.localizedDescription.contains("NotFound") {
-            errorMessage = "Resource not found. Please try again."
-        } else if error.localizedDescription.contains("429") || error.localizedDescription.contains("RateLimitExceeded") {
-            errorMessage = "Too many requests. Please wait a moment and try again."
-        } else if error.localizedDescription.contains("500") || error.localizedDescription.contains("InternalServerError") {
-            errorMessage = "Server error. Please try again later."
         } else {
-            errorMessage = "Failed to \(operation.lowercased()): \(error.localizedDescription)"
+            // Use our centralized error handler for consistent messaging
+            let (_, userMessage, requiresReAuth) = AuthenticationErrorHandler.categorizeError(error)
+            if requiresReAuth {
+                errorMessage = "\(userMessage) You may need to sign in again to continue."
+            } else {
+                errorMessage = userMessage
+            }
         }
         
         formError = errorMessage

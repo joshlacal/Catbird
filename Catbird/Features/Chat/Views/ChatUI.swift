@@ -13,16 +13,3 @@
 // - ChatExtensions.swift: Protocol conformances
 
 // Re-export all chat UI components so existing imports continue to work
-public typealias ChatTabView = ChatTabView
-public typealias ConversationListView = ConversationListView
-public typealias ConversationRow = ConversationRow
-public typealias LastMessagePreview = LastMessagePreview
-public typealias ChatProfileAvatarView = ChatProfileAvatarView
-public typealias ConversationView = ConversationView
-public typealias ChatToolbarMenu = ChatToolbarMenu
-public typealias ConversationToolbarMenu = ConversationToolbarMenu
-public typealias ConversationContextMenu = ConversationContextMenu
-public typealias MessageRequestsButton = MessageRequestsButton
-public typealias EmptyConversationView = EmptyConversationView
-public typealias CustomMessageMenuAction = CustomMessageMenuAction
-public typealias ReportChatMessageView = ReportChatMessageView

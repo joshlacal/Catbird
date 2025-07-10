@@ -47,11 +47,11 @@ struct ThreadViewMainPostView: View {
             .frame(width: Self.avatarSize, height: Self.avatarSize)
             .clipShape(Circle())
             .contentShape(Circle())
-            .overlay(
-              Circle()
-                .inset(by: -1.5)
-                .stroke(colorScheme == .dark ? Color.black : Color.white, lineWidth: 3)
-            )
+//            .overlay(
+//              Circle()
+//                .inset(by: -1.5)
+//                .stroke(colorScheme == .dark ? Color.black : Color.white, lineWidth: 3)
+//            )
         } else {
           Image(systemName: "person.circle.fill")
             .foregroundColor(.gray)

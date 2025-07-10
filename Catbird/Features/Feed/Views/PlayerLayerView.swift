@@ -206,7 +206,7 @@ final class PlayerContainer: UIView {
       guard let self = self, !self.isCleanedUp else { return }
       // This is essential for GIFs and looping videos
       self.player?.seek(to: .zero)
-      self.player?.play()
+      self.player?.safePlay()
     }
   }
 

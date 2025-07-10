@@ -16,6 +16,11 @@
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
 		215795952D9E16F60030A8C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */; };
+		216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; };
+		216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		216E57022E0EFF02001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; productRef = 216E57012E0EFF02001E7844 /* FaultOrdering */; };
+		216E57032E0EFF02001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 216E57012E0EFF02001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; productRef = 216E57042E0EFF02001E7844 /* FaultOrderingTests */; };
 		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
 		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
@@ -25,6 +30,8 @@
 		21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A87CAC2D94390D0062F8E9 /* Petrel */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
 		21ECC9B62DC26B7100C2049B /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21ECC9B52DC26B7100C2049B /* Petrel */; };
+		21F0719A2E0CF6CF003BE8C2 /* Linkmap.txt in Resources */ = {isa = PBXBuildFile; fileRef = 21F071992E0CF6CF003BE8C2 /* Linkmap.txt */; };
+		21F071A62E0D0720003BE8C2 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 21F071A12E0D0680003BE8C2 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +78,29 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		21F0719D2E0CF935003BE8C2 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21F071A52E0D0720003BE8C2 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				21F071A62E0D0720003BE8C2 /* FaultOrdering in Embed Frameworks */,
+				216E57032E0EFF02001E7844 /* FaultOrdering in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -83,6 +113,7 @@
 		215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		21AC6E632DD0E0E700251536 /* .swiftlint.yml */ = {isa = PBXFileReference; lastKnownFileType = text.yaml; path = .swiftlint.yml; sourceTree = "<group>"; };
 		21DDE5EE2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CatbirdFeedWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		21F071992E0CF6CF003BE8C2 /* Linkmap.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Linkmap.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -171,6 +202,7 @@
 				212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
+				216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -185,6 +217,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				216E57022E0EFF02001E7844 /* FaultOrdering in Frameworks */,
+				216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -203,6 +237,7 @@
 		212E93F42D60132700D3E1DD = {
 			isa = PBXGroup;
 			children = (
+				21F071992E0CF6CF003BE8C2 /* Linkmap.txt */,
 				21AC6E632DD0E0E700251536 /* .swiftlint.yml */,
 				215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */,
 				212E93FF2D60132700D3E1DD /* Catbird */,
@@ -271,6 +306,7 @@
 				212E93FB2D60132700D3E1DD /* Resources */,
 				21196F292DC1115E00662CC3 /* Embed Foundation Extensions */,
 				21AC6E602DD0DDBF00251536 /* Run Script */,
+				21F0719D2E0CF935003BE8C2 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -292,6 +328,7 @@
 				21A87CAC2D94390D0062F8E9 /* Petrel */,
 				21993DFF2DCE71E600E13661 /* MCEmojiPicker */,
 				2121B3F42DF5201E003871F1 /* ExyteChat */,
+				216E56FE2E0EFEF8001E7844 /* FaultOrdering */,
 			);
 			productName = Catbird;
 			productReference = 212E93FD2D60132700D3E1DD /* Catbird.app */;
@@ -327,6 +364,7 @@
 				212E94172D60132A00D3E1DD /* Sources */,
 				212E94182D60132A00D3E1DD /* Frameworks */,
 				212E94192D60132A00D3E1DD /* Resources */,
+				21F071A52E0D0720003BE8C2 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -338,6 +376,8 @@
 			);
 			name = CatbirdUITests;
 			packageProductDependencies = (
+				216E57012E0EFF02001E7844 /* FaultOrdering */,
+				216E57042E0EFF02001E7844 /* FaultOrderingTests */,
 			);
 			productName = CatbirdUITests;
 			productReference = 212E941B2D60132A00D3E1DD /* CatbirdUITests.xctest */;
@@ -410,6 +450,7 @@
 				21A87CAB2D94390D0062F8E9 /* XCLocalSwiftPackageReference "../Petrel" */,
 				21993DFE2DCE71E600E13661 /* XCRemoteSwiftPackageReference "MCEmojiPicker" */,
 				2121B3F32DF5201E003871F1 /* XCRemoteSwiftPackageReference "Chat" */,
+				216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 212E93FE2D60132700D3E1DD /* Products */;
@@ -453,6 +494,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				21F0719A2E0CF6CF003BE8C2 /* Linkmap.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -626,11 +668,14 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
+				LD_GENERATE_MAP_FILE = YES;
+				LD_MAP_FILE_PATH = "$(PROJECT_DIR)/Linkmap.txt";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				ORDER_FILE = "";
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -663,11 +708,14 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
+				LD_GENERATE_MAP_FILE = YES;
+				LD_MAP_FILE_PATH = "$(PROJECT_DIR)/Linkmap.txt";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				ORDER_FILE = "$(PROJECT_DIR)/order-file.txt";
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -808,7 +856,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -826,7 +874,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -842,7 +890,9 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -858,7 +908,9 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1009,6 +1061,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../FaultOrdering-1.0.0";
+		};
 		21A87CAB2D94390D0062F8E9 /* XCLocalSwiftPackageReference "../Petrel" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Petrel;
@@ -1056,6 +1112,14 @@
 				minimumVersion = 1.2.3;
 			};
 		};
+		21F071942E0CF492003BE8C2 /* XCRemoteSwiftPackageReference "FaultOrdering" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/FaultOrdering";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1083,6 +1147,21 @@
 			package = 212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */;
 			productName = NukeUI;
 		};
+		216E56FE2E0EFEF8001E7844 /* FaultOrdering */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
+			productName = FaultOrdering;
+		};
+		216E57012E0EFF02001E7844 /* FaultOrdering */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
+			productName = FaultOrdering;
+		};
+		216E57042E0EFF02001E7844 /* FaultOrderingTests */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
+			productName = FaultOrderingTests;
+		};
 		218B7A8B2D70B1AE0053987F /* LazyPager */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */;
@@ -1106,6 +1185,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 21A87CAB2D94390D0062F8E9 /* XCLocalSwiftPackageReference "../Petrel" */;
 			productName = Petrel;
+		};
+		21F071A12E0D0680003BE8C2 /* FaultOrdering */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21F071942E0CF492003BE8C2 /* XCRemoteSwiftPackageReference "FaultOrdering" */;
+			productName = FaultOrdering;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

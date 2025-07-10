@@ -49,8 +49,9 @@ final class URLHandler {
             queue: .main
         ) { [weak self] _ in
             guard let self = self else { return }
-            self.useInAppBrowser = appState.appSettings.useInAppBrowser
-            self.logger.debug("URLHandler updated useInAppBrowser setting: \(self.useInAppBrowser)")
+            let newValue = appState.appSettings.useInAppBrowser
+            self.logger.info("📲 URLHandler received AppSettingsChanged notification - updating useInAppBrowser from \(self.useInAppBrowser) to \(newValue)")
+            self.useInAppBrowser = newValue
         }
         
         logger.debug("URLHandler configured with AppState reference, useInAppBrowser: \(self.useInAppBrowser)")

@@ -1,0 +1,328 @@
+import Observation
+import Petrel
+import SwiftData
+import SwiftUI
+
+struct FeedView: View {
+  // MARK: - Properties
+  let appState: AppState
+  let fetch: FetchType
+  @Binding var path: NavigationPath
+  @Binding var selectedTab: Int
+
+  // Flag to track if we're returning from another view (e.g., ThreadView)
+  let isReturningFromView: Bool
+
+  // View state
+  @State private var isInitialLoad = true
+  @State private var showScrollToTop = false
+  @State private var previousFeedType: FetchType?
+  @State private var feedModel: FeedModel?
+
+  // Navigation state tracking
+  @State private var lastNavigationTime = Date.distantPast
+  @State private var navigationDirection = 0  // -1: back, 0: none, 1: forward
+  
+  // Scroll offset tracking for navigation bar behavior
+  @State private var scrollOffset: CGFloat = 0
+
+  // Environment
+  @Environment(\.colorScheme) private var colorScheme
+
+  // MARK: - Initialization
+  init(
+    appState: AppState,
+    fetch: FetchType,
+    path: Binding<NavigationPath>,
+    selectedTab: Binding<Int>,
+    isReturningFromView: Bool = false
+  ) {
+    self.appState = appState
+    self.fetch = fetch
+    self._path = path
+    self._selectedTab = selectedTab
+    self.isReturningFromView = isReturningFromView
+  }
+
+  // MARK: - Body
+  var body: some View {
+    ZStack {
+      if let model = feedModel {
+        if let error = model.error {
+          ErrorStateView(
+            error: error,
+            context: "Failed to load feed",
+            retryAction: {
+              Task {
+                await retryLoadFeed()
+              }
+            }
+          )
+          .accessibleTransition(.opacity, appState: appState)
+        } else if (isInitialLoad || model.isLoading) && model.posts.isEmpty {
+          loadingView
+            .accessibleTransition(.opacity, appState: appState)
+        } else if !isInitialLoad && !model.isLoading && model.posts.isEmpty {
+          emptyStateView
+            .accessibleTransition(.opacity, appState: appState)
+        } else {
+          contentView(model: model)
+            .accessibleTransition(.opacity, appState: appState)
+        }
+      } else {
+        ProgressView("Loading feed...")
+          .task {
+            let model = FeedModelContainer.shared.getModel(for: fetch, appState: appState)
+            self.feedModel = model
+            await loadInitialFeed()
+          }
+      }
+
+      if showScrollToTop {
+        VStack {
+          Spacer()
+          scrollToTopButton
+            .padding(.bottom, 20)
+            .accessibleTransition(.scale.combined(with: .opacity), appState: appState)
+        }
+      }
+
+    }
+    .accessibleAnimation(.easeInOut(duration: 0.3), value: isInitialLoad, appState: appState)
+    .accessibleAnimation(
+      .easeInOut(duration: 0.3), value: feedModel?.posts.isEmpty, appState: appState
+    )
+    .appDisplayScale(appState: appState)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+
+    .onChange(of: path.count) { oldCount, newCount in
+      lastNavigationTime = Date()
+      navigationDirection = oldCount < newCount ? 1 : (oldCount > newCount ? -1 : 0)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+        navigationDirection = 0
+      }
+    }
+    .onChange(of: fetch) { oldValue, newValue in
+      if oldValue != newValue {
+        previousFeedType = oldValue
+
+        withAnimation(.easeInOut(duration: 0.25)) {
+          isInitialLoad = true
+        }
+
+        Task {
+          // Use existing model if possible, just update fetch type
+          if let existingModel = feedModel {
+            existingModel.feedManager.updateFetchType(newValue)
+            await loadInitialFeed()
+          } else {
+            // Only create new model if we don't have one
+            let model = FeedModelContainer.shared.getModel(for: newValue, appState: appState)
+            self.feedModel = model
+            await loadInitialFeed()
+          }
+        }
+      }
+    }
+    .onReceive(
+      NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
+    ) { _ in
+      guard let model = feedModel else { return }
+      Task {
+        let didRefresh = await model.refreshIfNeeded(fetch: fetch, minInterval: 300)
+
+        // If feed was refreshed, trigger scroll to top
+        if didRefresh {
+          await MainActor.run {
+            appState.tabTappedAgain = selectedTab
+          }
+        }
+      }
+    }
+    .onAppear {
+      guard let model = feedModel else { return }
+
+      let shouldRefresh =
+        !isReturningFromView && navigationDirection != -1
+        && model.shouldRefreshFeed(minInterval: 300) && !model.posts.isEmpty
+
+      if shouldRefresh {
+        Task {
+          await model.loadFeed(fetch: fetch, forceRefresh: false, strategy: .backgroundRefresh)
+          appState.triggerScrollToTop(for: selectedTab)
+        }
+      }
+
+    }
+    .environment(\.defaultMinListRowHeight, 0)
+    .environment(\.defaultMinListHeaderHeight, 0)
+  }
+
+  // MARK: - Helper Methods
+
+  /// Retry loading the feed after an error
+  @MainActor
+  private func retryLoadFeed() async {
+    guard let model = feedModel else { return }
+    await model.loadFeed(fetch: fetch, forceRefresh: true, strategy: .fullRefresh)
+  }
+
+  // MARK: - Content Views
+
+  /// The main feed content with posts
+    @ViewBuilder
+  private func contentView(model: FeedModel) -> some View {
+    // Get filtered posts directly from the model
+    let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
+      
+//return FullUIKitNavigationWrapper(appState: <#T##AppState#>, fetchType: <#T##FetchType#>, feedName: <#T##String#>, path: <#T##NavigationPath#>, onScrollOffsetChanged: <#T##((CGFloat) -> Void)?#>, isDrawerOpenBinding: <#T##Binding<Bool>#>, showingSettingsBinding: <#T##Binding<Bool>#>, modelContext: <#T##arg#>)
+
+      //      return UIKitFeedViewRepresentable(
+//        posts: filteredPosts,
+//        appState: appState,
+//        fetchType: model.feedManager.fetchType,
+//        path: $path,
+//        loadMoreAction: {
+//          await model.loadMoreWithFiltering(filterSettings: appState.feedFilterSettings)
+//        },
+//        refreshAction: {
+//          await model.loadFeedWithFiltering(
+//            fetch: fetch,
+//            forceRefresh: true,
+//            strategy: .fullRefresh,
+//            filterSettings: appState.feedFilterSettings
+//          )
+//        },
+//        onScrollOffsetChanged: { offset in
+//          scrollOffset = offset
+//          showScrollToTop = offset > 200  // Show button when scrolled down enough
+//        }
+//)
+
+      
+    // Use NativeFeedContentView for all iOS versions
+    NativeFeedContentView(
+      posts: filteredPosts,
+      appState: appState,
+      path: $path,
+      loadMoreAction: {
+        await model.loadMoreWithFiltering(filterSettings: appState.feedFilterSettings)
+      },
+      refreshAction: {
+        await model.loadFeedWithFiltering(
+          fetch: fetch,
+          forceRefresh: true,
+          strategy: .fullRefresh,
+          filterSettings: appState.feedFilterSettings
+        )
+      },
+      feedType: fetch,
+      onScrollOffsetChanged: { offset in
+        scrollOffset = offset
+        showScrollToTop = offset > 200
+      }
+    )
+    .navigationBarTitleDisplayMode(.large)
+  }
+
+  /// Loading state when first loading the feed
+  private var loadingView: some View {
+    VStack {
+      ProgressView()
+        .controlSize(.large)
+        .padding()
+
+      Text("Loading feed...")
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  /// Empty state when no posts are available
+  private var emptyStateView: some View {
+    VStack(spacing: DesignTokens.Spacing.sectionLarge) {
+      Image(systemName: "text.bubble")
+        .appFont(size: 60)
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+
+      Text("No posts to show")
+        .enhancedAppHeadline()
+
+      Text("Pull down to refresh or check back later.")
+        .enhancedAppSubheadline()
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme)
+        )
+        .multilineTextAlignment(.center)
+        .spacingBase(.horizontal)
+
+      Button("Refresh") {
+        Task {
+          await loadInitialFeed()
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .spacingBase(.top)
+    }
+    .spacingBase()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  /// Scroll to top button
+  private var scrollToTopButton: some View {
+    Button(action: {
+      appState.tabTappedAgain = selectedTab
+      withAnimation {
+        showScrollToTop = false
+      }
+    }) {
+      Image(systemName: "arrow.up")
+        .appFont(AppTextRole.headline)
+        .foregroundStyle(
+          Color.dynamicText(appState.themeManager, style: .primary, currentScheme: .light)
+        )
+        .spacingBase()
+        .background(Circle().fill(Color.accentColor))
+        .shadow(radius: 4)
+    }
+  }
+
+  // MARK: - Helper Methods
+
+  /// Loads the initial feed data
+  private func loadInitialFeed() async {
+    guard let model = feedModel else { return }
+
+    await MainActor.run {
+      isInitialLoad = true
+    }
+
+    await MainActor.run {
+      if let previous = previousFeedType, previous.identifier != fetch.identifier {
+        model.posts = []
+      }
+    }
+
+    if let cachedFeed = await appState.getPrefetchedFeed(fetch) {
+      await model.setCachedFeed(cachedFeed.posts, cursor: cachedFeed.cursor)
+      isInitialLoad = false
+    }
+
+    await model.loadFeedWithFiltering(
+      fetch: fetch,
+      forceRefresh: true,
+      strategy: .fullRefresh,
+      filterSettings: appState.feedFilterSettings
+    )
+
+    await MainActor.run {
+      isInitialLoad = false
+    }
+
+    Task.detached(priority: .background) {
+      await model.prefetchNextPage()
+    }
+  }
+}

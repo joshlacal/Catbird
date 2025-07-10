@@ -13,61 +13,6 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-func getAvailableLanguages() -> [LanguageCodeContainer] {
-  // Define a curated list of common language tags following BCP 47
-  let commonLanguageTags = [
-    // Common language codes (ISO 639-1)
-    "ar", "de", "en", "es", "fr", "hi", "id", "it", "ja", "ko",
-    "nl", "pl", "pt", "ru", "th", "tr", "uk", "vi", "zh",
-
-    // Common regional variants
-    "en-US", "en-GB", "es-ES", "es-MX", "pt-BR", "pt-PT",
-    "zh-CN", "zh-TW", "fr-FR", "fr-CA", "de-DE", "de-AT", "de-CH"
-  ]
-
-  // Create a dictionary to track unique languages with their full tags
-  var uniqueLanguages: [String: LanguageCodeContainer] = [:]
-  
-  // Process each tag and keep only one entry per base language
-  for tag in commonLanguageTags {
-    let container = LanguageCodeContainer(languageCode: tag)
-    let baseLanguageCode = container.lang.languageCode?.identifier ?? container.lang.minimalIdentifier
-    
-    // Either add this as a new language or replace if it's a regional variant
-    // Prefer tags with regions (longer tags)
-    if uniqueLanguages[baseLanguageCode] == nil || tag.count > uniqueLanguages[baseLanguageCode]!.lang.minimalIdentifier.count {
-      uniqueLanguages[baseLanguageCode] = container
-    }
-  }
-  
-  // Sort the unique languages by their localized names
-  return uniqueLanguages.values.sorted(by: { (a: LanguageCodeContainer, b: LanguageCodeContainer) -> Bool in
-    let aName = Locale.current.localizedString(forLanguageCode: a.lang.languageCode?.identifier ?? "") ?? a.lang.minimalIdentifier
-    let bName = Locale.current.localizedString(forLanguageCode: b.lang.languageCode?.identifier ?? "") ?? b.lang.minimalIdentifier
-    return aName < bName
-  })
-}
-
-// Helper function to get a properly formatted display name including region
-func getDisplayName(for locale: Locale) -> String {
-  let languageName = Locale.current.localizedString(forLanguageCode: locale.language.languageCode?.identifier ?? "") ?? locale.identifier
-  
-  // If there's a region code, add it to the display name
-  if let regionCode = locale.region?.identifier {
-    let regionName = Locale.current.localizedString(forRegionCode: regionCode) ?? regionCode
-    return "\(languageName) (\(regionName))"
-  }
-  
-  return languageName
-}
-
-extension Sequence where Element: Hashable {
-  func uniqued() -> [Element] {
-    var set = Set<Element>()
-    return filter { set.insert($0).inserted }
-  }
-}
-
 struct PostComposerView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -86,6 +31,10 @@ struct PostComposerView: View {
     @State private var showThreadOptions: Bool = false
     @State private var isSubmitting = false
     @State private var showingEmojiPicker = false
+    @State private var showingLinkCreation = false
+    @State private var selectedTextForLink = ""
+    @State private var selectedRangeForLink = NSRange()
+    @State private var linkFacets: [RichTextFacetUtils.LinkFacet] = []
     
     init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
         self._viewModel = State(
@@ -227,22 +176,38 @@ struct PostComposerView: View {
             .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
                 viewModel.insertEmoji(emoji)
             }
+            // Link creation sheet
+            .sheet(isPresented: $showingLinkCreation) {
+                LinkCreationDialog(
+                    selectedText: selectedTextForLink,
+                    onComplete: { url in
+                        addLinkFacet(url: url, range: selectedRangeForLink)
+                        showingLinkCreation = false
+                    },
+                    onCancel: {
+                        showingLinkCreation = false
+                    }
+                )
+            }
         }
     }
     
     // MARK: - Main Content Views
     
     private var mainContentView: some View {
-        ZStack(alignment: .bottom) {
-            // Use theme background for entire view
-            Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
-                .ignoresSafeArea()
-            
-            VStack(spacing: 0) {
-                parentPostReplySection
-                mainComposerArea
+        VStack(spacing: 0) {
+            // Main content area with scrollable content
+            ZStack {
+                Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    parentPostReplySection
+                    mainComposerArea
+                    Spacer()
+                }
             }
-            .padding(.bottom, 60) // Make room for toolbar
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             
             // Toolbar pinned to bottom
             keyboardToolbar
@@ -418,21 +383,33 @@ struct PostComposerView: View {
     private var textEditorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Clean text editor without overlaid placeholder
-            RichTextEditor(
+            EnhancedRichTextEditor(
                 attributedText: $viewModel.richAttributedText,
+                linkFacets: $linkFacets,
                 placeholder: "What's on your mind?",
-                onImagePasted: { _ in
+                onImagePasted: { image in
                     Task {
-                        await viewModel.handleMediaPaste()
+                        let provider = NSItemProvider(object: image)
+                        await viewModel.handleMediaPaste([provider])
                     }
                 },
-                onGenmojiDetected: { genmojis in
+                onGenmojiDetected: { genmojiStrings in
                     Task {
-                        await viewModel.processDetectedGenmoji(genmojis)
+                        // Process each genmoji string
+                        for genmojiString in genmojiStrings {
+                            if let genmojiData = genmojiString.data(using: .utf8) {
+                                await viewModel.processDetectedGenmoji(genmojiData)
+                            }
+                        }
                     }
                 },
                 onTextChanged: { attributedText in
                     viewModel.updateFromAttributedText(attributedText)
+                },
+                onLinkCreationRequested: { selectedText, range in
+                    selectedTextForLink = selectedText
+                    selectedRangeForLink = range
+                    showingLinkCreation = true
                 }
             )
             .frame(minHeight: 120)
@@ -495,7 +472,7 @@ struct PostComposerView: View {
                     onPaste: {
                         // ✅ CLEANED: Unified paste handling
                         Task {
-                            await viewModel.handleMediaPaste()
+                            await viewModel.handleMediaPaste([])
                         }
                     },
                     hasClipboardMedia: viewModel.hasClipboardMedia()
@@ -694,6 +671,9 @@ struct PostComposerView: View {
                                     .stroke(Color.accentColor, lineWidth: 1.5)
                             )
                     }
+                    .simultaneousGesture(TapGesture().onEnded { _ in
+                        isTextFieldFocused = true
+                    })
                 }
                 
                 // Menu
@@ -702,6 +682,14 @@ struct PostComposerView: View {
                         showingEmojiPicker = true
                     }) {
                         Label("Add Emoji", systemImage: "face.smiling")
+                    }
+                    
+                    Button(action: {
+                        // For now, show a simple alert - in a real implementation
+                        // this would integrate with the text selection system
+                        showingLinkCreation = true
+                    }) {
+                        Label("Create Link", systemImage: "link")
                     }
                     
                     Divider()
@@ -731,9 +719,9 @@ struct PostComposerView: View {
                         
                         Button(action: {
                             if viewModel.isThreadMode {
-                                viewModel.disableThreadMode()
+                                viewModel.isThreadMode = false
                             } else {
-                                viewModel.enableThreadMode()
+                                viewModel.isThreadMode = true
                             }
                         }) {
                             Label(
@@ -798,9 +786,23 @@ struct PostComposerView: View {
                 dismiss()
             } catch {
                 isSubmitting = false
-                viewModel.alertItem = AlertItem(
-                    title: "Error",
-                    message: "Failed to create post: \(error.localizedDescription)"
+                print("PostComposerView: Failed to create post - \(error)")
+                
+                // Get more specific error message
+                let errorMessage: String
+                if let nsError = error as NSError? {
+                    errorMessage = nsError.localizedDescription
+                    print("PostComposerView: NSError domain: \(nsError.domain), code: \(nsError.code)")
+                    if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                        print("PostComposerView: Underlying error: \(underlyingError)")
+                    }
+                } else {
+                    errorMessage = error.localizedDescription
+                }
+                
+                viewModel.alertItem = PostComposerViewModel.AlertItem(
+                    title: "Failed to Create Post",
+                    message: errorMessage
                 )
             }
         }
@@ -809,376 +811,46 @@ struct PostComposerView: View {
     // ✅ CLEANED: Removed legacy handleImagePaste() and handleVideoPaste() methods
     // All paste handling is now unified through viewModel.handleMediaPaste()
     
-}
-
-struct ReplyingToView: View {
-  let parentPost: AppBskyFeedDefs.PostView
-
-  var body: some View {
-    HStack {
-      Text("Replying to")
-        .foregroundColor(.secondary)
-      Text("@\(parentPost.author.handle)")
-        .fontWeight(.semibold)
-        Spacer()
-    }
-    .appFont(AppTextRole.subheadline)
-    .padding(.vertical, 8)
-    .padding(.horizontal, 12)
-//    .background(Color(.systemGray5))
-//    .cornerRadius(8)
-  }
-}
-
-struct LabelSelectorView: View {
-  @Binding var selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>
-  @Environment(\.dismiss) private var dismiss
-
-  // Define only the allowed self-labels
-  private let allowedSelfLabels: [ComAtprotoLabelDefs.LabelValue] = [
-    .exclamationnodashunauthenticated,
-    .porn,
-    .sexual,
-    .nudity,
-    ComAtprotoLabelDefs.LabelValue(rawValue: "graphic-media")  // This one isn't in predefined values
-  ]
-  
-  // Display name mapping function
-  private func displayName(for label: ComAtprotoLabelDefs.LabelValue) -> String {
-    switch label.rawValue {
-      case "!no-unauthenticated": return "Hide from Logged-out Users"
-      case "porn": return "Adult Content"
-      case "sexual": return "Sexual Content"
-      case "nudity": return "Contains Nudity"
-      case "graphic-media": return "Graphic Media"
-      default: return label.rawValue.capitalized
-    }
-  }
-
-  var body: some View {
-    NavigationStack {
-      List(allowedSelfLabels, id: \.self) { label in
-        Button(action: { toggleLabel(label) }) {
-          HStack {
-            Text(displayName(for: label))
-            Spacer()
-            if selectedLabels.contains(label) {
-              Image(systemName: "checkmark")
-            }
-          }
-        }
-      }
-      .navigationTitle("Content Labels")
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-        }
-      }
-    }
-  }
-
-  private func toggleLabel(_ label: ComAtprotoLabelDefs.LabelValue) {
-    if selectedLabels.contains(label) {
-      selectedLabels.remove(label)
-    } else {
-      selectedLabels.insert(label)
-    }
-  }
-}
-// Add this extension to convert URLCardResponse to ViewExternal
-extension URLCardResponse {
-  func toViewExternal() -> AppBskyEmbedExternal.ViewExternal {
-    // Create a URI from the URL string
-    let uri = URI(self.url)
-
-    return AppBskyEmbedExternal.ViewExternal(
-      uri: uri ?? URI(""),
-      title: self.title,
-      description: self.description,
-      thumb: URI(self.image)
-    )
-  }
-}
-
-// Replace URLCardView with this adapter for ExternalEmbedView
-struct ComposeURLCardView: View {
-  let card: URLCardResponse
-  let onRemove: () -> Void
-  let willBeUsedAsEmbed: Bool
-
-  var body: some View {
-    ZStack(alignment: .topTrailing) {
-      ExternalEmbedView(
-        external: card.toViewExternal(),
-        shouldBlur: false,
-        postID: card.id
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 10)
-          .stroke(
-            willBeUsedAsEmbed ? Color.accentColor.opacity(0.5) : Color.gray.opacity(0.3),
-            lineWidth: willBeUsedAsEmbed ? 2 : 1)
-      )
-
-      VStack(alignment: .trailing) {
-        // Add featured badge if this will be used as embed
-        if willBeUsedAsEmbed {
-          Text("Featured")
-            .appFont(AppTextRole.caption2)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.accentColor.opacity(0.2))
-            .foregroundColor(.accentColor)
-            .cornerRadius(4)
-        }
-
-        Button(action: onRemove) {
-          Image(systemName: "xmark.circle.fill")
-            .appFont(AppTextRole.title3)
-            .foregroundStyle(.white, Color(.systemGray3))
-            .background(
-              Circle()
-                .fill(Color.black.opacity(0.3))
-            )
-        }
-        .padding(8)
-      }
-      .padding(4)
-    }
-  }
-}
-
-// MARK: - Thread Components
-
-struct ThreadPostEditorView: View {
-    let entry: ThreadEntry
-    let entryIndex: Int
-    let isCurrentPost: Bool
-    let isEditing: Bool
-    @Bindable var viewModel: PostComposerViewModel
-    let onTap: () -> Void
-    let onDelete: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
-    @FocusState private var isTextFocused: Bool
+    // MARK: - Link Facet Methods
     
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                avatarView
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    authorInfoView
-                    
-                    if isEditing {
-                        editingTextView
-                    } else {
-                        previewTextView
-                    }
-                    
-                    if isEditing {
-                        editingMediaView
-                    } else {
-                        previewMediaView
-                    }
-                    
-                    characterCountView
-                }
-                
-                Spacer()
-                
-                if !isEditing && viewModel.threadEntries.count > 1 {
-                    deleteButton
-                }
-            }
-            .padding(16)
-            .background(backgroundView)
-            .overlay(borderView)
-            .onTapGesture {
-                if !isEditing {
-                    onTap()
-                }
-            }
-        }
-        .onChange(of: isEditing) {
-            if isEditing {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    isTextFocused = true
-                }
-            }
-        }
-        .onChange(of: viewModel.postText) {
-            if isEditing {
-                viewModel.updatePostContent()
-            }
-        }
+    private func addLinkFacet(url: URL, range: NSRange) {
+        let linkFacet = RichTextFacetUtils.LinkFacet(
+            range: range,
+            url: url,
+            displayText: selectedTextForLink
+        )
+        
+        linkFacets.append(linkFacet)
+        
+        // Update the attributed text to show the link styling
+        let tempEditor = EnhancedRichTextEditor(
+            attributedText: .constant(viewModel.richAttributedText),
+            linkFacets: .constant([]),
+            placeholder: "",
+            onImagePasted: { _ in },
+            onGenmojiDetected: { _ in },
+            onTextChanged: { _ in },
+            onLinkCreationRequested: { _, _ in }
+        )
+        let newAttributedText = tempEditor.addLinkFacet(
+            url: url,
+            range: range,
+            in: viewModel.postText
+        )
+        
+        viewModel.richAttributedText = newAttributedText
     }
     
-    private var avatarView: some View {
-        Circle()
-            .fill(Color.accentColor.opacity(0.3))
-            .frame(width: 32, height: 32)
-            .overlay(
-                Image(systemName: "person.fill")
-                    .appFont(size: 16)
-                    .foregroundColor(.white)
-            )
+    private func updateFacetsInPost() {
+        // Convert link facets to AT Protocol facets for post creation
+        let atProtocolFacets = RichTextFacetUtils.createFacets(
+            from: linkFacets,
+            in: viewModel.postText
+        )
+        
+        // Update the view model with the facets
+        // This would need to be added to PostComposerViewModel
+        // viewModel.linkFacets = atProtocolFacets
     }
     
-    private var authorInfoView: some View {
-        HStack {
-            Text("You")
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.semibold)
-            
-            Text("@handle")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            if isEditing {
-                editingIndicatorView
-            }
-        }
-    }
-    
-    private var editingIndicatorView: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(Color.orange)
-                .frame(width: 6, height: 6)
-            Text("editing")
-                .appFont(AppTextRole.caption2)
-                .foregroundColor(.orange)
-        }
-    }
-    
-    private var editingTextView: some View {
-        TextField("What's happening?", text: $viewModel.postText, axis: .vertical)
-            .textFieldStyle(PlainTextFieldStyle())
-            .appFont(AppTextRole.body)
-            .lineLimit(3...10)
-            .focused($isTextFocused)
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
-            )
-    }
-    
-    private var previewTextView: some View {
-        Group {
-            if !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(entry.text)
-                    .appFont(AppTextRole.body)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text("Tap to add content")
-                    .appFont(AppTextRole.body)
-                    .foregroundColor(.secondary)
-                    .italic()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-    
-    private var editingMediaView: some View {
-        Group {
-            if !viewModel.mediaItems.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(viewModel.mediaItems, id: \.id) { item in
-                            if let image = item.image {
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 60, height: 60)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-            
-            if let videoItem = viewModel.videoItem, let image = videoItem.image {
-                HStack {
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 60, height: 60)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            Image(systemName: "play.circle.fill")
-                                .appFont(size: 20)
-                                .foregroundColor(.white)
-                        )
-                    Spacer()
-                }
-            }
-        }
-    }
-    
-    private var previewMediaView: some View {
-        Group {
-            if !entry.mediaItems.isEmpty {
-                HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "photo")
-                            .appFont(size: 12)
-                        Text("\(entry.mediaItems.count)")
-                            .appFont(AppTextRole.caption2)
-                    }
-                    .foregroundColor(.secondary)
-                    Spacer()
-                }
-            }
-            
-            if entry.videoItem != nil {
-                HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "video")
-                            .appFont(size: 12)
-                        Text("Video")
-                            .appFont(AppTextRole.caption2)
-                    }
-                    .foregroundColor(.secondary)
-                    Spacer()
-                }
-            }
-        }
-    }
-    
-    private var characterCountView: some View {
-        HStack {
-            Spacer()
-            let count = isEditing ? viewModel.postText.count : entry.text.count
-            Text("\(count)/300")
-                .appFont(AppTextRole.caption2)
-                .foregroundColor(count > 300 ? .red : .secondary)
-        }
-    }
-    
-    private var deleteButton: some View {
-        Button(action: onDelete) {
-            Image(systemName: "xmark.circle.fill")
-                .appFont(size: 20)
-                .foregroundStyle(.white, Color(.systemGray3))
-        }
-        .padding(.top, 4)
-    }
-    
-    private var backgroundView: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(isCurrentPost ? Color.accentColor.opacity(0.05) : Color(.systemBackground))
-    }
-    
-    private var borderView: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .stroke(
-                isCurrentPost ? Color.accentColor.opacity(0.3) : Color(.systemGray5),
-                lineWidth: isCurrentPost ? 2 : 1
-            )
-    }
 }

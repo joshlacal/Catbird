@@ -35,6 +35,7 @@ struct FeedContinuityBanner: View {
           insertion: .opacity.combined(with: .move(edge: .top)),
           removal: .opacity.combined(with: .move(edge: .top))
         ))
+        .animation(.easeInOut(duration: 0.3), value: isVisible)
         .onTapGesture {
           onTap?()
         }
@@ -293,13 +294,16 @@ final class FeedContinuityManager {
   
   func showNewContentBanner(count: Int, onTap: @escaping () -> Void) {
     // Prevent banner spam
-    guard Date().timeIntervalSince(lastBannerShow) > 5.0 else { return }
+    guard Date().timeIntervalSince(lastBannerShow) > 5.0 else { 
+      logger.debug("Skipping banner - too soon since last show")
+      return 
+    }
     
     currentBanner = .newContentAvailable(count: count)
     showingBanner = true
     lastBannerShow = Date()
     
-    logger.debug("Showing new content banner: \(count) posts")
+    logger.info("🟦 CONTINUITY: Showing new content banner: \(count) posts, showingBanner=\(self.showingBanner)")
   }
   
   func showConnectionRestoredBanner() {
@@ -327,10 +331,11 @@ final class FeedContinuityManager {
   }
   
   func hideBanner() {
+      logger.debug("hideBanner called - was showing: \(self.showingBanner)")
     currentBanner = nil
     showingBanner = false
     
-    logger.debug("Hiding continuity banner")
+    logger.debug("Continuity banner hidden")
   }
   
   func detectGaps(in posts: [CachedFeedViewPost]) -> [String] {
@@ -376,7 +381,7 @@ final class FeedContinuityManager {
 
 struct FeedContinuityView: View {
   @Environment(AppState.self) private var appState: AppState
-  let continuityManager: FeedContinuityManager
+  @Bindable var continuityManager: FeedContinuityManager
   let onBannerTap: (() -> Void)?
   let onGapLoad: (() -> Void)?
   
@@ -396,6 +401,12 @@ struct FeedContinuityView: View {
       
       // Gap indicators in feed content would be inserted by the feed view
       // when gaps are detected in the post list
+    }
+    .onAppear {
+      print("🟦 FeedContinuityView appeared - showingBanner: \(continuityManager.showingBanner), currentBanner: \(String(describing: continuityManager.currentBanner))")
+    }
+    .onChange(of: continuityManager.showingBanner) { oldValue, newValue in
+      print("🟦 FeedContinuityView showingBanner changed from \(oldValue) to \(newValue)")
     }
   }
 }

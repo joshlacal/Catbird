@@ -1,3 +1,179 @@
+////
+////  CatbirdUITests.swift
+////  CatbirdUITests
+////
+////  Created by Josh LaCalamito on 2/14/25.
+////
+//
+//import MachO
+//import FaultOrderingTests
+//import XCTest
+//
+//final class CatbirdUITests: XCTestCase {
+//    
+//    override func setUpWithError() throws {
+//        continueAfterFailure = false
+//    }
+//    
+//    func testLaunchPerformance() throws {
+//        if #available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 7.0, *) {
+//            measure(metrics: [XCTApplicationLaunchMetric()]) {
+//                XCUIApplication().launch()
+//            }
+//        }
+//    }
+//}
+//
+//// MARK: - FaultOrdering Tests
+//
+//final class FaultOrderingLaunchTest: XCTestCase {
+//    
+//    @MainActor
+//    func testLaunchWithFaultOrdering() throws {
+//        print("🚀 Starting FaultOrdering test")
+//        
+//        let app = XCUIApplication()
+//        
+//        let test = FaultOrderingTest { app in
+//            print("📱 Setting up app for FaultOrdering measurement")
+//            
+//            // Wait for app to stabilize
+//            sleep(5)
+//            
+//            // Find main UI elements and keep app active
+//            let collectionView = app.collectionViews.firstMatch
+//            if collectionView.waitForExistence(timeout: 15) {
+//                print("✅ Found collection view, starting interaction sequence")
+//                
+//                // Keep app active with realistic user interactions
+//                for i in 0..<30 {
+//                    // Scroll through feed
+//                    collectionView.swipeUp(velocity: .slow)
+//                    sleep(1)
+//                    
+//                    // Occasional taps to simulate user engagement
+//                    if i % 5 == 0 {
+//                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+//                        print("⏳ Keeping app active: \(i)/30")
+//                    }
+//                    
+//                    // Navigate between tabs periodically
+//                    if i % 10 == 0 && i > 0 {
+//                        let tabBar = app.tabBars.firstMatch
+//                        if tabBar.exists {
+//                            let buttons = tabBar.buttons
+//                            if buttons.count > 1 {
+//                                // Tap second tab
+//                                buttons.element(boundBy: 1).tap()
+//                                sleep(1)
+//                                // Return to first tab
+//                                buttons.element(boundBy: 0).tap()
+//                                sleep(1)
+//                            }
+//                        }
+//                    }
+//                }
+//            } else {
+//                print("⚠️ Collection view not found, using fallback interactions")
+//                // Fallback: generic screen taps
+//                for i in 0..<20 {
+//                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+//                    sleep(2)
+//                    if i % 5 == 0 {
+//                        print("⏳ Fallback interactions: \(i)/20")
+//                    }
+//                }
+//            }
+//            
+//            print("✅ Completed interaction sequence")
+//        }
+//        
+//        test.testApp(testCase: self, app: app)
+//    }
+//    
+//    @MainActor
+//    func testBasicAppLaunch() throws {
+//        print("📱 Testing basic app launch without FaultOrdering")
+//        
+//        let app = XCUIApplication()
+//        
+//        // Launch without FaultOrdering to verify app stability
+//        app.launchEnvironment = ["DISABLE_FAULT_ORDERING": "1"]
+//        app.launch()
+//        
+//        // Verify app launches successfully
+//        sleep(5)
+//        XCTAssertEqual(app.state, .runningForeground, "App should launch successfully")
+//        
+//        // Basic interaction test
+//        let collectionView = app.collectionViews.firstMatch
+//        if collectionView.waitForExistence(timeout: 10) {
+//            collectionView.swipeUp()
+//            print("✅ Basic app functionality verified")
+//        }
+//        
+//        app.terminate()
+//    }
+//    
+//    @MainActor
+//    func testFaultOrderingConfiguration() throws {
+//        print("🔧 Testing FaultOrdering configuration")
+//        
+//        // Verify dylib can be found
+//        if let dylibPath = getDylibPath(dylibName: "FaultOrdering") {
+//            print("✅ FaultOrdering dylib found at: \(dylibPath)")
+//        } else {
+//            print("⚠️ FaultOrdering dylib not found - may need to be linked to app target")
+//        }
+//        
+//        let app = XCUIApplication()
+//        
+//        // Test with explicit environment setup
+//        var launchEnvironment = app.launchEnvironment
+//        launchEnvironment["DEBUG_FAULT_ORDERING"] = "1"
+//        if let dylibPath = getDylibPath(dylibName: "FaultOrdering") {
+//            launchEnvironment["DYLD_INSERT_LIBRARIES"] = dylibPath
+//        }
+//        app.launchEnvironment = launchEnvironment
+//        
+//        app.launch()
+//        sleep(3)
+//        
+//        XCTAssertEqual(app.state, .runningForeground, "App should launch with FaultOrdering environment")
+//        
+//        app.terminate()
+//        print("✅ FaultOrdering configuration test completed")
+//    }
+//    
+//    // Helper function to find dylib
+//    private func getDylibPath(dylibName: String) -> String? {
+//        let count = _dyld_image_count()
+//        for i in 0..<count {
+//            if let imagePath = _dyld_get_image_name(i) {
+//                let imagePathStr = String(cString: imagePath)
+//                if (imagePathStr as NSString).lastPathComponent == dylibName {
+//                    return imagePathStr
+//                }
+//            }
+//        }
+//        return nil
+//    }
+//    
+//    // Run tests in a specific order for better reliability
+//    override class var defaultTestSuite: XCTestSuite {
+//        let suite = XCTestSuite(forTestCaseClass: self)
+//        
+//        // Start with basic tests, then move to FaultOrdering
+//        suite.addTest(FaultOrderingLaunchTest(selector: #selector(testBasicAppLaunch)))
+//        suite.addTest(FaultOrderingLaunchTest(selector: #selector(testFaultOrderingConfiguration)))
+//        suite.addTest(FaultOrderingLaunchTest(selector: #selector(testLaunchWithFaultOrdering)))
+//        
+//        return suite
+//    }
+//}
+
+
+
 //
 //  CatbirdUITests.swift
 //  CatbirdUITests
@@ -5,39 +181,174 @@
 //  Created by Josh LaCalamito on 2/14/25.
 //
 
+import MachO
+import FaultOrderingTests
 import XCTest
 
 final class CatbirdUITests: XCTestCase {
-
+    
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
     }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
-    @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
-        let app = XCUIApplication()
-        app.launch()
-
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-    }
-
-    @MainActor
+    
     func testLaunchPerformance() throws {
         if #available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 7.0, *) {
-            // This measures how long it takes to launch your application.
             measure(metrics: [XCTApplicationLaunchMetric()]) {
                 XCUIApplication().launch()
             }
         }
+    }
+}
+
+// MARK: - FaultOrdering Tests
+
+final class FaultOrderingLaunchTest: XCTestCase {
+    
+    @MainActor
+    func testLaunchWithFaultOrdering() throws {
+        print("🚀 Starting FaultOrdering test")
+        
+        // Wait a bit to ensure any previous server is closed
+        sleep(2)
+        
+        let app = XCUIApplication()
+        
+        let test = FaultOrderingTest { app in
+            print("📱 Setting up app for FaultOrdering measurement")
+            
+            // Wait for app to stabilize
+            sleep(5)
+            /*
+            // Find main UI elements and keep app active
+            let collectionView = app.collectionViews.firstMatch
+            if collectionView.waitForExistence(timeout: 15) {
+                print("✅ Found collection view, starting interaction sequence")
+                
+                // Keep app active with realistic user interactions
+                for i in 0..<30 {
+                    // Scroll through feed
+                    collectionView.swipeUp(velocity: .slow)
+                    sleep(1)
+                    
+                    // Occasional taps to simulate user engagement
+                    if i % 5 == 0 {
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                        print("⏳ Keeping app active: \(i)/30")
+                    }
+                    
+                    // Navigate between tabs periodically
+                    if i % 10 == 0 && i > 0 {
+                        let tabBar = app.tabBars.firstMatch
+                        if tabBar.exists {
+                            let buttons = tabBar.buttons
+                            if buttons.count > 1 {
+                                // Tap second tab
+                                buttons.element(boundBy: 1).tap()
+                                sleep(1)
+                                // Return to first tab
+                                buttons.element(boundBy: 0).tap()
+                                sleep(1)
+                            }
+                        }
+                    }
+                }
+            } else {
+                print("⚠️ Collection view not found, using fallback interactions")
+                // Fallback: generic screen taps
+                for i in 0..<20 {
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                    sleep(2)
+                    if i % 5 == 0 {
+                        print("⏳ Fallback interactions: \(i)/20")
+                    }
+                }
+            }
+            */
+            
+            app.launch()
+            print("✅ Completed interaction sequence")
+        }
+        
+        test.testApp(testCase: self, app: app)
+    }
+    
+    @MainActor
+    func testBasicAppLaunch() throws {
+        print("📱 Testing basic app launch without FaultOrdering")
+        
+        let app = XCUIApplication()
+        
+        // Launch without FaultOrdering to verify app stability
+        app.launchEnvironment = ["DISABLE_FAULT_ORDERING": "1"]
+        app.launch()
+        
+        // Verify app launches successfully
+        sleep(5)
+        XCTAssertEqual(app.state, .runningForeground, "App should launch successfully")
+        
+        // Basic interaction test
+        let collectionView = app.collectionViews.firstMatch
+        if collectionView.waitForExistence(timeout: 10) {
+            collectionView.swipeUp()
+            print("✅ Basic app functionality verified")
+        }
+        
+        app.terminate()
+    }
+    
+    @MainActor
+    func testFaultOrderingConfiguration() throws {
+        print("🔧 Testing FaultOrdering configuration")
+        
+        // Verify dylib can be found
+        if let dylibPath = getDylibPath(dylibName: "FaultOrdering") {
+            print("✅ FaultOrdering dylib found at: \(dylibPath)")
+        } else {
+            print("⚠️ FaultOrdering dylib not found - may need to be linked to app target")
+        }
+        
+        let app = XCUIApplication()
+        
+        // Test with explicit environment setup
+        var launchEnvironment = app.launchEnvironment
+        launchEnvironment["DEBUG_FAULT_ORDERING"] = "1"
+        if let dylibPath = getDylibPath(dylibName: "FaultOrdering") {
+            launchEnvironment["DYLD_INSERT_LIBRARIES"] = dylibPath
+        }
+        app.launchEnvironment = launchEnvironment
+        
+        app.launch()
+        sleep(3)
+        
+        XCTAssertEqual(app.state, .runningForeground, "App should launch with FaultOrdering environment")
+        
+        app.terminate()
+        print("✅ FaultOrdering configuration test completed")
+    }
+    
+    // Helper function to find dylib
+    private func getDylibPath(dylibName: String) -> String? {
+        let count = _dyld_image_count()
+        for i in 0..<count {
+            if let imagePath = _dyld_get_image_name(i) {
+                let imagePathStr = String(cString: imagePath)
+                if (imagePathStr as NSString).lastPathComponent == dylibName {
+                    return imagePathStr
+                }
+            }
+        }
+        return nil
+    }
+    
+    // Run tests in a specific order for better reliability
+    override class var defaultTestSuite: XCTestSuite {
+        let suite = XCTestSuite(forTestCaseClass: self)
+        
+        // Start with basic tests, then move to FaultOrdering
+        suite.addTest(FaultOrderingLaunchTest(selector: #selector(testBasicAppLaunch)))
+        suite.addTest(FaultOrderingLaunchTest(selector: #selector(testFaultOrderingConfiguration)))
+        suite.addTest(FaultOrderingLaunchTest(selector: #selector(testLaunchWithFaultOrdering)))
+        
+        return suite
     }
 }

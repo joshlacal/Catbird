@@ -8,6 +8,12 @@ enum NavigationDestination: Hashable {
     case timeline
     case feed(ATProtocolURI)
     case list(ATProtocolURI)
+    case createList
+    case editList(ATProtocolURI)
+    case listManager
+    case listDiscovery
+    case listFeed(ATProtocolURI)
+    case listMembers(ATProtocolURI)
     case starterPack(ATProtocolURI)
     case conversation(String) // convoId
     case chatTab
@@ -34,6 +40,21 @@ enum NavigationDestination: Hashable {
             hasher.combine(uri.uriString())
         case .list(let uri):
             hasher.combine("list")
+            hasher.combine(uri.uriString())
+        case .createList:
+            hasher.combine("createList")
+        case .editList(let uri):
+            hasher.combine("editList")
+            hasher.combine(uri.uriString())
+        case .listManager:
+            hasher.combine("listManager")
+        case .listDiscovery:
+            hasher.combine("listDiscovery")
+        case .listFeed(let uri):
+            hasher.combine("listFeed")
+            hasher.combine(uri.uriString())
+        case .listMembers(let uri):
+            hasher.combine("listMembers")
             hasher.combine(uri.uriString())
         case .starterPack(let uri):
             hasher.combine("starterPack")
@@ -67,6 +88,18 @@ enum NavigationDestination: Hashable {
         case (.feed(let lhsUri), .feed(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()
         case (.list(let lhsUri), .list(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.createList, .createList):
+            return true
+        case (.editList(let lhsUri), .editList(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.listManager, .listManager):
+            return true
+        case (.listDiscovery, .listDiscovery):
+            return true
+        case (.listFeed(let lhsUri), .listFeed(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.listMembers(let lhsUri), .listMembers(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()
         case (.starterPack(let lhsUri), .starterPack(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()

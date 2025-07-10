@@ -28,6 +28,8 @@ final class VideoCoordinator {
   // PiP management
   private var pipControllers: [String: AVPictureInPictureController] = [:]
   private var pipDelegates: [String: VideoPiPDelegate] = [:]
+  // CRITICAL: Persistent player layers for PiP that survive view deallocation
+  private var persistentPlayerLayers: [String: AVPlayerLayer] = [:]
 
   private let logger = Logger(subsystem: "blue.catbird", category: "VideoCoordinator")
 
@@ -57,8 +59,8 @@ final class VideoCoordinator {
   private init() {
     setupBackgroundHandling()
 
-    // Explicitly request silent mode at initialization
-    AudioSessionManager.shared.configureForSilentPlayback()
+    // Don't configure audio session at init - let it stay ambient
+    // Only configure when we actually need to play unmuted audio
   }
 
   // MARK: - Autoplay Check
@@ -119,7 +121,8 @@ final class VideoCoordinator {
             // Trigger a playback state update to start the GIF if visible
             updatePlaybackStates()
           } else {
-            logger.debug("⚠️ Failed to create looping wrapper, keeping manual looping for \(model.id)")
+            logger.debug(
+              "⚠️ Failed to create looping wrapper, keeping manual looping for \(model.id)")
             // Manual looping is already set up, no need to reconfigure
           }
         }
@@ -173,7 +176,7 @@ final class VideoCoordinator {
       logger.debug("📺 Refusing to mark PiP video \(modelId) for cleanup")
       return
     }
-    
+
     markedForCleanup.insert(modelId)
     preservedStreams[modelId] = Date()
 
@@ -182,7 +185,9 @@ final class VideoCoordinator {
       try? await Task.sleep(nanoseconds: UInt64(streamPreservationTime * 1_000_000_000))
 
       // Only clean up if still marked, not visible, and NOT in PiP
-      if markedForCleanup.contains(modelId) && !visibleVideoIDs.contains(modelId) && !isInPiPMode(modelId) {
+      if markedForCleanup.contains(modelId) && !visibleVideoIDs.contains(modelId)
+        && !isInPiPMode(modelId)
+      {
         logger.debug("⏰ Delayed cleanup triggered for \(modelId)")
         forceUnregister(modelId)
       }
@@ -220,12 +225,12 @@ final class VideoCoordinator {
       let task = Task { @MainActor in
         try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms debounce for hiding
         guard !Task.isCancelled else { return }
-        
+
         visibleVideoIDs.remove(modelId)
         // Don't immediately pause, let updatePlaybackStates handle it
         updatePlaybackStates()
       }
-      
+
       statusObservers[modelId] = task
     }
   }
@@ -245,7 +250,7 @@ final class VideoCoordinator {
 
     // Start playing the requested video
     player.seek(to: lastPlaybackTime)
-    player.play()
+    player.safePlay()
 
     // Update states
     activeVideos[modelId]?.model.isPlaying = true
@@ -313,7 +318,7 @@ final class VideoCoordinator {
       if let (model, _, _) = self.activeVideos[modelId], model.isPlaying {
         player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
           if finished {
-            player.play()
+            player.safePlay()
             self.logger.debug("✅ GIF looped successfully: \(modelId)")
           }
         }
@@ -326,8 +331,8 @@ final class VideoCoordinator {
     Task { @MainActor in
       guard !Task.isCancelled else { return }
 
-      // CRITICAL: Ensure silent mode
-      AudioSessionManager.shared.configureForSilentPlayback()
+      // Don't configure audio session at all - let videos play muted
+      // Only configure when user explicitly unmutes a video
 
       let autoplayEnabled = shouldAutoplayVideos()
       logger.debug(
@@ -344,14 +349,14 @@ final class VideoCoordinator {
           if isPlaying1 != isPlaying2 {
             return isPlaying1
           }
-          
+
           // Second priority: GIFs over regular videos (for auto-start)
           let isGif1 = activeVideos[id1]?.model.type.isGif ?? false
           let isGif2 = activeVideos[id2]?.model.type.isGif ?? false
           if isGif1 != isGif2 {
             return isGif1
           }
-          
+
           return id1 < id2  // Stable sort for same types
         }
         .first
@@ -378,7 +383,7 @@ final class VideoCoordinator {
             logger.debug(
               "▶️ Starting playback for top visible \(model.type.isGif ? "GIF" : "video"): \(id)")
             player.seek(to: lastPlaybackTime)
-            player.play()
+            player.safePlay()
 
             // Update states
             activeVideos[id]?.model.isPlaying = true
@@ -493,6 +498,12 @@ final class VideoCoordinator {
       logger.debug("📺 Cleaned up PiP controller for \(modelId)")
     }
     pipDelegates.removeValue(forKey: modelId)
+
+    // Clean up persistent player layer
+    if let persistentLayer = persistentPlayerLayers.removeValue(forKey: modelId) {
+      persistentLayer.player = nil
+      logger.debug("📺 Cleaned up persistent player layer for \(modelId)")
+    }
   }
 
   /// Force cleanup of PiP (called when PiP ends)
@@ -510,7 +521,7 @@ final class VideoCoordinator {
     if !visibleVideoIDs.contains(modelId) {
       // Don't immediately destroy - give 5 seconds grace period
       Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+        try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5 seconds
         // Only cleanup if still not visible after grace period
         if !visibleVideoIDs.contains(modelId) && !isInPiPMode(modelId) {
           logger.debug("📺 Grace period expired for \(modelId), cleaning up")
@@ -541,10 +552,8 @@ final class VideoCoordinator {
       queue: .main
     ) { [weak self] _ in
       Task { @MainActor [weak self] in
-        // CRITICAL: Ensure silent mode after returning from background
-        AudioSessionManager.shared.configureForSilentPlayback()
-
-        // Only after configuring audio, update player states
+        // Don't configure audio session at all when app becomes active
+        // This preserves music playback
         self?.updatePlaybackStates()
       }
     }
@@ -611,42 +620,90 @@ final class VideoCoordinator {
     logger.debug("🎬 [PiP Debug] SetUnmuted called for \(id), unmuted: \(unmuted)")
 
     if unmuted {
-      // User explicitly wants sound
+      // User explicitly wants sound - now we configure audio session
       AudioSessionManager.shared.handleVideoUnmute()
       player.isMuted = false
       player.volume = 1.0
       model.isMuted = false
       model.volume = 1.0
     } else {
-      // User wants to mute
-      AudioSessionManager.shared.handleVideoMute()
+      // User wants to mute - check if we can restore music
       player.isMuted = true
       player.volume = 0
       model.isMuted = true
       model.volume = 0
-    }
 
-    // Note: PiP status checking removed since PiP has been disabled
+      // If no other videos are unmuted, restore ambient audio
+      let hasOtherUnmutedVideo = activeVideos.values.contains {
+        $0.model.id != id && !$0.model.isMuted
+      }
+      if !hasOtherUnmutedVideo {
+        AudioSessionManager.shared.handleVideoMute()
+      }
+    }
   }
 
   // MARK: - PiP Management
 
   /// Register a PiP controller for a video
   func registerPiPController(_ controller: AVPictureInPictureController, for modelId: String) {
-    guard let (model, _, _) = activeVideos[modelId] else { return }
+    guard let (model, player, _) = activeVideos[modelId] else { return }
+
+    // Create a persistent player layer that survives view deallocation
+    let persistentLayer = AVPlayerLayer()
+    persistentLayer.player = player
+    persistentLayer.videoGravity = .resizeAspect
+
+    // Store the persistent layer
+    persistentPlayerLayers[modelId] = persistentLayer
+
+    // Create NEW PiP controller with persistent layer instead of view layer
+    let persistentPiPController = AVPictureInPictureController(playerLayer: persistentLayer)
+    persistentPiPController?.canStartPictureInPictureAutomaticallyFromInline = false
 
     // Create and set delegate
     let delegate = VideoPiPDelegate(modelId: modelId, coordinator: self)
-    controller.delegate = delegate
+    persistentPiPController?.delegate = delegate
 
-    // Store controller and delegate
-    pipControllers[modelId] = controller
+    // Store NEW controller and delegate (replacing any existing ones)
+    pipControllers[modelId] = persistentPiPController
     pipDelegates[modelId] = delegate
 
     // Update model state
     model.isPiPSupported = true
 
-    logger.debug("📺 Registered PiP controller for \(modelId)")
+    logger.debug("📺 Registered PERSISTENT PiP controller for \(modelId)")
+  }
+
+  /// Create PiP setup for a video from player layer info (simplified interface)
+  func setupPiPController(for modelId: String, validatedPlayerLayer: AVPlayerLayer) {
+    guard let (model, player, _) = activeVideos[modelId] else { return }
+
+    // Create a persistent player layer that survives view deallocation
+    let persistentLayer = AVPlayerLayer()
+    persistentLayer.player = player
+    persistentLayer.videoGravity = validatedPlayerLayer.videoGravity
+    persistentLayer.frame = validatedPlayerLayer.frame
+
+    // Store the persistent layer
+    persistentPlayerLayers[modelId] = persistentLayer
+
+    // Create PiP controller with persistent layer
+    let persistentPiPController = AVPictureInPictureController(playerLayer: persistentLayer)
+    persistentPiPController?.canStartPictureInPictureAutomaticallyFromInline = false
+
+    // Create and set delegate
+    let delegate = VideoPiPDelegate(modelId: modelId, coordinator: self)
+    persistentPiPController?.delegate = delegate
+
+    // Store controller and delegate
+    pipControllers[modelId] = persistentPiPController
+    pipDelegates[modelId] = delegate
+
+    // Update model state
+    model.isPiPSupported = true
+
+    logger.debug("📺 Created PERSISTENT PiP controller for \(modelId)")
   }
 
   /// Get PiP controller for a video
@@ -691,6 +748,8 @@ class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
     _ pictureInPictureController: AVPictureInPictureController
   ) {
     Task { @MainActor in
+      // Configure audio session only when PiP is actually starting
+      AudioSessionManager.shared.configureForPictureInPicture()
       coordinator?.updatePiPState(for: modelId, isActive: true)
     }
   }
@@ -714,7 +773,8 @@ class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
   ) {
     // PiP has ended, can now clean up if needed
     Task { @MainActor in
-
+      // Reset audio session when PiP stops
+      AudioSessionManager.shared.resetPiPAudioSession()
       coordinator?.forceCleanupPiP(for: modelId)
     }
   }

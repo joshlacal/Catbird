@@ -20,6 +20,9 @@ final class UIKitProfileViewController: UIViewController {
     internal let profileLogger = Logger(subsystem: "blue.catbird", category: "UIKitProfileViewController")
   
   // MARK: - UI Components
+  private let bannerHeight: CGFloat = 200
+  
+  
   private lazy var collectionView: UICollectionView = {
     let layout = createCompositionalLayout()
     let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -28,11 +31,10 @@ final class UIKitProfileViewController: UIViewController {
     collectionView.showsVerticalScrollIndicator = true
     collectionView.delegate = self
     
-    // Use automatic content inset adjustment for proper safe area handling
-    collectionView.contentInsetAdjustmentBehavior = .automatic
-    
-    // Register refresh control
-    collectionView.refreshControl = refreshControl
+    // Enable scroll view delegate for stretchy header effects
+    if let scrollView = collectionView as? UIScrollView {
+      scrollView.delegate = self
+    }
     
     return collectionView
   }()
@@ -54,7 +56,6 @@ final class UIKitProfileViewController: UIViewController {
   }
   
   private enum Item: Hashable {
-    case banner
     case profileInfo(AppBskyActorDefs.ProfileViewDetailed)
     case followedBy([AppBskyActorDefs.ProfileView])
     case tabSelector(ProfileTab)
@@ -85,7 +86,24 @@ final class UIKitProfileViewController: UIViewController {
   }
   
   required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
+    // Can't use profileLogger here since it's not initialized yet
+    print("UIKitProfileViewController: Attempted initialization from coder - not supported")
+    return nil
+  }
+  
+  deinit {
+    // Enhanced cleanup to prevent memory leaks
+    observationTask?.cancel()
+    observationTask = nil
+    
+    // Clear collection view references
+    collectionView.dataSource = nil
+    collectionView.delegate = nil
+    
+    // Clear collection view layout cache
+    collectionView.collectionViewLayout.invalidateLayout()
+    
+    profileLogger.debug("UIKitProfileViewController deallocated")
   }
   
   // MARK: - Lifecycle
@@ -97,32 +115,60 @@ final class UIKitProfileViewController: UIViewController {
     loadInitialData()
   }
   
+  private var observationTask: Task<Void, Never>?
+  
   private func setupObservers() {
-    // Use withObservationTracking to observe ProfileViewModel changes
-    Task { @MainActor in
-      await observeViewModelChanges()
+    // Use simple task with weak self to prevent crashes
+    observationTask = Task { @MainActor [weak self] in
+      guard let self = self else { return }
+      await self.observeViewModelChanges()
     }
   }
   
   @MainActor
   private func observeViewModelChanges() async {
+    // Enhanced observation pattern with better error handling
+    var lastUpdateTime = CFAbsoluteTimeGetCurrent()
+    let minUpdateInterval: CFTimeInterval = 0.1 // 100ms minimum between updates
+    
     while !Task.isCancelled {
-        withObservationTracking {
-        // Access the properties we want to observe
-        _ = viewModel.profile
-        _ = viewModel.posts
-        _ = viewModel.replies
-        _ = viewModel.postsWithMedia
-        _ = viewModel.isLoading
-        _ = viewModel.selectedProfileTab
-      } onChange: {
-        Task { @MainActor in
-            self.updateSnapshot()
+      do {
+        await withObservationTracking {
+          // Track relevant properties with safe access
+          _ = viewModel.profile?.did
+          _ = viewModel.posts.count
+          _ = viewModel.replies.count
+          _ = viewModel.postsWithMedia.count
+          _ = viewModel.isLoading
+          _ = viewModel.selectedProfileTab
+          _ = viewModel.error
+        } onChange: {
+          Task { @MainActor [weak self] in
+            guard let self = self, !Task.isCancelled else { return }
+            
+            let currentTime = CFAbsoluteTimeGetCurrent()
+            if currentTime - lastUpdateTime >= minUpdateInterval {
+              self.updateSnapshot()
+              lastUpdateTime = currentTime
+            }
+          }
         }
+        
+        // Optimized sleep duration
+        try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+        
+      } catch {
+        if Task.isCancelled {
+          profileLogger.debug("Observation task cancelled gracefully")
+          break
+        }
+        
+        profileLogger.error("Observation error: \(error.localizedDescription, privacy: .public)")
+        
+        // Exponential backoff for error recovery
+        let backoffTime = min(5.0, pow(2.0, Double.random(in: 0...2)))
+        try? await Task.sleep(nanoseconds: UInt64(backoffTime * 1_000_000_000))
       }
-      
-      // Small delay to prevent excessive updates
-      try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
     }
   }
   
@@ -131,20 +177,65 @@ final class UIKitProfileViewController: UIViewController {
     configureNavigationAndToolbarTheme()
   }
   
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+  }
+  
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
     super.traitCollectionDidChange(previousTraitCollection)
     
+    // Handle theme changes
     if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
       configureNavigationAndToolbarTheme()
       collectionView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
     }
+    
+    // Handle size class changes for responsive design
+    if previousTraitCollection?.horizontalSizeClass != traitCollection.horizontalSizeClass ||
+       previousTraitCollection?.verticalSizeClass != traitCollection.verticalSizeClass {
+      
+      // Invalidate layout for responsive design changes
+      collectionView.collectionViewLayout.invalidateLayout()
+      
+      // Update header view for new size class
+      updateHeaderView()
+    }
+    
+    // Handle accessibility changes
+    if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+      // Invalidate height calculations for new text sizes
+      collectionView.collectionViewLayout.invalidateLayout()
+      updateSnapshot()
+    }
   }
   
   // MARK: - Setup
+  private func setupRefreshControl() {
+    let refreshControl = UIRefreshControl()
+    refreshControl.addTarget(self, action: #selector(handleRefresh), for: .valueChanged)
+    refreshControl.tintColor = .label
+    
+    // Configure for better integration with stretchy header
+      refreshControl.layer.zPosition = -1 // Put behind header
+    
+    collectionView.refreshControl = refreshControl
+    
+    // Essential settings for stretchy header
+    collectionView.contentInsetAdjustmentBehavior = .automatic
+    collectionView.alwaysBounceVertical = true
+    
+    // Better integration with header
+    collectionView.automaticallyAdjustsScrollIndicatorInsets = true
+  }
+  
   private func setupUI() {
     view.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
     
+    // Add collection view to main view
     view.addSubview(collectionView)
+    
+    // Setup refresh control after collection view is created
+    setupRefreshControl()
     
     NSLayoutConstraint.activate([
       collectionView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -155,7 +246,6 @@ final class UIKitProfileViewController: UIViewController {
   }
   
   private func registerCells() {
-    collectionView.register(ProfileBannerCell.self, forCellWithReuseIdentifier: "ProfileBannerCell")
     collectionView.register(ProfileInfoCell.self, forCellWithReuseIdentifier: "ProfileInfoCell")
     collectionView.register(FollowedByCell.self, forCellWithReuseIdentifier: "FollowedByCell")
     collectionView.register(TabSelectorCell.self, forCellWithReuseIdentifier: "TabSelectorCell")
@@ -163,16 +253,95 @@ final class UIKitProfileViewController: UIViewController {
     collectionView.register(LoadingCell.self, forCellWithReuseIdentifier: "LoadingCell")
     collectionView.register(EmptyStateCell.self, forCellWithReuseIdentifier: "EmptyStateCell")
     collectionView.register(MoreViewCell.self, forCellWithReuseIdentifier: "MoreViewCell")
+    
+    // Register fixed header view for banner section
+    collectionView.register(
+      FixedProfileHeaderView.self,
+      forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+      withReuseIdentifier: FixedProfileHeaderView.reuseIdentifier
+    )
   }
   
   // MARK: - Height Calculator
   private lazy var heightCalculator = PostHeightCalculator()
   
+  // MARK: - Performance Tracking
+  private var lastLayoutTime: CFTimeInterval = 0
+  private let performanceLogger = Logger(subsystem: "blue.catbird", category: "ProfilePerformance")
+  
+  // MARK: - Configuration Tracking
+  private var lastProfileConfigurationTime: CFTimeInterval = 0
+  
+  // MARK: - Error Handling
+  private func handleLoadError(_ error: Error) {
+    profileLogger.error("Profile load error: \(error.localizedDescription, privacy: .public)")
+    
+    // Update UI to show error state
+    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    snapshot.appendSections([.content])
+    snapshot.appendItems([.emptyState("Error Loading Profile", "Please try again later")], toSection: .content)
+    dataSource.apply(snapshot, animatingDifferences: true)
+  }
+  
+  private func showRefreshError() {
+    // Show subtle error feedback without blocking UI
+    let feedbackGenerator = UINotificationFeedbackGenerator()
+    feedbackGenerator.notificationOccurred(.error)
+    
+    profileLogger.debug("Refresh error feedback shown")
+  }
+  
+  // Timeout wrapper for async operations
+  private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+      group.addTask {
+        try await operation()
+      }
+      
+      group.addTask {
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        throw TimeoutError()
+      }
+      
+      guard let result = try await group.next() else {
+        throw TimeoutError()
+      }
+      
+      group.cancelAll()
+      return result
+    }
+  }
+  
+  private struct TimeoutError: Error {
+    let localizedDescription = "Operation timed out"
+  }
+  
+  
+  // MARK: - Fallback Cell Creation
+  private func createFallbackCell(for indexPath: IndexPath, message: String) -> UICollectionViewCell {
+    let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "EmptyStateCell", for: indexPath) as? EmptyStateCell
+      ?? EmptyStateCell()
+    
+    if let emptyCell = cell as? EmptyStateCell {
+      emptyCell.configure(title: "Unavailable", message: message, appState: appState)
+    }
+    
+    return cell
+  }
+  
   // MARK: - Layout
   private func createCompositionalLayout() -> UICollectionViewLayout {
-    UICollectionViewCompositionalLayout { [weak self] sectionIndex, environment in
-      guard let self = self,
-            let section = Section(rawValue: sectionIndex) else { 
+    FixedStretchyLayout { [weak self] sectionIndex, environment in
+      guard let self = self else {
+        // Return a safe default section if self is nil
+        let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(44))
+        let item = NSCollectionLayoutItem(layoutSize: itemSize)
+        let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(44))
+        let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
+        return NSCollectionLayoutSection(group: group)
+      }
+      
+      guard let section = Section(rawValue: sectionIndex) else { 
         // Return a default section if we can't create the proper one
         let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(44))
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
@@ -182,27 +351,41 @@ final class UIKitProfileViewController: UIViewController {
       }
       
       let screenWidth = environment.container.contentSize.width
-      let responsivePadding = max(16, (screenWidth - 600) / 2)
+      let isCompact = screenWidth < 768
+      let responsivePadding = isCompact ? 16 : max(24, (screenWidth - 600) / 2)
+      let sectionSpacing: CGFloat = isCompact ? 8 : 12
       
       switch section {
       case .banner:
-        // Simple banner section
-        let bannerHeight: CGFloat = 150
-        
+        // Banner section (completely empty, just has header)
         let itemSize = NSCollectionLayoutSize(
           widthDimension: .fractionalWidth(1.0),
-          heightDimension: .absolute(bannerHeight)
+          heightDimension: .absolute(0) // No height since content is in header
         )
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
         
         let groupSize = NSCollectionLayoutSize(
           widthDimension: .fractionalWidth(1.0),
-          heightDimension: .absolute(bannerHeight)
+          heightDimension: .absolute(0) // No height
         )
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
         
+        // Add header for banner with responsive height
+        let bannerHeight = isCompact ? 180 : 220
+        let headerSize = NSCollectionLayoutSize(
+          widthDimension: .fractionalWidth(1.0),
+          heightDimension: .absolute(CGFloat(bannerHeight))
+        )
+        let header = NSCollectionLayoutBoundarySupplementaryItem(
+          layoutSize: headerSize,
+          elementKind: UICollectionView.elementKindSectionHeader,
+          alignment: .top
+        )
+        header.pinToVisibleBounds = false // Allow stretching
+        
         let section = NSCollectionLayoutSection(group: group)
-        section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+        section.boundarySupplementaryItems = [header]
+        section.contentInsets = NSDirectionalEdgeInsets.zero
         return section
         
       case .profileInfo:
@@ -223,7 +406,7 @@ final class UIKitProfileViewController: UIViewController {
         section.contentInsets = NSDirectionalEdgeInsets(
           top: 0,
           leading: responsivePadding,
-          bottom: 8,
+          bottom: sectionSpacing,
           trailing: responsivePadding
         )
         return section
@@ -246,7 +429,7 @@ final class UIKitProfileViewController: UIViewController {
         section.contentInsets = NSDirectionalEdgeInsets(
           top: 0,
           leading: responsivePadding,
-          bottom: 8,
+          bottom: sectionSpacing,
           trailing: responsivePadding
         )
         return section
@@ -269,7 +452,7 @@ final class UIKitProfileViewController: UIViewController {
         section.contentInsets = NSDirectionalEdgeInsets(
           top: 0,
           leading: responsivePadding,
-          bottom: 0,
+          bottom: sectionSpacing,
           trailing: responsivePadding
         )
         return section
@@ -309,7 +492,13 @@ final class UIKitProfileViewController: UIViewController {
         let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
         
         let section = NSCollectionLayoutSection(group: group)
-        section.interGroupSpacing = 8 // Add spacing between posts like other views
+        section.interGroupSpacing = sectionSpacing
+        section.contentInsets = NSDirectionalEdgeInsets(
+          top: 0,
+          leading: 0,
+          bottom: sectionSpacing,
+          trailing: 0
+        )
         return section
       }
     }
@@ -317,31 +506,38 @@ final class UIKitProfileViewController: UIViewController {
   
   // MARK: - Data Source
   private func createDataSource() -> UICollectionViewDiffableDataSource<Section, Item> {
-    UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] collectionView, indexPath, item in
+    let dataSource = UICollectionViewDiffableDataSource<Section, Item>(collectionView: collectionView) { [weak self] collectionView, indexPath, item in
       guard let self = self else { 
         // Return a basic cell as fallback
         return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
       }
       
       switch item {
-      case .banner:
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "ProfileBannerCell", for: indexPath) as! ProfileBannerCell
-        cell.configure(bannerURL: self.viewModel.profile?.banner?.uriString(), appState: self.appState)
-        return cell
-        
       case .profileInfo(let profile):
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "ProfileInfoCell", for: indexPath) as! ProfileInfoCell
-        cell.configure(
-          profile: profile,
-          viewModel: self.viewModel,
-          appState: self.appState,
-          isEditingProfile: self.isEditingProfile,
-          path: self.navigationPath
-        )
-        return cell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "ProfileInfoCell", for: indexPath) as? ProfileInfoCell else {
+          self.profileLogger.error("Failed to dequeue ProfileInfoCell - returning fallback")
+          return self.createFallbackCell(for: indexPath, message: "Profile info unavailable")
+        }
+        
+        do {
+          cell.configure(
+            profile: profile,
+            viewModel: self.viewModel,
+            appState: self.appState,
+            isEditingProfile: self.isEditingProfile,
+            path: self.navigationPath
+          )
+          return cell
+        } catch {
+          self.profileLogger.error("Failed to configure ProfileInfoCell: \(error.localizedDescription, privacy: .public)")
+          return self.createFallbackCell(for: indexPath, message: "Profile configuration error")
+        }
         
       case .followedBy(let knownFollowers):
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "FollowedByCell", for: indexPath) as! FollowedByCell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "FollowedByCell", for: indexPath) as? FollowedByCell else {
+          self.logger.error("Failed to dequeue FollowedByCell - returning fallback")
+          return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
+        }
         cell.configure(
           knownFollowers: knownFollowers,
           totalFollowersCount: self.viewModel.profile?.followersCount ?? 0,
@@ -351,7 +547,10 @@ final class UIKitProfileViewController: UIViewController {
         return cell
         
       case .tabSelector(let selectedTab):
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "TabSelectorCell", for: indexPath) as! TabSelectorCell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "TabSelectorCell", for: indexPath) as? TabSelectorCell else {
+          self.logger.error("Failed to dequeue TabSelectorCell - returning fallback")
+          return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
+        }
         cell.configure(
           selectedTab: selectedTab,
           path: self.navigationPath,
@@ -365,24 +564,43 @@ final class UIKitProfileViewController: UIViewController {
         return cell
         
       case .post(let feedPost):
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "PostCell", for: indexPath) as! PostCell
-        cell.configure(
-          post: feedPost,
-          appState: self.appState,
-          path: self.navigationPath
-        )
-        return cell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "PostCell", for: indexPath) as? PostCell else {
+          self.profileLogger.error("Failed to dequeue PostCell - returning fallback")
+          return self.createFallbackCell(for: indexPath, message: "Post unavailable")
+        }
+        
+        do {
+          cell.configure(
+            post: feedPost,
+            appState: self.appState,
+            path: self.navigationPath
+          )
+          return cell
+        } catch {
+          self.profileLogger.error("Failed to configure PostCell: \(error.localizedDescription, privacy: .public)")
+          return self.createFallbackCell(for: indexPath, message: "Post configuration error")
+        }
         
       case .loadingIndicator:
-        return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath) as? LoadingCell else {
+          return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
+        }
+        cell.startAnimating()
+        return cell
         
       case .emptyState(let title, let message):
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "EmptyStateCell", for: indexPath) as! EmptyStateCell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "EmptyStateCell", for: indexPath) as? EmptyStateCell else {
+          self.logger.error("Failed to dequeue EmptyStateCell - returning fallback")
+          return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
+        }
         cell.configure(title: title, message: message, appState: self.appState)
         return cell
         
       case .moreView:
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "MoreViewCell", for: indexPath) as! MoreViewCell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "MoreViewCell", for: indexPath) as? MoreViewCell else {
+          self.logger.error("Failed to dequeue MoreViewCell - returning fallback")
+          return collectionView.dequeueReusableCell(withReuseIdentifier: "LoadingCell", for: indexPath)
+        }
         cell.configure(
           viewModel: self.viewModel,
           appState: self.appState,
@@ -391,25 +609,73 @@ final class UIKitProfileViewController: UIViewController {
         return cell
       }
     }
+    
+    // Configure supplementary view provider for headers
+    dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
+      guard let self = self,
+            kind == UICollectionView.elementKindSectionHeader,
+            let section = Section(rawValue: indexPath.section) else {
+        return nil
+      }
+      
+      switch section {
+      case .banner:
+        guard let headerView = collectionView.dequeueReusableSupplementaryView(
+          ofKind: kind,
+          withReuseIdentifier: FixedProfileHeaderView.reuseIdentifier,
+          for: indexPath
+        ) as? FixedProfileHeaderView else {
+          self.profileLogger.error("Failed to dequeue FixedProfileHeaderView - returning nil")
+          return nil
+        }
+        
+        if let profile = self.viewModel.profile {
+          headerView.configure(profile: profile, appState: self.appState, viewModel: self.viewModel)
+        }
+        return headerView
+        
+      default:
+        return nil
+      }
+    }
+    
+    return dataSource
   }
   
   // MARK: - Data Loading
   private func loadInitialData() {
     Task {
-      // Load profile first
-      await viewModel.loadProfile()
-      
-      // Load known followers for other users
-      if !viewModel.isCurrentUser {
-        await viewModel.loadKnownFollowers()
-      }
-      
-      // Load initial tab content (usually posts)
-      await loadContentForCurrentTab()
-      
-      // Pre-calculate heights for better scroll performance
-      await MainActor.run {
-        preCalculateContentHeights()
+      do {
+        // Load profile first with error handling
+        await viewModel.loadProfile()
+        
+        // Verify profile loaded successfully
+        guard viewModel.profile != nil else {
+          profileLogger.warning("Profile failed to load, skipping dependent operations")
+          return
+        }
+        
+        // Load known followers for other users
+        if !viewModel.isCurrentUser {
+          await viewModel.loadKnownFollowers()
+        }
+        
+        // Load initial tab content (usually posts)
+        await loadContentForCurrentTab()
+        
+        // Pre-calculate heights for better scroll performance
+        await MainActor.run {
+          preCalculateContentHeights()
+        }
+        
+        profileLogger.debug("Initial data load completed successfully")
+        
+      } catch {
+        profileLogger.error("Failed to load initial data: \(error.localizedDescription, privacy: .public)")
+        
+        await MainActor.run {
+          self.handleLoadError(error)
+        }
       }
     }
   }
@@ -441,17 +707,39 @@ final class UIKitProfileViewController: UIViewController {
   
   @objc private func handleRefresh() {
     Task {
-      await viewModel.loadProfile()
-      
-      if !viewModel.isCurrentUser {
-        await viewModel.loadKnownFollowers()
-      }
-      
-      await loadContentForCurrentTab()
-      
-      await MainActor.run {
-        updateSnapshot()
-        refreshControl.endRefreshing()
+      do {
+        // Add timeout for refresh operations
+          try await withTimeout(seconds: 10) { [self] in
+          await viewModel.loadProfile()
+          
+          if !viewModel.isCurrentUser {
+            await viewModel.loadKnownFollowers()
+          }
+          
+          await loadContentForCurrentTab()
+        }
+        
+        await MainActor.run {
+          updateSnapshot()
+          
+          // Smooth refresh control dismissal
+          UIView.animate(withDuration: 0.3) {
+            self.refreshControl.endRefreshing()
+          }
+        }
+        
+      } catch {
+        profileLogger.error("Refresh failed: \(error.localizedDescription, privacy: .public)")
+        
+        await MainActor.run {
+          // End refreshing even on error
+          UIView.animate(withDuration: 0.3) {
+            self.refreshControl.endRefreshing()
+          }
+          
+          // Show error feedback
+          showRefreshError()
+        }
       }
     }
   }
@@ -492,13 +780,25 @@ final class UIKitProfileViewController: UIViewController {
   // MARK: - Snapshot Updates
   @MainActor
   private func updateSnapshot() {
+    // Throttle rapid updates to prevent performance issues
+    let currentTime = CFAbsoluteTimeGetCurrent()
+    let timeSinceLastUpdate = currentTime - lastProfileConfigurationTime
+    
+    if timeSinceLastUpdate < 0.1 && !viewModel.posts.isEmpty { // Don't throttle initial load
+      return
+    }
+    
+    lastProfileConfigurationTime = currentTime
+    
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     
     // Add sections
     snapshot.appendSections(Section.allCases)
     
-    // Banner
-    snapshot.appendItems([.banner], toSection: .banner)
+    // Banner section stays empty (header only)
+    
+    // Banner section (completely empty, content is purely in header)
+    // No items needed here to avoid visual conflicts
     
     // Profile info
     if let profile = viewModel.profile {
@@ -565,6 +865,25 @@ final class UIKitProfileViewController: UIViewController {
     }
     
     dataSource.apply(snapshot, animatingDifferences: true)
+    
+    // Update header view after applying snapshot (throttled)
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(50))
+      self.updateHeaderView()
+    }
+  }
+  
+  @MainActor
+  private func updateHeaderView() {
+    // Update the fixed header view
+    if let headerView = collectionView.supplementaryView(
+      forElementKind: UICollectionView.elementKindSectionHeader,
+      at: IndexPath(item: 0, section: 0)
+    ) as? FixedProfileHeaderView,
+       let profile = viewModel.profile {
+      headerView.configure(profile: profile, appState: appState, viewModel: viewModel)
+    }
+    
   }
   
   // MARK: - Theme Configuration
@@ -607,6 +926,17 @@ final class UIKitProfileViewController: UIViewController {
 @available(iOS 18.0, *)
 extension UIKitProfileViewController: UICollectionViewDelegate {
   func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+    // Add subtle entrance animation
+    if let section = Section(rawValue: indexPath.section), section == .content {
+      cell.alpha = 0
+      cell.transform = CGAffineTransform(translationX: 0, y: 20)
+      
+      UIView.animate(withDuration: 0.4, delay: 0.05 * Double(indexPath.item % 3), usingSpringWithDamping: 0.8, initialSpringVelocity: 0.3) {
+        cell.alpha = 1
+        cell.transform = .identity
+      }
+    }
+    
     // Check if we need to load more posts
     guard let section = Section(rawValue: indexPath.section),
           section == .content else { return }
@@ -614,8 +944,8 @@ extension UIKitProfileViewController: UICollectionViewDelegate {
     let snapshot = dataSource.snapshot()
     let items = snapshot.itemIdentifiers(inSection: .content)
     
-    // Load more when reaching the last 3 items
-    if indexPath.item >= items.count - 3 && !viewModel.isLoadingMorePosts {
+    // Load more when reaching the last 3 items (with safety check)
+    if items.count > 3 && indexPath.item >= items.count - 3 && !viewModel.isLoadingMorePosts {
       Task {
         switch viewModel.selectedProfileTab {
         case .posts:
@@ -634,6 +964,45 @@ extension UIKitProfileViewController: UICollectionViewDelegate {
     }
   }
   
+  func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    // Optimized scroll handling - only update navigation bar
+    // Layout automatically handles stretching without our intervention
+    let currentTime = CFAbsoluteTimeGetCurrent()
+    if currentTime - lastLayoutTime > 0.016 { // 60fps throttling
+      updateNavigationBarAppearance(offset: scrollView.contentOffset.y)
+      lastLayoutTime = currentTime
+    }
+  }
+  
+  
+  private func updateNavigationBarAppearance(offset: CGFloat) {
+    let transitionStart: CGFloat = 120
+    let transitionEnd: CGFloat = 180
+    
+    // Calculate transition progress with easing
+    let rawProgress = (offset - transitionStart) / (transitionEnd - transitionStart)
+    let progress = min(1, max(0, rawProgress))
+    let easedProgress = sin(progress * .pi / 2) // Ease-out curve
+    
+    // Smooth navigation bar background transition
+    let backgroundColor = UIColor.systemBackground.withAlphaComponent(easedProgress)
+    navigationController?.navigationBar.backgroundColor = backgroundColor
+    
+    // Smooth title transition with animation
+    let shouldShowTitle = progress > 0.6
+    let currentTitle = navigationItem.title
+    let targetTitle = shouldShowTitle ? (viewModel.profile?.displayName ?? viewModel.profile?.handle.description) : nil
+    
+    if currentTitle != targetTitle {
+      UIView.transition(with: navigationController?.navigationBar ?? UIView(), duration: 0.25, options: .transitionCrossDissolve) {
+        self.navigationItem.title = targetTitle
+      }
+    }
+    
+    // Update status bar style based on header visibility
+    let statusBarStyle: UIStatusBarStyle = progress < 0.5 ? .lightContent : .default
+        navigationController?.navigationBar.overrideUserInterfaceStyle = progress < 0.5 ? .dark : .unspecified
+  }
 }
 
 // MARK: - Property Binding Extension
@@ -647,66 +1016,9 @@ extension UIKitProfileViewController {
   }
 }
 
+
+
 // MARK: - Cell Types
-@available(iOS 18.0, *)
-final class ProfileBannerCell: UICollectionViewCell {
-  private var bannerImageView: UIImageView!
-  
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    setupViews()
-  }
-  
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-  
-  private func setupViews() {
-    bannerImageView = UIImageView()
-    bannerImageView.contentMode = .scaleAspectFill
-    bannerImageView.clipsToBounds = true
-    bannerImageView.backgroundColor = UIColor.systemGray5
-    bannerImageView.translatesAutoresizingMaskIntoConstraints = false
-    
-    contentView.addSubview(bannerImageView)
-    
-    NSLayoutConstraint.activate([
-      bannerImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-      bannerImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-      bannerImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-      bannerImageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
-    ])
-  }
-  
-  func configure(bannerURL: String?, appState: AppState) {
-    if let bannerURL = bannerURL,
-       let url = URL(string: bannerURL) {
-      // Use Nuke to load the image
-      let request = ImageRequest(url: url)
-      
-      // Clear any existing image
-      bannerImageView.image = nil
-      bannerImageView.backgroundColor = UIColor(Color.accentColor.opacity(0.3))
-      
-      ImagePipeline.shared.loadImage(with: request) { [weak self] result in
-        DispatchQueue.main.async {
-          switch result {
-          case .success(let response):
-            self?.bannerImageView.image = response.image
-            self?.bannerImageView.backgroundColor = .clear
-          case .failure(_):
-            // Keep the default background color on failure
-            break
-          }
-        }
-      }
-    } else {
-      // Default background
-      bannerImageView.image = nil
-      bannerImageView.backgroundColor = UIColor(Color.accentColor.opacity(0.3))
-    }
-  }
-}
 
 @available(iOS 18.0, *)
 final class ProfileInfoCell: UICollectionViewCell {
@@ -726,7 +1038,8 @@ final class ProfileInfoCell: UICollectionViewCell {
         appState: appState,
         isEditingProfile: isEditingProfile,
         path: path,
-        screenWidth: screenWidth
+        screenWidth: screenWidth,
+        hideAvatar: true // Hide avatar in SwiftUI since it's now in UIKit header
       )
     }
     .margins(.all, 0)
@@ -827,24 +1140,62 @@ final class PostCell: UICollectionViewCell {
 
 @available(iOS 18.0, *)
 final class LoadingCell: UICollectionViewCell {
+  private var activityIndicator: UIActivityIndicatorView!
+  private var pulseView: UIView!
+  
   override init(frame: CGRect) {
     super.init(frame: frame)
+    setupLoadingUI()
+  }
+  
+  required init?(coder: NSCoder) {
+    return nil
+  }
+  
+  private func setupLoadingUI() {
+    // Subtle pulse background
+    pulseView = UIView()
+    pulseView.backgroundColor = UIColor.systemGray6.withAlphaComponent(0.3)
+    pulseView.layer.cornerRadius = 8
+    pulseView.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(pulseView)
     
-    let activityIndicator = UIActivityIndicatorView(style: .medium)
+    activityIndicator = UIActivityIndicatorView(style: .medium)
     activityIndicator.translatesAutoresizingMaskIntoConstraints = false
-    activityIndicator.startAnimating()
-    
+    activityIndicator.hidesWhenStopped = true
+    activityIndicator.color = .systemBlue
     contentView.addSubview(activityIndicator)
     
     NSLayoutConstraint.activate([
-      activityIndicator.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-      activityIndicator.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      pulseView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+      pulseView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      pulseView.widthAnchor.constraint(equalToConstant: 60),
+      pulseView.heightAnchor.constraint(equalToConstant: 60),
+      
+      activityIndicator.centerXAnchor.constraint(equalTo: pulseView.centerXAnchor),
+      activityIndicator.centerYAnchor.constraint(equalTo: pulseView.centerYAnchor),
+      
       contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 100)
     ])
   }
   
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    stopAnimating()
+  }
+  
+  func startAnimating() {
+    activityIndicator.startAnimating()
+    
+    UIView.animate(withDuration: 1.5, delay: 0, options: [.repeat, .autoreverse, .allowUserInteraction]) {
+      self.pulseView.alpha = 0.1
+    }
+  }
+  
+  func stopAnimating() {
+    activityIndicator.stopAnimating()
+    pulseView.layer.removeAllAnimations()
+    pulseView.alpha = 0.3
   }
 }
 
@@ -852,26 +1203,34 @@ final class LoadingCell: UICollectionViewCell {
 final class EmptyStateCell: UICollectionViewCell {
   func configure(title: String, message: String, appState: AppState) {
     contentConfiguration = UIHostingConfiguration {
-      VStack(spacing: 16) {
+      VStack(spacing: 20) {
         Spacer()
         
+        // Animated icon
         Image(systemName: "square.stack.3d.up.slash")
-          .font(.system(size: 48))
-          .foregroundStyle(.secondary)
+          .font(.system(size: 56, weight: .light))
+          .foregroundStyle(.tertiary)
+          .symbolEffect(.pulse.byLayer, options: .repeat(.continuous).speed(0.5))
         
-        Text(title)
-          .font(.title3)
-          .fontWeight(.semibold)
-        
-        Text(message)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-          .padding(.horizontal)
+        VStack(spacing: 8) {
+          Text(title)
+            .font(.title2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.primary)
+          
+          Text(message)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 32)
+        }
         
         Spacer()
       }
-      .frame(minHeight: 300)
+      .frame(minHeight: 320)
       .frame(maxWidth: .infinity)
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("\(title). \(message)")
     }
     .margins(.all, 0)
   }

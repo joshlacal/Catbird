@@ -17,6 +17,7 @@ struct PostEmbed: View {
     let labels: [ComAtprotoLabelDefs.Label]?
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.postID) private var postID
     
     // MARK: - Constants
@@ -124,7 +125,7 @@ struct PostEmbed: View {
                     labels: labels,
                     contentType: "video"
                 ) {
-                    if let playerView = ModernVideoPlayerView18(
+                    if let playerView = ModernVideoPlayerView(
                         bskyVideo: videoView,
                         postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
                     ) {
@@ -133,7 +134,7 @@ struct PostEmbed: View {
                     } else {
                         Text("Unable to load video")
                             .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
@@ -158,7 +159,7 @@ struct PostEmbed: View {
             labels: labels,
             contentType: "video"
         ) {
-            if let playerView = ModernVideoPlayerView18(
+            if let playerView = ModernVideoPlayerView(
                 bskyVideo: videoView,
                 postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
             ) {
@@ -167,7 +168,7 @@ struct PostEmbed: View {
             } else {
                 Text("Unable to load video")
                     .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))

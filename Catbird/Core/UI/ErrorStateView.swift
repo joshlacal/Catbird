@@ -153,6 +153,7 @@ struct ContentUnavailableStateView: View {
       Image(systemName: systemImage)
         .appFont(size: 64)
         .foregroundColor(.secondary)
+        .accessibilityHidden(true) // Decorative, don't read to screen readers
       
       // Text content
       VStack(spacing: 8) {
@@ -160,9 +161,10 @@ struct ContentUnavailableStateView: View {
           .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
           .multilineTextAlignment(.center)
+          .accessibilityAddTraits(.isHeader)
         
         Text(description)
-                          .appFont(AppTextRole.body)
+          .appFont(AppTextRole.body)
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
           .lineLimit(nil)
@@ -175,11 +177,13 @@ struct ContentUnavailableStateView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
+        .accessibilityHint("Takes action to resolve the empty state")
       }
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(.systemBackground))
+    .accessibilityElement(children: .contain)
   }
 }
 
@@ -235,6 +239,73 @@ extension ErrorStateView {
       error: AuthenticationError.sessionExpired,
       context: "Your session has expired. Please log in again."
     )
+  }
+}
+
+extension ContentUnavailableStateView {
+  /// Create an empty feed state view
+  static func emptyFeed(feedName: String = "feed", onRefresh: (() -> Void)? = nil, onExplore: (() -> Void)? = nil) -> ContentUnavailableStateView {
+    if let onExplore = onExplore {
+      return ContentUnavailableStateView(
+        title: "No Posts in \(feedName)",
+        description: "This \(feedName) doesn't have any posts yet. Try refreshing or explore other feeds to discover new content.",
+        systemImage: "tray",
+        actionTitle: "Explore Feeds"
+      ) {
+        onExplore()
+      }
+    } else if let onRefresh = onRefresh {
+      return ContentUnavailableStateView(
+        title: "No Posts in \(feedName)",
+        description: "This \(feedName) doesn't have any posts yet. Pull down to refresh or try again later.",
+        systemImage: "tray",
+        actionTitle: "Refresh"
+      ) {
+        onRefresh()
+      }
+    } else {
+      return ContentUnavailableStateView(
+        title: "No Posts in \(feedName)",
+        description: "This \(feedName) doesn't have any posts yet. Check back later for new content.",
+        systemImage: "tray"
+      )
+    }
+  }
+  
+  /// Create an empty following feed state view
+  static func emptyFollowingFeed(onDiscover: @escaping () -> Void) -> ContentUnavailableStateView {
+    ContentUnavailableStateView(
+      title: "Your Timeline is Empty",
+      description: "Follow some people to see their posts in your timeline. Discover interesting accounts to get started.",
+      systemImage: "person.2",
+      actionTitle: "Discover People"
+    ) {
+      onDiscover()
+    }
+  }
+  
+  /// Create a content filtered state view
+  static func contentFiltered(onAdjustFilters: @escaping () -> Void) -> ContentUnavailableStateView {
+    ContentUnavailableStateView(
+      title: "All Content Filtered",
+      description: "Your current content filters are hiding all posts in this feed. You can adjust your filter settings to see more content.",
+      systemImage: "eye.slash",
+      actionTitle: "Adjust Filters"
+    ) {
+      onAdjustFilters()
+    }
+  }
+  
+  /// Create a network error state view for feeds
+  static func feedNetworkError(onRetry: @escaping () -> Void) -> ContentUnavailableStateView {
+    ContentUnavailableStateView(
+      title: "Can't Load Feed",
+      description: "There was a problem loading this feed. Check your internet connection and try again.",
+      systemImage: "wifi.slash",
+      actionTitle: "Try Again"
+    ) {
+      onRetry()
+    }
   }
 }
 

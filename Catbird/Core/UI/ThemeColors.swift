@@ -140,45 +140,45 @@ extension Color {
     // MARK: - Text Colors
     
     /// Dynamic text color with proper contrast for readability
-    static func dynamicText(_ themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme) -> Color {
+    static func dynamicText(_ themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme, increaseContrast: Bool = false) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
         let isBlackMode = colorScheme == .dark && themeManager.darkThemeMode == .black
         
         switch style {
         case .primary:
             if isBlackMode {
-                return Color(white: 0.95) // High contrast for black mode
+                return increaseContrast ? Color(white: 1.0) : Color(white: 0.95)
             } else if colorScheme == .dark {
-                return Color(white: 0.92) // Slightly less for dim mode
+                return increaseContrast ? Color(white: 0.98) : Color(white: 0.92)
             } else {
-                return .primary
+                return increaseContrast ? Color.black : .primary
             }
             
         case .secondary:
             if isBlackMode {
-                return Color(white: 0.70)
+                return increaseContrast ? Color(white: 0.85) : Color(white: 0.70)
             } else if colorScheme == .dark {
-                return Color(white: 0.65)
+                return increaseContrast ? Color(white: 0.80) : Color(white: 0.65)
             } else {
-                return .secondary
+                return increaseContrast ? Color(.systemGray) : .secondary
             }
             
         case .tertiary:
             if isBlackMode {
-                return Color(white: 0.50)
+                return increaseContrast ? Color(white: 0.65) : Color(white: 0.50)
             } else if colorScheme == .dark {
-                return Color(white: 0.45)
+                return increaseContrast ? Color(white: 0.60) : Color(white: 0.45)
             } else {
-                return Color(.tertiaryLabel)
+                return increaseContrast ? Color(.systemGray2) : Color(.tertiaryLabel)
             }
             
         case .disabled:
             if isBlackMode {
-                return Color(white: 0.35)
+                return increaseContrast ? Color(white: 0.50) : Color(white: 0.35)
             } else if colorScheme == .dark {
-                return Color(white: 0.30)
+                return increaseContrast ? Color(white: 0.45) : Color(white: 0.30)
             } else {
-                return Color(.quaternaryLabel)
+                return increaseContrast ? Color(.systemGray3) : Color(.quaternaryLabel)
             }
         }
     }
@@ -186,38 +186,56 @@ extension Color {
     // MARK: - Separator Colors
     
     /// Dynamic separator color
-    static func dynamicSeparator(_ themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
+    static func dynamicSeparator(_ themeManager: ThemeManager, currentScheme: ColorScheme, increaseContrast: Bool = false) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
         
         switch (colorScheme, themeManager.darkThemeMode) {
         case (.dark, .black):
-            return Color(white: 0.15, opacity: 0.6) // Visible but subtle
+            return increaseContrast ? Color(white: 0.30, opacity: 0.8) : Color(white: 0.15, opacity: 0.6)
         case (.dark, .dim):
-            return Color(white: 0.45, opacity: 0.6) // Much brighter for gray mode
+            return increaseContrast ? Color(white: 0.60, opacity: 0.8) : Color(white: 0.45, opacity: 0.6)
         default:
-            return Color(.separator)
+            return increaseContrast ? Color(.opaqueSeparator) : Color(.separator)
         }
     }
     
     // MARK: - Border Colors
     
     /// Dynamic border color for cards and containers
-    static func dynamicBorder(_ themeManager: ThemeManager, isProminent: Bool = false, currentScheme: ColorScheme) -> Color {
+    static func dynamicBorder(_ themeManager: ThemeManager, isProminent: Bool = false, currentScheme: ColorScheme, increaseContrast: Bool = false) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
         
         switch (colorScheme, themeManager.darkThemeMode) {
         case (.dark, .black):
-            return isProminent
-                ? Color(white: 0.25, opacity: 0.5)
-                : Color(white: 0.20, opacity: 0.3)
+            if increaseContrast {
+                return isProminent
+                    ? Color(white: 0.40, opacity: 0.8)
+                    : Color(white: 0.30, opacity: 0.6)
+            } else {
+                return isProminent
+                    ? Color(white: 0.25, opacity: 0.5)
+                    : Color(white: 0.20, opacity: 0.3)
+            }
         case (.dark, .dim):
-            return isProminent
-                ? Color(white: 0.50, opacity: 0.6)
-                : Color(white: 0.40, opacity: 0.5)
+            if increaseContrast {
+                return isProminent
+                    ? Color(white: 0.65, opacity: 0.8)
+                    : Color(white: 0.55, opacity: 0.7)
+            } else {
+                return isProminent
+                    ? Color(white: 0.50, opacity: 0.6)
+                    : Color(white: 0.40, opacity: 0.5)
+            }
         default:
-            return isProminent
-                ? Color(.systemGray3)
-                : Color(.systemGray5)
+            if increaseContrast {
+                return isProminent
+                    ? Color(.systemGray2)
+                    : Color(.systemGray4)
+            } else {
+                return isProminent
+                    ? Color(.systemGray3)
+                    : Color(.systemGray5)
+            }
         }
     }
     
@@ -331,11 +349,22 @@ extension Color {
         return increaseContrast ? .primary.opacity(0.3) : .gray.opacity(0.2)
     }
     
+    /// Adaptive text color that respects contrast settings
+    static func adaptiveText(appState: AppState?, themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme) -> Color {
+        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        return dynamicText(themeManager, style: style, currentScheme: currentScheme, increaseContrast: increaseContrast)
+    }
+    
+    /// Adaptive border color that respects theme and contrast settings
+    static func adaptiveBorder(appState: AppState?, themeManager: ThemeManager, isProminent: Bool = false, currentScheme: ColorScheme) -> Color {
+        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        return dynamicBorder(themeManager, isProminent: isProminent, currentScheme: currentScheme, increaseContrast: increaseContrast)
+    }
+    
     /// Adaptive separator color that respects contrast settings
     static func adaptiveSeparator(appState: AppState?, themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
         let increaseContrast = appState?.appSettings.increaseContrast ?? false
-        let baseColor = dynamicSeparator(themeManager, currentScheme: currentScheme)
-        return increaseContrast ? baseColor.opacity(0.8) : baseColor
+        return dynamicSeparator(themeManager, currentScheme: currentScheme, increaseContrast: increaseContrast)
     }
 }
 

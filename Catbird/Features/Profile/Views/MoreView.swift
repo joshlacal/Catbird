@@ -9,6 +9,8 @@ import SwiftUI
 
 // MARK: - More View
 struct MoreView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var path: NavigationPath
     
     // Tabs to show in the More menu
@@ -26,18 +28,18 @@ struct MoreView: View {
                             // Tab icon
                             Image(systemName: tab.systemImage)
                                 .appFont(AppTextRole.title3)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
                                 .frame(width: 24, height: 24)
                             
                             // Tab info
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(tab.title)
                                     .appFont(AppTextRole.headline)
-                                    .foregroundStyle(.primary)
+                                    .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: colorScheme))
                                 
                                 Text(tab.subtitle)
                                     .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             }
                             
                             Spacer()
@@ -45,28 +47,33 @@ struct MoreView: View {
                             // Chevron
                             Image(systemName: "chevron.right")
                                 .appFont(AppTextRole.caption)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .tertiary, currentScheme: colorScheme))
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
-                        .background(Color(.secondarySystemBackground))
+                        .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     
                     if tab != moreTabs.last {
                         Divider()
+                            .background(Color.adaptiveSeparator(appState: appState, themeManager: appState.themeManager, currentScheme: colorScheme))
                             .padding(.leading, 60)
                     }
                 }
             }
-            .background(Color(.systemBackground))
+            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.adaptiveBorder(appState: appState, themeManager: appState.themeManager, isProminent: false, currentScheme: colorScheme), lineWidth: 0.5)
+            )
             .padding(.horizontal, 16)
             .padding(.top, 16)
             
             Spacer(minLength: 300)
         }
-        .background(Color(.secondarySystemGroupedBackground))
+        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     }
 }

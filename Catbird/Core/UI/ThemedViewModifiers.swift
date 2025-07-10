@@ -29,9 +29,13 @@ extension View {
             self
         }
         .background { 
-            ThemedBackground(themeManager: themeManager) { colorScheme in
+            ThemedContrastAwareBackground(
+                themeManager: themeManager,
+                appSettings: appSettings
+            ) { colorScheme, increaseContrast in
                 Color.dynamicBackground(themeManager, currentScheme: colorScheme)
             }
+            .ignoresSafeArea(.all)
         }
         .themeTransition(themeManager, appSettings: appSettings)
     }
@@ -45,9 +49,13 @@ extension View {
             self
         }
         .background { 
-            ThemedBackground(themeManager: themeManager) { colorScheme in
+            ThemedContrastAwareBackground(
+                themeManager: themeManager,
+                appSettings: appSettings
+            ) { colorScheme, increaseContrast in
                 Color.dynamicSecondaryBackground(themeManager, currentScheme: colorScheme)
             }
+            .ignoresSafeArea(.all)
         }
         .themeTransition(themeManager, appSettings: appSettings)
     }
@@ -64,6 +72,7 @@ extension View {
             ThemedBackground(themeManager: themeManager) { colorScheme in
                 Color.dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
             }
+            .ignoresSafeArea(.all)
         }
         .themeTransition(themeManager, appSettings: appSettings)
     }
@@ -94,6 +103,7 @@ extension View {
             ThemedBackground(themeManager: themeManager) { colorScheme in
                 Color.dynamicGroupedBackground(themeManager, currentScheme: colorScheme)
             }
+            .ignoresSafeArea(.all)
         }
         .themeTransition(themeManager, appSettings: appSettings)
     }
@@ -108,7 +118,7 @@ extension View {
     ) -> some View {
         self
             .background(glassBackground(intensity: intensity, themeManager: themeManager))
-            .overlay(glassBorder(intensity: intensity, themeManager: themeManager))
+            .overlay(glassBorder(intensity: intensity, themeManager: themeManager, appSettings: appSettings))
             .cornerRadius(12)
             .background(glassShadow(intensity: intensity, themeManager: themeManager))
             .themeTransition(themeManager, appSettings: appSettings)
@@ -124,7 +134,7 @@ extension View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(glassBackground(intensity: intensity, themeManager: themeManager))
-            .overlay(glassBorder(intensity: intensity, themeManager: themeManager).cornerRadius(8))
+            .overlay(glassBorder(intensity: intensity, themeManager: themeManager, appSettings: appSettings).cornerRadius(8))
             .cornerRadius(8)
             .themeTransition(themeManager, appSettings: appSettings)
     }
@@ -136,8 +146,8 @@ extension View {
         ThemedGlassBackground(themeManager: themeManager, intensity: intensity)
     }
     
-    private func glassBorder(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
-        ThemedBorderView(themeManager: themeManager, isProminent: intensity == .strong)
+    private func glassBorder(intensity: GlassIntensity, themeManager: ThemeManager, appSettings: AppSettings) -> some View {
+        ThemedBorderView(themeManager: themeManager, isProminent: intensity == .strong, appSettings: appSettings)
     }
     
     private func glassShadow(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
@@ -173,8 +183,11 @@ extension View {
     func themedDivider(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         Divider()
             .background {
-                ThemedBackground(themeManager: themeManager) { colorScheme in
-                    Color.dynamicSeparator(themeManager, currentScheme: colorScheme)
+                ThemedContrastAwareBackground(
+                    themeManager: themeManager,
+                    appSettings: appSettings
+                ) { colorScheme, increaseContrast in
+                    Color.dynamicSeparator(themeManager, currentScheme: colorScheme, increaseContrast: increaseContrast)
                 }
             }
             .themeTransition(themeManager, appSettings: appSettings)
@@ -190,6 +203,7 @@ extension View {
             ThemedBackground(themeManager: themeManager) { colorScheme in
                 Color.dynamicBackground(themeManager, currentScheme: colorScheme)
             }
+            .ignoresSafeArea(.all)
             .themeTransition(themeManager, appSettings: appSettings)
         )
     }
@@ -205,6 +219,7 @@ extension View {
                 ThemedBackground(themeManager: themeManager) { colorScheme in
                     Color.elevatedBackground(themeManager, elevation: .modal, currentScheme: colorScheme)
                 }
+                .ignoresSafeArea(.all)
             }
             .themeTransition(themeManager, appSettings: appSettings)
     }
@@ -350,6 +365,17 @@ struct ThemedBackground: View {
     }
 }
 
+struct ThemedContrastAwareBackground: View {
+    let themeManager: ThemeManager
+    let appSettings: AppSettings
+    let colorProvider: (ColorScheme, Bool) -> Color
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        colorProvider(colorScheme, appSettings.increaseContrast)
+    }
+}
+
 struct ThemedElevatedBackground: View {
     let themeManager: ThemeManager
     let elevation: ColorElevation
@@ -463,11 +489,27 @@ struct ThemedTextView<Content: View>: View {
 struct ThemedBorderView: View {
     let themeManager: ThemeManager
     let isProminent: Bool
+    let appSettings: AppSettings?
     @Environment(\.colorScheme) private var colorScheme
     
+    init(themeManager: ThemeManager, isProminent: Bool, appSettings: AppSettings? = nil) {
+        self.themeManager = themeManager
+        self.isProminent = isProminent
+        self.appSettings = appSettings
+    }
+    
     var body: some View {
+        let increaseContrast = appSettings?.increaseContrast ?? false
         RoundedRectangle(cornerRadius: 12)
-            .stroke(Color.dynamicBorder(themeManager, isProminent: isProminent, currentScheme: colorScheme), lineWidth: 1)
+            .stroke(
+                Color.dynamicBorder(
+                    themeManager, 
+                    isProminent: isProminent, 
+                    currentScheme: colorScheme, 
+                    increaseContrast: increaseContrast
+                ), 
+                lineWidth: increaseContrast ? 2 : 1
+            )
     }
 }
 

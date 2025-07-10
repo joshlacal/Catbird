@@ -252,7 +252,7 @@ struct AccountSwitcherView: View {
               ProgressView()
                 .controlSize(.small)
 
-              Text("Authenticating with Bluesky...")
+              Text("Authenticating...")
                 .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }

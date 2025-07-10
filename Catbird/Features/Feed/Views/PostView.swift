@@ -17,6 +17,7 @@ import SwiftUI
   var currentPost: AppBskyFeedDefs.PostView
   var isAvatarLoaded = false
   var showingReportView = false
+  var showingAddToListSheet = false
 
   init(post: AppBskyFeedDefs.PostView) {
     self.currentPost = post
@@ -31,6 +32,7 @@ struct PostView: View, Equatable, Identifiable {
         
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
   let post: AppBskyFeedDefs.PostView
   let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
   let isParentPost: Bool
@@ -168,6 +170,14 @@ var id: String {
         )
       }
     }
+    // Present the add to list sheet when showingAddToListSheet is true
+    .sheet(isPresented: $postState.showingAddToListSheet) {
+      AddToListSheet(
+        userDID: postState.currentPost.author.did.didString(),
+        userHandle: postState.currentPost.author.handle.description,
+        userDisplayName: postState.currentPost.author.displayName
+      )
+    }
   }
   
   @ViewBuilder
@@ -240,6 +250,17 @@ var id: String {
   // Post menu (three dots)
   private var postEllipsisMenuView: some View {
     Menu {
+      // Only show "Add to List" for other users' posts
+      if postState.currentPost.author.did.didString() != postState.currentUserDid {
+        Button(action: {
+          contextMenuViewModel.addAuthorToList()
+        }) {
+          Label("Add Author to List", systemImage: "list.bullet.rectangle")
+        }
+        
+        Divider()
+      }
+      
       Button(action: {
         Task { await contextMenuViewModel.muteUser() }
       }) {
@@ -275,7 +296,7 @@ var id: String {
       }
     } label: {
       Image(systemName: "ellipsis")
-        .foregroundStyle(.gray)
+        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
         .padding(PostView.baseUnit * 3)
         .contentShape(Rectangle())
         .accessibilityLabel("Post Options")
@@ -289,20 +310,20 @@ var id: String {
   private func replyIndicatorView(grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil) -> some View {
     HStack(alignment: .center, spacing: PostView.baseUnit) {
       Image(systemName: "arrow.up.forward.circle")
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
         .appBody()
 
       HStack(spacing: 0) {
         Text("in reply to ")
           .appBody()
           .offset(y: -1)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
 
           if isToYou {
             Text("you")
                   .appBody()
                   .offset(y: -1)
-                  .foregroundStyle(.secondary)
+                  .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
           } else if let grandparentAuthor = grandparentAuthor {
               Text("@\(grandparentAuthor.handle)")
                   .appBody()
@@ -341,6 +362,11 @@ var id: String {
     // Set up report callback
     contextMenuViewModel.onReportPost = {
       postState.showingReportView = true  // Use consolidated state
+    }
+    
+    // Set up add to list callback
+    contextMenuViewModel.onAddAuthorToList = {
+      postState.showingAddToListSheet = true  // Use consolidated state
     }
 
     // Fetch user data

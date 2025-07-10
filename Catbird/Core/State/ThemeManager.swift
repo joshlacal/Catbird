@@ -179,7 +179,7 @@ import OSLog
                     
                     // Apply text color based on theme
                     let textColor = isDarkMode
-                        ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
+                        ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark, increaseContrast: false))
                         : UIColor.label
                     
                     [standardAppearance, scrollEdgeAppearance, compactAppearance].forEach { appearance in
@@ -599,7 +599,7 @@ import OSLog
         
         // Apply text color
         let textColor = isDark 
-            ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark))
+            ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark, increaseContrast: false))
             : UIColor.label
         
         var titleAttrs = appearance.titleTextAttributes

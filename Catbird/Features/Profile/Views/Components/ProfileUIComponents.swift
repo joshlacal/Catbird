@@ -24,13 +24,11 @@ struct ProfileTabSelector: View {
             }
         }
         .pickerStyle(.segmented)
-        .padding(.horizontal)
         .onChange(of: selectedTab) { _, newValue in
             if newValue != .more {
                 onTabChange?(newValue)
             }
         }
-        .frame(width: UIScreen.main.bounds.width)
     }
 }
 

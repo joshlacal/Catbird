@@ -12,28 +12,47 @@ struct ConversationRow: View {
   @State private var displayName: String = ""
   @State private var handle: String = ""
 
+  @Environment(AppState.self) private var appState
   // Determine the other member involved in the conversation
   private var otherMember: ChatBskyActorDefs.ProfileViewBasic? {
     // Find the first member whose DID does not match the current user's DID
     return convo.members.first(where: { $0.did.didString() != did }) ?? nil
   }
+  
+  // Accessibility description for screen readers
+  private var accessibilityDescription: String {
+    let userName = displayName.isEmpty ? handle : displayName
+    let unreadText = convo.unreadCount > 0 ? ", \(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")" : ""
+    
+    var messageText = "No messages yet"
+    if let lastMessage = convo.lastMessage {
+      // Extract last message text for accessibility
+      messageText = "Has messages"
+    }
+    
+    return "Conversation with \(userName)\(unreadText). \(messageText)"
+  }
 
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.base) {
       ChatProfileAvatarView(profile: otherMember, size: 50)
+        .accessibilityLabel("\(displayName.isEmpty ? handle : displayName) profile picture")
 
       VStack(alignment: .leading, spacing: 4) {
         Text(displayName.isEmpty ? handle : displayName)  // Show handle if display name is empty
           .enhancedAppHeadline()
           .lineLimit(1)
+          .accessibilityAddTraits(.isHeader)
 
         // Last message preview
         if let lastMessage = convo.lastMessage {
           LastMessagePreview(lastMessage: lastMessage)
+            .accessibilityLabel("Last message")
         } else {
           Text("No messages yet")
             .appSubheadline()
             .foregroundColor(.gray)
+            .accessibilityLabel("No messages in this conversation yet")
         }
       }
 
@@ -45,6 +64,7 @@ struct ConversationRow: View {
           Text(formatDate(date))
             .appCaption()
             .foregroundColor(.gray)
+            .accessibilityLabel("Last message \(formatDate(date))")
         }
 
         // Unread message count badge
@@ -57,13 +77,21 @@ struct ConversationRow: View {
             .spacingSM(.vertical)
             .background(Color.blue)
             .clipShape(Capsule())
+            .accessibilityLabel("\(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")")
+            .accessibilityAddTraits(.isStaticText)
         } else {
           // Keep alignment consistent even when no badge
           Spacer().frame(height: 20)  // Adjust height to match badge approx
         }
       }
     }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(accessibilityDescription)
+    .accessibilityAddTraits(.isButton)
+    .accessibilityHint("Double tap to open conversation")
     .spacingMD(.vertical)
+    .padding(.horizontal, DesignTokens.Spacing.sm) // Add horizontal padding to ensure content doesn't touch edges
+    .frame(maxWidth: .infinity) // Make the HStack take the full width available
     .onAppear {
       // Load profile details when the row appears
       loadProfileDetails()

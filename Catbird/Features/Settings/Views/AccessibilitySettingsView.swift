@@ -311,11 +311,10 @@ private struct DisplayPreviewView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Sample User")
                                 .appFont(AppTextRole.headline)
-                                .accessibleText(appState: appState)
+                                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: .light))
                             Text("@sampleuser")
                                 .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                                .accessibleText(appState: appState)
+                                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: .light))
                         }
                         
                         Spacer()
@@ -323,7 +322,7 @@ private struct DisplayPreviewView: View {
                     
                     Text("This is how text will appear with your current accessibility settings. You can adjust the display scale, contrast, and bold text options above.")
                         .appFont(AppTextRole.body)
-                        .accessibleText(appState: appState)
+                        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: .light))
                     
                     HStack(spacing: 20) {
                         Button {} label: {
@@ -343,7 +342,7 @@ private struct DisplayPreviewView: View {
                 .contrastAwareBackground(appState: appState, defaultColor: Color(.systemGray6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.adaptiveBorder(appState: appState), lineWidth: appState.appSettings.increaseContrast ? 2 : 1)
+                        .stroke(Color.adaptiveBorder(appState: appState, themeManager: appState.themeManager, currentScheme: .light), lineWidth: appState.appSettings.increaseContrast ? 2 : 1)
                 )
             }
         }

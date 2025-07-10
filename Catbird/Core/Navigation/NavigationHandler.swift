@@ -120,6 +120,40 @@ struct NavigationHandler {
       )
       //            .themedNavigationBar(appState.themeManager)
       .id(migrationID)
+    
+    case .createList:
+      CreateListView()
+        .navigationTitle("Create List")
+        .navigationBarTitleDisplayMode(.inline)
+        .id("createList")
+    
+    case .editList(let listURI):
+      EditListView(listURI: listURI.uriString())
+        .navigationTitle("Edit List")
+        .navigationBarTitleDisplayMode(.inline)
+        .id(listURI.uriString())
+    
+    case .listManager:
+      ListsManagerView()
+        .navigationTitle("My Lists")
+        .navigationBarTitleDisplayMode(.large)
+        .id("listManager")
+    
+    case .listDiscovery:
+      ListDiscoveryView()
+        .navigationTitle("Discover Lists")
+        .navigationBarTitleDisplayMode(.large)
+        .id("listDiscovery")
+    
+    case .listFeed(let listURI):
+      ListFeedView(listURI: listURI.uriString())
+        .navigationTitle("List Feed")
+        .navigationBarTitleDisplayMode(.inline)
+        .id(listURI.uriString())
+    
+    case .listMembers(let listURI):
+      ListMemberManagementView(listURI: listURI.uriString())
+        .id(listURI.uriString())
     }
   }
 
@@ -155,6 +189,24 @@ struct NavigationHandler {
       return "🚨 Account Migration"
     case .migrationProgress:
       return "Migration Progress"
+    
+    case .createList:
+      return "Create List"
+    
+    case .editList:
+      return "Edit List"
+    
+    case .listManager:
+      return "My Lists"
+    
+    case .listDiscovery:
+      return "Discover Lists"
+    
+    case .listFeed:
+      return "List Feed"
+    
+    case .listMembers:
+      return "List Members"
     }
   }
 
@@ -189,6 +241,24 @@ struct NavigationHandler {
       return "arrow.triangle.2.circlepath"
     case .migrationProgress:
       return "arrow.up.arrow.down.circle"
+    
+    case .createList:
+      return "plus.rectangle.on.rectangle"
+    
+    case .editList:
+      return "pencil.and.list.clipboard"
+    
+    case .listManager:
+      return "list.bullet.rectangle.portrait"
+    
+    case .listDiscovery:
+      return "magnifyingglass"
+    
+    case .listFeed:
+      return "list.bullet.rectangle"
+    
+    case .listMembers:
+      return "person.2.badge.gearshape"
     }
   }
 }

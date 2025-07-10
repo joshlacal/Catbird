@@ -102,6 +102,7 @@ struct ConversationView: View {
           .shadow(radius: 5)
       }
     }
+    .frame(maxWidth: 600)  
     .scrollDismissesKeyboard(.interactively)
     .navigationTitle(conversationTitle)
     .navigationBarTitleDisplayMode(.inline)

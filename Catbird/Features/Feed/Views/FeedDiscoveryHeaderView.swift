@@ -97,9 +97,9 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   private var subscribeButton: some View {
-    Button(action: {
+    Button {
       Task { await toggleSubscription() }
-    }) {
+    } label: {
       HStack(spacing: 6) {
         if isTogglingSubscription {
           ProgressView()
@@ -154,33 +154,8 @@ struct FeedDiscoveryHeaderView: View {
   
   private var actionButtons: some View {
     HStack(spacing: 24) {
-      // Test button with explicit debugging and visual confirmation
+      // Like button
       Button {
-        logger.info("🔥 DEBUG: Test button action started!")
-        print("🔥 DEBUG: Test button action started!")
-        
-        // Add haptic feedback to confirm touch is received
-        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-        impactFeedback.impactOccurred()
-        
-        logger.info("🔥 DEBUG: Test button action completed!")
-        print("🔥 DEBUG: Test button action completed!")
-      } label: {
-        Text("TEST")
-          .foregroundColor(.red)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 8)
-          .background(Color.red.opacity(0.4)) // More visible background for debugging
-          .cornerRadius(6)
-      }
-      .buttonStyle(.plain) // Individual button style
-      .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle()) // Explicit touch shape
-      
-      // Like button with debugging and visual background
-      Button {
-        logger.info("🔥 BUTTON TAP: Like button action started!")
-        print("🔥 BUTTON TAP: Like button action started!")
         likeFeed()
       } label: {
         HStack(spacing: 4) {
@@ -191,16 +166,13 @@ struct FeedDiscoveryHeaderView: View {
         .foregroundColor(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.blue.opacity(0.2)) // Visual debugging background
       }
-      .buttonStyle(.plain) // Individual button style
+      .buttonStyle(.plain)
       .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle()) // Explicit touch shape
+      .contentShape(Rectangle())
       
-      // Share button with debugging and visual background
+      // Share button
       Button {
-        logger.info("🔥 BUTTON TAP: Share button action started!")
-        print("🔥 BUTTON TAP: Share button action started!")
         shareFeed()
       } label: {
         HStack(spacing: 4) {
@@ -211,16 +183,13 @@ struct FeedDiscoveryHeaderView: View {
         .foregroundColor(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.green.opacity(0.2)) // Visual debugging background
       }
-      .buttonStyle(.plain) // Individual button style
+      .buttonStyle(.plain)
       .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle()) // Explicit touch shape
+      .contentShape(Rectangle())
       
-      // Report button with debugging and visual background
+      // Report button
       Button {
-        logger.info("🔥 BUTTON TAP: Report button action started!")
-        print("🔥 BUTTON TAP: Report button action started!")
         reportFeed()
       } label: {
         HStack(spacing: 4) {
@@ -231,15 +200,13 @@ struct FeedDiscoveryHeaderView: View {
         .foregroundColor(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.2)) // Visual debugging background
       }
-      .buttonStyle(.plain) // Individual button style
+      .buttonStyle(.plain)
       .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle()) // Explicit touch shape
+      .contentShape(Rectangle())
       
-      Spacer() // Push buttons to the left
+      Spacer()
     }
-    // Removed .buttonStyle(.plain) from HStack - this was the key issue!
   }
   
   // MARK: - Actions
@@ -257,7 +224,11 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   private func likeFeed() {
-    logger.info("🔥 BUTTON TAP: Like button tapped for feed: \(feed.uri)")
+    logger.info("Like button tapped for feed: \(feed.uri)")
+    
+    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    impactFeedback.impactOccurred()
+    
     Task {
       do {
         guard let client = appState.atProtoClient else { 
@@ -299,7 +270,11 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   private func shareFeed() {
-    logger.info("🔥 BUTTON TAP: Share button tapped for feed: \(feed.uri)")
+    logger.info("Share button tapped for feed: \(feed.uri)")
+    
+    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    impactFeedback.impactOccurred()
+    
     guard let url = URL(string: feed.uri.uriString()) else { 
       logger.error("Failed to create URL from feed URI: \(feed.uri.uriString())")
       return 
@@ -320,7 +295,11 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   private func reportFeed() {
-    logger.info("🔥 BUTTON TAP: Report button tapped for feed: \(feed.uri)")
+    logger.info("Report button tapped for feed: \(feed.uri)")
+    
+    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    impactFeedback.impactOccurred()
+    
     Task {
       do {
         guard let client = appState.atProtoClient else { 

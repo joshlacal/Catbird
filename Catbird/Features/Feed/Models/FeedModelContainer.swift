@@ -40,6 +40,7 @@ final class FeedModelContainer {
                 appState: appState
             )
             
+            
             modelCache[key] = model
             return model
         } catch {

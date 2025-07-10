@@ -90,7 +90,11 @@ struct NotificationsView: View {
       Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
     }
     .pickerStyle(.segmented)
-    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+    .frame(height: 36)
+    .frame(maxWidth: 600)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 8)
+    .listRowInsets(EdgeInsets())
     .listRowSeparator(.hidden)
   }
 
@@ -100,7 +104,6 @@ struct NotificationsView: View {
       VStack(spacing: DesignTokens.Spacing.none) {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-          .fixedSize()
         
         ErrorStateView(
           error: error,
@@ -194,8 +197,6 @@ struct NotificationsView: View {
       List {
         // Filter picker as the first list item
         filterPicker
-          .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-          .listRowSeparator(.hidden)
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
 
         ForEach(viewModel.groupedNotifications, id: \.id) { group in

@@ -65,3 +65,21 @@ extension ChatBskyActorDefs.ProfileViewBasic {
     }
 
 }
+
+// MARK: - Array Extensions for Unique Elements
+
+extension Array {
+    /// Returns an array with duplicate elements removed based on a key path
+    func uniqued<T: Hashable>(by keyPath: KeyPath<Element, T>) -> [Element] {
+        var seen = Set<T>()
+        return filter { element in
+            let key = element[keyPath: keyPath]
+            if seen.contains(key) {
+                return false
+            } else {
+                seen.insert(key)
+                return true
+            }
+        }
+    }
+}
