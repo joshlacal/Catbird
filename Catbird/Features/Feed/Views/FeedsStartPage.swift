@@ -99,9 +99,9 @@ struct FeedsStartPage: View {
   }
   private var gridSpacing: CGFloat {
     switch screenWidth {
-    case ..<375: return 12
-    case ..<768: return 16
-    default: return 18
+    case ..<375: return 8
+    case ..<768: return 10
+    default: return 12
     }
   }
   private var horizontalPadding: CGFloat {
@@ -276,7 +276,7 @@ struct FeedsStartPage: View {
       Spacer()
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, gridSpacing)
+    .padding(.top, 8)
     .padding(.bottom, 4)
   }
 
@@ -495,7 +495,7 @@ struct FeedsStartPage: View {
       }
     }
     .animation(.spring(duration: 0.4), value: feeds)
-    .padding(.bottom, gridSpacing)
+    .padding(.bottom, 8)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(category.capitalized) feeds grid")
   }
@@ -540,8 +540,8 @@ struct FeedsStartPage: View {
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
       }
-      .frame(width: itemWidth - 6)
-      .padding(8)
+      .frame(width: itemWidth)
+      .padding(6)
       .background(
         RoundedRectangle(cornerRadius: 16)
           .fill(
@@ -650,8 +650,8 @@ struct FeedsStartPage: View {
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
       }
-      .frame(width: itemWidth - 6)
-      .padding(8)
+      .frame(width: itemWidth)
+      .padding(6)
       .background(
         RoundedRectangle(cornerRadius: 16)
           .fill(
@@ -747,16 +747,18 @@ struct FeedsStartPage: View {
         // Stretchy banner header
         GeometryReader { geometry in
           bannerHeaderView()
-            .frame(width: geometry.size.width)
+            .frame(width: drawerWidth)
             .frame(height: max(bannerHeight, bannerHeight + geometry.frame(in: .global).minY))
             .offset(y: geometry.frame(in: .global).minY > 0 ? -geometry.frame(in: .global).minY : 0)
+            .clipped()
         }
-        .frame(height: bannerHeight)
+        .frame(width: drawerWidth, height: bannerHeight)
         
         // Main content below the banner
         feedsContent()
       }
     }
+    .frame(width: drawerWidth)
     .ignoresSafeArea(edges: .top)
     .refreshable {
       await handleRefresh()
@@ -818,6 +820,7 @@ struct FeedsStartPage: View {
               image
                 .resizable()
                 .aspectRatio(contentMode: .fill)
+                .frame(width: drawerWidth)
             } else {
               // Fallback gradient banner
               LinearGradient(
@@ -828,6 +831,7 @@ struct FeedsStartPage: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
               )
+              .frame(width: drawerWidth)
             }
           }
         } else {
@@ -840,8 +844,10 @@ struct FeedsStartPage: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           )
+          .frame(width: drawerWidth)
         }
       }
+      .frame(width: drawerWidth)
       .clipped()
       
       // Scrim overlay for text visibility
@@ -850,10 +856,11 @@ struct FeedsStartPage: View {
         startPoint: .bottom,
         endPoint: .center
       )
+      .frame(width: drawerWidth)
       
       // Profile Info
       VStack(alignment: .leading, spacing: 2) {
-        HStack {
+        HStack(spacing: 8) {
           // Avatar
           Group {
             if let avatarURL = profile?.avatar?.url {
@@ -881,6 +888,7 @@ struct FeedsStartPage: View {
                 .foregroundStyle(.white)
                 .shadow(radius: 2)
                 .lineLimit(1)
+                .truncationMode(.tail)
             }
             if let handle = profile?.handle {
               Text("@\(handle.description)")
@@ -888,13 +896,19 @@ struct FeedsStartPage: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .shadow(radius: 2)
                 .lineLimit(1)
+                .truncationMode(.tail)
             }
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          
+          Spacer(minLength: 0)
         }
+        .frame(maxWidth: drawerWidth - (horizontalPadding * 2))
       }
       .padding(.horizontal, horizontalPadding)
       .padding(.bottom, 12)
     }
+    .frame(width: drawerWidth)
     .contentShape(Rectangle())
     .onTapGesture {
       if let userDID = appState.authManager.state.userDID {

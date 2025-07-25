@@ -1039,7 +1039,7 @@ final class ProfileInfoCell: UICollectionViewCell {
         isEditingProfile: isEditingProfile,
         path: path,
         screenWidth: screenWidth,
-        hideAvatar: true // Hide avatar in SwiftUI since it's now in UIKit header
+        hideAvatar: false // Show avatar since it's no longer in the header
       )
     }
     .margins(.all, 0)

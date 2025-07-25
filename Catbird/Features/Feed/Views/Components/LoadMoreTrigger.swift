@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import OSLog
 
 /// An invisible view that triggers loading more posts when it comes into view.
 /// Uses modern Swift concurrency patterns with @Sendable functions and optimized performance.
@@ -24,11 +25,14 @@ struct LoadMoreTrigger: View {
     /// Debounce timer to prevent rapid-fire triggers
     @State private var debounceTask: Task<Void, Never>?
     
-    /// Base spacing unit (multiple of 3pt)
-    private static let baseUnit: CGFloat = 3
+    /// Base spacing unit from centralized constants
+    private static let baseUnit: CGFloat = FeedConstants.baseSpacingUnit
     
     /// Debounce delay to prevent multiple rapid triggers
-    private static let debounceDelay: Duration = .milliseconds(200)
+    private static let debounceDelay: Duration = .nanoseconds(FeedConstants.triggerDebounceDelay)
+    
+    /// Logger for debugging load more operations
+    private let logger = Logger(subsystem: "blue.catbird", category: "LoadMoreTrigger")
     
     // MARK: - Body
     var body: some View {
@@ -100,7 +104,7 @@ struct LoadMoreTrigger: View {
     // Preview with a simple loading action
     LoadMoreTrigger {
         try? await Task.sleep(for: .seconds(2))
-        logger.debug("More content loaded")
+        print("More content loaded")
     }
     .frame(width: 300, height: 50)
     .border(.gray)

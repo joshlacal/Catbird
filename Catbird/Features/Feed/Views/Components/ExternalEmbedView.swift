@@ -10,6 +10,7 @@ struct ExternalEmbedView: View {
     let postID: String
     @State private var isBlurred: Bool
     @State private var userOverrideBlock = false
+    @State private var userTappedToShowEmbed = false
     @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
     @State private var videoModel: VideoModel?
@@ -29,11 +30,6 @@ struct ExternalEmbedView: View {
             VStack(alignment: .leading, spacing: 0) {
                 content
                     .frame(maxWidth: .infinity)
-            }
-            .onTapGesture {
-                if let url = URL(string: external.uri.uriString()) {
-                    _ = appState.urlHandler.handle(url)
-                }
             }
             .environment(
                 \.openURL,
@@ -58,6 +54,7 @@ struct ExternalEmbedView: View {
             gifErrorContent(error: gifError)
         } else if let url = URL(string: external.uri.uriString()),
                   appState.appSettings.useWebViewEmbeds,
+                  userTappedToShowEmbed,
                   let embedType = ExternalMediaType.detect(from: url),
                   shouldShowWebViewEmbed(for: embedType) {
             webViewEmbedContent(url: url, embedType: embedType)
@@ -100,17 +97,45 @@ struct ExternalEmbedView: View {
     
     @ViewBuilder
     private func webViewEmbedContent(url: URL, embedType: ExternalMediaType) -> some View {
-        EnhancedEmbeddedMediaWebView(
-            url: url,
-            embedType: embedType,
-            shouldBlur: shouldBlur
-        )
-        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        VStack(spacing: 0) {
+            EnhancedEmbeddedMediaWebView(
+                url: url,
+                embedType: embedType,
+                shouldBlur: shouldBlur
+            )
+            .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            
+            // Hide embed button
+            HStack {
+                Spacer()
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        userTappedToShowEmbed = false
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "minus.rectangle.fill")
+                            .imageScale(.small)
+                        Text("Hide Embed")
+                            .appFont(AppTextRole.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(.top, 4)
+        }
     }
     
     @ViewBuilder
     private func linkCardContent() -> some View {
+        let canShowEmbed = appState.appSettings.useWebViewEmbeds &&
+                          URL(string: external.uri.uriString()) != nil &&
+                          ExternalMediaType.detect(from: URL(string: external.uri.uriString())!) != nil &&
+                          shouldShowWebViewEmbed(for: ExternalMediaType.detect(from: URL(string: external.uri.uriString())!)!)
+        
         if shouldBlur {
             VStack(alignment: .leading, spacing: 3) {
                 ZStack(alignment: .topTrailing) {
@@ -125,26 +150,45 @@ struct ExternalEmbedView: View {
                 }
                 
                 linkDetails
+                
+                linkActionButtons(canShowEmbed: canShowEmbed)
             }
             .padding(6)
             .background(Color.gray.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    .stroke(canShowEmbed && !isBlurred ? Color.blue.opacity(0.3) : Color.gray.opacity(0.3), lineWidth: 1)
             )
+            .scaleEffect(canShowEmbed && !isBlurred ? 1.0 : 1.0)
+            .onTapGesture {
+                if canShowEmbed && !isBlurred {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        userTappedToShowEmbed = true
+                    }
+                }
+            }
         } else {
             VStack(alignment: .leading, spacing: 3) {
                 thumbnailImageContent
                 linkDetails
+                
+                linkActionButtons(canShowEmbed: canShowEmbed)
             }
             .padding(6)
             .background(Color.gray.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    .stroke(canShowEmbed ? Color.blue.opacity(0.3) : Color.gray.opacity(0.3), lineWidth: 1)
             )
+            .onTapGesture {
+                if canShowEmbed {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        userTappedToShowEmbed = true
+                    }
+                }
+            }
         }
     }
     
@@ -234,6 +278,41 @@ struct ExternalEmbedView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .zIndex(1)
+    }
+    
+    // Link Action Buttons
+    @ViewBuilder
+    private func linkActionButtons(canShowEmbed: Bool) -> some View {
+        HStack(spacing: 12) {
+            if canShowEmbed {
+                // Visual indicator that card is tappable
+                HStack(spacing: 4) {
+                    Image(systemName: "hand.tap.fill")
+                        .imageScale(.small)
+                    Text("Tap to show embed")
+                        .appFont(AppTextRole.caption)
+                }
+                .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            // Open link button
+            Button(action: {
+                if let url = URL(string: external.uri.uriString()) {
+                    openURL(url)
+                }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.forward.square")
+                        .imageScale(.small)
+                    Text("Open Link")
+                        .appFont(AppTextRole.caption)
+                }
+                .foregroundStyle(.blue)
+            }
+        }
+        .padding(.top, 4)
     }
 
     private func setupVideoIfNeeded() {

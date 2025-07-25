@@ -17,7 +17,6 @@ struct HomeView: View {
 
   // Local state
   @State private var showingSettings = false
-  @State private var feedModel: FeedModel?
 
   // For logging
   let id = UUID().uuidString.prefix(6)
@@ -75,76 +74,13 @@ struct HomeView: View {
   
   @ViewBuilder
   private func nativeFeedView(navigationPath: Binding<NavigationPath>) -> some View {
-    let filterSettings = appState.feedFilterSettings
-    let filteredPosts = feedModel?.applyFilters(withSettings: filterSettings)
-    let posts = filteredPosts ?? []
-    
-    NativeFeedContentView(
-      posts: posts,
+    // Use the proven FeedView -> NativeFeedContentView integration pattern
+    FeedView(
       appState: appState,
+      fetch: selectedFeed,
       path: navigationPath,
-      loadMoreAction: {
-        // Load more posts
-        if let model = feedModel {
-          await model.loadMoreWithFiltering(filterSettings: filterSettings)
-        }
-      },
-      refreshAction: {
-        // Refresh the feed
-        if let model = feedModel {
-          await model.loadFeedWithFiltering(
-            fetch: selectedFeed,
-            forceRefresh: true,
-            strategy: .fullRefresh,
-            filterSettings: filterSettings
-          )
-        }
-      },
-      feedType: selectedFeed,
-      onScrollOffsetChanged: { _ in }
+      selectedTab: $selectedTab
     )
-    .task {
-      // Initialize feedModel if needed
-      if feedModel == nil {
-        let container = FeedModelContainer.shared
-        feedModel = container.getModel(for: selectedFeed, appState: appState)
-      }
-      
-      // Load feed data - this was the missing piece!
-      if let model = feedModel {
-        // Check for cached data first
-        if let cachedFeed = await appState.getPrefetchedFeed(selectedFeed) {
-          await model.setCachedFeed(cachedFeed.posts, cursor: cachedFeed.cursor)
-        }
-        
-        // Load fresh data
-        await model.loadFeedWithFiltering(
-          fetch: selectedFeed,
-          forceRefresh: true,
-          strategy: .fullRefresh,
-          filterSettings: filterSettings
-        )
-      }
-    }
-    .onChange(of: selectedFeed) { oldValue, newValue in
-      // Handle feed type changes
-      if oldValue != newValue {
-        Task {
-          if let model = feedModel {
-            // Clear old posts when switching feeds
-            model.posts = []
-            
-            // Load new feed data
-            await model.loadFeedWithFiltering(
-              fetch: newValue,
-              forceRefresh: true,
-              strategy: .fullRefresh,
-              filterSettings: appState.feedFilterSettings
-            )
-          }
-        }
-      }
-    }
   }
   
   
@@ -181,10 +117,8 @@ struct HomeView: View {
 
   private func handleSelectedFeedChange(oldValue: FetchType, newValue: FetchType) {
     if oldValue != newValue {
-      // Update feedModel when switching feeds
-      Task { @MainActor in
-        feedModel = FeedModelContainer.shared.getModel(for: newValue, appState: appState)
-      }
+      // FeedView now handles its own model updates when feed changes
+      logger.debug("[\(id)] Feed changed from \(oldValue.identifier) to \(newValue.identifier)")
     }
   }
 

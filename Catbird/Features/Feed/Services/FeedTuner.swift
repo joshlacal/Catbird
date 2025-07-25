@@ -177,14 +177,8 @@ final class FeedTuner {
     }
     
     // Select the primary post for this thread:
-    // 1. If root post is in the feed, use it
-    // 2. Otherwise, use the most recent post in the group
-    let primaryPost: AppBskyFeedDefs.FeedViewPost
-    if let rootPost = sortedPosts.first(where: { $0.post.uri.uriString() == rootUri }) {
-      primaryPost = rootPost
-    } else {
-      primaryPost = sortedPosts.last! // Most recent post
-    }
+    // Use the most recent post in the group (the actual post that appeared in the feed)
+    let primaryPost = sortedPosts.last! // Most recent post (the reply)
     
     // Create slice from the primary post
     return createSlice(from: primaryPost)

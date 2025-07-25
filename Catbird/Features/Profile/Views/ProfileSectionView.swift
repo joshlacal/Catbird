@@ -118,7 +118,6 @@ struct ProfileSectionView: View {
           } else {
               ForEach(viewModel.likes, id: \.post.uri) { post in
                   FeedPost(post: post, path: $path)
-                      .applyListRowModifiers(id: post.id)
                   
                   // Load more when reaching the end
                   if post == viewModel.likes.last && !viewModel.isLoadingMorePosts {
@@ -147,8 +146,6 @@ struct ProfileSectionView: View {
           } else {
               ForEach(viewModel.otherUserLikes, id: \.uri) { post in
                   PostView(post: post, grandparentAuthor: nil, isParentPost: false, isSelectable: false, path: $path, appState: appState)
-                
-                      .applyListRowModifiers(id: post.uri.uriString())
                       .padding(.top, ProfileSectionView.baseUnit * 3)
                     .padding(.horizontal, ProfileSectionView.baseUnit * 1.5)
                     .fixedSize(horizontal: false, vertical: true)
@@ -190,7 +187,6 @@ struct ProfileSectionView: View {
       LazyVStack(spacing: 0) {
         ForEach(viewModel.lists, id: \.uri) { list in
           ListRow(list: list)
-                .applyListRowModifiers(id: list.uri.uriString())
 
           // Load more when reaching the end
           if list == viewModel.lists.last && !viewModel.isLoadingMorePosts {
@@ -226,7 +222,6 @@ struct ProfileSectionView: View {
           } label: {
             StarterPackRowView(pack: pack)
           }
-          .applyListRowModifiers(id: pack.uri.uriString())
 
           // Load more when reaching the end
           if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts
@@ -263,7 +258,6 @@ struct ProfileSectionView: View {
           FeedRowView(feed: feed)
         }
         .buttonStyle(.plain)
-        .applyListRowModifiers(id: feed.uri.uriString())
 
         // Load more when reaching the end
         if feed == viewModel.feeds.last && !viewModel.isLoadingMorePosts {

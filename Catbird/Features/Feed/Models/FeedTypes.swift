@@ -77,6 +77,34 @@ enum FetchType: Hashable, Sendable, CustomStringConvertible {
             return "Likes by \(did)"
         }
     }
+    
+    /// Returns true if this feed type should preserve scroll position during updates
+    /// Chronological feeds benefit most from scroll preservation to maintain reading position
+    var shouldPreserveScrollPosition: Bool {
+        switch self {
+        case .timeline:
+            // Timeline is chronological and should preserve scroll position
+            return true
+        case .author:
+            // Author feeds are chronological (reverse chronological order)
+            return true
+        case .feed, .list, .likes:
+            // Custom feeds and lists may have non-chronological ordering
+            // Still preserve scroll to maintain user position during refresh
+            return true
+        }
+    }
+    
+    /// Returns true if this feed type displays content in chronological order
+    var isChronological: Bool {
+        switch self {
+        case .timeline, .author:
+            return true
+        case .feed, .list, .likes:
+            // Custom feeds may have algorithmic ordering
+            return false
+        }
+    }
 }
 
 // Extend Equatable for FetchType

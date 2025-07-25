@@ -1,4 +1,3 @@
-import Combine
 import Petrel
 import SwiftUI
 import SwiftData
@@ -40,12 +39,104 @@ final class FeedCompositionalLayout: UICollectionViewCompositionalLayout {
   }
 }
 
+// MARK: - Scroll Position Tracker
+@available(iOS 18.0, *)
+final class ScrollPositionTracker {
+  private let logger = Logger(
+    subsystem: "blue.catbird", category: "ScrollPositionTracker")
+
+  struct ScrollAnchor {
+    let indexPath: IndexPath
+    let offsetY: CGFloat
+    let itemFrameY: CGFloat
+    let timestamp: Date
+  }
+
+  private var lastAnchor: ScrollAnchor?
+  private(set) var isTracking = true
+
+  func captureScrollAnchor(collectionView: UICollectionView) -> ScrollAnchor? {
+    guard isTracking else { return nil }
+
+    // Find the first visible post that's at least 30% visible
+    let visibleIndexPaths = collectionView.indexPathsForVisibleItems.sorted()
+    let visibleBounds = collectionView.bounds
+
+    for indexPath in visibleIndexPaths {
+      // Only consider post items
+      if indexPath.section == FeedViewController.Section.posts.rawValue,
+        let attributes = collectionView.layoutAttributesForItem(at: indexPath)
+      {
+
+        // Check if the item is sufficiently visible (at least 30% showing)
+        let itemFrame = attributes.frame
+        let visibleArea = itemFrame.intersection(visibleBounds)
+        let visibilityRatio = visibleArea.height / itemFrame.height
+
+        if visibilityRatio >= 0.3 {
+          let anchor = ScrollAnchor(
+            indexPath: indexPath,
+            offsetY: collectionView.contentOffset.y,
+            itemFrameY: itemFrame.origin.y,
+            timestamp: Date()
+          )
+
+          lastAnchor = anchor
+          logger.debug(
+            "Captured scroll anchor: item[\(indexPath.section), \(indexPath.item)] at y=\(itemFrame.origin.y), offset=\(collectionView.contentOffset.y), visibility=\(visibilityRatio)"
+          )
+          return anchor
+        }
+      }
+    }
+
+    return nil
+  }
+
+  func restoreScrollPosition(collectionView: UICollectionView, to anchor: ScrollAnchor) {
+    guard isTracking else { return }
+
+    // Force layout to ensure all positions are calculated
+    collectionView.layoutIfNeeded()
+
+    // Get current position of anchor item
+    guard let currentAttributes = collectionView.layoutAttributesForItem(at: anchor.indexPath)
+    else {
+      logger.warning("Could not restore scroll position - anchor item not found")
+      return
+    }
+
+    // Calculate how much content was added/removed above the anchor
+    let currentItemY = currentAttributes.frame.origin.y
+    let originalItemY = anchor.itemFrameY
+    let heightDelta = currentItemY - originalItemY
+
+    // Apply corrected offset
+    let newOffsetY = anchor.offsetY + heightDelta
+    let correctedOffset = max(0, newOffsetY)  // Don't scroll above content
+
+    collectionView.setContentOffset(CGPoint(x: 0, y: correctedOffset), animated: false)
+
+    logger.debug(
+      "Restored scroll position: anchor moved from y=\(originalItemY) to y=\(currentItemY), delta=\(heightDelta), new offset=\(correctedOffset)"
+    )
+  }
+
+  func pauseTracking() {
+    isTracking = false
+  }
+
+  func resumeTracking() {
+    isTracking = true
+  }
+}
+
 // MARK: - Feed View Controller
 @available(iOS 18.0, *)
 final class FeedViewController: UICollectionViewController, StateInvalidationSubscriber {
   // MARK: - Properties
   private var appState: AppState
-  private var feedModel: FeedModel
+  private var feedModel: FeedModel?
   private(set) var fetchType: FetchType
   private var path: Binding<NavigationPath>
 
@@ -53,7 +144,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   var onScrollOffsetChanged: ((CGFloat) -> Void)?
 
   private var posts: [CachedFeedViewPost] = []
-  private var isLoading = false  // SwiftUI handles loading states
+  private var isLoading = true
   private var hasInitialized = false
   private var isLoadingMore = false
   private var isRefreshing = false
@@ -62,7 +153,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   private let userActivityTracker = UserActivityTracker()
   private lazy var smartTabCoordinator = SmartTabCoordinator(appState: appState)
   private let newPostsIndicatorManager = NewPostsIndicatorManager()
-  private var cancellables = Set<AnyCancellable>()
 
   // Background loader for smart tab coordination (placeholder for now)
   private lazy var backgroundLoader = BackgroundFeedLoader(appState: appState)
@@ -104,13 +194,13 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   // MARK: - Collection View Configuration
   private func configureCollectionView() {
     // Configure the inherited collection view from UICollectionViewController
-    // Background will be set in configureTheme()
-    collectionView.backgroundColor = .clear
+    collectionView.backgroundColor = UIColor(
+      Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
     collectionView.showsVerticalScrollIndicator = true
     collectionView.prefetchDataSource = self
 
-    // HACK: 0 top is huge, 10 is smaller(?), so using a negative inset
-    collectionView.contentInset = UIEdgeInsets(top: -10, left: 0, bottom: 0, right: 0)
+    // Add 10pt top content inset (matching ThreadView)
+    collectionView.contentInset = UIEdgeInsets(top: 10, left: 0, bottom: 0, right: 0)
 
     // Enable automatic adjustment for navigation bars - critical for large title behavior
     collectionView.contentInsetAdjustmentBehavior = .automatic
@@ -118,15 +208,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     // Configure for better performance
     collectionView.isPrefetchingEnabled = true
     collectionView.remembersLastFocusedIndexPath = true
-
-    // Performance: Optimize scroll view for frame-based calculations
-    collectionView.delaysContentTouches = false
-    collectionView.canCancelContentTouches = true
-    
-    // Performance: Reduce Auto Layout overhead during scrolling
-    if #available(iOS 16.0, *) {
-      collectionView.selfSizingInvalidation = .enabledIncludingConstraints
-    }
 
     // Enable scroll-to-top and navigation bar integration
     collectionView.scrollsToTop = true
@@ -137,49 +218,26 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     collectionView.refreshControl = refreshControl
   }
 
-  // DISABLED: SwiftUI handles loading states
-  private lazy var loadingView: UIView = UIView()
-  
-  // DISABLED: SwiftUI handles empty states
-  private lazy var emptyStateView: UIView = UIView() /*{
+  private lazy var loadingView: UIView = {
     let container = UIView()
     container.translatesAutoresizingMaskIntoConstraints = false
-    container.backgroundColor = .clear
+    container.backgroundColor = UIColor(
+      Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
 
-      let imageView = UIImageView(image: UIImage(systemName: "wind"))
-    imageView.translatesAutoresizingMaskIntoConstraints = false
-    imageView.tintColor = UIColor.secondaryLabel
-    imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 48, weight: .light)
+    let activityIndicator = UIActivityIndicatorView(style: .medium)
+    activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+    activityIndicator.startAnimating()
 
-    let titleLabel = UILabel()
-    titleLabel.translatesAutoresizingMaskIntoConstraints = false
-    titleLabel.text = "No Posts Available"
-    titleLabel.textAlignment = .center
-    titleLabel.font = UIFont.preferredFont(forTextStyle: .title2)
-    titleLabel.textColor = UIColor.label
+    let label = UILabel()
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.text = "Loading feed..."
+    label.textAlignment = .center
+    label.font = UIFont.preferredFont(forTextStyle: .body)
 
-    let messageLabel = UILabel()
-    messageLabel.translatesAutoresizingMaskIntoConstraints = false
-    messageLabel.text = "Check back later for new content"
-    messageLabel.textAlignment = .center
-    messageLabel.font = UIFont.preferredFont(forTextStyle: .body)
-    messageLabel.textColor = UIColor.secondaryLabel
-    messageLabel.numberOfLines = 0
-
-    let retryButton = UIButton(type: .system)
-    retryButton.translatesAutoresizingMaskIntoConstraints = false
-    retryButton.setTitle("Retry", for: .normal)
-    retryButton.titleLabel?.font = UIFont.preferredFont(forTextStyle: .body)
-    retryButton.backgroundColor = UIColor.systemBlue
-    retryButton.setTitleColor(.white, for: .normal)
-    retryButton.layer.cornerRadius = 8
-    retryButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 24, bottom: 12, right: 24)
-    retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
-
-    let stackView = UIStackView(arrangedSubviews: [imageView, titleLabel, messageLabel, retryButton])
+    let stackView = UIStackView(arrangedSubviews: [activityIndicator, label])
     stackView.translatesAutoresizingMaskIntoConstraints = false
     stackView.axis = .vertical
-    stackView.spacing = 16
+    stackView.spacing = 8
     stackView.alignment = .center
 
     container.addSubview(stackView)
@@ -187,73 +245,31 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     NSLayoutConstraint.activate([
       stackView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
       stackView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-      stackView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 40),
-      stackView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
     ])
 
     return container
-  }() */
+  }()
 
   // MARK: - Data Source
   enum Section: Int, CaseIterable {
     case header
     case posts
-    // DISABLED: loadMoreIndicator breaks infinite scroll
-    // case loadMoreIndicator
+    case loadMoreIndicator
   }
 
   enum Item: Hashable {
     case header(FetchType)  // Feed type for conditional header
     case post(CachedFeedViewPost)
-    case gapIndicator(String)  // Gap indicator with unique ID
-    // DISABLED: loadMoreIndicator breaks infinite scroll
-    // case loadMoreIndicator
+    case loadMoreIndicator
   }
 
   private lazy var dataSource = createDataSource()
-
-  // MARK: - Loading State Management
-  
-  @MainActor
-  private func showLoadingView() {
-    // DISABLED: SwiftUI layer handles all loading states
-    // UIKit should never show loading view to prevent flashing
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Loading view disabled - SwiftUI handles loading states")
-  }
-  
-  @MainActor
-  private func hideLoadingView() {
-    guard loadingView.superview != nil else { return }
-    loadingView.removeFromSuperview()
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Loading view hidden")
-  }
-  
-  @MainActor
-  private func showEmptyStateView() {
-    // DISABLED: SwiftUI layer handles all empty states
-    // UIKit should never show empty state view to prevent flashing
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Empty state view disabled - SwiftUI handles empty states")
-  }
-  
-  @MainActor
-  private func hideEmptyStateView() {
-    guard emptyStateView.superview != nil else { return }
-    emptyStateView.removeFromSuperview()
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Empty state view hidden")
-  }
-  
-  @objc private func retryButtonTapped() {
-    // DISABLED: SwiftUI handles all data loading
-    // UIKit retry should not load data independently
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Retry button disabled - SwiftUI handles loading")
-  }
 
   // MARK: - Initialization
   init(appState: AppState, fetchType: FetchType, path: Binding<NavigationPath>, modelContext: ModelContext) {
     self.appState = appState
     self.fetchType = fetchType
     self.path = path
-    self.feedModel = FeedModelContainer.shared.getModel(for: fetchType, appState: appState)
 
     // Create layout for UICollectionViewController
     let layout = FeedViewController.createCompositionalLayout()
@@ -285,9 +301,8 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
         return FeedViewController.createHeaderSection()
       case .posts:
         return FeedViewController.createPostsSection()
-      // DISABLED: loadMoreIndicator breaks infinite scroll
-      // case .loadMoreIndicator:
-      //   return FeedViewController.createLoadMoreSection()
+      case .loadMoreIndicator:
+        return FeedViewController.createLoadMoreSection()
       }
     }
 
@@ -325,8 +340,12 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     newPostsCheckTimer?.invalidate()
     tabTapObserverTimer?.invalidate()
 
-    // Note: We cannot call @MainActor methods from deinit
-    // The UI components will be cleaned up when their hosting controllers are removed below
+    // Clean up enhanced components on main actor
+      Task.detached { @MainActor [self] in
+           smartTabCoordinator.resetAllHandlers()
+           newPostsIndicatorManager.hideIndicator()
+       continuityManager.hideBanner()
+    }
 
     // Clean up hosting controllers
     newPostsIndicatorHostingController?.view.removeFromSuperview()
@@ -361,14 +380,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
 
     // Set up tab tap observation
     observeAppStateTabTaps()
-    
-    // Set up new posts indicator observer
-    setupNewPostsIndicatorObserver()
-
-    // Initialize feedModel even if we're not loading initial data
-    // This is needed for infinite scroll functionality
-    feedModel = FeedModelContainer.shared.getModel(for: fetchType, appState: appState)
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Initialized feedModel for infinite scroll")
 
     controllerLogger.debug(
       "UIKitFeedView [\(self.instanceId)]: viewDidLoad completed, collection view frame: \(self.collectionView.frame.debugDescription)"
@@ -380,7 +391,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   private func setupEnhancedComponents() {
     // Enhanced components are now only used during pull-to-refresh
     // No background timers or automatic checking needed
-    setupContinuityBannerObserver()
     controllerLogger.debug(
       "Enhanced UX components initialized for feed: \(self.fetchType.identifier)")
   }
@@ -407,23 +417,16 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     let continuityView = FeedContinuityView(
       continuityManager: continuityManager,
       onBannerTap: { [weak self] in
-        Task { @MainActor in
-          self?.handleContinuityBannerTap()
-        }
+        self?.handleContinuityBannerTap()
       },
       onGapLoad: { [weak self] in
-        Task { @MainActor in
-          self?.loadGapContent()
-        }
+        self?.loadGapContent()
       }
     )
     .environment(appState)
 
     let hostingController = UIHostingController(rootView: continuityView)
     hostingController.view.backgroundColor = UIColor.clear
-    
-    // Enable intrinsic content size for proper SwiftUI layout
-    hostingController.sizingOptions = [.intrinsicContentSize]
 
     addChild(hostingController)
     view.addSubview(hostingController.view)
@@ -434,39 +437,20 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     NSLayoutConstraint.activate([
       hostingController.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
       hostingController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      hostingController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+      hostingController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      hostingController.view.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
     ])
 
     continuityBannerHostingController = hostingController
 
-      controllerLogger.debug("Continuity banner system initialized - hosting controller: \(hostingController.debugDescription), view frame: \(hostingController.view.frame.debugDescription)")
-  }
-  
-  private func setupContinuityBannerObserver() {
-    // Setup the continuity banner UI integration
-    setupContinuityBannerUI()
-  }
-  
-  private func setupNewPostsIndicatorObserver() {
-    // Observe changes to the new posts indicator manager's currentIndicator
-    newPostsIndicatorManager.$currentIndicator
-      .receive(on: DispatchQueue.main)
-      .sink { [weak self] indicator in
-        if let indicator = indicator {
-          self?.showEnhancedNewPostsIndicator(
-            newPostCount: indicator.newPostCount,
-            authors: indicator.authors,
-            timestamp: indicator.timestamp
-          )
-        } else {
-          self?.hideEnhancedNewPostsIndicator()
-        }
-      }
-      .store(in: &cancellables)
-    
-    controllerLogger.debug("New posts indicator observer initialized")
+    controllerLogger.debug("Continuity banner system initialized")
   }
 
+  @MainActor
+  private func handleContinuityBannerTap() {
+    controllerLogger.debug("Continuity banner tapped")
+    scrollToTop()
+  }
 
   @MainActor
   private func loadGapContent() {
@@ -506,22 +490,35 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     )
 
     // Ensure theming is applied after view appears
-    Task { @MainActor in
+    DispatchQueue.main.async {
       self.configureTheme()
     }
 
-    // DISABLED: SwiftUI handles all data loading
-    // UIKit should only display posts provided by SwiftUI
+    // CORRECTED LOGIC: Use hasInitialized as the primary trigger
     if !hasInitialized {
       controllerLogger.debug(
-        "UIKitFeedView [\(self.instanceId)]: First appearance - waiting for SwiftUI to provide posts"
+        "UIKitFeedView [\(self.instanceId)]: First appearance (hasInitialized is false), triggering initial load."
       )
+
+      // Mark as initialized immediately to prevent this block from running again
       hasInitialized = true
+
+      // Ensure collection view is fully ready before loading
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        self.controllerLogger.debug(
+          "UIKitFeedView [\(self.instanceId)]: About to call loadInitialFeedWithRetry")
+        self.loadInitialFeedWithRetry()
+      }
+    } else if posts.isEmpty && !isLoading {
+      // Fallback for cases where the view might reappear with no posts after an error
+      controllerLogger.debug(
+        "UIKitFeedView [\(self.instanceId)]: View re-appeared with no posts and not loading, attempting a reload."
+      )
+      loadInitialFeedWithRetry()
+    } else {
+      controllerLogger.debug(
+        "UIKitFeedView [\(self.instanceId)]: Already initialized, skipping initial load.")
     }
-    
-    controllerLogger.debug(
-        "UIKitFeedView [\(self.instanceId)]: UIKit view ready - posts count: \(self.posts.count)"
-    )
 
     // SAFETY CHECK: Remove loading overlay after timeout if still present
     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
@@ -558,15 +555,19 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
       configureTheme()
 
-      // Update collection view background - just call configureTheme which handles all theming
-      // (removed duplicate theming code that's handled in configureTheme)
+      // Update collection view background
+      collectionView.backgroundColor = UIColor(
+        Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      view.backgroundColor = .clear  // Let SwiftUI .themedPrimaryBackground() handle this
+      loadingView.backgroundColor = UIColor(
+        Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
     }
   }
 
   // MARK: - Theme Configuration
 
   private func configureTheme() {
-    let currentScheme = currentColorScheme()
+    let currentScheme = getCurrentColorScheme()
     let isDarkMode = appState.themeManager.isDarkMode(for: currentScheme)
     let isBlackMode = appState.themeManager.isUsingTrueBlack
 
@@ -575,23 +576,13 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       Color.dynamicBackground(appState.themeManager, currentScheme: currentScheme))
     view.backgroundColor = .clear  // Let SwiftUI .themedPrimaryBackground() handle this
     collectionView.backgroundColor = backgroundColor
-    // Loading and empty state views disabled - SwiftUI handles these states
-  }
-
-  private func currentColorScheme() -> ColorScheme {
-    let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
-    // Use ThemeManager's effective color scheme to account for manual overrides
-    return appState.themeManager.effectiveColorScheme(for: systemScheme)
+    loadingView.backgroundColor = backgroundColor
   }
 
   // MARK: - UI Setup
   private func setupLoadingOverlay() {
-    // Add loading view as overlay and ensure it's visible immediately
+    // Add loading view as overlay when needed
     view.addSubview(loadingView)
-    
-    // Ensure loading view is visible on top
-    loadingView.isHidden = false
-    view.bringSubviewToFront(loadingView)
 
     loadingView.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
@@ -600,50 +591,19 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       loadingView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       loadingView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
     ])
-    
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Loading overlay setup and made visible")
   }
 
   private func registerCells() {
     collectionView.register(FeedHeaderCell.self, forCellWithReuseIdentifier: "FeedHeaderCell")
     collectionView.register(FeedPostCell.self, forCellWithReuseIdentifier: "FeedPostCell")
-    collectionView.register(FeedGapCell.self, forCellWithReuseIdentifier: "FeedGapCell")
-    // DISABLED: LoadMoreIndicatorCell breaks infinite scroll
-    // collectionView.register(
-    //   LoadMoreIndicatorCell.self, forCellWithReuseIdentifier: "LoadMoreIndicatorCell")
+    collectionView.register(
+      LoadMoreIndicatorCell.self, forCellWithReuseIdentifier: "LoadMoreIndicatorCell")
   }
 
   // MARK: - CollectionView Layout
 
   // Reuse PostHeightCalculator for accurate height estimations (matching ThreadView)
   private lazy var heightCalculator = PostHeightCalculator()
-  
-  // Performance: Height caching to avoid recalculation during scroll
-  private var heightCache: [String: CGFloat] = [:]
-  private let heightCacheLimit = 500  // Limit cache size to prevent memory issues
-  
-  /// Calculate height with caching for better performance
-  private func calculateHeightWithCache(for post: AppBskyFeedDefs.FeedViewPost, mode: PostHeightCalculator.CalculationMode = .compact) -> CGFloat {
-    let cacheKey = "\(post.post.uri.description)_\(mode.rawValue)"
-    
-    if let cachedHeight = heightCache[cacheKey] {
-      return cachedHeight
-    }
-    
-    let calculatedHeight = heightCalculator.calculateHeight(for: post.post, mode: mode)
-    
-    // Cache the result but limit cache size
-    if heightCache.count >= heightCacheLimit {
-      // Remove oldest entries when cache is full
-      let keysToRemove = Array(heightCache.keys.prefix(100))
-      for key in keysToRemove {
-        heightCache.removeValue(forKey: key)
-      }
-    }
-    
-    heightCache[cacheKey] = calculatedHeight
-    return calculatedHeight
-  }
 
   private static func createHeaderSection() -> NSCollectionLayoutSection {
     let itemSize = NSCollectionLayoutSize(
@@ -720,11 +680,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
           collectionView.dequeueReusableCell(withReuseIdentifier: "FeedHeaderCell", for: indexPath)
           as! FeedHeaderCell
         cell.configure(fetchType: feedType, appState: self.appState)
-        
-        // Performance: Enable rasterization for static header content
-        cell.layer.shouldRasterize = true
-        cell.layer.rasterizationScale = UIScreen.main.scale
-        
         return cell
 
       case .post(let cachedPost):
@@ -739,45 +694,17 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
           appState: self.appState,
           path: self.path
         )
-        
-        // Performance: Selective rasterization for post cells
-        // Only rasterize for static content to improve scrolling
-        if cachedPost.feedViewPost.post.embed == nil {
-          // Posts without media can be safely rasterized
-          cell.layer.shouldRasterize = true
-          cell.layer.rasterizationScale = UIScreen.main.scale
-        } else {
-          // Posts with media should not be rasterized to avoid memory issues
-          cell.layer.shouldRasterize = false
-        }
-        
         return cell
 
-      case .gapIndicator(let gapId):
+      case .loadMoreIndicator:
         self.controllerLogger.debug(
-          "UIKitFeedView [\(self.self.instanceId)]: Creating gap indicator cell for section \(indexPath.section), item \(indexPath.item), gapID: \(gapId)"
+          "UIKitFeedView [\(self.self.instanceId)]: Creating load more cell for section \(indexPath.section), item \(indexPath.item)"
         )
         let cell =
-          collectionView.dequeueReusableCell(withReuseIdentifier: "FeedGapCell", for: indexPath)
-          as! FeedGapCell
-        cell.configure(gapId: gapId)
-        
-        // Performance: Enable rasterization for gap indicator cells (static content)
-        cell.layer.shouldRasterize = true
-        cell.layer.rasterizationScale = UIScreen.main.scale
-        
+          collectionView.dequeueReusableCell(
+            withReuseIdentifier: "LoadMoreIndicatorCell", for: indexPath) as! LoadMoreIndicatorCell
+        cell.configure(isLoading: self.isLoadingMore)
         return cell
-
-      // DISABLED: loadMoreIndicator breaks infinite scroll
-      // case .loadMoreIndicator:
-      //   self.controllerLogger.debug(
-      //     "UIKitFeedView [\(self.self.instanceId)]: Creating load more cell for section \(indexPath.section), item \(indexPath.item)"
-      //   )
-      //   let cell =
-      //     collectionView.dequeueReusableCell(
-      //       withReuseIdentifier: "LoadMoreIndicatorCell", for: indexPath) as! LoadMoreIndicatorCell
-      //   cell.configure(isLoading: self.isLoadingMore)
-      //   return cell
       }
     }
 
@@ -787,8 +714,12 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   // MARK: - Feed Loading Logic
 
   func loadInitialFeedWithRetry() {
-    // DISABLED: SwiftUI handles all data loading
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: loadInitialFeedWithRetry disabled - SwiftUI handles loading")
+    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: loadInitialFeedWithRetry called")
+    Task(priority: .userInitiated) { @MainActor in
+      // Load feed immediately - don't wait for authentication
+      controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Loading feed immediately")
+      await loadInitialFeed()
+    }
   }
 
   private func loadInitialFeed() {
@@ -799,11 +730,15 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
 
       // Get or create feed model - this works even without authentication
       feedModel = FeedModelContainer.shared.getModel(for: fetchType, appState: appState)
-      let model = feedModel
 
-      // DISABLED: SwiftUI handles loading states
-      // isLoading = true
-      // showLoadingView()
+      guard let model = feedModel else {
+        controllerLogger.error("UIKitFeedView [\(self.instanceId)]: Failed to get feed model")
+        isLoading = false
+        loadingView.removeFromSuperview()
+        return
+      }
+
+      isLoading = true
 
       // First, try to load cached data for immediate display
       if let cachedPosts = smartRefreshCoordinator.loadCachedData(for: fetchType.identifier),
@@ -815,7 +750,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
         await updateDataWithPositionPreservation(cachedPosts, insertAt: .replace)
         await restorePersistedScrollPosition(posts: cachedPosts)
         
-        hideLoadingView()
+        loadingView.removeFromSuperview()
         isLoading = false
         
         // Check if we should refresh in background
@@ -827,16 +762,15 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
         
         if shouldRefresh {
           // Refresh in background without disrupting UI
-          Task { [weak self, fetchType, cachedPosts, persistentStateManager, appState] in
-            guard let self = self else { return }
-            await self.feedModel.loadFeedWithFiltering(
+          Task {
+            await model.loadFeedWithFiltering(
               fetch: fetchType,
               forceRefresh: true,
               strategy: .fullRefresh,
               filterSettings: appState.feedFilterSettings
             )
             
-            let updatedPosts = self.feedModel.applyFilters(withSettings: appState.feedFilterSettings)
+            let updatedPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
             if updatedPosts.count != cachedPosts.count {
               // Save the updated data
               persistentStateManager.saveFeedData(updatedPosts, for: fetchType.identifier)
@@ -847,13 +781,8 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
                  firstCachedId != firstUpdatedId {
                 let newCount = updatedPosts.firstIndex { $0.id == firstCachedId } ?? 0
                 if newCount > 0 {
-                  // Get authors from new posts for capsule indicator
-                  let newAuthors = Array(updatedPosts.prefix(newCount))
-                    .compactMap { $0.feedViewPost.post.author }
-                    .uniqued(by: \.did)
-                  
-                  if !newAuthors.isEmpty {
-                      self.showNewPostsIndicator(authors: newAuthors, forceShow: true)
+                  continuityManager.showNewContentBanner(count: newCount) { [weak self] in
+                    self?.scrollToTop()
                   }
                 }
               }
@@ -867,7 +796,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       // No cached data - try to load from FeedModel if available, otherwise show loading
       if !model.posts.isEmpty {
         controllerLogger.debug(
-            "UIKitFeedView [\(self.instanceId)]: Loading \(model.posts.count) p?osts from FeedModel"
+          "UIKitFeedView [\(self.instanceId)]: Loading \(model.posts.count) posts from FeedModel"
         )
         let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
         await updateDataWithPositionPreservation(filteredPosts, insertAt: .replace)
@@ -877,41 +806,32 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       } else {
         // Perform fresh load if we have authentication
         if appState.atProtoClient != nil {
-          do {
-            await model.loadFeedWithFiltering(
-              fetch: fetchType,
-              forceRefresh: true,
-              strategy: .fullRefresh,
-              filterSettings: appState.feedFilterSettings
-            )
-            
-            let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
-            
-            // Save to cache for next time
-            if !filteredPosts.isEmpty {
-              persistentStateManager.saveFeedData(filteredPosts, for: fetchType.identifier)
-            }
-            
-            await updateDataWithPositionPreservation(filteredPosts, insertAt: .replace)
-            
-            lastRefreshTime = Date()
-            controllerLogger.debug(
-              "UIKitFeedView [\(self.instanceId)]: Initial load completed with \(filteredPosts.count) posts"
-            )
-          } catch {
-            controllerLogger.error(
-              "UIKitFeedView [\(self.instanceId)]: Failed to load feed: \(error.localizedDescription)"
-            )
-            // Show error state instead of infinite loading
-            await showErrorState(error: error)
+          await model.loadFeedWithFiltering(
+            fetch: fetchType,
+            forceRefresh: true,
+            strategy: .fullRefresh,
+            filterSettings: appState.feedFilterSettings
+          )
+          
+          let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
+          
+          // Save to cache for next time
+          if !filteredPosts.isEmpty {
+            persistentStateManager.saveFeedData(filteredPosts, for: fetchType.identifier)
           }
           
-          // Always remove loading view, whether success or error
-          hideLoadingView()
+          await updateDataWithPositionPreservation(filteredPosts, insertAt: .replace)
+          
+          loadingView.removeFromSuperview()
           isLoading = false
+          
+          lastRefreshTime = Date()
+          controllerLogger.debug(
+            "UIKitFeedView [\(self.instanceId)]: Initial load completed with \(filteredPosts.count) posts"
+          )
         } else {
           // No authentication yet - hide loading and wait
-          hideLoadingView()
+          loadingView.removeFromSuperview()
           isLoading = false
           controllerLogger.debug(
             "UIKitFeedView [\(self.instanceId)]: No authentication available, will load when auth completes"
@@ -926,15 +846,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   private func performSmartRefresh(strategy: RefreshStrategy, showProgress: Bool = true) {
     controllerLogger.debug("Smart refresh disabled - using standard refresh methods instead")
     // Use loadInitialFeed() or standard refresh methods instead
-  }
-  
-  @MainActor
-  private func showErrorState(error: Error) async {
-    controllerLogger.error("UIKitFeedView [\(self.instanceId)]: Showing error state for: \(error.localizedDescription)")
-    await updateDataWithPositionPreservation([], insertAt: .replace)
-    
-    // Hide loading state and show empty state - updateDataWithPositionPreservation will handle this
-    isLoading = false
   }
 
   // Removed unused handleRefreshComplete method
@@ -1007,8 +918,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
 
   @MainActor
   private func performRefreshWithPositionPreservation() async {
-    guard !isRefreshing, !isLoading, feedModel != nil else { return }
-      let model = feedModel
+    guard !isRefreshing, !isLoading, let model = feedModel else { return }
 
     controllerLogger.debug("Starting pull-to-refresh with position preservation")
 
@@ -1050,71 +960,37 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       "Pull-to-refresh: originalCount=\(originalPostsCount), newCount=\(newPosts.count), hasNewPosts=\(hasNewPosts)"
     )
 
-    // Check for new content and show continuity banner if appropriate
-    if hasNewPosts {
-      let newPostsCount = max(1, newPosts.count - originalPostsCount)
-      continuityManager.checkForNewContent(
-        currentPosts: newPosts,
-        feedIdentifier: fetchType.identifier,
-        onNewContentFound: { [weak self] count in
-          Task { @MainActor in
-            // Show continuity banner for in-feed gaps
-            self?.continuityManager.showNewContentBanner(count: count) {
-              Task { @MainActor in
-                self?.handleContinuityBannerTap()
-              }
-            }
-            self?.controllerLogger.debug("Continuity banner triggered for \(count) new posts")
-          }
-        }
-      )
-      
-      // Update continuity info
-      continuityManager.updateContinuityInfo(
-        for: fetchType.identifier,
-        posts: newPosts,
-        hasNewContent: true
-      )
-    }
-
-    // Show indicator if we have new posts, regardless of scroll position
-    if hasNewPosts {
-      // Calculate actual new posts count, ensuring it's at least 1
-      let actualNewPostsCount = max(1, newPosts.count - originalPostsCount)
-      
-      // Get authors from new posts, avoiding empty arrays
-      let newAuthors: [AppBskyActorDefs.ProfileViewBasic]
-      if newPosts.count > originalPostsCount {
-        // We have actual new posts - get authors from the new ones
-        newAuthors = Array(newPosts.prefix(actualNewPostsCount))
-          .compactMap { $0.feedViewPost.post.author }
-          .uniqued(by: \.did) // Remove duplicate authors
-      } else {
-        // Post IDs changed but count is same - get author from first post
-        if let firstAuthor = newPosts.first?.feedViewPost.post.author {
-          newAuthors = [firstAuthor]
-        } else {
-          newAuthors = []
-        }
-      }
-
-      if !newAuthors.isEmpty {
-        controllerLogger.debug(
-          "Showing new posts indicator: \(actualNewPostsCount) posts from \(newAuthors.count) unique authors"
-        )
-        
-        // Show legacy indicator, forcing it to appear after a pull-to-refresh
-        showNewPostsIndicator(authors: newAuthors, forceShow: true)
-      } else {
-        controllerLogger.debug("No authors found for new posts indicator")
-      }
-    }
-
     if let anchor = scrollAnchor {
       // We have a scroll anchor - use position preservation
       controllerLogger.debug("Using scroll anchor for position preservation")
       await updateDataWithNewPostsAtTop(
         newPosts, originalAnchor: anchor, hasNewPosts: hasNewPosts)
+
+      // Show indicator if we have new posts and user isn't at the top
+      if hasNewPosts {
+        let newAuthors = Array(
+          newPosts.prefix(
+            originalPostsCount < newPosts.count ? newPosts.count - originalPostsCount : 0)
+        )
+        .compactMap { $0.feedViewPost.post.author }
+
+        if !newAuthors.isEmpty {
+          let newPostCount =
+            originalPostsCount < newPosts.count ? newPosts.count - originalPostsCount : 1
+
+          // Use enhanced indicator manager
+          newPostsIndicatorManager.showNewPostsIndicator(
+            newPostCount: newPostCount,
+            authors: newAuthors,
+            feedType: fetchType,
+            userActivity: userActivityTracker,
+            scrollView: collectionView
+          )
+
+          // Also use legacy indicator for compatibility
+          showNewPostsIndicator(authors: newAuthors)
+        }
+      }
     } else {
       // No scroll anchor (user at very top) - simple update
       controllerLogger.debug("No scroll anchor - updating without position preservation")
@@ -1164,89 +1040,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   
   @MainActor
   func loadPostsDirectly(_ posts: [CachedFeedViewPost]) async {
-    controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: loadPostsDirectly called with \(posts.count) posts")
-    
-    // Quick check: if posts are identical to current posts, skip update entirely
-    let currentPosts = self.posts
-    let currentPostsNotEmpty = !currentPosts.isEmpty
-    let postCountMatches = posts.count == currentPosts.count
-    let postsAreEqual = posts.elementsEqual(currentPosts, by: { post1, post2 in
-      let idsMatch = post1.id == post2.id
-        let timestampsMatch = post1.cachedAt == post2.cachedAt
-      return idsMatch && timestampsMatch
-    })
-    let postsUnchanged = currentPostsNotEmpty && postCountMatches && postsAreEqual
-    
-    if postsUnchanged {
-      controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Posts unchanged - skipping update")
-      return
-    }
-    
-    // Determine the appropriate insert mode by comparing with existing posts
-    let insertMode: InsertPosition
-    let shouldTriggerContinuity: Bool
-    
-    if currentPosts.isEmpty {
-      // First load - use replace mode
-      insertMode = .replace
-      shouldTriggerContinuity = false
-      controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: First load - using replace mode")
-    } else {
-      // Check if we have new posts at the top
-      let existingIds = Set(currentPosts.map { $0.id })
-      let newPostsAtTop = posts.prefix(while: { !existingIds.contains($0.id) })
-      
-      if !newPostsAtTop.isEmpty {
-        // New posts detected at top - use top insertion with scroll preservation
-        insertMode = .top
-        shouldTriggerContinuity = true
-        controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: \(newPostsAtTop.count) new posts detected - using top insertion mode")
-        
-        // Show capsule indicator for new posts
-        if newPostsAtTop.count > 0 {
-          let newAuthors = newPostsAtTop
-            .compactMap { $0.feedViewPost.post.author }
-            .uniqued(by: \.did)
-          
-          if !newAuthors.isEmpty {
-            showNewPostsIndicator(authors: newAuthors, forceShow: true)
-          }
-        }
-      } else {
-        // No new posts at top - check if this is a refresh/update
-        let countChanged = posts.count != currentPosts.count
-        let idsChanged = !posts.elementsEqual(currentPosts, by: { $0.id == $1.id })
-        let hasSignificantChanges = countChanged || idsChanged
-        
-        if hasSignificantChanges {
-          insertMode = .replace
-          shouldTriggerContinuity = false
-          controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Significant changes detected - using replace mode")
-        } else {
-          // Posts are essentially the same - minimal update
-          insertMode = .replace
-          shouldTriggerContinuity = false
-          controllerLogger.debug("UIKitFeedView [\(self.instanceId)]: Minimal changes - using replace mode")
-        }
-      }
-    }
-    
-    await updateDataWithPositionPreservation(posts, insertAt: insertMode)
-    
-    // Update continuity info after successful update
-    if shouldTriggerContinuity {
-      continuityManager.updateContinuityInfo(
-        for: fetchType.identifier,
-        posts: posts,
-        hasNewContent: true
-      )
-    } else {
-      continuityManager.updateContinuityInfo(
-        for: fetchType.identifier,
-        posts: posts,
-        hasNewContent: false
-      )
-    }
+    await updateDataWithPositionPreservation(posts, insertAt: .replace)
   }
 
   @MainActor
@@ -1261,9 +1055,8 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     controllerLogger.debug(
       "UIKitFeedView [\(self.instanceId)]: Current posts count before update: \(self.posts.count)")
 
-    // Debounce rapid updates to prevent scroll position jumps, but skip for initial loads
-    let shouldDebounce = !posts.isEmpty && now.timeIntervalSince(lastUpdateTime) < updateDebounceInterval
-    if shouldDebounce {
+    // Debounce rapid updates to prevent scroll position jumps
+    if now.timeIntervalSince(lastUpdateTime) < updateDebounceInterval {
       try? await Task.sleep(nanoseconds: UInt64(updateDebounceInterval * 1_000_000_000))
     }
     lastUpdateTime = now
@@ -1327,11 +1120,14 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     // Add posts (refresh indicator is handled by UIRefreshControl)
     let postItems = posts.map { Item.post($0) }
     snapshot.appendItems(postItems, toSection: .posts)
-    controllerLogger.debug("🔥 FEED UPDATE [\(self.instanceId)]: Added \(postItems.count) post items to snapshot")
+    controllerLogger.debug(
+      "🔥 FEED UPDATE [\(self.instanceId)]: Added \(postItems.count) post items to snapshot")
 
-    // DISABLED: Load more indicator interferes with infinite scroll
-    // Infinite scroll is handled by scroll detection in scrollViewDidScroll
-    // controllerLogger.debug("🔥 FEED UPDATE [\(self.instanceId)]: Infinite scroll via scroll detection")
+    // Add load more indicator if we have posts and not loading
+    if !posts.isEmpty && !isLoading {
+      snapshot.appendItems([.loadMoreIndicator], toSection: .loadMoreIndicator)
+      controllerLogger.debug("🔥 FEED UPDATE [\(self.instanceId)]: Added load more indicator")
+    }
 
     controllerLogger.debug(
       "UIKitFeedView [\(self.instanceId)]: Final snapshot sections: \(snapshot.sectionIdentifiers.count), total items: \(snapshot.itemIdentifiers.count)"
@@ -1377,11 +1173,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       "UIKitFeedView [\(self.instanceId)]: Completed updateDataWithPositionPreservation - final posts count: \(self.posts.count)"
     )
 
-    // DISABLED: SwiftUI layer handles all loading/empty states
-    // UIKit layer should only display the collection view content
-    hideLoadingView()
-    hideEmptyStateView()
-
     // Force layout and check visible cells
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
       self.collectionView.layoutIfNeeded()
@@ -1394,18 +1185,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       self.controllerLogger.debug(
         "UIKitFeedView [\(self.self.instanceId)]: Post-update check - bounds: \(self.collectionView.bounds.debugDescription)"
       )
-    }
-    
-    // Update continuity info for this feed
-    continuityManager.updateContinuityInfo(
-      for: fetchType.identifier,
-      posts: posts,
-      hasNewContent: false
-    )
-    
-    // After data update, check for gaps and insert gap indicators if needed
-    Task {
-      await detectAndInsertGaps()
     }
   }
 
@@ -1420,9 +1199,9 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     let oldContentOffsetY = collectionView.contentOffset.y
     let anchorIndexPath = originalAnchor.indexPath
 
-    // Pre-calculate heights for better position estimates (with caching)
+    // Pre-calculate heights for better position estimates
     for post in newPosts.prefix(min(10, newPosts.count)) {
-      _ = calculateHeightWithCache(for: post.feedViewPost, mode: .compact)
+      _ = heightCalculator.calculateHeight(for: post.feedViewPost.post, mode: .compact)
     }
 
     // Find the anchor post ID in the current data
@@ -1478,8 +1257,10 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     let postItems = posts.map { Item.post($0) }
     snapshot.appendItems(postItems, toSection: .posts)
 
-    // DISABLED: Load more indicator interferes with infinite scroll
-    // controllerLogger.debug("🔥 FEED UPDATE: Infinite scroll via scroll detection")
+    // Add load more indicator if we have posts
+    if !posts.isEmpty && !isLoading {
+      snapshot.appendItems([.loadMoreIndicator], toSection: .loadMoreIndicator)
+    }
 
     // Disable animations during the update to prevent flicker
     CATransaction.begin()
@@ -1533,8 +1314,7 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
 
   @MainActor
   private func performRefresh() async {
-    guard !isRefreshing, !isLoading, feedModel != nil else { return }
-      let model = feedModel
+    guard !isRefreshing, !isLoading, let model = feedModel else { return }
 
     // Cancel any pending refresh
     pendingRefreshTask?.cancel()
@@ -1567,18 +1347,17 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
 
   @MainActor
   private func performLoadMore() async {
-    guard !isLoadingMore, !isLoading, !isRefreshing, feedModel != nil else {
+    guard !isLoadingMore, !isLoading, !isRefreshing, let model = feedModel else {
       controllerLogger.debug(
         "Load more blocked: isLoadingMore=\(self.isLoadingMore), isLoading=\(self.isLoading), isRefreshing=\(self.isRefreshing), hasModel=\(self.feedModel != nil)"
       )
       return
     }
-      let model = feedModel
 
     controllerLogger.debug("Starting load more...")
 
     isLoadingMore = true
-    // DISABLED: updateLoadMoreIndicator() - no longer using load more button
+    updateLoadMoreIndicator()
 
     // Load more posts
     await model.loadMoreWithFiltering(filterSettings: appState.feedFilterSettings)
@@ -1590,235 +1369,18 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     await updateDataWithPositionPreservation(filteredPosts, insertAt: .bottom)
 
     isLoadingMore = false
-    // DISABLED: updateLoadMoreIndicator() - no longer using load more button
-  }
-
-  @MainActor
-  private func performGapLoad(gapId: String) async {
-    guard feedModel != nil else {
-      controllerLogger.debug("Gap load blocked: no feed model available")
-      return
-    }
-      let model = feedModel
-
-    controllerLogger.debug("Starting targeted gap load for gapId: \(gapId)")
-    
-    // Extract the post ID from the gap ID
-    let postId = gapId.replacingOccurrences(of: "gap_after_", with: "")
-    
-    // Find the post and its position to determine what range to load
-    guard let gapPostIndex = posts.firstIndex(where: { $0.id == postId }) else {
-      controllerLogger.warning("Could not find gap post for ID: \(postId)")
-      return
-    }
-    
-    // Store current scroll position for this specific gap
-    let scrollAnchor = scrollTracker.captureScrollAnchor(collectionView: collectionView)
-    
-    // Determine the cursor range for this gap
-    // This would ideally use the specific cursor from the post at gapPostIndex
-    let gapCursor = getGapCursor(for: gapPostIndex)
-    
-    controllerLogger.debug("Loading gap with cursor: \(gapCursor ?? "none") at index: \(gapPostIndex)")
-    
-    // TODO: Implement targeted loading with specific cursor
-    // For now, do a more targeted refresh that tries to fill this specific gap
-    if let cursor = gapCursor {
-      await loadSpecificGapRange(model: model, cursor: cursor, gapIndex: gapPostIndex)
-    } else {
-      // Fallback to full refresh if we can't determine the cursor
-      await model.loadFeedWithFiltering(
-        fetch: fetchType,
-        forceRefresh: true,
-        strategy: .fullRefresh,
-        filterSettings: appState.feedFilterSettings
-      )
-    }
-
-    // Update posts with position preservation at the gap location
-    let filteredPosts = model.applyFilters(withSettings: appState.feedFilterSettings)
-    controllerLogger.debug("Gap load completed: loaded \(filteredPosts.count) total posts")
-
-    // Insert new content while preserving scroll position
-    if let anchor = scrollAnchor {
-      await updateDataWithNewPostsAtGap(filteredPosts, originalAnchor: anchor, gapIndex: gapPostIndex)
-    } else {
-      await updateDataWithPositionPreservation(filteredPosts, insertAt: .replace)
-    }
-    
-    // Recalculate gaps after loading
-    await detectAndInsertGaps()
-  }
-  
-  private func getGapCursor(for postIndex: Int) -> String? {
-    // IMPORTANT: Cursors are opaque and must come from AT Protocol responses
-    // We cannot generate them from timestamps or URIs
-    
-    guard postIndex < posts.count else { return nil }
-    
-    let post = posts[postIndex]
-    
-    // In a proper implementation, cursors would be stored with each post
-    // from the original AT Protocol response. For now, we don't have access
-    // to the original pagination cursors, so we can't do targeted loading.
-    
-    controllerLogger.debug("Cannot generate cursor for gap after post \(post.id) - cursors must come from AT Protocol API")
-    
-    // Return nil to indicate we should fall back to full refresh
-    return nil
-  }
-  
-  private func loadSpecificGapRange(model: FeedModel, cursor: String, gapIndex: Int) async {
-    // This method would need FeedManager support for cursor-based range loading
-    // Something like: await model.loadPostsAfterCursor(cursor, limit: 20)
-    
-    controllerLogger.debug("Targeted gap loading not yet implemented - falling back to full refresh")
-    
-    // For now, use full refresh since we don't have cursor-based range loading
-    await model.loadFeedWithFiltering(
-      fetch: fetchType,
-      forceRefresh: true,
-      strategy: .fullRefresh,
-      filterSettings: appState.feedFilterSettings
-    )
-  }
-  
-  @MainActor
-  private func updateDataWithNewPostsAtGap(
-    _ newPosts: [CachedFeedViewPost],
-    originalAnchor: ScrollPositionTracker.ScrollAnchor,
-    gapIndex: Int
-  ) async {
-    controllerLogger.debug("Updating data with new posts at gap index: \(gapIndex)")
-    
-    // This is where we'd intelligently merge the new posts at the gap location
-    // while preserving scroll position
-    
-    // For now, fall back to the existing position preservation logic
-    await updateDataWithNewPostsAtTop(newPosts, originalAnchor: originalAnchor, hasNewPosts: true)
-  }
-
-  @MainActor
-  private func detectAndInsertGaps() async {
-    // Detect gaps based on feed continuity, not time
-    let detectedGaps = detectFeedSequenceGaps()
-    
-    controllerLogger.debug("Detected \(detectedGaps.count) sequence gaps in feed")
-    
-    // If we have gaps, update the data source to include gap indicators
-    if !detectedGaps.isEmpty {
-      await insertGapIndicators(at: detectedGaps)
-    }
-  }
-  
-  private func detectFeedSequenceGaps() -> [String] {
-    // Only detect gaps for chronological feeds
-    guard shouldDetectGaps(for: self.fetchType) else {
-      controllerLogger.debug("Gap detection disabled for feed type: \(self.fetchType.identifier)")
-      return []
-    }
-    
-    guard posts.count > 1 else { return [] }
-    
-    var gaps: [String] = []
-    
-    // Use continuity manager to detect sequence breaks
-    // This is the proper way - let the continuity system determine gaps
-    if let continuityInfo = persistentStateManager.loadFeedContinuityInfo(for: fetchType.identifier) {
-      
-      // Main gap detection: missing content at the top
-      if let lastKnownTopId = continuityInfo.lastKnownTopPostId {
-        
-        // Find where our last known content appears in the current feed
-        if let knownPostIndex = posts.firstIndex(where: { $0.id == lastKnownTopId }) {
-          
-          // If the last known post is deep in our current feed (not near top),
-          // there's likely missing content between the top and this known post
-          if knownPostIndex >= 3 { // Conservative threshold
-            gaps.append(posts[min(1, posts.count - 1)].id) // Gap after second post
-            controllerLogger.debug("Gap detected: last known post '\(lastKnownTopId)' found at index \(knownPostIndex), indicating missing top content")
-          }
-        } else if !posts.isEmpty {
-          // Last known post not found at all - might be a gap or very old content
-          // Only create gap if continuity system specifically detected one
-          if continuityInfo.gapDetected {
-            gaps.append(posts[0].id) // Gap after first post
-            controllerLogger.debug("Gap detected: last known post '\(lastKnownTopId)' not found and continuity system flagged gap")
-          }
-        }
-      }
-    }
-    
-    return gaps
-  }
-  
-  private func shouldDetectGaps(for fetchType: FetchType) -> Bool {
-    // Only enable gap detection for chronological feeds
-    switch fetchType {
-    case .timeline:
-      return true // Following timeline is chronological
-    case .list(_):
-      // Custom lists might be chronological, but we can't be sure
-      // Conservative approach: disable for now
-      return false
-    case .feed(_):
-      // Custom feeds could be chronological or algorithmic
-      // Conservative approach: disable unless we know it's chronological
-      return false
-    case .author(_):
-      return true // Author posts are chronological
-    case .likes(_):
-      return true // Liked posts are chronological
-    }
-  }
-  
-  @MainActor
-  private func insertGapIndicators(at gapPostIds: [String]) async {
-    // Create a new snapshot with gap indicators inserted
-    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-    snapshot.appendSections(Section.allCases)
-
-    // Add header with feed type only if it should be shown
-    if shouldShowHeaderForCurrentFeed() {
-      snapshot.appendItems([.header(fetchType)], toSection: .header)
-    }
-
-    // Build posts section with gap indicators
-    var postsWithGaps: [Item] = []
-    
-    for (index, post) in posts.enumerated() {
-      // Add the post
-      postsWithGaps.append(.post(post))
-      
-      // Check if we need to add a gap indicator after this post
-      if gapPostIds.contains(post.id) && index < posts.count - 1 {
-        let gapId = "gap_after_\(post.id)"
-        postsWithGaps.append(.gapIndicator(gapId))
-        controllerLogger.debug("Inserted gap indicator after post: \(post.id)")
-      }
-    }
-    
-    snapshot.appendItems(postsWithGaps, toSection: .posts)
-
-    // DISABLED: Load more indicator interferes with infinite scroll
-    // controllerLogger.debug("🔥 FEED UPDATE: Infinite scroll via scroll detection")
-
-    // Apply the snapshot
-    await dataSource.apply(snapshot, animatingDifferences: true)
-    
-    controllerLogger.debug("Applied snapshot with \(gapPostIds.count) gap indicators")
+    updateLoadMoreIndicator()
   }
 
   // Refresh indicator is now handled by UIRefreshControl - no longer needed
 
-  // DISABLED: loadMoreIndicator breaks infinite scroll
-  // private func updateLoadMoreIndicator() {
-  //   var snapshot = dataSource.snapshot()
-  //   if snapshot.itemIdentifiers(inSection: .loadMoreIndicator).contains(.loadMoreIndicator) {
-  //     snapshot.reconfigureItems([.loadMoreIndicator])
-  //     dataSource.apply(snapshot, animatingDifferences: false)
-  //   }
-  // }
+  private func updateLoadMoreIndicator() {
+    var snapshot = dataSource.snapshot()
+    if snapshot.itemIdentifiers(inSection: .loadMoreIndicator).contains(.loadMoreIndicator) {
+      snapshot.reconfigureItems([.loadMoreIndicator])
+      dataSource.apply(snapshot, animatingDifferences: false)
+    }
+  }
 
   // MARK: - State Invalidation Handling (Reduced Dependency)
 
@@ -1931,8 +1493,8 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
     // Get or create new feed model for the new fetch type
     feedModel = FeedModelContainer.shared.getModel(for: fetchType, appState: appState)
 
-    // Reset state - SwiftUI handles loading states
-    // isLoading = true
+    // Reset state
+    isLoading = true
     hasInitialized = false
 
     // Load the new feed
@@ -1954,66 +1516,91 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
       newPostsIndicatorManager.hideIndicator()
 
       // Read adjustedContentInset.top on the main thread before the animation block
+      let topInset = self.collectionView.adjustedContentInset.top
 
-      DispatchQueue.main.async {
-        let topInset = self.collectionView.adjustedContentInset.top
-
-        UIView.animate(
-          withDuration: 0.3, delay: 0, options: [.curveEaseInOut],
-          animations: {
-            // Scroll to top with content insets considered, using the stored value
-            self.collectionView.setContentOffset(
-              CGPoint(x: 0, y: -topInset), animated: false)
-          })
-      }
+      UIView.animate(
+        withDuration: 0.3, delay: 0, options: [.curveEaseInOut],
+        animations: {
+          // Scroll to top with content insets considered, using the stored value
+          self.collectionView.setContentOffset(
+            CGPoint(x: 0, y: -topInset), animated: false)
+        })
     }
     
     
   // MARK: - New Posts Indicator
 
   @MainActor
-  private func showNewPostsIndicator(authors: [AppBskyActorDefs.ProfileViewBasic], forceShow: Bool = false) {
-    // Simplified check - forceShow overrides all conditions
-    guard !authors.isEmpty else {
-      controllerLogger.debug("Not showing indicator - no authors provided")
-      return
-    }
-    
-    // If forceShow is true (like after pull-to-refresh), skip all other checks
-    if !forceShow {
-      // Log the current scroll position and activity state for debugging
-      let scrollOffset = collectionView.contentOffset.y
-      let distanceFromTop = scrollOffset + collectionView.adjustedContentInset.top
-      controllerLogger.debug("Checking indicator visibility - scrollOffset: \(scrollOffset), distanceFromTop: \(distanceFromTop)")
-      
-      guard userActivityTracker.shouldShowNewContentIndicator(
+  private func showNewPostsIndicator(authors: [AppBskyActorDefs.ProfileViewBasic]) {
+    // Enhanced check using UserActivityTracker
+    guard
+      userActivityTracker.shouldShowNewContentIndicator(
         scrollView: collectionView,
-        distanceFromTop: 100,  // Further reduced from 150 to 100pts for better visibility
-        minimumIdleTime: 0.5   // Reduced from 1.0 to 0.5 seconds for quicker response
-      ) else {
-        controllerLogger.debug("Not showing indicator - user activity check failed (distance: \(distanceFromTop), required: 100)")
-        return
-      }
-    } else {
-      controllerLogger.debug("Force showing indicator after pull-to-refresh")
+        distanceFromTop: 300,  // Increased from 50 to 300pts
+        minimumIdleTime: 2.0
+      ) && !authors.isEmpty
+    else {
+      controllerLogger.debug(
+        "Enhanced check: Not showing indicator - user activity check failed or no authors")
+      return
     }
 
     controllerLogger.debug("Creating enhanced new posts indicator with \(authors.count) authors")
     newPostsAuthors = authors
 
-    // Use capsule-style indicator with avatar stack
-    showSimpleNewPostsIndicator(authors: authors)
-    
-    // Also update the indicator manager for consistency
-    newPostsIndicatorManager.showNewPostsIndicator(
-      newPostCount: authors.count,
-      authors: authors,
-      feedType: fetchType,
-      userActivity: userActivityTracker,
-      scrollView: collectionView,
-      forceShow: forceShow
-    )
-    
+    // Use enhanced indicator if available, fallback to legacy
+    if let currentIndicator = newPostsIndicatorManager.currentIndicator {
+      controllerLogger.debug("Using enhanced indicator manager")
+      // Enhanced indicator is already being managed
+      return
+    }
+
+    let indicatorView = NewPostsIndicator(authors: authors) { [weak self] in
+      Task { @MainActor in
+        self?.scrollToTop()
+      }
+    }
+    .environment(appState)
+
+    let hostingController = UIHostingController(rootView: AnyView(indicatorView))
+    hostingController.view.backgroundColor = .clear
+
+    // Remove existing indicator if present
+    newPostsIndicatorHostingController?.view.removeFromSuperview()
+    newPostsIndicatorHostingController?.removeFromParent()
+
+    // Add new indicator
+    addChild(hostingController)
+    view.addSubview(hostingController.view)
+    hostingController.didMove(toParent: self)
+
+    // Configure constraints
+    hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      hostingController.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      hostingController.view.topAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+    ])
+
+    newPostsIndicatorHostingController = hostingController
+
+    controllerLogger.debug("Added enhanced new posts indicator to view hierarchy")
+
+    // Animate in
+    hostingController.view.alpha = 0
+    hostingController.view.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+
+    UIView.animate(
+      withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0
+    ) {
+      hostingController.view.alpha = 1
+      hostingController.view.transform = .identity
+    }
+
+    // Enhanced auto-hide after 15 seconds (increased from 8)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+      self?.hideNewPostsIndicator()
+    }
   }
 
   @MainActor
@@ -2027,10 +1614,8 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
         hostingController.view.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
       }
     ) { _ in
-      Task { @MainActor in
-        hostingController.view.removeFromSuperview()
-        hostingController.removeFromParent()
-      }
+      hostingController.view.removeFromSuperview()
+      hostingController.removeFromParent()
     }
 
     newPostsIndicatorHostingController = nil
@@ -2066,17 +1651,11 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
 
     let hostingController = UIHostingController(rootView: enhancedIndicatorView)
     hostingController.view.backgroundColor = .clear
-    
-    // Enable intrinsic content size for proper SwiftUI layout
-    hostingController.sizingOptions = [.intrinsicContentSize]
 
     // Add to view hierarchy
     addChild(hostingController)
     view.addSubview(hostingController.view)
     hostingController.didMove(toParent: self)
-    
-    // Ensure it appears above the collection view
-    view.bringSubviewToFront(hostingController.view)
 
     // Configure constraints
     hostingController.view.translatesAutoresizingMaskIntoConstraints = false
@@ -2096,71 +1675,6 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   @MainActor
   private func hideEnhancedNewPostsIndicator() {
     hideNewPostsIndicator()  // Use existing implementation
-  }
-
-  /// Display simple capsule-style new posts indicator
-  @MainActor
-  private func showSimpleNewPostsIndicator(authors: [AppBskyActorDefs.ProfileViewBasic]) {
-    // Remove any existing indicator
-    hideNewPostsIndicator()
-
-    let indicatorView = NewPostsIndicator(
-      authors: authors,
-      onTap: { [weak self] in
-        Task { @MainActor in
-          self?.handleNewPostsIndicatorTap()
-        }
-      }
-    )
-    .environment(appState)
-
-    let hostingController = UIHostingController(rootView: indicatorView)
-    hostingController.view.backgroundColor = .clear
-    
-    // Enable intrinsic content size for proper SwiftUI layout
-    hostingController.sizingOptions = [.intrinsicContentSize]
-
-    // Add to view hierarchy
-    addChild(hostingController)
-    view.addSubview(hostingController.view)
-    hostingController.didMove(toParent: self)
-    
-    // Ensure it appears above the collection view
-    view.bringSubviewToFront(hostingController.view)
-
-    // Configure constraints
-    hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      hostingController.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-      hostingController.view.topAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-    ])
-
-    // Store reference
-    newPostsIndicatorHostingController = hostingController
-
-    controllerLogger.info(
-      "Simple capsule indicator displayed for \(authors.count) authors")
-  }
-
-  // MARK: - Continuity Banner Methods
-
-  private func setupContinuityBannerUI() {
-    // Delegate to the main setup method
-    // This method exists for compatibility but just calls the main setup
-    // No need for duplicate implementation
-    controllerLogger.debug("setupContinuityBannerUI called - delegating to setupContinuityBanner")
-  }
-
-  @MainActor
-  private func handleContinuityBannerTap() {
-    // Hide the banner
-    continuityManager.hideBanner()
-    
-    // Scroll to top to show new content
-    scrollToTop()
-    
-    controllerLogger.debug("Continuity banner tapped - scrolling to top")
   }
 
   @MainActor
@@ -2226,6 +1740,155 @@ final class FeedViewController: UICollectionViewController, StateInvalidationSub
   }
 }
 
+// MARK: - Collection View Cells
+// FeedHeaderCell is now in a separate file: UIKitFeedHeaderCell.swift
+
+@available(iOS 18.0, *)
+final class FeedPostCell: UICollectionViewCell {
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    setupCell()
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  private func setupCell() {
+    // Configure cell appearance
+    backgroundColor = .clear
+
+    // Configure for better performance
+    layer.shouldRasterize = false
+    isOpaque = false
+  }
+
+  func configure(cachedPost: CachedFeedViewPost, appState: AppState, path: Binding<NavigationPath>)
+  {
+    // Set themed background color
+    let currentScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+    let effectiveScheme = appState.themeManager.effectiveColorScheme(for: currentScheme)
+    contentView.backgroundColor = UIColor(
+      Color.dynamicBackground(appState.themeManager, currentScheme: effectiveScheme))
+
+    // Always use enhanced feed post view for consistent rendering in feeds with divider
+    let content = AnyView(
+      VStack(spacing: 0) {
+        EnhancedFeedPost(
+          cachedPost: cachedPost,
+          path: path
+        )
+        .environment(appState)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+
+        // Add full-width divider at bottom of each post
+        Divider()
+          .padding(.top, 3)
+      }
+    )
+
+    // Only reconfigure if needed (using post id as identity check)
+    let postIdentifier = cachedPost.id
+    if contentConfiguration == nil
+      || postIdentifier != (contentView.tag != 0 ? String(contentView.tag) : nil)
+    {
+
+      // Store post ID in tag for comparison on reuse
+      contentView.tag = postIdentifier.hashValue
+
+      // Configure with SwiftUI content
+      contentConfiguration = UIHostingConfiguration {
+        content
+      }
+      .margins(.all, .zero)
+    }
+  }
+
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    // Clean up resources when cell is reused
+    contentConfiguration = nil
+    contentView.tag = 0
+  }
+}
+
+// RefreshIndicatorCell removed - using UIRefreshControl instead
+
+@available(iOS 18.0, *)
+final class LoadMoreIndicatorCell: UICollectionViewCell {
+  private let activityIndicator = UIActivityIndicatorView(style: .medium)
+  private let label = UILabel()
+  private var isCurrentlyLoading = false
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    setupViews()
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  private func setupViews() {
+    backgroundColor = .clear
+
+    activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.text = "Load more posts"
+    label.font = UIFont.preferredFont(forTextStyle: .subheadline)
+    label.textColor = UIColor.systemBlue
+    label.textAlignment = .center
+
+    let stackView = UIStackView(arrangedSubviews: [activityIndicator, label])
+    stackView.translatesAutoresizingMaskIntoConstraints = false
+    stackView.axis = .horizontal
+    stackView.spacing = 8
+    stackView.alignment = .center
+
+    contentView.addSubview(stackView)
+
+    NSLayoutConstraint.activate([
+      stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+      stackView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+      stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+    ])
+
+    // Make it tappable
+    let tapGesture = UITapGestureRecognizer(target: self, action: #selector(cellTapped))
+    addGestureRecognizer(tapGesture)
+  }
+
+  @objc private func cellTapped() {
+    // Trigger load more action through delegate pattern
+    // This will be handled by the collection view's didSelectItem
+  }
+
+  func configure(isLoading: Bool) {
+    // Only update if the state is changing to avoid unnecessary UI updates
+    guard isLoading != isCurrentlyLoading else { return }
+
+    isCurrentlyLoading = isLoading
+
+    if isLoading {
+      activityIndicator.startAnimating()
+      label.text = "Loading more..."
+      label.textColor = UIColor.systemGray
+    } else {
+      activityIndicator.stopAnimating()
+      label.text = "Load more posts"
+      label.textColor = UIColor.systemBlue
+    }
+  }
+
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    activityIndicator.stopAnimating()
+    isCurrentlyLoading = false
+  }
+}
+
 // MARK: - UICollectionViewDelegate
 @available(iOS 18.0, *)
 extension FeedViewController: UICollectionViewDataSourcePrefetching {
@@ -2241,28 +1904,16 @@ extension FeedViewController: UICollectionViewDataSourcePrefetching {
       // Header tapped - could show feed settings or do nothing
       break
     case .posts:
-      // Check if this is a gap indicator or regular post
-      guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
-      
-      switch item {
-      case .gapIndicator(let gapId):
-        Task {
-          await performGapLoad(gapId: gapId)
-        }
-      case .post, .header: // DISABLED: .loadMoreIndicator
-        // Post tapped - handled by the post cell itself
-        break
+      // Post tapped - handled by the post cell itself
+      break
+    case .loadMoreIndicator:
+      Task {
+        await performLoadMore()
       }
-    // DISABLED: loadMoreIndicator breaks infinite scroll
-    // case .loadMoreIndicator:
-    //   Task {
-    //     await performLoadMore()
-    //   }
     }
   }
 
   override func scrollViewDidScroll(_ scrollView: UIScrollView) {
-    // Performance: Use frame-based calculations instead of heavy Auto Layout operations
     let scrollOffset = scrollView.contentOffset.y
 
     // Update user activity tracking
@@ -2357,3 +2008,696 @@ extension FeedViewController: UICollectionViewDataSourcePrefetching {
     // No explicit cancellation needed as it uses intelligent deduplication
   }
 }
+
+// MARK: - SwiftUI Integration
+
+@available(iOS 18.0, *)
+struct UIKitFeedViewRepresentable: UIViewRepresentable {
+  let posts: [CachedFeedViewPost]
+  let appState: AppState
+  let fetchType: FetchType
+  @Binding var path: NavigationPath
+  let loadMoreAction: @Sendable () async -> Void
+  let refreshAction: @Sendable () async -> Void
+  let onScrollOffsetChanged: ((CGFloat) -> Void)?
+  
+  @Environment(\.modelContext) private var modelContext
+  
+  func makeUIView(context: Context) -> UICollectionView {
+    // Create the feed controller to use its layout and configuration
+    let feedController = FeedViewController(
+      appState: appState,
+      fetchType: fetchType,
+      path: $path,
+      modelContext: modelContext
+    )
+    
+    // Get the collection view safely
+    guard let collectionView = feedController.collectionView else {
+      // Fallback: create a basic collection view if feedController's is nil
+      let layout = FeedCompositionalLayout(sectionProvider: { _, _ in
+        let itemSize = NSCollectionLayoutSize(
+          widthDimension: .fractionalWidth(1.0),
+          heightDimension: .estimated(200)
+        )
+        let item = NSCollectionLayoutItem(layoutSize: itemSize)
+        let group = NSCollectionLayoutGroup.vertical(layoutSize: itemSize, subitems: [item])
+        return NSCollectionLayoutSection(group: group)
+      })
+      return UICollectionView(frame: .zero, collectionViewLayout: layout)
+    }
+    
+    // Set up the coordinator to bridge UIKit and SwiftUI
+    let coordinator = context.coordinator
+    coordinator.feedController = feedController
+    
+    // Set the scroll offset callback on the feed controller
+    feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    
+    // Keep the feed controller as the delegate (don't override with coordinator)
+    // The feed controller will handle scroll events and call our callback
+    
+    // Ensure proper navigation bar integration for large title behavior
+    collectionView.contentInsetAdjustmentBehavior = .automatic
+    
+    return collectionView
+  }
+  
+  func updateUIView(_ uiView: UICollectionView, context: Context) {
+    // Update the feed controller with new posts
+    if let feedController = context.coordinator.feedController {
+      Task { @MainActor in
+        await feedController.loadPostsDirectly(posts)
+      }
+      
+      // Update scroll offset callback on the feed controller
+      feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    }
+    
+    // Update scroll offset callback on coordinator as backup
+    context.coordinator.onScrollOffsetChanged = onScrollOffsetChanged
+  }
+  
+  func makeCoordinator() -> Coordinator {
+    Coordinator(
+      feedController: nil,
+      loadMoreAction: loadMoreAction,
+      refreshAction: refreshAction,
+      onScrollOffsetChanged: onScrollOffsetChanged
+    )
+  }
+  
+  // MARK: - Coordinator
+  
+  class Coordinator: NSObject, UICollectionViewDelegate {
+    var feedController: FeedViewController?
+    let loadMoreAction: @Sendable () async -> Void
+    let refreshAction: @Sendable () async -> Void
+    var onScrollOffsetChanged: ((CGFloat) -> Void)?
+    
+    init(
+      feedController: FeedViewController?,
+      loadMoreAction: @escaping @Sendable () async -> Void,
+      refreshAction: @escaping @Sendable () async -> Void,
+      onScrollOffsetChanged: ((CGFloat) -> Void)?
+    ) {
+      self.feedController = feedController
+      self.loadMoreAction = loadMoreAction
+      self.refreshAction = refreshAction
+      self.onScrollOffsetChanged = onScrollOffsetChanged
+    }
+    
+    // Delegate scroll events - SwiftUI NavigationStack will automatically detect these
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      onScrollOffsetChanged?(scrollView.contentOffset.y)
+    }
+    
+    // Handle selection and other collection view events
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+      feedController?.collectionView(collectionView, didSelectItemAt: indexPath)
+    }
+  }
+}
+
+// MARK: - Full UIKit Navigation Wrapper
+
+/// A complete UIKit navigation controller that provides native navigation bar behavior
+struct FullUIKitNavigationWrapper: UIViewControllerRepresentable {
+  let appState: AppState
+  let fetchType: FetchType
+  let feedName: String
+  @Binding var path: NavigationPath
+  let onScrollOffsetChanged: ((CGFloat) -> Void)?
+  let isDrawerOpenBinding: Binding<Bool>
+  let showingSettingsBinding: Binding<Bool>
+@Environment(\.modelContext) private var modelContext
+    
+  func makeUIViewController(context: Context) -> UIKitNavigationController {
+    let controller = UIKitNavigationController(
+      appState: appState,
+      fetchType: fetchType,
+      feedName: feedName,
+      path: $path,
+      isDrawerOpenBinding: isDrawerOpenBinding,
+      showingSettingsBinding: showingSettingsBinding,
+        modelContext: modelContext
+    )
+    controller.feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    return controller
+  }
+
+  func updateUIViewController(_ uiViewController: UIKitNavigationController, context: Context) {
+    // Update scroll offset callback
+    uiViewController.feedController.onScrollOffsetChanged = onScrollOffsetChanged
+
+    // Update navigation title if changed
+    if uiViewController.feedController.title != feedName {
+      uiViewController.feedController.title = feedName
+    }
+
+    // Handle tab tap to scroll to top
+    if let tapped = appState.tabTappedAgain, tapped == 0 {
+      uiViewController.feedController.scrollToTop()
+
+      // Reset the tabTappedAgain value after handling
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        appState.tabTappedAgain = nil
+      }
+    }
+  }
+}
+
+// MARK: - UIKit Navigation Controller
+
+/// A UIKit navigation controller that provides complete control over navigation behavior
+@available(iOS 18.0, *)
+final class UIKitNavigationController: UINavigationController {
+  let feedController: FeedViewController
+  private let appState: AppState
+  private let isDrawerOpenBinding: Binding<Bool>
+  private let showingSettingsBinding: Binding<Bool>
+  private let navigationPath: Binding<NavigationPath>
+  private var navigationObservation: Any?
+  private var lastPathCount = 0
+  private var navigationPathTimer: Timer?
+
+  init(
+    appState: AppState,
+    fetchType: FetchType,
+    feedName: String,
+    path: Binding<NavigationPath>,
+    isDrawerOpenBinding: Binding<Bool>,
+    showingSettingsBinding: Binding<Bool>,
+    modelContext: ModelContext
+  ) {
+    self.appState = appState
+    self.isDrawerOpenBinding = isDrawerOpenBinding
+    self.showingSettingsBinding = showingSettingsBinding
+    self.navigationPath = path
+    self.feedController = FeedViewController(appState: appState, fetchType: fetchType, path: path, modelContext: modelContext)
+
+    super.init(nibName: nil, bundle: nil)
+
+    // Set the feed controller as the root view controller
+    viewControllers = [feedController]
+
+    // Configure the navigation bar
+    setupNavigationBar()
+
+    // Set the navigation title
+    feedController.title = feedName
+
+    // Set up navigation bridge
+    setupNavigationBridge()
+  }
+
+  required init?(coder aDecoder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+
+    // Apply theme
+    applyTheme()
+
+    // Setup toolbar items
+    setupToolbarItems()
+
+    // Configure collection view for large title behavior
+    if let collectionView = feedController.collectionView {
+      // Critical: Collection view must be the first subview and aligned to top
+      // This is required for large title collapse behavior to work properly
+      collectionView.contentInsetAdjustmentBehavior = .automatic
+      collectionView.scrollsToTop = true
+    }
+
+    // Navigation is now handled by SwiftUI NavigationStack in the hybrid approach
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+
+    // Ensure navigation bar is configured properly
+    navigationBar.prefersLargeTitles = true
+    feedController.navigationItem.largeTitleDisplayMode = .automatic
+
+    // Apply custom fonts
+    NavigationFontConfig.applyFonts(to: navigationBar)
+  }
+
+  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    super.traitCollectionDidChange(previousTraitCollection)
+
+    if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+      applyTheme()
+    }
+  }
+
+  private func setupNavigationBar() {
+    // Enable large titles
+    navigationBar.prefersLargeTitles = true
+
+    // Use the global navigation bar appearance set by ThemeManager
+    // instead of creating our own custom appearance that conflicts
+    let globalStandardAppearance = UINavigationBar.appearance().standardAppearance
+    let globalScrollEdgeAppearance =
+      UINavigationBar.appearance().scrollEdgeAppearance ?? globalStandardAppearance
+    let globalCompactAppearance =
+      UINavigationBar.appearance().compactAppearance ?? globalStandardAppearance
+
+    // Apply the global appearances to this specific navigation bar
+    navigationBar.standardAppearance = globalStandardAppearance
+    navigationBar.scrollEdgeAppearance = globalScrollEdgeAppearance
+    navigationBar.compactAppearance = globalCompactAppearance
+  }
+
+  private func setupToolbarItems() {
+    // Leading toolbar item - feeds drawer
+    let feedsButton = UIBarButtonItem(
+      image: UIImage(systemName: "circle.grid.3x3.circle"),
+      style: .plain,
+      target: self,
+
+      action: #selector(openDrawer)
+    )
+    feedsButton.tintColor = UIColor(
+      Color.dynamicText(appState.themeManager, style: .primary, currentScheme: currentColorScheme())
+    )
+
+    // Trailing toolbar item - settings avatar
+    let avatarButton = UIBarButtonItem(
+      image: UIImage(systemName: "person.circle"),
+      style: .plain,
+      target: self,
+      action: #selector(openSettings)
+    )
+    avatarButton.tintColor = UIColor(
+      Color.dynamicText(appState.themeManager, style: .primary, currentScheme: currentColorScheme())
+    )
+
+    // Set the navigation items
+    feedController.navigationItem.leftBarButtonItem = feedsButton
+    feedController.navigationItem.rightBarButtonItem = avatarButton
+  }
+
+  @objc private func openDrawer() {
+    isDrawerOpenBinding.wrappedValue = true
+  }
+
+  @objc private func openSettings() {
+    showingSettingsBinding.wrappedValue = true
+  }
+
+  private func applyTheme() {
+    let isDarkMode = traitCollection.userInterfaceStyle == .dark
+    let effectiveScheme = appState.themeManager.effectiveColorScheme(
+      for: isDarkMode ? .dark : .light)
+
+    view.backgroundColor = .clear  // Let SwiftUI .themedPrimaryBackground() handle this
+
+    // Reapply navigation bar theme
+    setupNavigationBar()
+
+    // Update toolbar item colors
+    setupToolbarItems()
+  }
+
+  private func currentColorScheme() -> ColorScheme {
+    let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+    // Use ThemeManager's effective color scheme to account for manual overrides
+    return appState.themeManager.effectiveColorScheme(for: systemScheme)
+  }
+
+  // MARK: - SwiftUI Navigation Integration
+
+  private func setupNavigationBridge() {
+    // Set up monitoring of the navigation path
+    lastPathCount = navigationPath.wrappedValue.count
+
+    // Invalidate any existing timer
+    navigationPathTimer?.invalidate()
+
+    // Monitor navigation path changes
+    navigationPathTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
+      [weak self] timer in
+      guard let self = self else {
+        timer.invalidate()
+        return
+      }
+
+      let currentPathCount = self.navigationPath.wrappedValue.count
+
+      if currentPathCount != self.lastPathCount {
+        self.handleNavigationPathChange(from: self.lastPathCount, to: currentPathCount)
+        self.lastPathCount = currentPathCount
+      }
+    }
+  }
+
+  deinit {
+    // Clean up navigation path timer
+    navigationPathTimer?.invalidate()
+  }
+
+  private func handleNavigationPathChange(from oldCount: Int, to newCount: Int) {
+    if newCount > oldCount {
+      // Navigation forward - we need to use a different approach since we can't extract individual destinations
+      // Let's fall back to SwiftUI navigation when needed
+      fallbackToSwiftUINavigation()
+    } else if newCount < oldCount {
+      // Navigation back
+      let targetCount = max(1, newCount + 1)  // +1 for root controller
+      if viewControllers.count > targetCount {
+        let targetViewController = viewControllers[targetCount - 1]
+        popToViewController(targetViewController, animated: true)
+      }
+    }
+  }
+
+  private func fallbackToSwiftUINavigation() {
+    // When SwiftUI navigation is needed, we can present a SwiftUI navigation stack
+    // This is a hybrid approach that maintains UIKit nav bar for the main feed
+    // but uses SwiftUI for detailed navigation
+
+    // For now, we'll let the navigation be handled by the post views themselves
+    // which can present modally or use other navigation patterns
+  }
+
+  // Method to handle navigation back to root
+  override func popToRootViewController(animated: Bool) -> [UIViewController]? {
+    // Also clear the SwiftUI navigation path
+    DispatchQueue.main.async {
+      self.navigationPath.wrappedValue = NavigationPath()
+    }
+    return super.popToRootViewController(animated: animated)
+  }
+}
+
+// MARK: - Legacy UIKit Feed Wrapper (keeping for compatibility)
+
+/// A complete UIKit implementation that provides native navigation bar behavior
+struct FullUIKitFeedWrapper: UIViewControllerRepresentable {
+  let posts: [CachedFeedViewPost]
+  let appState: AppState
+  let fetchType: FetchType
+  @Binding var path: NavigationPath
+  let onScrollOffsetChanged: ((CGFloat) -> Void)?
+@Environment(\.modelContext) private var modelContext
+    
+  func makeUIViewController(context: Context) -> UIKitFeedWrapperController {
+    let controller = UIKitFeedWrapperController(
+        appState: appState, fetchType: fetchType, path: $path, modelContext: modelContext)
+    controller.feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    return controller
+  }
+
+  func updateUIViewController(_ uiViewController: UIKitFeedWrapperController, context: Context) {
+    // Update scroll offset callback
+    uiViewController.feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    
+    // Update posts when they change
+    Task { @MainActor in
+      await uiViewController.feedController.loadPostsDirectly(posts)
+    }
+    
+    // Handle fetch type changes
+    if uiViewController.feedController.fetchType.identifier != fetchType.identifier {
+      uiViewController.feedController.handleFetchTypeChange(to: fetchType)
+    }
+
+    // Handle tab tap to scroll to top
+    if let tapped = appState.tabTappedAgain, tapped == 0 {
+      uiViewController.feedController.scrollToTop()
+
+      // Reset the tabTappedAgain value after handling
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        appState.tabTappedAgain = nil
+      }
+    }
+  }
+}
+
+// MARK: - UIKit Feed Wrapper Controller
+
+/// A UIKit view controller that properly integrates with navigation hierarchy
+@available(iOS 18.0, *)
+final class UIKitFeedWrapperController: UIViewController {
+  let feedController: FeedViewController
+  private let appState: AppState
+
+  init(appState: AppState, fetchType: FetchType, path: Binding<NavigationPath>, modelContext: ModelContext) {
+    self.appState = appState
+    self.feedController = FeedViewController(appState: appState, fetchType: fetchType, path: path, modelContext: modelContext)
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+
+    // Add the feed controller as a child
+    addChild(feedController)
+    view.addSubview(feedController.view)
+    feedController.didMove(toParent: self)
+
+    // Set up constraints - extend under navigation bar for proper large title behavior
+    feedController.view.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      feedController.view.topAnchor.constraint(equalTo: view.topAnchor),
+      feedController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      feedController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      feedController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+
+    // Apply theme
+    applyTheme()
+    
+    // Load content immediately like FeedView does
+    Task { @MainActor in
+      await loadContentImmediately()
+    }
+  }
+  
+  @MainActor
+  private func loadContentImmediately() async {
+    // Get or create feed model like FeedView does
+    let feedModel = FeedModelContainer.shared.getModel(for: feedController.fetchType, appState: appState)
+    
+    // If the model already has posts, load them immediately
+    if !feedModel.posts.isEmpty {
+      let filteredPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
+      await feedController.loadPostsDirectly(filteredPosts)
+    } else {
+      // Call the public method to trigger loading
+      feedController.loadInitialFeedWithRetry()
+    }
+  }
+  
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+    
+    // Ensure proper navigation bar integration for large title behavior
+    if let navigationController = navigationController {
+      // Force the collection view to extend under the navigation bar
+      extendedLayoutIncludesOpaqueBars = true
+      
+      // Make sure the feed controller's collection view has proper content inset behavior
+      feedController.collectionView.contentInsetAdjustmentBehavior = .automatic
+    }
+  }
+
+  private func applyTheme() {
+    let currentScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+    let effectiveScheme = appState.themeManager.effectiveColorScheme(for: currentScheme)
+    view.backgroundColor = .clear  // Let SwiftUI .themedPrimaryBackground() handle this
+  }
+
+  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    super.traitCollectionDidChange(previousTraitCollection)
+
+    if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+      applyTheme()
+    }
+  }
+}
+
+// MARK: - New Posts Indicator
+
+struct NewPostsIndicator: View {
+  let authors: [AppBskyActorDefs.ProfileViewBasic]
+  let onTap: () -> Void
+  @Environment(AppState.self) private var appState: AppState
+
+  private var avatarStack: some View {
+    HStack(spacing: -8) {
+      ForEach(Array(authors.prefix(3).enumerated()), id: \.element.did) { index, author in
+        authorAvatar(author: author, index: index)
+      }
+    }
+  }
+
+  private func authorAvatar(author: AppBskyActorDefs.ProfileViewBasic, index: Int) -> some View {
+    AsyncImage(url: author.avatar?.url) { image in
+      image
+        .resizable()
+        .aspectRatio(contentMode: .fill)
+    } placeholder: {
+      Circle()
+        .fill(Color.gray.opacity(0.3))
+    }
+    .frame(width: 24, height: 24)
+    .clipShape(Circle())
+    .overlay(
+      Circle()
+        .stroke(Color.white, lineWidth: 1.5)
+    )
+    .zIndex(Double(authors.count - index))
+  }
+
+  private var textContent: some View {
+    HStack(spacing: 4) {
+      Text(authors.count == 1 ? "New post" : "\(authors.count) new posts")
+        .font(.system(size: 14, weight: .medium))
+        .foregroundColor(.white)
+
+      Image(systemName: "arrow.up")
+        .font(.system(size: 12, weight: .bold))
+        .foregroundColor(.white)
+    }
+  }
+
+  private var buttonBackground: some View {
+    Capsule()
+      .fill(Color.blue)
+      .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+  }
+
+  var body: some View {
+    Button(action: onTap) {
+      HStack(spacing: 8) {
+        avatarStack
+        textContent
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(buttonBackground)
+    }
+    .buttonStyle(PlainButtonStyle())
+  }
+}
+
+// MARK: - Native FeedContentView with UIViewControllerRepresentable
+
+struct NativeFeedContentView: View {
+  // MARK: - Properties
+  let posts: [CachedFeedViewPost]
+  let appState: AppState
+  @Binding var path: NavigationPath
+  let loadMoreAction: @Sendable () async -> Void
+  let refreshAction: @Sendable () async -> Void
+  let feedType: FetchType
+  let onScrollOffsetChanged: ((CGFloat) -> Void)?
+  
+  @Environment(\.modelContext) private var modelContext
+
+  init(
+    posts: [CachedFeedViewPost],
+    appState: AppState,
+    path: Binding<NavigationPath>,
+    loadMoreAction: @escaping @Sendable () async -> Void,
+    refreshAction: @escaping @Sendable () async -> Void,
+    feedType: FetchType,
+    onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
+  ) {
+    self.posts = posts
+    self.appState = appState
+    self._path = path
+    self.loadMoreAction = loadMoreAction
+    self.refreshAction = refreshAction
+    self.feedType = feedType
+    self.onScrollOffsetChanged = onScrollOffsetChanged
+  }
+
+  var body: some View {
+    if #available(iOS 18.0, *) {
+      // Use UIViewControllerRepresentable for native NavigationStack integration
+      NativeFeedViewControllerRepresentable(
+        posts: posts,
+        appState: appState,
+        fetchType: feedType,
+        path: $path,
+        loadMoreAction: loadMoreAction,
+        refreshAction: refreshAction,
+        modelContext: modelContext,
+        onScrollOffsetChanged: onScrollOffsetChanged
+      )
+    } else {
+      // Fallback to existing SwiftUI implementation
+      FeedContentView(
+        posts: posts,
+        appState: appState,
+        path: $path,
+        loadMoreAction: loadMoreAction,
+        refreshAction: refreshAction,
+        feedType: feedType
+      )
+    }
+  }
+}
+
+// MARK: - Native UIViewControllerRepresentable
+
+@available(iOS 18.0, *)
+struct NativeFeedViewControllerRepresentable: UIViewControllerRepresentable {
+  let posts: [CachedFeedViewPost]
+  let appState: AppState
+  let fetchType: FetchType
+  @Binding var path: NavigationPath
+  let loadMoreAction: @Sendable () async -> Void
+  let refreshAction: @Sendable () async -> Void
+  let modelContext: ModelContext
+  let onScrollOffsetChanged: ((CGFloat) -> Void)?
+  
+  func makeUIViewController(context: Context) -> FeedViewController {
+    let feedController = FeedViewController(
+      appState: appState,
+      fetchType: fetchType,
+      path: $path,
+      modelContext: modelContext
+    )
+    
+    // Configure for SwiftUI navigation integration
+    feedController.collectionView.contentInsetAdjustmentBehavior = .automatic
+    feedController.collectionView.scrollsToTop = true
+    
+    // Set up scroll offset callback for navigation bar behavior
+    feedController.onScrollOffsetChanged = onScrollOffsetChanged
+    
+    // Load initial posts
+    Task { @MainActor in
+      await feedController.loadPostsDirectly(posts)
+    }
+    
+    return feedController
+  }
+  
+  func updateUIViewController(_ uiViewController: FeedViewController, context: Context) {
+    // Update scroll offset callback
+    uiViewController.onScrollOffsetChanged = onScrollOffsetChanged
+    
+    // Update with new posts when they change
+    Task { @MainActor in
+      await uiViewController.loadPostsDirectly(posts)
+    }
+    
+    // Handle fetch type changes
+    if uiViewController.fetchType.identifier != fetchType.identifier {
+      uiViewController.handleFetchTypeChange(to: fetchType)
+    }
+  }
+}
+

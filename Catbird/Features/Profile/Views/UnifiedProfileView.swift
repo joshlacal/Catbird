@@ -325,7 +325,6 @@ struct UnifiedProfileView: View {
           ListRow(list: list)
         }
         .buttonStyle(.plain)
-        .applyListRowModifiers(id: list.uri.uriString())
         .onAppear {
           // Load more when reaching the end
           if list == viewModel.lists.last && !viewModel.isLoadingMorePosts {
@@ -362,7 +361,6 @@ struct UnifiedProfileView: View {
     } else {
       ForEach(viewModel.starterPacks, id: \.uri) { pack in
         StarterPackRowView(pack: pack)
-              .applyListRowModifiers(id: pack.uri.uriString())
           .onAppear {
             // Load more when reaching the end
             if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts {
@@ -404,7 +402,6 @@ struct UnifiedProfileView: View {
           FeedRowView(feed: feed)
         }
         .buttonStyle(.plain)
-        .applyListRowModifiers(id: feed.uri.uriString())
         .onAppear {
           // Load more when reaching the end
           if feed == viewModel.feeds.last && !viewModel.isLoadingMorePosts {
@@ -1426,12 +1423,12 @@ struct FeedRowView: View {
 
 // MARK: - Stretchy Header Extensions
 // MARK: - Preference Key for Scroll Offset
-//struct ScrollOffsetPreferenceKey: PreferenceKey {
-//    static var defaultValue: CGFloat = 0
-//    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-//        value = nextValue()
-//    }
-//}
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
 
 extension View {
     // this is defined elsewhere but we're keeping it for reference

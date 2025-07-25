@@ -545,11 +545,10 @@ struct FeedDiscoveryCard: View {
     .sheet(isPresented: $showingFullFeed) {
       NavigationStack {
         if let feedUri = try? ATProtocolURI(uriString: feed.uri.uriString()) {
-          FeedView(
+          FeedCollectionView.create(
+            for: .feed(feedUri),
             appState: appState,
-            fetch: .feed(feedUri),
-            path: .constant(NavigationPath()),
-            selectedTab: .constant(0)
+            navigationPath: .constant(NavigationPath())
           )
           .navigationTitle(feed.displayName)
           .navigationBarTitleDisplayMode(.inline)

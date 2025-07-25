@@ -766,11 +766,10 @@ struct EnhancedRecommendationCard: View {
     
     private var feedPreviewSheet: some View {
         NavigationStack {
-            FeedView(
+            FeedCollectionView.create(
+                for: .feed(recommendation.feed.uri),
                 appState: AppState.shared,
-                fetch: .feed(recommendation.feed.uri),
-                path: .constant(NavigationPath()),
-                selectedTab: .constant(0)
+                navigationPath: .constant(NavigationPath())
             )
             .navigationTitle(recommendation.feed.displayName)
             .navigationBarTitleDisplayMode(.inline)

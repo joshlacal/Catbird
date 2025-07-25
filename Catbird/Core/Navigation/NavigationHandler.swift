@@ -43,34 +43,22 @@ struct NavigationHandler {
         .id(tag)
 
     case .timeline:
-      if #available(iOS 18.0, *) {
-        NativeFeedContentView(
-          posts: [],  // Will be loaded by the UIKit controller
-          appState: appState,
-          path: path,
-          loadMoreAction: {},  // Handled internally by UIKit controller
-          refreshAction: {},  // Handled internally by UIKit controller
-          feedType: .timeline
-        )
-        .id("timeline")  // Add stable identity
-        .navigationTitle("Timeline")
-        .navigationBarTitleDisplayMode(.large)
-      } else {
-        FeedView(appState: appState, fetch: .timeline, path: path, selectedTab: selectedTab)
-          .id("timeline")
-      }
+      FeedCollectionView.create(
+        for: .timeline,
+        appState: appState,
+        navigationPath: path
+      )
+      .id("timeline")  // Add stable identity
+      .navigationTitle("Timeline")
+      .navigationBarTitleDisplayMode(.large)
 
     case .feed(let uri):
-        NativeFeedContentView(
-            posts: [],  // Will be loaded by the UIKit controller
-          appState: appState,
-          path: path,
-            loadMoreAction: {},  // Handled internally by UIKit controller
-            refreshAction: {},  // Handled internally by UIKit controller
-
-            feedType: .feed(uri),
-        )
-          .id(uri.uriString())
+      FeedCollectionView.create(
+        for: .feed(uri),
+        appState: appState,
+        navigationPath: path
+      )
+      .id(uri.uriString())
 
     case .list(let uri):
       ListView(listURI: uri, path: path)

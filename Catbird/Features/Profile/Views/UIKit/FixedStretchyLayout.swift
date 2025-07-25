@@ -57,15 +57,27 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
       
       var frame = attributes.frame
       
-      // LINEAR stretch: extend height and adjust position
-      frame.size.height = max(1.0, attributes.frame.height + stretchAmount) // Ensure positive dimensions
-      frame.origin.y = contentOffsetY
+      // Safe stretch calculation with bounds checking
+      let originalHeight = attributes.frame.height
+      let maxStretch = originalHeight * 2.0 // Limit stretch to 2x original height
+      let clampedStretch = min(stretchAmount, maxStretch)
       
-      attributes.frame = frame
+      // Ensure frame dimensions are always valid
+      frame.size.height = max(originalHeight, originalHeight + clampedStretch)
+      frame.size.width = max(1.0, frame.size.width) // Ensure positive width
+      frame.origin.y = min(contentOffsetY, frame.origin.y) // Prevent invalid Y position
+      
+      // Validate frame before applying
+      if frame.size.height > 0 && frame.size.width > 0 && 
+         !frame.size.height.isInfinite && !frame.size.width.isInfinite &&
+         !frame.size.height.isNaN && !frame.size.width.isNaN {
+        attributes.frame = frame
+      }
+      
       attributes.zIndex = 50 // Much lower z-index so avatar can appear on top
       
       if stretchAmount > 10 {
-        layoutLogger.debug("Header stretching: offset=\(contentOffsetY, privacy: .public), stretch=\(stretchAmount, privacy: .public)")
+        layoutLogger.debug("Header stretching: offset=\(contentOffsetY, privacy: .public), stretch=\(clampedStretch, privacy: .public)")
       }
     } else {
       // Normal state - much lower z-index so avatar can appear on top

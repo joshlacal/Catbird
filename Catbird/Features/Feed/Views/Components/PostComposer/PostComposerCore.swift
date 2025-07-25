@@ -168,9 +168,7 @@ extension PostComposerViewModel {
         isPosting = true
         defer { isPosting = false }
         
-        guard let postManager = appState.postManager else {
-            throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Post manager not available"])
-        }
+        let postManager = appState.postManager
         
         // Filter out empty thread entries
         let validEntries = threadEntries.filter { entry in
@@ -208,7 +206,7 @@ extension PostComposerViewModel {
             }
             
             // Create self labels
-            let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: Array(selectedLabels))
+            let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
             
             // Only apply threadgate to the first post
             var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
@@ -221,7 +219,7 @@ extension PostComposerViewModel {
                 entry.text,
                 languages: selectedLanguages,
                 metadata: [:],
-                hashtags: entry.hashtags,
+                hashtags: outlineTags,
                 facets: facets,
                 parentPost: previousPost,
                 selfLabels: selfLabels,
@@ -264,12 +262,9 @@ extension PostComposerViewModel {
         isPosting = true
         defer { isPosting = false }
         
-        logger.info("Creating post with text: \(postText)")
+        logger.info("Creating post with text: \(self.postText)")
         
-        guard let postManager = appState.postManager else {
-            logger.error("Post manager not available")
-            throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Post manager not available"])
-        }
+        let postManager = appState.postManager
         
         // Process facets (mentions, links, etc.)
         logger.debug("Processing facets...")
@@ -283,7 +278,7 @@ extension PostComposerViewModel {
             // Handle GIF embed
             embed = try await createGifEmbed(gif)
         } else if !mediaItems.isEmpty {
-            logger.debug("Creating images embed for \(mediaItems.count) images")
+            logger.debug("Creating images embed for \(self.mediaItems.count) images")
             // Handle image embeds
             embed = try await createImagesEmbed()
         } else if videoItem != nil {
@@ -303,7 +298,7 @@ extension PostComposerViewModel {
         }
         
         // Create self labels
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: Array(selectedLabels))
+        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
         
         // Convert threadgate settings if needed
         var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
@@ -312,13 +307,13 @@ extension PostComposerViewModel {
         }
         
         // Create the post
-        logger.info("Calling postManager.createPost with text: '\(postText)', languages: \(selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(parentPost != nil)")
+        logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
         
         try await postManager.createPost(
             postText,
             languages: selectedLanguages,
             metadata: [:],
-            hashtags: [],
+            hashtags: outlineTags,
             facets: facets,
             parentPost: parentPost,
             selfLabels: selfLabels,
@@ -391,7 +386,7 @@ extension PostComposerViewModel {
         
         // For GIFs, we create an external embed with the GIF URL
         let external = AppBskyEmbedExternal.External(
-            uri: gif.url,
+            uri: URI(uriString: gif.url),
             title: gif.title.isEmpty ? "GIF" : gif.title,
             description: "via Tenor",
             thumb: nil // Could upload thumbnail if needed
@@ -401,18 +396,18 @@ extension PostComposerViewModel {
     }
     
     private func createQuoteEmbed(_ quotedPost: AppBskyFeedDefs.PostView) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        let record = AppBskyEmbedRecord.ViewRecord(
+        let strongRef = ComAtprotoRepoStrongRef(
             uri: quotedPost.uri,
             cid: quotedPost.cid
         )
         
-        return .appBskyEmbedRecord(AppBskyEmbedRecord(record: record))
+        return .appBskyEmbedRecord(AppBskyEmbedRecord(record: strongRef))
     }
     
     private func createExternalEmbed(_ urlCard: URLCardResponse) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
         // TODO: Upload thumbnail if available
         let external = AppBskyEmbedExternal.External(
-            uri: urlCard.url,
+            uri: URI(uriString: urlCard.url),
             title: urlCard.title,
             description: urlCard.description,
             thumb: nil // Would need to upload urlCard.image
@@ -463,7 +458,7 @@ extension PostComposerViewModel {
                 if let range = Range(match.range, in: postText) {
                     let urlString = String(postText[range])
                     let byteRange = calculateByteRange(for: match.range, in: postText)
-                    let link = AppBskyRichtextFacet.Link(uri: urlString)
+                    let link = AppBskyRichtextFacet.Link(uri: URI(uriString: urlString))
                     let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetLink(link)
                     
                     let facet = AppBskyRichtextFacet(

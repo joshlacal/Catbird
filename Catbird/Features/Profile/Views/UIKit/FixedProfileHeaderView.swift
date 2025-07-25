@@ -12,8 +12,6 @@ final class FixedProfileHeaderView: UICollectionReusableView {
   private let headerLogger = Logger(subsystem: "blue.catbird", category: "FixedProfileHeaderView")
   
   private var bannerImageView: UIImageView!
-  private var avatarImageView: UIImageView!
-  private var followButtonContainer: UIView!
   private var gradientLayer: CAGradientLayer!
   private var currentProfile: AppBskyActorDefs.ProfileViewDetailed?
   
@@ -25,7 +23,6 @@ final class FixedProfileHeaderView: UICollectionReusableView {
   
   // Image loading tasks
   private var bannerLoadTask: Task<Void, Never>?
-  private var avatarLoadTask: Task<Void, Never>?
   
   // UI State
   private var appState: AppState?
@@ -46,7 +43,6 @@ final class FixedProfileHeaderView: UICollectionReusableView {
   
   deinit {
     bannerLoadTask?.cancel()
-    avatarLoadTask?.cancel()
     headerLogger.debug("FixedProfileHeaderView deallocated")
   }
   
@@ -54,12 +50,13 @@ final class FixedProfileHeaderView: UICollectionReusableView {
     clipsToBounds = false // Allow elements to extend beyond bounds
     backgroundColor = .clear
     
-    // Banner image view
+    // Banner image view with safe defaults
     bannerImageView = UIImageView()
     bannerImageView.contentMode = .scaleAspectFill
     bannerImageView.clipsToBounds = true
     bannerImageView.backgroundColor = .systemGray6
     bannerImageView.translatesAutoresizingMaskIntoConstraints = false
+    bannerImageView.layer.masksToBounds = true // Ensure proper clipping
     addSubview(bannerImageView)
     
     // Add subtle gradient overlay for visual depth
@@ -69,23 +66,8 @@ final class FixedProfileHeaderView: UICollectionReusableView {
       UIColor.black.withAlphaComponent(0.1).cgColor
     ]
     gradientLayer.locations = [0.7, 1.0]
+    gradientLayer.frame = CGRect(x: 0, y: 0, width: 1, height: 1) // Safe initial frame
     bannerImageView.layer.addSublayer(gradientLayer)
-    
-    // Avatar image view - leading aligned
-    avatarImageView = UIImageView()
-    avatarImageView.contentMode = .scaleAspectFill
-    avatarImageView.clipsToBounds = true
-    avatarImageView.backgroundColor = .systemGray6
-    avatarImageView.layer.cornerRadius = 40 // 80x80 = 40 radius
-    avatarImageView.layer.borderWidth = 4
-    avatarImageView.layer.borderColor = UIColor.systemBackground.cgColor
-    avatarImageView.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(avatarImageView)
-    
-    // Follow button container - trailing aligned
-    followButtonContainer = UIView()
-    followButtonContainer.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(followButtonContainer)
     
     setupConstraints()
   }
@@ -99,52 +81,50 @@ final class FixedProfileHeaderView: UICollectionReusableView {
       bannerTopConstraint,
       bannerImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
       bannerImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      bannerImageView.heightAnchor.constraint(equalToConstant: originalHeight),
-      
-      // Avatar - leading aligned, overlapping banner
-      avatarImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-      avatarImageView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -40), // Half overlapping
-      avatarImageView.widthAnchor.constraint(equalToConstant: 80),
-      avatarImageView.heightAnchor.constraint(equalToConstant: 80),
-      
-      // Follow button container - trailing aligned to same level as avatar
-      followButtonContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-      followButtonContainer.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
-      followButtonContainer.heightAnchor.constraint(equalToConstant: 36), // Standard button height
-      followButtonContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 80)
+      bannerImageView.heightAnchor.constraint(equalToConstant: originalHeight)
     ])
   }
   
   override func layoutSubviews() {
     super.layoutSubviews()
     
-    // Update gradient frame
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    gradientLayer.frame = bannerImageView.bounds
-    CATransaction.commit()
+    // Update gradient frame with bounds checking
+    let bannerBounds = bannerImageView.bounds
+    if bannerBounds.width > 0 && bannerBounds.height > 0 && 
+       bannerBounds.width.isFinite && bannerBounds.height.isFinite {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      gradientLayer.frame = bannerBounds
+      CATransaction.commit()
+    }
   }
   
   @MainActor
   func updateForStretch(stretchAmount: CGFloat) {
     // Only stretch when pulling down (positive stretch)
-    guard stretchAmount > 0 else {
+    guard stretchAmount > 0 && stretchAmount.isFinite && !stretchAmount.isNaN else {
       resetStretch()
       return
     }
     
-    // Don't clamp - let it stretch naturally
-    // The layout is already handling frame positioning, we just need to scale the image
+    // Clamp stretch amount to prevent excessive scaling
+    let maxStretch = originalHeight * 1.5 // Maximum 1.5x stretch
+    let clampedStretch = min(stretchAmount, maxStretch)
     
     // Keep banner top pinned since layout handles frame positioning
     bannerTopConstraint.constant = 0
     
-    // More natural scale effect - less aggressive but more responsive
-    let scale = 1 + (stretchAmount / originalHeight) * 0.3
-    bannerImageView.transform = CGAffineTransform(scaleX: scale, y: scale)
+    // Safe scale calculation with bounds checking
+    let scaleRatio = clampedStretch / originalHeight
+    let scale = max(1.0, min(2.0, 1 + scaleRatio * 0.3)) // Clamp scale between 1.0 and 2.0
+    
+    // Validate scale before applying
+    if scale.isFinite && !scale.isNaN && scale > 0 {
+      bannerImageView.transform = CGAffineTransform(scaleX: scale, y: scale)
+    }
     
     if stretchAmount > 10 {
-      headerLogger.debug("Stretch: amount=\(stretchAmount, privacy: .public), scale=\(scale, privacy: .public)")
+      headerLogger.debug("Stretch: amount=\(clampedStretch, privacy: .public), scale=\(scale, privacy: .public)")
     }
   }
   
@@ -185,20 +165,7 @@ final class FixedProfileHeaderView: UICollectionReusableView {
       setDefaultBannerGradient()
     }
     
-    // Load avatar
-    if let avatarURL = profile.avatar?.uriString(),
-       let url = URL(string: avatarURL) {
-      avatarLoadTask = Task {
-        await loadImage(from: url, into: avatarImageView, type: "avatar")
-      }
-    } else {
-      // Default avatar
-      avatarImageView.image = nil
-      avatarImageView.backgroundColor = .systemGray6
-    }
-    
-    // Setup follow button
-    setupFollowButton(for: profile)
+    // Avatar is now handled in ProfileInfoCell
   }
   
   private func setDefaultBannerGradient() {
@@ -255,33 +222,6 @@ final class FixedProfileHeaderView: UICollectionReusableView {
     }
   }
   
-  // MARK: - Follow Button Setup
-  private func setupFollowButton(for profile: AppBskyActorDefs.ProfileViewDetailed) {
-    // Clear existing button
-    followButtonContainer.subviews.forEach { $0.removeFromSuperview() }
-    
-    guard let appState = appState, let viewModel = viewModel else { return }
-    
-    // Create SwiftUI follow button using UIHostingController
-    let followButtonView = FollowButtonView(
-      profile: profile,
-      viewModel: viewModel,
-      appState: appState
-    )
-    
-    let hostingController = UIHostingController(rootView: followButtonView)
-    hostingController.view.backgroundColor = .clear
-    hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-    
-    followButtonContainer.addSubview(hostingController.view)
-    
-    NSLayoutConstraint.activate([
-      hostingController.view.topAnchor.constraint(equalTo: followButtonContainer.topAnchor),
-      hostingController.view.leadingAnchor.constraint(equalTo: followButtonContainer.leadingAnchor),
-      hostingController.view.trailingAnchor.constraint(equalTo: followButtonContainer.trailingAnchor),
-      hostingController.view.bottomAnchor.constraint(equalTo: followButtonContainer.bottomAnchor)
-    ])
-  }
   
   override func prepareForReuse() {
     super.prepareForReuse()

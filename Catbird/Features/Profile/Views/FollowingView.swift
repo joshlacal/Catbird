@@ -34,7 +34,6 @@ struct FollowingView: View {
                 ForEach(viewModel.follows, id: \.did) { follow in
                         ProfileRowView(profile: follow)
                         .padding(12)
-                            .applyListRowModifiers(id: follow.did.didString())
                             .onTapGesture {
                                 path.append(NavigationDestination.profile(follow.did.didString()))
 

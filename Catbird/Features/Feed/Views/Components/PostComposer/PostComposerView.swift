@@ -239,6 +239,7 @@ struct PostComposerView: View {
                 quotedPostSection  
                 mediaSection
                 urlCardsSection
+                outlineTagsSection
                 languageSection
             }
             .padding(.horizontal, 20)
@@ -248,36 +249,47 @@ struct PostComposerView: View {
     
     @ViewBuilder
     private var quotedPostSection: some View {
-        if viewModel.quotedPost != nil {
-            quotedPostPreview
-        }
-    }
-    
-    // MARK: - Quoted Post View
+        if let quotedPost = viewModel.quotedPost {
+            VStack(alignment: .leading, spacing: 8) {
+                // Remove quote button
+                Button(action: {
+                    viewModel.quotedPost = nil
+                }) {
+                    Text("Remove Quote")
+                        .appFont(AppTextRole.caption)
+                        .foregroundColor(.accentColor)
+                }
 
-    private var quotedPostPreview: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Remove quote button
-            Button(action: {
-                viewModel.quotedPost = nil
-            }) {
-                Text("Remove Quote")
-                    .appFont(AppTextRole.caption)
-                    .foregroundColor(.accentColor)
+                // Simplified post preview to avoid complex type resolution
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("@\(quotedPost.author.handle.description)")
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    
+                    if case .knownType(let record) = quotedPost.record,
+                       let post = record as? AppBskyFeedPost {
+                        Text(post.text)
+                            .appFont(AppTextRole.body)
+                            .lineLimit(3)
+                    } else {
+                        Text("Quoted post")
+                            .appFont(AppTextRole.body)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(8)
+                .background(Color(.systemBackground))
+                .cornerRadius(8)
             }
-
-            // PostView
-            PostView(post: viewModel.quotedPost!, grandparentAuthor: nil, isParentPost: false, isSelectable: false, path: .constant(NavigationPath()), appState: appState)
-//            PostEmbed(embed: .appBskyEmbedRecordView(.init(record: .appBskyEmbedRecordViewRecord(.init(uri: <#T##ATProtocolURI#>, cid: <#T##CID#>, author: <#T##AppBskyActorDefs.ProfileViewBasic#>, value: <#T##ATProtocolValueContainer#>, labels: <#T##[ComAtprotoLabelDefs.Label]?#>, replyCount: <#T##Int?#>, repostCount: <#T##Int?#>, likeCount: <#T##Int?#>, quoteCount: <#T##Int?#>, embeds: , indexedAt: <#T##ATProtocolDate#>)))), labels: <#T##[ComAtprotoLabelDefs.Label]?#>, path: <#T##Binding<NavigationPath>#>)
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(.systemGray4), lineWidth: 1)
-        )
     }
+
 
     // MARK: - New Thread UI Components
 
@@ -600,6 +612,10 @@ struct PostComposerView: View {
                 }
             }
         }
+    }
+    
+    private var outlineTagsSection: some View {
+        OutlineTagsView(tags: $viewModel.outlineTags)
     }
     
     // Helper computed properties for character count

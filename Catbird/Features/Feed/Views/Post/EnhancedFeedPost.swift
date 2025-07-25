@@ -80,18 +80,24 @@ struct EnhancedFeedPost: View, Equatable {
   @ViewBuilder
   private var threadContent: some View {
     let mode = threadDisplayMode
-//  logger.debug("🧵 EnhancedFeedPost: \(cachedPost.id) mode=\(mode), sliceItems=\(cachedPost.sliceItems?.count ?? 0)")
+    // Debug log to understand what's happening
     
-    switch mode {
-    case .standard:
-      standardThreadContent
-      
-    case .expanded(let postCount):
-      expandedThreadContent(postCount: postCount)
-      
-    case .collapsed(let hiddenCount):
-      collapsedThreadContent(hiddenCount: hiddenCount)
-    }
+      Group {
+          switch mode {
+          case .standard:
+              standardThreadContent
+              
+          case .expanded(let postCount):
+              expandedThreadContent(postCount: postCount)
+              
+          case .collapsed(let hiddenCount):
+              collapsedThreadContent(hiddenCount: hiddenCount)
+          }
+      }
+          .onAppear {
+              print("🧵 EnhancedFeedPost: \(cachedPost.id) mode=\(mode), sliceItems=\(cachedPost.sliceItems?.count ?? 0), threadDisplayMode=\(cachedPost.threadDisplayMode ?? "nil")")
+
+          }
   }
   
   // MARK: - Thread Display Mode
@@ -124,7 +130,7 @@ struct EnhancedFeedPost: View, Equatable {
   @ViewBuilder
   private var standardThreadContent: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Parent post if needed (for replies)
+      // Parent post if needed (for replies) - always show like FeedPost does
       if let parentPost = feedViewPost.reply?.parent, feedViewPost.reason == nil {
         parentPostContent(parentPost)
           .padding(.bottom, EnhancedFeedPost.baseUnit * 2)

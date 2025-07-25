@@ -36,6 +36,9 @@ final class FeedModel: StateInvalidationSubscriber {
 
   // Pagination
   @MainActor private var cursor: String?
+  
+  // Navigation state
+  @MainActor var isReturningFromNavigation = false
 
   // Feed type tracking
   private(set) var lastFeedType: FetchType
@@ -133,13 +136,21 @@ final class FeedModel: StateInvalidationSubscriber {
       self.cursor = newCursor
       self.hasMore = newCursor != nil
       self.lastRefreshTime = Date()
+      
+      logger.debug("🔍 loadFeed completed - loaded \(self.posts.count) posts, cursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
       await refreshPostShadows(fetchedPosts)
       
       // Update widget data
       FeedWidgetDataProvider.shared.updateWidgetData(from: newPosts, feedType: fetch)
     } catch {
-      self.error = error
+      // Use standardized error handling
+      error.logError(context: "Feed load for \(fetch.identifier)", operation: "loadFeed")
+      
+      // Only show errors to user if they're not cancellations
+      if error.shouldShowToUser {
+        self.error = error
+      }
     }
 
     if strategy == .backgroundRefresh {
@@ -168,11 +179,16 @@ final class FeedModel: StateInvalidationSubscriber {
 
   @MainActor
   func loadMore() async {
-    guard !isLoading && !isLoadingMore && hasMore && cursor != nil else { return }
+    guard !isLoading && !isLoadingMore && hasMore && cursor != nil else {
+        logger.debug("🔍 loadMore skipped - isLoading: \(self.isLoading), isLoadingMore: \(self.isLoadingMore), hasMore: \(self.hasMore), cursor: \(self.cursor ?? "nil")")
+      return
+    }
 
     isLoadingMore = true
+      logger.debug("🔍 Starting loadMore with cursor: \(self.cursor ?? "nil")")
 
     guard appState.atProtoClient != nil else {
+      logger.warning("🔥 No AT Proto client available for loadMore")
       isLoadingMore = false
       return
     }
@@ -197,10 +213,18 @@ final class FeedModel: StateInvalidationSubscriber {
       self.posts.append(contentsOf: uniqueNewPosts)
       self.cursor = newCursor
       self.hasMore = newCursor != nil
+      
+      logger.debug("🔍 loadMore completed - added \(uniqueNewPosts.count) posts, newCursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
       await refreshPostShadows(fetchedPosts)
     } catch {
-      self.error = error
+      // Use standardized error handling
+      error.logError(context: "Load more for \(fetchType.identifier)", operation: "loadMore")
+      
+      // Only show errors to user if they're not cancellations
+      if error.shouldShowToUser {
+        self.error = error
+      }
     }
 
     isLoadingMore = false
@@ -580,7 +604,7 @@ final class FeedModel: StateInvalidationSubscriber {
         await addPostOptimistically(post)
       }
       
-    case .replyCreated(let reply, let parentUri):
+    case .replyCreated(_, let parentUri):
       // For timeline feeds, we might want to show the reply
       if lastFeedType == .timeline {
         // Check if the parent post is visible in the current feed
@@ -682,7 +706,7 @@ final class FeedModel: StateInvalidationSubscriber {
     )
     
     // Create a cached post with temporary flag
-    var cachedPost = CachedFeedViewPost(from: feedViewPost, feedType: lastFeedType.identifier)
+      let cachedPost = CachedFeedViewPost(from: feedViewPost, feedType: lastFeedType.identifier)
     cachedPost.isTemporary = true
     
     // Insert at the beginning of the feed

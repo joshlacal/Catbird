@@ -366,15 +366,17 @@ enum ExternalMediaType: Equatable {
         // Standard YouTube URL
         if let range = urlString.range(of: "v=") {
             let startIndex = range.upperBound
-            let endIndex = urlString.firstIndex(of: "&") ?? urlString.endIndex
-            return String(urlString[startIndex..<endIndex])
+            let substring = urlString[startIndex...]
+            let endIndex = substring.firstIndex(of: "&") ?? substring.endIndex
+            return String(substring[..<endIndex])
         }
         
         // YouTube Shorts URL
         if let range = urlString.range(of: "/shorts/") {
             let startIndex = range.upperBound
-            let endIndex = urlString.firstIndex(of: "?") ?? urlString.endIndex
-            return String(urlString[startIndex..<endIndex])
+            let substring = urlString[startIndex...]
+            let endIndex = substring.firstIndex(of: "?") ?? substring.endIndex
+            return String(substring[..<endIndex])
         }
         
         // youtu.be URL
