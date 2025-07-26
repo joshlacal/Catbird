@@ -384,12 +384,47 @@ extension PostComposerViewModel {
     private func createGifEmbed(_ gif: TenorGif) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
         guard let client = appState.atProtoClient else { return nil }
         
-        // For GIFs, we create an external embed with the GIF URL
+        // Get the proper GIF media URL (not the Tenor page URL)
+        // Debug: Log all available formats to find the right one
+        logger.debug("Available media formats:")
+        logger.debug("gif: \(gif.media_formats.gif?.url ?? "nil")")
+        logger.debug("mediumgif: \(gif.media_formats.mediumgif?.url ?? "nil")")
+        logger.debug("tinygif: \(gif.media_formats.tinygif?.url ?? "nil")")
+        logger.debug("nanogif: \(gif.media_formats.nanogif?.url ?? "nil")")
+        
+        let gifURL: String
+        if let gifFormat = gif.media_formats.gif {
+            gifURL = gifFormat.url
+        } else if let mediumGif = gif.media_formats.mediumgif {
+            gifURL = mediumGif.url
+        } else if let tinyGif = gif.media_formats.tinygif {
+            gifURL = tinyGif.url
+        } else {
+            // Fallback to the page URL if no media formats available
+            gifURL = gif.url
+        }
+        
+        // Upload thumbnail if available
+        var thumbBlob: Blob?
+        if let previewURL = gif.media_formats.gifpreview?.url ?? gif.media_formats.tinygifpreview?.url {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: URL(string: previewURL)!)
+                let (_, uploadResult) = try await client.com.atproto.repo.uploadBlob(data: data, mimeType: "image/jpeg")
+                thumbBlob = uploadResult?.blob
+            } catch {
+                logger.debug("Failed to upload GIF thumbnail: \(error)")
+            }
+        }
+        
+        // Use proper title and description
+        let title = gif.content_description.isEmpty ? gif.title : gif.content_description
+        let description = gif.content_description.isEmpty ? "via Tenor" : "ALT: \(gif.content_description)"
+        
         let external = AppBskyEmbedExternal.External(
-            uri: URI(uriString: gif.url),
-            title: gif.title.isEmpty ? "GIF" : gif.title,
-            description: "via Tenor",
-            thumb: nil // Could upload thumbnail if needed
+            uri: URI(uriString: gifURL),
+            title: title.isEmpty ? "GIF" : title,
+            description: description,
+            thumb: thumbBlob
         )
         
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
