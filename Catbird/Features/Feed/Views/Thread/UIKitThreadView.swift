@@ -84,6 +84,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   // Estimated height for parent posts (used for scroll position preservation)
   private let estimatedParentPostHeight: CGFloat = 120.0
+  
+  // Optimized scroll system for iOS 18+
+  @available(iOS 18.0, *)
+  private lazy var optimizedScrollSystem = OptimizedScrollPreservationSystem()
 
   // Logger for debugging thread loading issues
   private let controllerLogger = Logger(
@@ -173,6 +177,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Clean up UIUpdateLink
     updateLink?.isEnabled = false
     updateLink = nil
+    
+    // Clean up iOS 18+ optimized scroll system
+    if #available(iOS 18.0, *) {
+      optimizedScrollSystem.cleanup()
+    }
     
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
@@ -1200,15 +1209,18 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Apply snapshot immediately for layout calculation
     dataSource.apply(snapshot, animatingDifferences: false)
     
-    // Maintain current scroll position by adjusting for newly inserted content
+    // Use sophisticated position preservation like feed view
     Task { @MainActor in
-      // Calculate height of newly inserted parent posts to preserve scroll position
-      let newParentHeight = CGFloat(newParentsCount) * estimatedParentPostHeight
-      let currentOffset = collectionView.contentOffset.y
-      let adjustedOffset = CGPoint(x: 0, y: currentOffset + newParentHeight)
-      
-      // Preserve scroll position by offsetting for new content above
-      collectionView.setContentOffset(adjustedOffset, animated: false)
+      if #available(iOS 18.0, *) {
+        await applyParentPostsWithPrecisePreservation(
+          newParentsCount: newParentsCount,
+          oldParentCount: oldParentCount,
+          scrollAnchor: scrollAnchor
+        )
+      } else {
+        // Fallback to simple position preservation for older iOS
+        await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
+      }
       
       // Clean up loading state after positioning
       isLoadingMoreParents = false
@@ -1217,8 +1229,126 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       // Disable continuous updates now that loading is complete
       updateLink?.requiresContinuousUpdates = false
       
-      controllerLogger.debug("⬆️ LOAD MORE PARENTS: Successfully added \(newParentsCount) parents while preserving scroll position")
+      controllerLogger.debug("⬆️ LOAD MORE PARENTS: Successfully added \(newParentsCount) parents with precise position preservation")
     }
+  }
+  
+  // MARK: - Precise Position Preservation for Parent Posts (iOS 18+)
+  
+  @available(iOS 18.0, *)
+  @MainActor
+  private func applyParentPostsWithPrecisePreservation(
+    newParentsCount: Int,
+    oldParentCount: Int,
+    scrollAnchor: ThreadScrollPositionTracker.ScrollAnchor?
+  ) async {
+    // Capture precise scroll anchor before any changes (similar to feed view)
+    let preciseAnchor = optimizedScrollSystem.capturePreciseAnchor(
+      from: collectionView,
+      preferredIndexPath: nil
+    )
+    
+    guard let anchor = preciseAnchor else {
+      // Fallback to simple preservation if anchor capture fails
+      await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
+      return
+    }
+    
+    // Store current post IDs to track content changes (include all thread content)
+    let currentPostIds = (
+      parentPosts.map { $0.id } + 
+      [mainPost?.id].compactMap { $0 } + 
+      replyWrappers.map { $0.id }
+    )
+    
+    // Apply atomic update with position preservation (like feed view does)
+    await applyAtomicParentUpdateWithPreservation(
+      anchor: anchor,
+      newParentsCount: newParentsCount,
+      currentPostIds: currentPostIds
+    )
+    
+    controllerLogger.debug("✅ Applied precise position preservation for \(newParentsCount) parent posts")
+  }
+  
+  @available(iOS 18.0, *)
+  @MainActor
+  private func applyAtomicParentUpdateWithPreservation(
+    anchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor,
+    newParentsCount: Int,
+    currentPostIds: [String]
+  ) async {
+    // Step 1: Calculate target position using layout estimation (like feed view)
+    var targetOffset: CGPoint?
+    
+    // Find where the anchor post will be after parent posts are added
+    if let anchorIndex = currentPostIds.firstIndex(of: anchor.postId) {
+      // Account for the new parents that will be inserted above
+      let newAnchorIndex = anchorIndex + newParentsCount
+      
+      // Estimate the new position based on current layout
+      if let currentFirstVisible = collectionView.indexPathsForVisibleItems.sorted().first,
+         let currentAttributes = collectionView.layoutAttributesForItem(at: currentFirstVisible) {
+        
+        let estimatedItemHeight = currentAttributes.frame.height
+        let estimatedItemY = CGFloat(newAnchorIndex) * estimatedItemHeight
+        let safeAreaTop = collectionView.adjustedContentInset.top
+        
+        // Calculate target offset to maintain viewport position (viewport-relative positioning)
+        let targetOffsetY = estimatedItemY - anchor.viewportRelativeY
+        
+        // Clamp to valid bounds
+        let minOffset = -safeAreaTop
+        let maxEstimatedContentHeight = CGFloat(currentPostIds.count + newParentsCount) * estimatedItemHeight
+        let maxOffset = max(minOffset, maxEstimatedContentHeight - collectionView.bounds.height + safeAreaTop)
+        
+        targetOffset = CGPoint(
+          x: 0,
+          y: max(minOffset, min(targetOffsetY, maxOffset))
+        )
+      }
+    }
+    
+    // Step 2: Apply atomic changes with UIUpdateLink coordination (like feed view)
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    
+    // Enable UIUpdateLink for smooth coordination
+    updateLink?.requiresContinuousUpdates = true
+    
+    // Step 3: Set estimated position immediately to prevent visual flash
+    if let targetOffset = targetOffset {
+      collectionView.setContentOffset(targetOffset, animated: false)
+    }
+    
+    // Step 4: Force layout to get accurate positions
+    collectionView.layoutIfNeeded()
+    
+    // Step 5: Fine-tune position with actual layout data
+    if let finalTargetOffset = optimizedScrollSystem.calculateTargetOffset(
+      for: anchor,
+      newPostIds: currentPostIds,
+      in: collectionView
+    ) {
+      collectionView.setContentOffset(finalTargetOffset, animated: false)
+    }
+    
+    CATransaction.commit()
+    
+    controllerLogger.debug("✅ Applied atomic parent update with precise position preservation")
+  }
+  
+  @MainActor
+  private func applyParentPostsWithSimplePreservation(newParentsCount: Int) async {
+    // Fallback implementation for iOS < 18
+    let newParentHeight = CGFloat(newParentsCount) * estimatedParentPostHeight
+    let currentOffset = collectionView.contentOffset.y
+    let adjustedOffset = CGPoint(x: 0, y: currentOffset + newParentHeight)
+    
+    // Preserve scroll position by offsetting for new content above
+    collectionView.setContentOffset(adjustedOffset, animated: false)
+    
+    controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts")
   }
   
   // MARK: - Scroll Position Restoration with Retry Logic
