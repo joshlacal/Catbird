@@ -1245,11 +1245,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     oldParentCount: Int,
     scrollAnchor: ThreadScrollPositionTracker.ScrollAnchor?
   ) async {
-    // Capture precise scroll anchor before any changes (similar to feed view)
-    let preciseAnchor = optimizedScrollSystem.capturePreciseAnchor(
-      from: collectionView,
-      preferredIndexPath: nil
-    )
+    // Capture precise scroll anchor before any changes (thread-specific approach)
+    let preciseAnchor = captureThreadPreciseAnchor(from: collectionView)
     
     guard let anchor = preciseAnchor else {
       // Fallback to simple preservation if anchor capture fails
@@ -1357,6 +1354,68 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts")
   }
   
+  // MARK: - Thread-Specific Anchor Capture
+  
+  @available(iOS 18.0, *)
+  @MainActor
+  private func captureThreadPreciseAnchor(from collectionView: UICollectionView) -> OptimizedScrollPreservationSystem.PreciseScrollAnchor? {
+    // Get the first visible item to use as anchor
+    guard let firstVisibleIndexPath = collectionView.indexPathsForVisibleItems.sorted().first,
+          let attributes = collectionView.layoutAttributesForItem(at: firstVisibleIndexPath) else {
+      controllerLogger.debug("⚠️ No visible items for anchor capture")
+      return nil
+    }
+    
+    // Get the post ID for this index path from thread structure
+    let postId: String
+    switch firstVisibleIndexPath.section {
+    case 0: // Parent posts
+      guard firstVisibleIndexPath.item < parentPosts.count else {
+        controllerLogger.debug("⚠️ Parent index out of bounds: \(firstVisibleIndexPath.item)")
+        return nil
+      }
+      postId = parentPosts[firstVisibleIndexPath.item].id
+      
+    case 1: // Main post
+      guard let mainPostId = mainPost?.id else {
+        controllerLogger.debug("⚠️ Main post has no ID")
+        return nil
+      }
+      postId = mainPostId
+      
+    case 2: // Replies
+      guard firstVisibleIndexPath.item < replyWrappers.count else {
+        controllerLogger.debug("⚠️ Reply index out of bounds: \(firstVisibleIndexPath.item)")
+        return nil
+      }
+      postId = replyWrappers[firstVisibleIndexPath.item].id
+      
+    default:
+      controllerLogger.debug("⚠️ Unknown section for anchor capture: \(firstVisibleIndexPath.section)")
+      return nil
+    }
+    
+    // Calculate viewport-relative position
+    let safeAreaTop = collectionView.adjustedContentInset.top
+    let currentContentOffset = collectionView.contentOffset.y
+    let viewportRelativeY = attributes.frame.origin.y - (currentContentOffset + safeAreaTop)
+    
+    let anchor = OptimizedScrollPreservationSystem.PreciseScrollAnchor(
+      indexPath: firstVisibleIndexPath,
+      postId: postId,
+      contentOffset: collectionView.contentOffset,
+      viewportRelativeY: viewportRelativeY,
+      itemFrameY: attributes.frame.origin.y,
+      itemHeight: attributes.frame.height,
+      visibleHeightInViewport: min(attributes.frame.height, collectionView.bounds.height),
+      timestamp: CACurrentMediaTime(),
+      displayScale: UIScreen.main.scale
+    )
+    
+    controllerLogger.debug("🎯 Thread anchor captured - section: \(firstVisibleIndexPath.section), item: \(firstVisibleIndexPath.item), postId: \(postId)")
+    return anchor
+  }
+  
   // MARK: - Thread-Specific Position Calculation
   
   @available(iOS 18.0, *)
@@ -1376,7 +1435,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
       
       // Main post section (section 1, item 0)
-      if let mainPostId = mainPost?.id {
+      if let mainPostId = mainPost?.uri.uriString() {
         mapping[mainPostId] = IndexPath(item: 0, section: 1)
       }
       
