@@ -180,8 +180,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Clean up iOS 18+ optimized scroll system
     if #available(iOS 18.0, *) {
+      let scrollSystem = optimizedScrollSystem
       Task { @MainActor in
-        optimizedScrollSystem.cleanup()
+        scrollSystem.cleanup()
       }
     }
     
