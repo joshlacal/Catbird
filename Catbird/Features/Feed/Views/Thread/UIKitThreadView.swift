@@ -1254,11 +1254,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       return
     }
     
-    // Store current post IDs to track content changes (include all thread content)
+    // Store current post URIs to track content changes (include all thread content)
     let currentPostIds = (
-      parentPosts.map { $0.id } + 
+      parentPosts.map { $0.post.uri.uriString() } + 
       [mainPost?.uri.uriString()].compactMap { $0 } +
-      replyWrappers.map { $0.id }
+      replyWrappers.map { $0.post.uri.uriString() }
     )
     
     // Apply atomic update with position preservation (like feed view does)
@@ -1366,7 +1366,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       return nil
     }
     
-    // Get the post ID for this index path from thread structure
+    // Get the post URI for this index path from thread structure
     let postId: String
     switch firstVisibleIndexPath.section {
     case 0: // Parent posts
@@ -1374,21 +1374,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         controllerLogger.debug("⚠️ Parent index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      postId = parentPosts[firstVisibleIndexPath.item].id
+      postId = parentPosts[firstVisibleIndexPath.item].post.uri.uriString()
       
     case 1: // Main post
-      guard let mainPostId = mainPost?.id else {
-        controllerLogger.debug("⚠️ Main post has no ID")
+      guard let mainPostUri = mainPost?.uri.uriString() else {
+        controllerLogger.debug("⚠️ Main post has no URI")
         return nil
       }
-      postId = mainPostId
+      postId = mainPostUri
       
     case 2: // Replies
       guard firstVisibleIndexPath.item < replyWrappers.count else {
         controllerLogger.debug("⚠️ Reply index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      postId = replyWrappers[firstVisibleIndexPath.item].id
+      postId = replyWrappers[firstVisibleIndexPath.item].post.uri.uriString()
       
     default:
       controllerLogger.debug("⚠️ Unknown section for anchor capture: \(firstVisibleIndexPath.section)")
@@ -1431,17 +1431,17 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       // Parent posts section (section 0)
       for (index, parentPost) in parentPosts.enumerated() {
-        mapping[parentPost.id] = IndexPath(item: index, section: 0)
+        mapping[parentPost.post.uri.uriString()] = IndexPath(item: index, section: 0)
       }
       
       // Main post section (section 1, item 0)
-      if let mainPostId = mainPost?.uri.uriString() {
-        mapping[mainPostId] = IndexPath(item: 0, section: 1)
+      if let mainPostUri = mainPost?.uri.uriString() {
+        mapping[mainPostUri] = IndexPath(item: 0, section: 1)
       }
       
       // Replies section (section 2)
       for (index, replyWrapper) in replyWrappers.enumerated() {
-        mapping[replyWrapper.id] = IndexPath(item: index, section: 2)
+        mapping[replyWrapper.post.uri.uriString()] = IndexPath(item: index, section: 2)
       }
       
       return mapping
