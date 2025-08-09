@@ -180,7 +180,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Clean up iOS 18+ optimized scroll system
     if #available(iOS 18.0, *) {
-      optimizedScrollSystem.cleanup()
+      Task { @MainActor in
+        optimizedScrollSystem.cleanup()
+      }
     }
     
     // Unsubscribe from state invalidation events
@@ -1257,7 +1259,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Store current post IDs to track content changes (include all thread content)
     let currentPostIds = (
       parentPosts.map { $0.id } + 
-      [mainPost?.id].compactMap { $0 } + 
+      [mainPost?.uri.uriString()].compactMap { $0 } +
       replyWrappers.map { $0.id }
     )
     
