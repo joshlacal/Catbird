@@ -1327,13 +1327,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Step 4: Force layout to get accurate positions
     collectionView.layoutIfNeeded()
     
-    // Step 5: Fine-tune position with actual layout data
-    if let finalTargetOffset = optimizedScrollSystem.calculateTargetOffset(
+    // Step 5: Fine-tune position with actual layout data using thread-specific calculation
+    if let finalTargetOffset = calculateThreadTargetOffset(
       for: anchor,
       newPostIds: currentPostIds,
       in: collectionView
     ) {
       collectionView.setContentOffset(finalTargetOffset, animated: false)
+      controllerLogger.debug("🎯 Applied fine-tuned thread position: \(finalTargetOffset.y)")
+    } else {
+      controllerLogger.debug("⚠️ Thread fine-tuning failed - using estimated position")
     }
     
     CATransaction.commit()
@@ -1352,6 +1355,64 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     collectionView.setContentOffset(adjustedOffset, animated: false)
     
     controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts")
+  }
+  
+  // MARK: - Thread-Specific Position Calculation
+  
+  @available(iOS 18.0, *)
+  @MainActor
+  private func calculateThreadTargetOffset(
+    for anchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor,
+    newPostIds: [String],
+    in collectionView: UICollectionView
+  ) -> CGPoint? {
+    // Create a mapping from thread content to collection view indices
+    let threadContentToIndexPath: [String: IndexPath] = {
+      var mapping: [String: IndexPath] = [:]
+      
+      // Parent posts section (section 0)
+      for (index, parentPost) in parentPosts.enumerated() {
+        mapping[parentPost.id] = IndexPath(item: index, section: 0)
+      }
+      
+      // Main post section (section 1, item 0)
+      if let mainPostId = mainPost?.id {
+        mapping[mainPostId] = IndexPath(item: 0, section: 1)
+      }
+      
+      // Replies section (section 2)
+      for (index, replyWrapper) in replyWrappers.enumerated() {
+        mapping[replyWrapper.id] = IndexPath(item: index, section: 2)
+      }
+      
+      return mapping
+    }()
+    
+    // Find the anchor post's new index path
+    guard let anchorIndexPath = threadContentToIndexPath[anchor.postId] else {
+      controllerLogger.debug("⚠️ Thread anchor post not found: \(anchor.postId)")
+      return nil
+    }
+    
+    // Get the actual layout attributes for the anchor post
+    guard let anchorAttributes = collectionView.layoutAttributesForItem(at: anchorIndexPath) else {
+      controllerLogger.debug("⚠️ No layout attributes for anchor at \(anchorIndexPath)")
+      return nil
+    }
+    
+    // Calculate target offset using viewport-relative positioning
+    let safeAreaTop = collectionView.adjustedContentInset.top
+    let targetOffsetY = anchorAttributes.frame.origin.y - safeAreaTop - anchor.viewportRelativeY
+    
+    // Clamp to valid content bounds
+    let minOffset = -safeAreaTop
+    let maxOffset = max(minOffset, collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom)
+    
+    let clampedOffsetY = max(minOffset, min(targetOffsetY, maxOffset))
+    
+    controllerLogger.debug("🎯 Thread target calculation - anchor: \(anchor.postId), indexPath: \(anchorIndexPath), targetY: \(clampedOffsetY)")
+    
+    return CGPoint(x: 0, y: clampedOffsetY)
   }
   
   // MARK: - Scroll Position Restoration with Retry Logic
