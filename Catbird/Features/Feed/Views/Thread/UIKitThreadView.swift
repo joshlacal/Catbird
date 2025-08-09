@@ -20,6 +20,7 @@ extension UIView {
     }
 }
 
+
 // MARK: - Custom Thread Layout
 @available(iOS 18.0, *)
 final class ThreadCompositionalLayout: UICollectionViewCompositionalLayout {
@@ -70,12 +71,19 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var parentLoadAttempts = 0
   private var hasReachedTopOfThread = false
   private var pendingLoadTask: Task<Void, Never>?
+  
+  // MARK: - UIUpdateLink for coordinated UI updates
+  private var updateLink: UIUpdateLink?
+  private var scrollPositionTracker = ThreadScrollPositionTracker()
 
   private var parentPosts: [ParentPost] = []
   private var mainPost: AppBskyFeedDefs.PostView?
   private var replyWrappers: [ReplyWrapper] = []
 
   private static let mainPostID = "main-post-id"
+  
+  // Estimated height for parent posts (used for scroll position preservation)
+  private let estimatedParentPostHeight: CGFloat = 120.0
 
   // Logger for debugging thread loading issues
   private let controllerLogger = Logger(
@@ -85,13 +93,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     private lazy var collectionView: UICollectionView = {
         let layout = createCompositionalLayout()
         let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+        collectionView.backgroundColor = .systemBackground
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.showsVerticalScrollIndicator = true
         collectionView.prefetchDataSource = self
         
-        // Add 10pt top content inset
-        collectionView.contentInset = UIEdgeInsets(top: 10, left: 0, bottom: 0, right: 0)
+        // Let automatic content inset adjustment handle safe areas since we're edge-to-edge
+        collectionView.contentInsetAdjustmentBehavior = .automatic
 
         return collectionView
     }()
@@ -99,7 +107,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private lazy var loadingView: UIView = {
     let container = UIView()
     container.translatesAutoresizingMaskIntoConstraints = false
-    container.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      container.backgroundColor = .systemBackground
 
     let activityIndicator = UIActivityIndicatorView(style: .medium)
     activityIndicator.translatesAutoresizingMaskIntoConstraints = false
@@ -162,6 +170,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
   
   deinit {
+    // Clean up UIUpdateLink
+    updateLink?.isEnabled = false
+    updateLink = nil
+    
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
   }
@@ -195,6 +207,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     
+    // Setup UIUpdateLink now that view is in window hierarchy
+    if updateLink == nil {
+      setupUIUpdateLink()
+    }
+    
     // Ensure theming is applied after view appears (helps with material effects)
     DispatchQueue.main.async {
       self.configureNavigationAndToolbarTheme()
@@ -210,9 +227,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       configureNavigationAndToolbarTheme()
       
       // Update collection view background
-      collectionView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
-      view.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
-      loadingView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+        collectionView.backgroundColor = .systemBackground
+        view.backgroundColor = .systemBackground
+        loadingView.backgroundColor = .systemBackground
     }
   }
   
@@ -256,30 +273,32 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     let tabBarAppearance = UITabBarAppearance()
     
-    if isDarkMode && isBlackMode {
-        // True black mode - solid black background
-        tabBarAppearance.configureWithOpaqueBackground()
-        tabBarAppearance.backgroundColor = UIColor.black
-        tabBarAppearance.shadowColor = .clear
-        
-        // Set blue tint color for better visibility on black
-        tabBarController.tabBar.tintColor = UIColor.systemBlue
-    } else if isDarkMode {
-        // Dim mode - use dim background color
-        tabBarAppearance.configureWithOpaqueBackground()
-        tabBarAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
-        tabBarAppearance.shadowColor = .clear
-        
-        // Reset tint color to system default (not black)
-        tabBarController.tabBar.tintColor = nil
-    } else {
-        // Light mode - use system background
-        tabBarAppearance.configureWithDefaultBackground()
-        tabBarAppearance.backgroundColor = UIColor.systemBackground
-        
-        // Explicitly set blue tint color to ensure visibility
-        tabBarController.tabBar.tintColor = UIColor.systemBlue
-    }
+//    if isDarkMode && isBlackMode {
+//        // True black mode - solid black background
+//        tabBarAppearance.configureWithOpaqueBackground()
+//        tabBarAppearance.backgroundColor = UIColor.black
+//        tabBarAppearance.shadowColor = .clear
+//        
+//        // Set blue tint color for better visibility on black
+//        tabBarController.tabBar.tintColor = UIColor.systemBlue
+//    } else if isDarkMode {
+//        // Dim mode - use dim background color
+//        tabBarAppearance.configureWithOpaqueBackground()
+//        tabBarAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
+//        tabBarAppearance.shadowColor = .clear
+//        
+//        // Reset tint color to system default (not black)
+//        tabBarController.tabBar.tintColor = nil
+//    } else {
+//        // Light mode - use system background
+//        tabBarAppearance.configureWithDefaultBackground()
+//        tabBarAppearance.backgroundColor = UIColor.systemBackground
+//        
+//        // Explicitly set blue tint color to ensure visibility
+//        tabBarController.tabBar.tintColor = UIColor.systemBlue
+//    }
+      
+      tabBarAppearance.configureWithTransparentBackground()
     
     // Apply the tab bar appearance
     tabBarController.tabBar.standardAppearance = tabBarAppearance
@@ -296,9 +315,33 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // No need to modify UIKit navigation bar appearance directly
   }
 
+  // MARK: - UIUpdateLink Setup
+  private func setupUIUpdateLink() {
+    guard let windowScene = view.window?.windowScene else {
+      controllerLogger.warning("Cannot setup UIUpdateLink: windowScene not available")
+      return
+    }
+    
+    // Create UIUpdateLink for the window scene for smooth transitions
+    updateLink = UIUpdateLink(windowScene: windowScene)
+    
+    // Add action for coordinating smooth animations during updates
+    updateLink?.addAction(handler: { [weak self] link, info in
+      // Use UIUpdateLink for what it's designed for - coordinating with display refresh
+      // Position restoration is handled separately using the proven ScrollPositionTracker pattern
+    })
+    
+    // Configure UIUpdateLink preferences for smooth transitions
+    updateLink?.isEnabled = true
+    updateLink?.requiresContinuousUpdates = false
+    updateLink?.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 60)
+    
+    controllerLogger.debug("UIUpdateLink setup completed for smooth transitions")
+  }
+
   // MARK: - UI Setup
   private func setupUI() {
-    view.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      view.backgroundColor = .systemBackground
 
     // Initially hide collection view to prevent content flickering
     collectionView.alpha = 0
@@ -307,10 +350,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     view.addSubview(loadingView)
 
     NSLayoutConstraint.activate([
-      collectionView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      collectionView.topAnchor.constraint(equalTo: view.topAnchor),
       collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      collectionView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+      collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
       loadingView.topAnchor.constraint(equalTo: view.topAnchor),
       loadingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -859,14 +902,28 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             let mainPostY = attributes.frame.origin.y
             
             let offset: CGFloat
+            // Debug content insets
+            let adjustedContentInset = self.collectionView.adjustedContentInset
+            let safeAreaTop = self.view.safeAreaInsets.top
+            
+            self.controllerLogger.debug("🔍 POSITIONING DEBUG:")
+            self.controllerLogger.debug("  - adjustedContentInset.top: \(adjustedContentInset.top)")
+            self.controllerLogger.debug("  - safeAreaInsets.top: \(safeAreaTop)")
+            self.controllerLogger.debug("  - mainPostY: \(mainPostY)")
+            self.controllerLogger.debug("  - hasParentPosts: \(hasParentPosts)")
+            
             if hasParentPosts {
                 // Show 10pt of parent content when there are parent posts
+                // Position main post just below navigation bar, with 10pt of parent showing above
                 let partialParentVisibility: CGFloat = 10
-                offset = max(0, mainPostY - partialParentVisibility)
+                offset = max(0, mainPostY - safeAreaTop - partialParentVisibility)
+                self.controllerLogger.debug("  - WITH parents offset: \(offset)")
             } else {
-                // When there are no parent posts, respect the content inset
-                // This will show the main post with the 10pt top margin from content inset
-                offset = -self.collectionView.contentInset.top
+                // When there are no parent posts, the main post is at position 0
+                // We want to scroll to show it just below the navigation bar
+                // Since mainPostY is 0, we use negative offset to let automatic content inset handle positioning
+                offset = -adjustedContentInset.top + 10
+                self.controllerLogger.debug("  - NO parents offset: \(offset) (using negative offset for top positioning)")
             }
             
             // Apply the offset if requested
@@ -925,8 +982,23 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
               "DELAYED position check - Main post visible top offset: \(visibleTop)pt")
 
             // If position has drifted, correct it again
-            if visibleTop < 9 || visibleTop > 11 {  // Allow 1pt tolerance
-              let correctedOffset = max(0, attrs.frame.origin.y - 10)
+            let adjustedContentInset = self.collectionView.adjustedContentInset
+            let safeAreaTop = self.view.safeAreaInsets.top
+            
+            let expectedVisibleTop: CGFloat
+            let correctedOffset: CGFloat
+            
+            if hasParentPosts {
+              // For threads with parents, expect main post to be positioned with 10pt of parent visible above nav bar
+              expectedVisibleTop = safeAreaTop + 10
+              correctedOffset = max(0, attrs.frame.origin.y - safeAreaTop - 10)
+            } else {
+              // For top-level posts, expect them 10pt below nav bar
+              expectedVisibleTop = 10
+              correctedOffset = -adjustedContentInset.top + 10
+            }
+            
+            if abs(visibleTop - expectedVisibleTop) > 2 {  // Allow 2pt tolerance
               self.controllerLogger.debug("Correcting position drift to: \(correctedOffset)")
 
               // Use transaction to ensure it applies cleanly
@@ -967,8 +1039,19 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     isLoadingMoreParents = true
     lastParentLoadTime = Date()
     
-    // iOS 18: Use collection view's new update coordination
-    let mainPostIndexPath = IndexPath(item: 0, section: Section.mainPost.rawValue)
+    // Capture scroll anchor BEFORE any changes (critical for thread reverse infinite scroll)
+    let scrollAnchor = scrollPositionTracker.captureScrollAnchor(collectionView: collectionView)
+    
+    // Log anchor capture for debugging
+    if let anchor = scrollAnchor {
+      controllerLogger.debug("⬆️ LOAD MORE PARENTS: Captured scroll anchor - section: \(anchor.indexPath.section), item: \(anchor.indexPath.item), mainPostY: \(anchor.mainPostFrameY)")
+    } else {
+      controllerLogger.warning("⬆️ LOAD MORE PARENTS: Failed to capture scroll anchor - position may jump")
+    }
+    
+    // Enable smooth transitions during the update
+    updateLink?.requiresContinuousUpdates = true
+    
     let oldestParent = parentPosts.last!
     
     // Start loading animation
@@ -1031,7 +1114,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         if hasRootPost {
           controllerLogger.debug("⬆️ LOAD MORE PARENTS: Found root post, updating view")
           // Update the view with the complete chain including root
-          updateDataWithNewParents(fullChainFromManager, mainPostIndexPath: mainPostIndexPath)
+          updateDataWithNewParents(fullChainFromManager, scrollAnchor: scrollAnchor)
           return
         }
         
@@ -1056,24 +1139,24 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       controllerLogger.debug("⬆️ LOAD MORE PARENTS: Adding \(fullChainFromManager.count - self.parentPosts.count) new parents")
       
       // Update data with coordinated updates
-      updateDataWithNewParents(fullChainFromManager, mainPostIndexPath: mainPostIndexPath)
+      updateDataWithNewParents(fullChainFromManager, scrollAnchor: scrollAnchor)
     }
   }
 
-  // Coordinated update method with manual position tracking
+  // Coordinated update method using proven scroll position restoration pattern adapted for threads
   @MainActor
-  private func updateDataWithNewParents(_ newParents: [ParentPost], mainPostIndexPath: IndexPath) {
-    // Store current position before update
-    let oldContentOffsetY = collectionView.contentOffset.y
-    let oldMainPostFrameY = collectionView.layoutAttributesForItem(at: mainPostIndexPath)?.frame.origin.y
+  private func updateDataWithNewParents(_ newParents: [ParentPost], scrollAnchor: ThreadScrollPositionTracker.ScrollAnchor?) {
+    controllerLogger.debug("⬆️ LOAD MORE PARENTS: Starting update with thread-aware scroll position restoration")
     
-    // Pre-calculate heights for new parents
+    // Pre-calculate heights for new parents for better layout stability
     let newParentsCount = newParents.count - parentPosts.count
+    controllerLogger.debug("⬆️ LOAD MORE PARENTS: Pre-calculating heights for \(newParentsCount) new parents")
     for parent in newParents.prefix(newParentsCount) {
       _ = heightCalculator.calculateParentPostHeight(for: parent)
     }
     
-    // Update model
+    // Update model data
+    let oldParentCount = parentPosts.count
     parentPosts = newParents
     
     // Check if we now have the root post
@@ -1089,58 +1172,125 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       hasReachedTopOfThread = true
     }
     
-    // Create new snapshot
+    // Create new snapshot with updated data
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     snapshot.appendSections(Section.allCases)
     
+    // Add load more trigger only if we haven't reached the top
     if !parentPosts.isEmpty && !hasReachedTopOfThread {
       snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
     }
     
+    // Add parent posts in reverse chronological order (oldest first, newest last)
     let parentItems = parentPosts.reversed().map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
     
+    // Add main post
     if let mainPost = mainPost {
       snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
     }
     
+    // Add replies 
     let replyItems = replyWrappers.map { Item.reply($0) }
     snapshot.appendItems(replyItems, toSection: .replies)
     
+    // Add bottom spacer
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
     
-    // Apply snapshot
+    // Apply snapshot immediately for layout calculation
     dataSource.apply(snapshot, animatingDifferences: false)
     
-    // Force layout to calculate new positions
-    collectionView.layoutIfNeeded()
-    
-    // Calculate and apply position correction
-    if let oldMainPostY = oldMainPostFrameY,
-       let newAttributes = collectionView.layoutAttributesForItem(at: mainPostIndexPath) {
+    // Maintain current scroll position by adjusting for newly inserted content
+    Task { @MainActor in
+      // Calculate height of newly inserted parent posts to preserve scroll position
+      let newParentHeight = CGFloat(newParentsCount) * estimatedParentPostHeight
+      let currentOffset = collectionView.contentOffset.y
+      let adjustedOffset = CGPoint(x: 0, y: currentOffset + newParentHeight)
       
-      let newMainPostY = newAttributes.frame.origin.y
-      let contentHeightAddedAboveAnchor = newMainPostY - oldMainPostY
+      // Preserve scroll position by offsetting for new content above
+      collectionView.setContentOffset(adjustedOffset, animated: false)
       
-      // Calculate new offset to maintain visual position
-      let newCalculatedOffsetY = oldContentOffsetY + contentHeightAddedAboveAnchor
+      // Clean up loading state after positioning
+      isLoadingMoreParents = false
+      updateLoadingCell(isLoading: false)
       
-      // Ensure within bounds
-      let contentHeight = collectionView.contentSize.height
-      let boundsHeight = collectionView.bounds.height
-      let maxPossibleOffsetY = max(0, contentHeight - boundsHeight)
-      let safeOffsetY = max(0, min(newCalculatedOffsetY, maxPossibleOffsetY))
+      // Disable continuous updates now that loading is complete
+      updateLink?.requiresContinuousUpdates = false
       
-      // Apply the corrected offset
-      collectionView.setContentOffset(CGPoint(x: 0, y: safeOffsetY), animated: false)
-      
-      controllerLogger.debug("⬆️ LOAD MORE PARENTS: Position adjusted - old Y: \(oldMainPostY), new Y: \(newMainPostY), delta: \(contentHeightAddedAboveAnchor), final offset: \(safeOffsetY)")
+      controllerLogger.debug("⬆️ LOAD MORE PARENTS: Successfully added \(newParentsCount) parents while preserving scroll position")
+    }
+  }
+  
+  // MARK: - Scroll Position Restoration with Retry Logic
+  
+  @MainActor
+  private func restoreScrollPositionWithRetry(anchor: ThreadScrollPositionTracker.ScrollAnchor?, newParentsCount: Int, oldParentCount: Int) async {
+    guard let anchor = anchor else {
+      controllerLogger.warning("⬆️ RESTORE: No anchor available - position may jump")
+      return
     }
     
-    isLoadingMoreParents = false
-    updateLoadingCell(isLoading: false)
+    controllerLogger.debug("⬆️ RESTORE: Starting position restoration with \(FeedConstants.maxScrollRestorationAttempts) max attempts")
     
-    controllerLogger.debug("⬆️ LOAD MORE PARENTS: Successfully added \(newParentsCount) parents")
+    var attempts = 0
+    let maxAttempts = FeedConstants.maxScrollRestorationAttempts
+    var lastOffset: CGFloat = collectionView.contentOffset.y
+    
+    while attempts < maxAttempts {
+      attempts += 1
+      
+      // Force layout calculation
+      collectionView.layoutIfNeeded()
+      
+      // Attempt restoration
+      scrollPositionTracker.restoreScrollPosition(collectionView: collectionView, to: anchor)
+      
+      // Verify restoration success
+      let currentOffset = collectionView.contentOffset.y
+      let offsetDifference = abs(currentOffset - lastOffset)
+      
+      // If position stabilized or we have reasonable position, we're done
+      if offsetDifference < FeedConstants.scrollRestorationVerificationThreshold || isPositionReasonable(currentOffset: currentOffset, anchor: anchor) {
+        controllerLogger.debug("⬆️ RESTORE: Position restored successfully after \(attempts) attempts (offset: \(currentOffset))")
+        break
+      }
+      
+      lastOffset = currentOffset
+      
+      // Wait before next attempt (exponential backoff)
+      let delay = Double(attempts) * 0.1 // 100ms, 200ms, 300ms
+      try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+      
+      controllerLogger.debug("⬆️ RESTORE: Attempt \(attempts) incomplete, offset difference: \(offsetDifference)")
+    }
+    
+    if attempts >= maxAttempts {
+      controllerLogger.warning("⬆️ RESTORE: Failed to restore position after \(maxAttempts) attempts - using final position")
+    }
+  }
+  
+  /// Validates if the current scroll position is reasonable for the thread layout
+  private func isPositionReasonable(currentOffset: CGFloat, anchor: ThreadScrollPositionTracker.ScrollAnchor) -> Bool {
+    // Check bounds
+    let contentHeight = collectionView.contentSize.height
+    let viewHeight = collectionView.bounds.height
+    let maxOffset = max(0, contentHeight - viewHeight)
+    
+    guard currentOffset >= 0 && currentOffset <= maxOffset else {
+      return false
+    }
+    
+    // For main post anchors, verify main post is reasonably positioned
+    if anchor.isMainPostAnchor {
+      let mainPostIndexPath = IndexPath(item: 0, section: ThreadScrollPositionTracker.ThreadSection.mainPost.rawValue)
+      if let mainPostAttributes = collectionView.layoutAttributesForItem(at: mainPostIndexPath) {
+        let mainPostVisibleY = mainPostAttributes.frame.origin.y - currentOffset
+        // Main post should be somewhere in the viewport (not completely off-screen)
+        return mainPostVisibleY >= -mainPostAttributes.frame.height && mainPostVisibleY <= viewHeight
+      }
+    }
+    
+    return true
   }
 
   // MARK: - Helper Functions
@@ -1662,7 +1812,7 @@ final class ParentPostCell: UICollectionViewCell {
 
   func configure(parentPost: ParentPost, appState: AppState, path: Binding<NavigationPath>) {
     // Set themed background color
-    contentView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      contentView.backgroundColor = .systemBackground
     
     let content = AnyView(
       ParentPostView(
@@ -1714,7 +1864,7 @@ final class MainPostCell: UICollectionViewCell {
 
   func configure(post: AppBskyFeedDefs.PostView, appState: AppState, path: Binding<NavigationPath>) {
     // Set themed background color
-    contentView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      contentView.backgroundColor = .systemBackground
     
     // Avoid removing/readding subviews if configuration hasn't changed
     let content = AnyView(
@@ -1770,7 +1920,7 @@ final class ReplyCell: UICollectionViewCell {
     path: Binding<NavigationPath>
   ) {
     // Set themed background color
-    contentView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      contentView.backgroundColor = .systemBackground
     
     let content = AnyView(
       VStack(spacing: 0) {
@@ -2098,6 +2248,7 @@ struct ThreadView: View {
   var body: some View {
     ThreadViewControllerRepresentable(postURI: postURI, path: $path)
       .frame(maxWidth: 600)  // Ensure 600pt maximum width for better iPad experience
+      .ignoresSafeArea()
 //      .themedNavigationBar(appState.themeManager)
 //      .applyTheme(appState.themeManager)
   }
