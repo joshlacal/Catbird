@@ -21,12 +21,15 @@ class SelfSizingTextView: UITextView {
     return CGSize(width: UIView.noIntrinsicMetric, height: ceil(size.height))
   }
   
+  private var lastKnownWidth: CGFloat = 0
+  
   override func layoutSubviews() {
     super.layoutSubviews()
     
-    // Only invalidate if the width has changed significantly
+    // Only invalidate if the width has changed significantly to avoid unnecessary layout passes
     let currentWidth = bounds.width
-    if abs(currentWidth - (superview?.bounds.width ?? 0)) > 1 {
+    if abs(currentWidth - lastKnownWidth) > 1 {
+      lastKnownWidth = currentWidth
       invalidateIntrinsicContentSize()
     }
   }
@@ -49,10 +52,9 @@ struct TappableTextView: UIViewRepresentable {
   private var textStyle: Font.TextStyle
   private var textSize: CGFloat?
   private var fontWidth: CGFloat?
-  private var isSelectable: Bool
 
   // Public initializer
-  public init(attributedString: AttributedString, isSelectable: Bool = false) {
+  public init(attributedString: AttributedString) {
     self.attributedString = attributedString
     self.textSize = nil
     self.textStyle = .body
@@ -61,7 +63,6 @@ struct TappableTextView: UIViewRepresentable {
     self.fontWidth = nil
     self.lineSpacing = 1.6
     self.letterSpacing = 0.2
-    self.isSelectable = isSelectable
   }
     
   public init(
@@ -72,8 +73,7 @@ struct TappableTextView: UIViewRepresentable {
       textWeight: Font.Weight = .regular,
       fontWidth: CGFloat? = nil,
       lineSpacing: CGFloat = 1.6,
-      letterSpacing: CGFloat = 0.2,
-      isSelectable: Bool = false
+      letterSpacing: CGFloat = 0.2
   ) {
       self.attributedString = attributedString
       self.textSize = textSize
@@ -83,7 +83,6 @@ struct TappableTextView: UIViewRepresentable {
       self.fontWidth = fontWidth
       self.lineSpacing = lineSpacing
       self.letterSpacing = letterSpacing
-      self.isSelectable = isSelectable
   }
 
   func makeUIView(context: Context) -> SelfSizingTextView {
@@ -91,7 +90,7 @@ struct TappableTextView: UIViewRepresentable {
     
     // Configure basic properties
     textView.isEditable = false
-    textView.isSelectable = isSelectable
+    textView.isSelectable = false
     textView.isScrollEnabled = false
     textView.backgroundColor = .clear
     textView.textContainer.lineFragmentPadding = 0
@@ -118,7 +117,7 @@ struct TappableTextView: UIViewRepresentable {
     textView.adjustsFontForContentSizeCategory = true
     
     // Text selection configuration
-    textView.textDragInteraction?.isEnabled = isSelectable
+    textView.textDragInteraction?.isEnabled = false
     
     return textView
   }
@@ -133,11 +132,9 @@ struct TappableTextView: UIViewRepresentable {
     
     if uiView.attributedText != nsAttributedString {
       uiView.attributedText = nsAttributedString
-      // Trigger layout update after content changes
-      DispatchQueue.main.async {
-        uiView.invalidateIntrinsicContentSize()
-        uiView.setNeedsLayout()
-      }
+      // Trigger immediate layout update after content changes
+      uiView.invalidateIntrinsicContentSize()
+      uiView.setNeedsLayout()
     }
     
     // Apply theme colors

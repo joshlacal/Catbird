@@ -21,12 +21,15 @@ class SelectableSelfSizingTextView: UITextView {
     return CGSize(width: UIView.noIntrinsicMetric, height: ceil(size.height))
   }
   
+  private var lastKnownWidth: CGFloat = 0
+  
   override func layoutSubviews() {
     super.layoutSubviews()
     
-    // Only invalidate if the width has changed significantly
+    // Only invalidate if the width has changed significantly to avoid unnecessary layout passes
     let currentWidth = bounds.width
-    if abs(currentWidth - (superview?.bounds.width ?? 0)) > 1 {
+    if abs(currentWidth - lastKnownWidth) > 1 {
+      lastKnownWidth = currentWidth
       invalidateIntrinsicContentSize()
     }
   }
@@ -126,11 +129,9 @@ struct SelectableTextView: UIViewRepresentable {
     
     if uiView.attributedText != nsAttributedString {
       uiView.attributedText = nsAttributedString
-      // Trigger layout update after content changes
-      DispatchQueue.main.async {
-        uiView.invalidateIntrinsicContentSize()
-        uiView.setNeedsLayout()
-      }
+      // Trigger immediate layout update after content changes
+      uiView.invalidateIntrinsicContentSize()
+      uiView.setNeedsLayout()
     }
     
     // Apply theme colors
