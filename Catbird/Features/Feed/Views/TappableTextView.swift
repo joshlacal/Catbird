@@ -49,9 +49,10 @@ struct TappableTextView: UIViewRepresentable {
   private var textStyle: Font.TextStyle
   private var textSize: CGFloat?
   private var fontWidth: CGFloat?
+  private var isSelectable: Bool
 
   // Public initializer
-  public init(attributedString: AttributedString) {
+  public init(attributedString: AttributedString, isSelectable: Bool = false) {
     self.attributedString = attributedString
     self.textSize = nil
     self.textStyle = .body
@@ -60,6 +61,7 @@ struct TappableTextView: UIViewRepresentable {
     self.fontWidth = nil
     self.lineSpacing = 1.6
     self.letterSpacing = 0.2
+    self.isSelectable = isSelectable
   }
     
   public init(
@@ -70,7 +72,8 @@ struct TappableTextView: UIViewRepresentable {
       textWeight: Font.Weight = .regular,
       fontWidth: CGFloat? = nil,
       lineSpacing: CGFloat = 1.6,
-      letterSpacing: CGFloat = 0.2
+      letterSpacing: CGFloat = 0.2,
+      isSelectable: Bool = false
   ) {
       self.attributedString = attributedString
       self.textSize = textSize
@@ -80,6 +83,7 @@ struct TappableTextView: UIViewRepresentable {
       self.fontWidth = fontWidth
       self.lineSpacing = lineSpacing
       self.letterSpacing = letterSpacing
+      self.isSelectable = isSelectable
   }
 
   func makeUIView(context: Context) -> SelfSizingTextView {
@@ -87,7 +91,7 @@ struct TappableTextView: UIViewRepresentable {
     
     // Configure basic properties
     textView.isEditable = false
-    textView.isSelectable = true
+    textView.isSelectable = isSelectable
     textView.isScrollEnabled = false
     textView.backgroundColor = .clear
     textView.textContainer.lineFragmentPadding = 0
@@ -114,7 +118,7 @@ struct TappableTextView: UIViewRepresentable {
     textView.adjustsFontForContentSizeCategory = true
     
     // Text selection configuration
-    textView.textDragInteraction?.isEnabled = true
+    textView.textDragInteraction?.isEnabled = isSelectable
     
     return textView
   }
@@ -155,8 +159,10 @@ struct TappableTextView: UIViewRepresentable {
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange) -> Bool {
       guard let appState = appState else { return true }
       
-      // Handle URL through the app's URL handler
-      let result = appState.urlHandler.handle(URL)
+      // Handle URL through the app's URL handler on the main thread
+      DispatchQueue.main.async {
+        _ = appState.urlHandler.handle(URL)
+      }
       
       // Return false to prevent default system handling since we're handling it ourselves
       return false
@@ -177,21 +183,35 @@ struct TappableTextView: UIViewRepresentable {
     // Calculate effective font size
     let baseSize = textSize ?? Typography.Size.body
     let effectiveSize = isEmojiOnly ? baseSize * 3 : baseSize
-    
-    // Create font with FontManager integration
     let scaledSize = fontManager.scaledSize(effectiveSize)
-    let font = createUIFont(size: scaledSize, weight: textWeight, design: textDesign)
     
-    // Apply font to entire string
-    nsAttributedString.addAttribute(.font, value: font, range: NSRange(location: 0, length: nsAttributedString.length))
+    // Create default font with FontManager integration
+    let defaultFont = createUIFont(size: scaledSize, weight: textWeight, design: textDesign)
     
-    // Apply line spacing
+    // Enumerate existing attributes and preserve formatting while updating font sizes
+    nsAttributedString.enumerateAttributes(in: NSRange(location: 0, length: nsAttributedString.length), options: []) { attributes, range, _ in
+      var newAttributes = attributes
+      
+      // Update font while preserving weight/traits if they exist
+      if let existingFont = attributes[.font] as? UIFont {
+        // Preserve existing font traits (bold, italic, etc.) but update size
+        let newFont = existingFont.withSize(scaledSize)
+        newAttributes[.font] = newFont
+      } else {
+        // No existing font, use default
+        newAttributes[.font] = defaultFont
+      }
+      
+      nsAttributedString.setAttributes(newAttributes, range: range)
+    }
+    
+    // Apply line spacing and paragraph style
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.lineSpacing = fontManager.getLineSpacing(for: scaledSize) * lineSpacing
     paragraphStyle.lineBreakMode = .byWordWrapping
     paragraphStyle.alignment = .left
     
-    // Apply letter spacing
+    // Apply letter spacing and paragraph style to entire string
     let letterSpacingValue = fontManager.letterSpacingValue * letterSpacing
     nsAttributedString.addAttribute(.kern, value: letterSpacingValue, range: NSRange(location: 0, length: nsAttributedString.length))
     nsAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttributedString.length))
