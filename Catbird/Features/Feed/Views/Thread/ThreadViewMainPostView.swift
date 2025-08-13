@@ -109,12 +109,21 @@ struct ThreadViewMainPostView: View {
             .frame(height: 60, alignment: .center)
             .padding(.bottom, 3)
               
-              Post(post: feedPost, isSelectable: true, path: $path, textSize: 28, textStyle: .title3, textDesign: .default, textWeight: .regular, fontWidth: 100)
-                  .lineLimit(nil)
-                  .fixedSize(horizontal: false, vertical: true)
-                  .padding(.vertical, 6)
-                  .padding(.leading, 6)
-                  .padding(.trailing, 6)
+              if !feedPost.text.isEmpty {
+                SelectableTextView(
+                  attributedString: feedPost.facetsAsAttributedString,
+                  textSize: 28,
+                  textStyle: .title3,
+                  textDesign: .default,
+                  textWeight: .regular,
+                  fontWidth: 100
+                )
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 6)
+                .padding(.leading, 6)
+                .padding(.trailing, 6)
+              }
 
 //              if feedPost.text != "" {
 //                  
