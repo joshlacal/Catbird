@@ -9,6 +9,29 @@ import Foundation
 import SwiftUI
 import UIKit
 
+// Custom UITextView that properly sizes itself
+class SelfSizingTextView: UITextView {
+  override var intrinsicContentSize: CGSize {
+    // Use a reasonable width constraint for text wrapping
+    let maxWidth = superview?.bounds.width ?? UIScreen.main.bounds.width - 32
+    let constrainedSize = CGSize(width: maxWidth, height: CGFloat.greatestFiniteMagnitude)
+    
+    // Calculate the size needed for the current attributed text
+    let size = sizeThatFits(constrainedSize)
+    return CGSize(width: UIView.noIntrinsicMetric, height: ceil(size.height))
+  }
+  
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    
+    // Only invalidate if the width has changed significantly
+    let currentWidth = bounds.width
+    if abs(currentWidth - (superview?.bounds.width ?? 0)) > 1 {
+      invalidateIntrinsicContentSize()
+    }
+  }
+}
+
 struct TappableTextView: UIViewRepresentable {
   let attributedString: AttributedString
   @Environment(AppState.self) private var appState
@@ -59,8 +82,8 @@ struct TappableTextView: UIViewRepresentable {
       self.letterSpacing = letterSpacing
   }
 
-  func makeUIView(context: Context) -> UITextView {
-    let textView = UITextView()
+  func makeUIView(context: Context) -> SelfSizingTextView {
+    let textView = SelfSizingTextView()
     
     // Configure basic properties
     textView.isEditable = false
@@ -74,9 +97,16 @@ struct TappableTextView: UIViewRepresentable {
     // Enable data detectors for URLs
     textView.dataDetectorTypes = [.link]
     
-    // Configure for better performance with long text
+    // Configure for proper text wrapping and sizing
     textView.textContainer.lineBreakMode = .byWordWrapping
     textView.textContainer.maximumNumberOfLines = 0
+    textView.textContainer.widthTracksTextView = true
+    textView.textContainer.heightTracksTextView = false
+    
+    // Set content compression and hugging priorities
+    textView.setContentCompressionResistancePriority(.required, for: .vertical)
+    textView.setContentHuggingPriority(.required, for: .vertical)
+    textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     
     // Accessibility configuration
     textView.isAccessibilityElement = true
@@ -89,7 +119,7 @@ struct TappableTextView: UIViewRepresentable {
     return textView
   }
   
-  func updateUIView(_ uiView: UITextView, context: Context) {
+  func updateUIView(_ uiView: SelfSizingTextView, context: Context) {
     // Check for emoji-only content
     let plainText = extractPlainText(from: attributedString)
     let isEmojiOnly = plainText.containsOnlyEmojis
@@ -99,13 +129,17 @@ struct TappableTextView: UIViewRepresentable {
     
     if uiView.attributedText != nsAttributedString {
       uiView.attributedText = nsAttributedString
+      // Trigger layout update after content changes
+      DispatchQueue.main.async {
+        uiView.invalidateIntrinsicContentSize()
+        uiView.setNeedsLayout()
+      }
     }
     
     // Apply theme colors
-    if let themeManager = appState.themeManager {
-      uiView.textColor = UIColor(themeManager.primaryTextColor)
-      uiView.tintColor = UIColor(themeManager.accentColor)
-    }
+    let effectiveColorScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
+    uiView.textColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
+    uiView.tintColor = UIColor(.accentColor)
     
     // Update coordinator with current environment values
     context.coordinator.appState = appState
