@@ -222,7 +222,7 @@ struct CatbirdApp: App {
           // Fallback to in-memory storage if documents directory is inaccessible
           logger.warning("⚠️ Documents directory inaccessible, using in-memory storage")
           self.modelContainer = try! ModelContainer(
-            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,             RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
             configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
           )
           return
@@ -237,8 +237,7 @@ struct CatbirdApp: App {
             
             // Retry initialization
             self.modelContainer = try ModelContainer(
-              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,               // 🧪 EXPERIMENTAL: Repository parsing models
-              RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
               configurations: ModelConfiguration("Catbird", schema: nil, url: dbURL)
             )
             logger.debug("✅ Model container recreated successfully after recovery")
@@ -247,7 +246,7 @@ struct CatbirdApp: App {
             // Fallback to in-memory storage instead of crashing
             logger.warning("⚠️ Using in-memory storage as final fallback")
             self.modelContainer = try! ModelContainer(
-              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,               RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
               configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
             )
           }
@@ -255,7 +254,7 @@ struct CatbirdApp: App {
           // Fallback to in-memory storage instead of crashing
           logger.warning("⚠️ Using in-memory storage as fallback")
           self.modelContainer = try! ModelContainer(
-            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,             RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
+            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
             configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
           )
         }
