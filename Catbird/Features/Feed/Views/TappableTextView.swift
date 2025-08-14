@@ -7,37 +7,11 @@
 
 import Foundation
 import SwiftUI
-import UIKit
 
-// Custom UITextView that properly sizes itself
-class SelfSizingTextView: UITextView {
-  override var intrinsicContentSize: CGSize {
-    // Use a reasonable width constraint for text wrapping
-    let maxWidth = superview?.bounds.width ?? UIScreen.main.bounds.width - 32
-    let constrainedSize = CGSize(width: maxWidth, height: CGFloat.greatestFiniteMagnitude)
-    
-    // Calculate the size needed for the current attributed text
-    let size = sizeThatFits(constrainedSize)
-    return CGSize(width: UIView.noIntrinsicMetric, height: ceil(size.height))
-  }
-  
-  private var lastKnownWidth: CGFloat = 0
-  
-  override func layoutSubviews() {
-    super.layoutSubviews()
-    
-    // Only invalidate if the width has changed significantly to avoid unnecessary layout passes
-    let currentWidth = bounds.width
-    if abs(currentWidth - lastKnownWidth) > 1 {
-      lastKnownWidth = currentWidth
-      invalidateIntrinsicContentSize()
-    }
-  }
-}
-
-struct TappableTextView: UIViewRepresentable {
+struct TappableTextView: View {
   let attributedString: AttributedString
-  @Environment(AppState.self) private var appState
+    @Environment(AppState.self) private var appState
+    @Environment(\.openURL) private var openURL
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.fontManager) private var fontManager
@@ -52,6 +26,7 @@ struct TappableTextView: UIViewRepresentable {
   private var textStyle: Font.TextStyle
   private var textSize: CGFloat?
   private var fontWidth: CGFloat?
+  @State private var animateText = false
 
   // Public initializer
   public init(attributedString: AttributedString) {
@@ -85,166 +60,98 @@ struct TappableTextView: UIViewRepresentable {
       self.letterSpacing = letterSpacing
   }
 
-  func makeUIView(context: Context) -> SelfSizingTextView {
-    let textView = SelfSizingTextView()
-    
-    // Configure basic properties
-    textView.isEditable = false
-    textView.isSelectable = false
-    textView.isScrollEnabled = false
-    textView.backgroundColor = .clear
-    textView.textContainer.lineFragmentPadding = 0
-    textView.textContainerInset = .zero
-    textView.delegate = context.coordinator
-    
-    // Enable data detectors for URLs
-    textView.dataDetectorTypes = [.link]
-    
-    // Configure for proper text wrapping and sizing
-    textView.textContainer.lineBreakMode = .byWordWrapping
-    textView.textContainer.maximumNumberOfLines = 0
-    textView.textContainer.widthTracksTextView = true
-    textView.textContainer.heightTracksTextView = false
-    
-    // Set content compression and hugging priorities
-    textView.setContentCompressionResistancePriority(.required, for: .vertical)
-    textView.setContentHuggingPriority(.required, for: .vertical)
-    textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    
-    // Accessibility configuration
-    textView.isAccessibilityElement = true
-    textView.accessibilityTraits = [.staticText]
-    textView.adjustsFontForContentSizeCategory = true
-    
-    // Text selection configuration
-    textView.textDragInteraction?.isEnabled = false
-    
-    return textView
-  }
-  
-  func updateUIView(_ uiView: SelfSizingTextView, context: Context) {
-    // Check for emoji-only content
-    let plainText = extractPlainText(from: attributedString)
-    let isEmojiOnly = plainText.containsOnlyEmojis
-    
-    // Create NSAttributedString with proper font attributes
-    let nsAttributedString = createNSAttributedString(from: attributedString, isEmojiOnly: isEmojiOnly)
-    
-    if uiView.attributedText != nsAttributedString {
-      uiView.attributedText = nsAttributedString
-      // Trigger immediate layout update after content changes
-      uiView.invalidateIntrinsicContentSize()
-      uiView.setNeedsLayout()
+    var body: some View {
+        Group {
+            if containsOnlyEmojis {
+                // If the string contains only emojis, use a larger font size with accessibility support
+                Text(attributedString)
+                    .appFont(size: effectiveTextSize ?? 24, weight: textWeight, relativeTo: textStyle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                    .tracking(fontManager.letterSpacingValue)
+                    .lineSpacing(fontManager.getLineSpacing(for: effectiveTextSize ?? 24))
+                    .lineLimit(nil)
+                    .allowsTightening(true)
+                    .minimumScaleFactor(0.9)
+            } else {
+                // Regular text handling with FontManager integration
+                Text(attributedString)
+                    .appFont(size: effectiveTextSize ?? Typography.Size.body, weight: textWeight, relativeTo: textStyle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                    .tracking(fontManager.letterSpacingValue)
+                    .lineSpacing(fontManager.getLineSpacing(for: effectiveTextSize ?? Typography.Size.body))
+                    .lineLimit(nil)
+                    .allowsTightening(true)
+                    .minimumScaleFactor(0.9)
+                    .textSelectionAffinity(.automatic)
+                    .textSelection(.disabled)
+                    .animation(.spring(duration: 0.3), value: dynamicTypeSize)
+                    .animation(.spring(duration: 0.3), value: fontManager.sizeScale)
+                    .animation(.spring(duration: 0.3), value: fontManager.fontDesign)
+                    .environment(
+                        \.openURL,
+                         OpenURLAction { url in
+                             return appState.urlHandler.handle(url)
+                         })
+            }
+        }
+        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
+        .onAppear {
+            checkIfOnlyEmojis()
+        }
+
     }
     
-    // Apply theme colors
-    let effectiveColorScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
-    uiView.textColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
-    uiView.tintColor = UIColor(.accentColor)
+    // Helper function to convert Font.TextStyle to AppTextRole
+    private func textStyleToRole(_ textStyle: Font.TextStyle) -> AppTextRole {
+        switch textStyle {
+        case .largeTitle: return .largeTitle
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .body: return .body
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption
+        case .caption2: return .caption2
+        @unknown default: return .body
+        }
+    }
     
-    // Update coordinator with current environment values
-    context.coordinator.appState = appState
+  // Computed property for text size that increases size for emoji-only strings
+  private var effectiveTextSize: CGFloat? {
+      if containsOnlyEmojis {
+          // Return a larger size for emoji-only strings
+          return textSize != nil ? textSize! * 3 : 27
+      }
+      return textSize
   }
   
-  func makeCoordinator() -> Coordinator {
-    Coordinator()
-  }
-  
-  class Coordinator: NSObject, UITextViewDelegate {
-    var appState: AppState?
-    
-    func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange) -> Bool {
-      guard let appState = appState else { return true }
-      
-      // Handle URL through the app's URL handler on the main thread
-      DispatchQueue.main.async {
-        _ = appState.urlHandler.handle(URL)
+  // Function to check if the string contains only emojis
+  private func checkIfOnlyEmojis() {
+      // Safely extract a plain string and handle potential crashes
+      let plainString: String
+      do {
+          plainString = String(attributedString.characters.reduce("") { result, char in
+              result + String(char)
+          })
+      } catch {
+          // If any error occurs during processing, assume it's not emoji-only
+          containsOnlyEmojis = false
+          return
       }
       
-      // Return false to prevent default system handling since we're handling it ourselves
-      return false
-    }
-  }
-  
-  // MARK: - Helper Functions
-  
-  private func extractPlainText(from attributedString: AttributedString) -> String {
-    return String(attributedString.characters.reduce("") { result, char in
-      result + String(char)
-    })
-  }
-  
-  private func createNSAttributedString(from attributedString: AttributedString, isEmojiOnly: Bool) -> NSAttributedString {
-    let nsAttributedString = NSMutableAttributedString(attributedString)
-    
-    // Calculate effective font size
-    let baseSize = textSize ?? Typography.Size.body
-    let effectiveSize = isEmojiOnly ? baseSize * 3 : baseSize
-    let scaledSize = fontManager.scaledSize(effectiveSize)
-    
-    // Create default font with FontManager integration
-    let defaultFont = createUIFont(size: scaledSize, weight: textWeight, design: textDesign)
-    
-    // Enumerate existing attributes and preserve formatting while updating font sizes
-    nsAttributedString.enumerateAttributes(in: NSRange(location: 0, length: nsAttributedString.length), options: []) { attributes, range, _ in
-      var newAttributes = attributes
-      
-      // Update font while preserving weight/traits if they exist
-      if let existingFont = attributes[.font] as? UIFont {
-        // Preserve existing font traits (bold, italic, etc.) but update size
-        let newFont = existingFont.withSize(scaledSize)
-        newAttributes[.font] = newFont
-      } else {
-        // No existing font, use default
-        newAttributes[.font] = defaultFont
+      // Skip empty strings
+      guard !plainString.isEmpty else {
+          containsOnlyEmojis = false
+          return
       }
       
-      nsAttributedString.setAttributes(newAttributes, range: range)
-    }
-    
-    // Apply line spacing and paragraph style
-    let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = fontManager.getLineSpacing(for: scaledSize) * lineSpacing
-    paragraphStyle.lineBreakMode = .byWordWrapping
-    paragraphStyle.alignment = .left
-    
-    // Apply letter spacing and paragraph style to entire string
-    let letterSpacingValue = fontManager.letterSpacingValue * letterSpacing
-    nsAttributedString.addAttribute(.kern, value: letterSpacingValue, range: NSRange(location: 0, length: nsAttributedString.length))
-    nsAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttributedString.length))
-    
-    return nsAttributedString
-  }
-  
-  private func createUIFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> UIFont {
-    let fontWeight: UIFont.Weight
-    switch weight {
-    case .ultraLight: fontWeight = .ultraLight
-    case .thin: fontWeight = .thin  
-    case .light: fontWeight = .light
-    case .regular: fontWeight = .regular
-    case .medium: fontWeight = .medium
-    case .semibold: fontWeight = .semibold
-    case .bold: fontWeight = .bold
-    case .heavy: fontWeight = .heavy
-    case .black: fontWeight = .black
-    default: fontWeight = .regular
-    }
-    
-    let fontDesign: UIFontDescriptor.SystemDesign
-    switch design {
-    case .default: fontDesign = .default
-    case .serif: fontDesign = .serif
-    case .monospaced: fontDesign = .monospaced
-    case .rounded: fontDesign = .rounded
-    default: fontDesign = .default
-    }
-    
-    if let descriptor = UIFont.systemFont(ofSize: size, weight: fontWeight).fontDescriptor.withDesign(fontDesign) {
-      return UIFont(descriptor: descriptor, size: size)
-    }
-    
-    return UIFont.systemFont(ofSize: size, weight: fontWeight)
+      // Check if the string contains only emoji characters
+      containsOnlyEmojis = plainString.containsOnlyEmojis
   }
 }
 
