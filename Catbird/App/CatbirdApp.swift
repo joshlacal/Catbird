@@ -201,9 +201,7 @@ struct CatbirdApp: App {
       } else {
         // Full model container for normal use
         self.modelContainer = try ModelContainer(
-          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,           // 🧪 EXPERIMENTAL: Repository parsing models
-          RepositoryRecord.self, ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self, ParsedConnection.self, ParsedMedia.self, ParsedUnknownRecord.self,
-          configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
+          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,               configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
         )
         logger.debug("✅ Model container initialized successfully")
       }

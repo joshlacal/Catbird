@@ -25,9 +25,6 @@ import SwiftUI
   var isMuted = true
   var volume: Float = 0.0
 
-  // PiP state tracking
-  var isPiPActive = false
-  var isPiPSupported = false
 
   enum VideoType: Equatable {
     case hlsStream(playlistURL: URL, cid: CID, aspectRatio: AspectRatio?)
