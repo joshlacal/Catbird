@@ -81,14 +81,22 @@ struct ExternalEmbedView: View {
     private func webViewEmbedContent(url: URL, embedType: ExternalMediaType) -> some View {
         VStack(spacing: 0) {
             ZStack {
-                EnhancedEmbeddedMediaWebView(
-                    url: url,
-                    embedType: embedType,
-                    shouldBlur: shouldBlur
-                )
+                // Enhanced embedded media view (disabled for now)
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .overlay {
+                        VStack {
+                            Image(systemName: "globe")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("External Link")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 
-                // Add PiP indicator for supported types
-                if embedType.supportsPiP && appState.appSettings.enablePictureInPicture {
+                // PiP functionality disabled
+                if false {
                     VStack {
                         HStack {
                             Spacer()

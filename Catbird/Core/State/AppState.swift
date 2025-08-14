@@ -219,14 +219,7 @@ final class AppState {
                   // Load current user profile for optimistic updates
                   await self.loadCurrentUserProfile(did: userDID)
                   
-                  // Check for automatic backup if enabled
-                  if let userProfile = self.currentUserProfile {
-                    await self.backupManager.createAutomaticBackupIfNeeded(
-                      for: userDID,
-                      userHandle: userProfile.handle.description,
-                      client: client
-                    )
-                  }
+                  // User profile loaded successfully
                   
                   // Clear any stale widget data and trigger fresh load
                   Task {
@@ -618,9 +611,7 @@ final class AppState {
   func initializePreferencesManager(with modelContext: ModelContext) {
     preferencesManager.setModelContext(modelContext)
     appSettings.initialize(with: modelContext)
-    repositoryParsingService.configure(with: modelContext)
-    backupManager.configure(with: modelContext, repositoryParsingService: repositoryParsingService)
-    logger.debug("Initialized PreferencesManager, AppSettings, BackupManager, and RepositoryParsingService with ModelContext")
+    logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
     
     // Apply theme settings (now that SwiftData is available, this will use the persisted values)
     _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)

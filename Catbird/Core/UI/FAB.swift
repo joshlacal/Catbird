@@ -19,26 +19,14 @@ struct FAB: View {
     var body: some View {
         VStack {
             Spacer()
-            .adaptiveGlassContainer(spacing: 12) {
-                HStack {
-                    if showFeedsButton {
-                        feedsButton
-                            .adaptiveGlassEffect(
-                                style: .tinted(.secondary),
-                                in: Circle(),
-                                interactive: true
-                            )
-                            .catbirdGlassMorphing(id: "feeds", namespace: glassNamespace)
-                    }
-                    Spacer()
-                    composeButton
-                        .adaptiveGlassEffect(
-                            style: .tinted(.accentColor), 
-                            in: Circle(),
-                            interactive: true
-                        )
-                        .catbirdGlassMorphing(id: "compose", namespace: glassNamespace)
+            HStack(spacing: 12) {
+                if showFeedsButton {
+                    feedsButton
+                        .adaptiveGlassEffect(in: Circle())
                 }
+                Spacer()
+                composeButton
+                    .adaptiveGlassEffect(style: .accentTinted, in: Circle(), interactive: true)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)

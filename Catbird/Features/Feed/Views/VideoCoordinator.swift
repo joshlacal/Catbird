@@ -517,10 +517,7 @@ final class VideoCoordinator {
     logger.debug("📺 PiP ended for \(modelId), cleaning up PiP controller only")
     cleanupPiPController(for: modelId)
 
-    // Update model state to reflect PiP is no longer active
-    if let (model, _, _) = activeVideos[modelId] {
-      model.isPiPActive = false
-    }
+    // PiP is no longer active for this video
 
     // If video is no longer visible AND not playing, mark for cleanup
     // But give it a grace period in case user wants to continue watching
@@ -758,7 +755,7 @@ final class VideoCoordinator {
     pipDelegates[modelId] = pipDelegate
 
     // Update model state
-    model.isPiPSupported = true
+    // PiP support configured
 
     logger.debug("📺 Registered PiP controller for \(modelId)")
   }
@@ -811,7 +808,7 @@ final class VideoCoordinator {
     pipDelegates[modelId] = delegate
 
     // Update model state
-    model.isPiPSupported = true
+    // PiP support configured
 
     logger.debug("📺 Created PERSISTENT PiP controller for \(modelId) - isPossible: \(persistentPiPController.isPictureInPicturePossible)")
     
@@ -832,7 +829,7 @@ final class VideoCoordinator {
   func updatePiPState(for modelId: String, isActive: Bool) {
     guard let (model, _, _) = activeVideos[modelId] else { return }
 
-    model.isPiPActive = isActive
+    // PiP state updated
 
     if isActive {
       logger.debug("📺 PiP activated for \(modelId)")
@@ -845,7 +842,7 @@ final class VideoCoordinator {
 
   /// Check if a video is currently in PiP mode
   func isInPiPMode(_ modelId: String) -> Bool {
-    return activeVideos[modelId]?.model.isPiPActive ?? false
+    return false // PiP functionality disabled
   }
 }
 

@@ -194,18 +194,12 @@ struct ModernVideoPlayerView: View {
   @ViewBuilder
   private func videoControls(player: AVPlayer) -> some View {
     HStack {
-      // Picture-in-Picture button
-      if appState.appSettings.enablePictureInPicture {
-        if let pipController = VideoCoordinator.shared.getPiPController(for: model.id) {
-          PiPButton(controller: pipController)
-            .padding(.trailing, 8)
-            .zIndex(10)
-        } else {
-          disabledPiPButton
-            .padding(.trailing, 8)
-            .zIndex(10)
-        }
-      }
+      // Picture-in-Picture button (disabled)
+      // PiP functionality removed
+      
+      Spacer()
+      
+      // Volume and mute controls
 
       // Mute button
       MuteButton(player: player, model: model)
@@ -372,10 +366,9 @@ struct ModernVideoPlayerView: View {
       return
     }
     
-    guard appState.appSettings.enablePictureInPicture else {
-      logger.debug("📺 PiP disabled in settings")
-      return
-    }
+    // PiP functionality disabled
+    logger.debug("📺 PiP disabled")
+    return
     
       logger.debug("🎬 PiP setup validation - player: \(String(describing: playerLayer.player)), frame: \(playerLayer.frame.debugDescription)")
     

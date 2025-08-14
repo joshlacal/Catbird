@@ -19,11 +19,7 @@ struct ChatFAB: View {
             HStack {
                 Spacer()
                 newMessageButton
-                    .adaptiveGlassEffect(
-                        style: .tinted(.accentColor),
-                        in: Circle(),
-                        interactive: true
-                    )
+                    .adaptiveGlassEffect(style: .accentTinted, in: Circle(), interactive: true)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)

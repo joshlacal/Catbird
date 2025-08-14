@@ -106,7 +106,7 @@ struct PostComposerView: View {
                             .padding(.vertical, 8)
                     }
                     .adaptiveGlassEffect(
-                        style: .tinted(.accentColor),
+                        style: .accentTinted,
                         in: Capsule(),
                         interactive: true
                     )
