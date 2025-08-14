@@ -101,13 +101,13 @@ public extension View {
     ) -> some View {
         self
             .background {
-                style.fallbackMaterial
-                    .overlay {
-                        if let tint = style.fallbackTintColor {
-                            tint
-                        }
+                ZStack {
+                    style.fallbackMaterial
+                    if let tint = style.fallbackTintColor {
+                        tint
                     }
-                    .clipShape(shape)
+                }
+                .clipShape(shape)
             }
             .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
     }
