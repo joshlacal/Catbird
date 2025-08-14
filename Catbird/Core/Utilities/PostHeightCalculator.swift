@@ -1,6 +1,7 @@
 import UIKit
 import Petrel
 import CoreGraphics
+import SwiftUI
 import os
 
 /// Calculates consistent post heights before rendering to improve scroll stability
@@ -39,7 +40,7 @@ class PostHeightCalculator {
         let videoControlsHeight: CGFloat
         
         static let standard = Config(
-            maxWidth: UIScreen.main.bounds.width - 32,
+            maxWidth: min(600, UIScreen.main.bounds.width) - 9,
             textFont: UIFont.preferredFont(forTextStyle: .body),
             lineSpacing: 1.2,
             letterSpacing: 0.2,
@@ -100,6 +101,15 @@ class PostHeightCalculator {
         return shared.calculateHeight(for: post, mode: mode)
     }
     
+    /// Static helper for thread-aware height estimation
+    static func estimatedThreadHeight(
+        for post: AppBskyFeedDefs.PostView,
+        threadContext: ThreadContext,
+        mode: CalculationMode = .compact
+    ) -> CGFloat {
+        return shared.calculateThreadHeight(for: post, threadContext: threadContext, mode: mode)
+    }
+    
     /// Calculates height for a post, with caching for performance
     func calculateHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode = .compact) -> CGFloat {
         // Use post URI and CID as cache key for uniqueness
@@ -112,8 +122,27 @@ class PostHeightCalculator {
         let height = calculateUncachedHeight(for: post, mode: mode)
         heightCache.setObject(NSNumber(value: Double(height)), forKey: cacheKey)
         
-        // Log height calculation for debugging
-        logger.debug("Calculated height for post \(post.uri.uriString()): \(height) in mode \(mode.rawValue)")
+        
+        return height
+    }
+    
+    /// Thread-aware height calculation - the core fix for height estimation errors
+    func calculateThreadHeight(
+        for post: AppBskyFeedDefs.PostView,
+        threadContext: ThreadContext,
+        mode: CalculationMode = .compact
+    ) -> CGFloat {
+        // Create comprehensive cache key including thread context
+        let contextKey = "\(threadContext.displayMode.rawValue)-\(threadContext.sliceItems?.count ?? 0)-\(threadContext.hiddenCount)"
+        let cacheKey = "\(post.uri.uriString())-\(post.cid.string)-\(mode.rawValue)-\(contextKey)" as NSString
+        
+        if let cachedHeight = heightCache.object(forKey: cacheKey) {
+            return cachedHeight.doubleValue
+        }
+        
+        let height = calculateUncachedThreadHeight(for: post, threadContext: threadContext, mode: mode)
+        heightCache.setObject(NSNumber(value: Double(height)), forKey: cacheKey)
+        
         
         return height
     }
@@ -186,7 +215,148 @@ class PostHeightCalculator {
         case mainPost // For main post in thread view
     }
     
+    // MARK: - Thread Context
+    
+    /// Context information for thread-aware height calculation
+    struct ThreadContext {
+        let displayMode: ThreadDisplayMode
+        let sliceItems: [ThreadSliceItem]?
+        let hiddenCount: Int
+        
+        enum ThreadDisplayMode: String {
+            case standard
+            case expanded
+            case collapsed
+        }
+        
+        struct ThreadSliceItem {
+            let post: AppBskyFeedDefs.PostView
+            let parentAuthor: AppBskyActorDefs.ProfileViewBasic?
+        }
+        
+        init(
+            displayMode: ThreadDisplayMode = .standard,
+            sliceItems: [ThreadSliceItem]? = nil,
+            hiddenCount: Int = 0
+        ) {
+            self.displayMode = displayMode
+            self.sliceItems = sliceItems
+            self.hiddenCount = hiddenCount
+        }
+    }
+    
     // MARK: - Private Height Calculation Logic
+    
+    /// Calculate thread-aware height - handles expanded and collapsed thread modes
+    private func calculateUncachedThreadHeight(
+        for post: AppBskyFeedDefs.PostView,
+        threadContext: ThreadContext,
+        mode: CalculationMode
+    ) -> CGFloat {
+        switch threadContext.displayMode {
+        case .standard:
+            // Standard mode: single post + optional parent
+            return calculateStandardThreadHeight(for: post, mode: mode)
+            
+        case .expanded:
+            // Expanded mode: multiple full posts in sequence
+            return calculateExpandedThreadHeight(
+                for: post,
+                sliceItems: threadContext.sliceItems,
+                mode: mode
+            )
+            
+        case .collapsed:
+            // Collapsed mode: root + separator + last 2 posts
+            return calculateCollapsedThreadHeight(
+                for: post,
+                sliceItems: threadContext.sliceItems,
+                hiddenCount: threadContext.hiddenCount,
+                mode: mode
+            )
+        }
+    }
+    
+    private func calculateStandardThreadHeight(
+        for post: AppBskyFeedDefs.PostView,
+        mode: CalculationMode
+    ) -> CGFloat {
+        // Same as original single post calculation
+        return calculateUncachedHeight(for: post, mode: mode)
+    }
+    
+    private func calculateExpandedThreadHeight(
+        for post: AppBskyFeedDefs.PostView,
+        sliceItems: [ThreadContext.ThreadSliceItem]?,
+        mode: CalculationMode
+    ) -> CGFloat {
+        guard let sliceItems = sliceItems, !sliceItems.isEmpty else {
+            return calculateUncachedHeight(for: post, mode: mode)
+        }
+        
+        var totalHeight: CGFloat = 0
+        
+        // Add container padding (matches EnhancedFeedPost)
+        totalHeight += 9 // Top padding (baseUnit * 3)
+        totalHeight += 4.5 // Horizontal padding compensation
+        
+        // Calculate height for each post in the slice
+        for (index, sliceItem) in sliceItems.enumerated() {
+            let isLast = index == sliceItems.count - 1
+            let postMode: CalculationMode = isLast ? .compact : .parentInThread
+            
+            // Calculate individual post height
+            let postHeight = calculateUncachedHeight(for: sliceItem.post, mode: postMode)
+            totalHeight += postHeight
+            
+            // Add spacing between posts (matches EnhancedFeedPost)
+            if !isLast {
+                totalHeight += 6 // baseUnit * 2 spacing between posts
+            }
+        }
+        
+        return totalHeight
+    }
+    
+    private func calculateCollapsedThreadHeight(
+        for post: AppBskyFeedDefs.PostView,
+        sliceItems: [ThreadContext.ThreadSliceItem]?,
+        hiddenCount: Int,
+        mode: CalculationMode
+    ) -> CGFloat {
+        guard let sliceItems = sliceItems, sliceItems.count >= 3 else {
+            return calculateUncachedHeight(for: post, mode: mode)
+        }
+        
+        var totalHeight: CGFloat = 0
+        
+        // Add container padding
+        totalHeight += 9 // Top padding
+        totalHeight += 4.5 // Horizontal padding compensation
+        
+        // Root post (first item)
+        let rootPost = sliceItems[0]
+        totalHeight += calculateUncachedHeight(for: rootPost.post, mode: .parentInThread)
+        
+        // Thread separator height (estimated from ThreadSeparatorView)
+        totalHeight += 40 // Separator with hidden count text
+        
+        // Last 2 posts
+        let lastTwoItems = Array(sliceItems.suffix(2))
+        for (index, sliceItem) in lastTwoItems.enumerated() {
+            let isLast = index == lastTwoItems.count - 1
+            let postMode: CalculationMode = isLast ? .compact : .parentInThread
+            
+            totalHeight += calculateUncachedHeight(for: sliceItem.post, mode: postMode)
+            
+            // Add spacing between last posts
+            if !isLast {
+                totalHeight += 6 // baseUnit * 2 spacing
+            }
+        }
+        
+        return totalHeight
+    }
     
     private func calculateUncachedHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode) -> CGFloat {
         var totalHeight: CGFloat = 0
@@ -421,3 +591,39 @@ class PostHeightCalculator {
         return height + config.videoControlsHeight
     }
 }
+
+// MARK: - ThreadContext Extensions
+
+extension PostHeightCalculator.ThreadContext {
+    /// Create ThreadContext from CachedFeedViewPost for seamless integration
+    init(from cachedPost: CachedFeedViewPost) {
+        // Determine display mode from cached post
+        let displayMode: ThreadDisplayMode
+        switch cachedPost.threadDisplayMode {
+        case "expanded":
+            displayMode = .expanded
+        case "collapsed":
+            displayMode = .collapsed
+        default:
+            displayMode = .standard
+        }
+        
+        // Convert slice items if present
+        var sliceItems: [ThreadSliceItem]? = nil
+        if let cachedSliceItems = cachedPost.sliceItems {
+            sliceItems = cachedSliceItems.map { cachedSliceItem in
+                ThreadSliceItem(
+                    post: cachedSliceItem.post,
+                    parentAuthor: cachedSliceItem.parentAuthor
+                )
+            }
+        }
+        
+        self.init(
+            displayMode: displayMode,
+            sliceItems: sliceItems,
+            hiddenCount: cachedPost.threadHiddenCount ?? 0
+        )
+    }
+}
+

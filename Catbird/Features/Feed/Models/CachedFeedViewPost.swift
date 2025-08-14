@@ -195,13 +195,11 @@ final class CachedFeedViewPost: Identifiable {
                 self.threadDisplayMode = "collapsed"
                 self.threadPostCount = slice.items.count
                 self.threadHiddenCount = max(0, slice.items.count - 3)
-                cachedPostLogger.debug("🔍 CachedFeedViewPost: \(mainItem.post.uri.uriString()) -> COLLAPSED (\(slice.items.count) items, incomplete=\(slice.isIncompleteThread))")
             } else {
                 // Expanded thread mode
                 self.threadDisplayMode = "expanded"
                 self.threadPostCount = slice.items.count
                 self.threadHiddenCount = 0
-                cachedPostLogger.debug("🔍 CachedFeedViewPost: \(mainItem.post.uri.uriString()) -> EXPANDED (\(slice.items.count) items, incomplete=\(slice.isIncompleteThread))")
             }
         } else {
             // Standard mode

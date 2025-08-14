@@ -24,6 +24,9 @@ struct HeightValidationResult {
   let hasExternalEmbed: Bool
   let hasRecordEmbed: Bool
   let textLength: Int
+  let threadDisplayMode: String?
+  let threadPostCount: Int?
+  let isThreadAware: Bool
   
   var isSignificantError: Bool {
     // Consider >10% error or >20pt absolute error as significant
@@ -71,7 +74,7 @@ class HeightValidationManager: ObservableObject {
   
   // MARK: - Public API
   
-  /// Validate height calculation for a post and its actual rendered cell
+  /// Validate height calculation for a post and its actual rendered cell (legacy method)
   func validateHeight(
     for post: AppBskyFeedDefs.PostView,
     actualHeight: CGFloat,
@@ -107,17 +110,79 @@ class HeightValidationManager: ObservableObject {
       hasVideos: hasVideos,
       hasExternalEmbed: hasExternalEmbed,
       hasRecordEmbed: hasRecordEmbed,
-      textLength: textLength
+      textLength: textLength,
+      threadDisplayMode: nil,
+      threadPostCount: nil,
+      isThreadAware: false
     )
     
     // Store result
     addValidationResult(result)
     
-    // Log significant errors
+    // Log only significant errors to reduce noise
     if result.isSignificantError {
-      logger.warning("📏 Significant height error - Post: \(post.uri.uriString().suffix(12)), Estimated: \(estimatedHeight), Actual: \(actualHeight), Error: \(String(format: "%.1f", percentageError))%")
-    } else {
-      logger.debug("📏 Height validation - Post: \(post.uri.uriString().suffix(12)), Estimated: \(estimatedHeight), Actual: \(actualHeight), Error: \(String(format: "%.1f", percentageError))%")
+      logger.warning("Significant height error - Post: \(post.uri.uriString().suffix(12)), Error: \(String(format: "%.1f", percentageError))%")
+    }
+    
+    // Update statistics
+    updateStatistics()
+  }
+  
+  /// Thread-aware height validation - the key to fixing height estimation errors
+  func validateThreadHeight(
+    for post: AppBskyFeedDefs.PostView,
+    actualHeight: CGFloat,
+    feedType: String,
+    threadContext: PostHeightCalculator.ThreadContext,
+    mode: PostHeightCalculator.CalculationMode = .compact
+  ) {
+    guard isValidationEnabled else { return }
+    
+    // Get thread-aware estimated height
+    let estimatedHeight = heightCalculator.calculateThreadHeight(
+      for: post,
+      threadContext: threadContext,
+      mode: mode
+    )
+    
+    // Calculate difference and percentage error
+    let difference = actualHeight - estimatedHeight
+    let percentageError = actualHeight > 0 ? (difference / actualHeight) * 100.0 : 0
+    
+    // Extract post content characteristics
+    let hasImages = extractHasImages(from: post)
+    let hasVideos = extractHasVideos(from: post)
+    let hasExternalEmbed = extractHasExternalEmbed(from: post)
+    let hasRecordEmbed = extractHasRecordEmbed(from: post)
+    let textLength = extractTextLength(from: post)
+    
+    // Create thread-aware validation result
+    let result = HeightValidationResult(
+      postId: post.uri.uriString(),
+      estimatedHeight: estimatedHeight,
+      actualHeight: actualHeight,
+      difference: difference,
+      percentageError: percentageError,
+      timestamp: Date(),
+      feedType: feedType,
+      hasImages: hasImages,
+      hasVideos: hasVideos,
+      hasExternalEmbed: hasExternalEmbed,
+      hasRecordEmbed: hasRecordEmbed,
+      textLength: textLength,
+      threadDisplayMode: threadContext.displayMode.rawValue,
+      threadPostCount: threadContext.sliceItems?.count,
+      isThreadAware: true
+    )
+    
+    // Store result
+    addValidationResult(result)
+    
+    // Log only significant thread errors to reduce noise
+    if result.isSignificantError {
+      let threadInfo = threadContext.displayMode == .standard ? "standard" : 
+                      "\(threadContext.displayMode.rawValue)(\(threadContext.sliceItems?.count ?? 0))"
+      logger.warning("Thread height error - Post: \(post.uri.uriString().suffix(12)), Mode: \(threadInfo), Error: \(String(format: "%.1f", percentageError))%")
     }
     
     // Update statistics
@@ -149,6 +214,42 @@ class HeightValidationManager: ObservableObject {
     
     ## Error Analysis by Content Type
     """
+    
+    // Analysis by thread awareness
+    let threadAwareResults = validationResults.filter { $0.isThreadAware }
+    let legacyResults = validationResults.filter { !$0.isThreadAware }
+    
+    if !threadAwareResults.isEmpty && !legacyResults.isEmpty {
+      let threadAwareError = threadAwareResults.map { abs($0.percentageError) }.reduce(0, +) / CGFloat(threadAwareResults.count)
+      let legacyError = legacyResults.map { abs($0.percentageError) }.reduce(0, +) / CGFloat(legacyResults.count)
+      report += "\n- Thread-aware calculations: \(threadAwareResults.count) posts, avg error: \(String(format: "%.1f", threadAwareError))%"
+      report += "\n- Legacy calculations: \(legacyResults.count) posts, avg error: \(String(format: "%.1f", legacyError))%"
+      
+      let improvement = legacyError - threadAwareError
+      if improvement > 0 {
+        report += "\n- 🎯 Thread-aware improvement: \(String(format: "%.1f", improvement))% reduction in average error"
+      }
+    }
+    
+    // Analysis by thread display mode
+    let expandedResults = validationResults.filter { $0.threadDisplayMode == "expanded" }
+    let collapsedResults = validationResults.filter { $0.threadDisplayMode == "collapsed" }
+    let standardResults = validationResults.filter { $0.threadDisplayMode == "standard" || $0.threadDisplayMode == nil }
+    
+    if !expandedResults.isEmpty {
+      let expandedError = expandedResults.map { abs($0.percentageError) }.reduce(0, +) / CGFloat(expandedResults.count)
+      report += "\n- Expanded threads: \(expandedResults.count) posts, avg error: \(String(format: "%.1f", expandedError))%"
+    }
+    
+    if !collapsedResults.isEmpty {
+      let collapsedError = collapsedResults.map { abs($0.percentageError) }.reduce(0, +) / CGFloat(collapsedResults.count)
+      report += "\n- Collapsed threads: \(collapsedResults.count) posts, avg error: \(String(format: "%.1f", collapsedError))%"
+    }
+    
+    if !standardResults.isEmpty {
+      let standardError = standardResults.map { abs($0.percentageError) }.reduce(0, +) / CGFloat(standardResults.count)
+      report += "\n- Standard posts: \(standardResults.count) posts, avg error: \(String(format: "%.1f", standardError))%"
+    }
     
     // Analysis by content type
     let imageResults = validationResults.filter { $0.hasImages }
@@ -213,7 +314,7 @@ class HeightValidationManager: ObservableObject {
   func clearResults() {
     validationResults.removeAll()
     currentStatistics = nil
-    logger.info("📏 Cleared all validation results")
+    logger.info("Cleared validation results")
   }
   
   /// Export results as JSON for external analysis

@@ -48,7 +48,7 @@ struct DebugSettingsView: View {
         }
       }
       
-      Section("Validation Report", footer: Text("Shows accuracy statistics for PostHeightCalculator estimates vs actual rendered heights.")) {
+      Section {
         if !validationReport.isEmpty {
           ScrollView {
             Text(validationReport)
@@ -67,6 +67,10 @@ struct DebugSettingsView: View {
             .foregroundColor(.secondary)
             .italic()
         }
+      } header: {
+        Text("Validation Report")
+      } footer: {
+        Text("Shows accuracy statistics for PostHeightCalculator estimates vs actual rendered heights.")
       }
       
       Section("Information") {

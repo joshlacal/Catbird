@@ -96,8 +96,7 @@ struct EnhancedFeedPost: View, Equatable {
           }
       }
           .onAppear {
-              print("🧵 EnhancedFeedPost: \(cachedPost.id) mode=\(mode), sliceItems=\(cachedPost.sliceItems?.count ?? 0), threadDisplayMode=\(cachedPost.threadDisplayMode ?? "nil")")
-
+              // Initialize post appearance
           }
   }
   

@@ -468,12 +468,15 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             return
         }
         
-        // Perform validation
+        // Perform thread-aware validation
         let feedTypeString = stateManager.currentFeedType.identifier
-        heightValidationManager.validateHeight(
+        let threadContext = PostHeightCalculator.ThreadContext(from: post)
+        
+        heightValidationManager.validateThreadHeight(
             for: post.feedViewPost.post,
             actualHeight: actualHeight,
             feedType: feedTypeString,
+            threadContext: threadContext,
             mode: .compact
         )
         
