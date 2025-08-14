@@ -188,6 +188,17 @@ struct SettingsView: View {
                 }
             }
             
+            NavigationLink {
+                DebugSettingsView()
+            } label: {
+                Label {
+                    Text("Debug Settings")
+                } icon: {
+                    Image(systemName: "hammer.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+            
             // NavigationLink {
             //     ThemeTestView()
             // } label: {

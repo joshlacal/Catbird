@@ -50,7 +50,7 @@ struct FeedDropDelegate: DropDelegate {
       } else {
         await viewModel.togglePinStatus(for: fromItem)
       }
-      await viewModel.updateCaches()
+      // Cache update and state invalidation are handled by the individual methods above
     }
 
     return true

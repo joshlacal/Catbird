@@ -69,7 +69,7 @@ struct DefaultFeedDropDelegate: DropDelegate {
         currentFeedName = defaultFeedName
       }
       
-      await viewModel.updateCaches()
+      // Cache update and state invalidation are handled by setDefaultFeed above
     }
 
     return true

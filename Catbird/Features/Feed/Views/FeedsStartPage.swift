@@ -191,6 +191,7 @@ struct FeedsStartPage: View {
     isLoadingProfile = false
   }
 
+  @MainActor
   private func updateFilteredFeeds() async {
     // Update the caches first - this will ensure proper timeline position
     await viewModel.updateCaches()
@@ -1075,8 +1076,14 @@ final class FeedsStartPageStateSubscriber: StateInvalidationSubscriber {
       // Refresh the feed generators and update caches
       await viewModel?.fetchFeedGenerators()
       await viewModel?.updateCaches()
-      // Update the filtered feeds to refresh the UI
-      await updateFilteredFeeds?()
+      // Update the filtered feeds to refresh the UI with animation
+      await MainActor.run {
+        withAnimation(.spring(duration: 0.4)) {
+          Task {
+            await updateFilteredFeeds?()
+          }
+        }
+      }
     default:
       break
     }

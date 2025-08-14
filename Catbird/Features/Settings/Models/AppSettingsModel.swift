@@ -100,6 +100,10 @@ final class AppSettingsModel {
     // Privacy
     var loggedOutVisibility: Bool = true
     
+    // Debug and Development
+    var enableHeightValidation: Bool = false
+    var showHeightValidationOverlay: Bool = false
+    
     // MARK: - Initializers
     
     init() {}
@@ -213,6 +217,10 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = defaults.bool(forKey: "loggedOutVisibility")
+        
+        // Debug and Development
+        enableHeightValidation = defaults.bool(forKey: "enableHeightValidation")
+        showHeightValidationOverlay = defaults.bool(forKey: "showHeightValidationOverlay")
     }
     
     /// Reset all settings to defaults
@@ -303,5 +311,9 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = true
+        
+        // Debug and Development
+        enableHeightValidation = false
+        showHeightValidationOverlay = false
     }
 }

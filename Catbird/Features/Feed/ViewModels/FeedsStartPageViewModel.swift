@@ -327,6 +327,9 @@ final class FeedsStartPageViewModel {
 
       // Update caches after change
       await updateCaches()
+      
+      // Notify state invalidation bus that feeds have changed
+      await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
       errorMessage = "Failed to toggle pin status: \(error.localizedDescription)"
       logger.error("Error toggling pin status: \(error.localizedDescription)")
@@ -412,6 +415,9 @@ final class FeedsStartPageViewModel {
 
       // Update caches after change
       await updateCaches()
+      
+      // Notify state invalidation bus that feeds have changed
+      await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
       errorMessage = "Failed to reorder pinned feed: \(error.localizedDescription)"
       logger.error("Error reordering pinned feed: \(error.localizedDescription)")
@@ -459,6 +465,9 @@ final class FeedsStartPageViewModel {
 
       // Update caches after change
       await updateCaches()
+      
+      // Notify state invalidation bus that feeds have changed
+      await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
       errorMessage = "Failed to reorder saved feed: \(error.localizedDescription)"
       logger.error("Error reordering saved feed: \(error.localizedDescription)")
@@ -560,6 +569,9 @@ final class FeedsStartPageViewModel {
 
       // Update caches after change
       await updateCaches()
+      
+      // Notify state invalidation bus that feeds have changed
+      await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
       errorMessage = "Failed to set default feed: \(error.localizedDescription)"
