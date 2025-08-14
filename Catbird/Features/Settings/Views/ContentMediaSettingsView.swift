@@ -28,31 +28,11 @@ struct ContentMediaSettingsView: View {
                 ))
                 .tint(.blue)
                 
-                .tint(.blue)
-                
                 Toggle("Open Links In-App", isOn: Binding(
                     get: { appState.appSettings.useInAppBrowser },
                     set: { appState.appSettings.useInAppBrowser = $0 }
                 ))
                 .tint(.blue)
-            }
-            
-                    Toggle("Auto-start PiP when navigating away", isOn: Binding(
-                        get: { appState.appSettings.autoStartPiP },
-                        set: { appState.appSettings.autoStartPiP = $0 }
-                    ))
-                    .tint(.blue)
-                    
-                    Toggle("Remember PiP window position", isOn: Binding(
-                        get: { appState.appSettings.rememberPiPPosition },
-                        set: { appState.appSettings.rememberPiPPosition = $0 }
-                    ))
-                    .tint(.blue)
-                } else {
-                    Text("Enable Picture in Picture above to access additional settings")
-                        .foregroundColor(.secondary)
-                        .font(.caption)
-                }
             }
             
             // Feed Content Settings
@@ -220,7 +200,7 @@ struct ContentMediaSettingsView: View {
             } header: {
                 Text("External Media Embeds")
             } footer: {
-                Text("WebView embeds show interactive content directly in posts. Picture in Picture allows videos to continue playing in a floating window while browsing. When WebView embeds are disabled, external media will display as link cards. Control which external media services are allowed to display embedded content in posts.")
+                Text("WebView embeds show interactive content directly in posts. When WebView embeds are disabled, external media will display as link cards. Control which external media services are allowed to display embedded content in posts.")
                     .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -328,7 +308,6 @@ struct ContentMediaSettingsView: View {
         
         // Reset external media settings
         appState.appSettings.useWebViewEmbeds = true
-        appState.appSettings.enablePictureInPicture = true
         appState.appSettings.allowYouTube = true
         appState.appSettings.allowYouTubeShorts = true
         appState.appSettings.allowVimeo = true

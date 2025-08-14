@@ -328,10 +328,47 @@ find Catbird/ -name "*.swift" | head -10 | xargs -I {} swift -frontend -parse {}
 swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios18.0 -I /path/to/modules filename.swift
 ```
 
-## Development Warnings
-- **DO NOT BUILD**, instead use the frontend error checking
-- **AVOID** full xcodebuild unless necessary - use incremental builds or syntax checking
-- **ALWAYS** run syntax checks before committing
+## Build System Configuration
+
+### Incremental Build Optimization
+The project is configured for optimal incremental builds using Swift 6.1 and Xcode 16:
+
+**Debug Configuration (Development):**
+```
+SWIFT_COMPILATION_MODE = Incremental
+SWIFT_OPTIMIZATION_LEVEL = -Onone  
+ONLY_ACTIVE_ARCH = YES
+DEBUG_INFORMATION_FORMAT = dwarf
+SWIFT_USE_INTEGRATED_DRIVER = NO  // Better incremental builds
+```
+
+**Release Configuration (Production):**
+```
+SWIFT_COMPILATION_MODE = WholeModule
+SWIFT_OPTIMIZATION_LEVEL = -O
+ONLY_ACTIVE_ARCH = NO
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+```
+
+### Build Performance Tips
+- **Use incremental builds** for development - they're 4x faster than clean builds
+- **Syntax checking**: Use `swift -frontend -parse [filename]` for quick validation
+- **Full builds**: Only use when necessary for release or after major changes
+- **Network optimization**: Block `developerservices2.apple.com` in `/etc/hosts` to avoid xcodebuild network delays
+- **Thread configuration**: Enable "Parallelize Build" with 1.5-2x CPU core count
+- **Explicit modules**: Available experimentally with `SWIFT_ENABLE_EXPLICIT_MODULES = YES`
+
+### Git Hooks Integration
+The project includes automated quality checks:
+- **Pre-commit**: Swift syntax validation, TODO/FIXME warnings, print() statement detection  
+- **Commit-msg**: Conventional commit format enforcement
+- **Pre-push**: Build verification, secrets scanning, branch protection
+
+### Development Workflow
+- **ALWAYS** run syntax checks before committing: `./swift-check.sh`
+- **Use incremental builds** for development iteration
+- **Full builds** only for release preparation or major refactoring
+- **Leverage MCP tools** for simulator and device builds
 
 ---
 
