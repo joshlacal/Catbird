@@ -129,9 +129,6 @@ import OSLog
         
         // Save webview settings for persistence
         defaults.set(useWebViewEmbeds, forKey: "useWebViewEmbeds")
-        defaults.set(enablePictureInPicture, forKey: "enablePictureInPicture")
-        defaults.set(autoStartPiP, forKey: "autoStartPiP")
-        defaults.set(rememberPiPPosition, forKey: "rememberPiPPosition")
         defaults.set(allowYouTube, forKey: "allowYouTube")
         defaults.set(allowYouTubeShorts, forKey: "allowYouTubeShorts")
         defaults.set(allowVimeo, forKey: "allowVimeo")
@@ -183,11 +180,10 @@ import OSLog
     }
     
     /// Load webview settings from UserDefaults if SwiftData is not available
-    private func loadWebViewSettingsFromUserDefaults() -> (useWebViewEmbeds: Bool, enablePictureInPicture: Bool, allowYouTube: Bool, allowYouTubeShorts: Bool, allowVimeo: Bool, allowTwitch: Bool, allowGiphy: Bool, allowTenor: Bool, allowSpotify: Bool, allowAppleMusic: Bool, allowSoundCloud: Bool, allowFlickr: Bool) {
+    private func loadWebViewSettingsFromUserDefaults() -> (useWebViewEmbeds: Bool, allowYouTube: Bool, allowYouTubeShorts: Bool, allowVimeo: Bool, allowTwitch: Bool, allowGiphy: Bool, allowTenor: Bool, allowSpotify: Bool, allowAppleMusic: Bool, allowSoundCloud: Bool, allowFlickr: Bool) {
         let defaults = UserDefaults.standard
         
         let savedUseWebViewEmbeds = defaults.object(forKey: "useWebViewEmbeds") != nil ? defaults.bool(forKey: "useWebViewEmbeds") : true
-        let savedEnablePictureInPicture = defaults.object(forKey: "enablePictureInPicture") != nil ? defaults.bool(forKey: "enablePictureInPicture") : true
         let savedAllowYouTube = defaults.object(forKey: "allowYouTube") != nil ? defaults.bool(forKey: "allowYouTube") : true
         let savedAllowYouTubeShorts = defaults.object(forKey: "allowYouTubeShorts") != nil ? defaults.bool(forKey: "allowYouTubeShorts") : true
         let savedAllowVimeo = defaults.object(forKey: "allowVimeo") != nil ? defaults.bool(forKey: "allowVimeo") : true
@@ -201,7 +197,6 @@ import OSLog
         
         return (
             useWebViewEmbeds: savedUseWebViewEmbeds,
-            enablePictureInPicture: savedEnablePictureInPicture,
             allowYouTube: savedAllowYouTube,
             allowYouTubeShorts: savedAllowYouTubeShorts,
             allowVimeo: savedAllowVimeo,
@@ -674,44 +669,6 @@ import OSLog
         }
     }
     
-    var enablePictureInPicture: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.enablePictureInPicture
-            }
-            return loadWebViewSettingsFromUserDefaults().enablePictureInPicture
-        }
-        set {
-            settingsModel?.enablePictureInPicture = newValue
-            saveChanges()
-        }
-    }
-    
-    var autoStartPiP: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.autoStartPiP
-            }
-            return UserDefaults.standard.bool(forKey: "autoStartPiP")
-        }
-        set {
-            settingsModel?.autoStartPiP = newValue
-            saveChanges()
-        }
-    }
-    
-    var rememberPiPPosition: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.rememberPiPPosition
-            }
-            return UserDefaults.standard.object(forKey: "rememberPiPPosition") != nil ? UserDefaults.standard.bool(forKey: "rememberPiPPosition") : true
-        }
-        set {
-            settingsModel?.rememberPiPPosition = newValue
-            saveChanges()
-        }
-    }
 
     // Languages
     var appLanguage: String {

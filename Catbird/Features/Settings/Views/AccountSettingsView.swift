@@ -31,12 +31,6 @@ struct AccountSettingsView: View {
     @State private var isExporting = false
     @State private var exportCompleted = false
     
-    // Backup management
-    @State private var backupRecords: [BackupRecord] = []
-    @State private var backupConfiguration: BackupConfiguration?
-    @State private var isShowingBackupSettings = false
-    @State private var selectedBackupRecord: BackupRecord?
-    @State private var isShowingBackupDetails = false
     
     // Email verification polling
     @State private var verificationPollingTimer: Timer?
@@ -291,27 +285,6 @@ struct AccountSettingsView: View {
                                 .padding(.vertical, 8)
                         }
                         
-                        // 🧪 EXPERIMENTAL: Repository Browser
-                        NavigationLink {
-                            // Navigate to Repository Browser within the settings sheet
-                            RepositoryBrowserView()
-                        } label: {
-                            HStack {
-                                Image(systemName: "archivebox.fill")
-                                    .foregroundColor(.orange)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("🧪 Repository Browser")
-                                        .fontWeight(.medium)
-                                    Text("EXPERIMENTAL: Browse parsed backup data")
-                                        .appFont(AppTextRole.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
                         .buttonStyle(PlainButtonStyle())
                     }
                     

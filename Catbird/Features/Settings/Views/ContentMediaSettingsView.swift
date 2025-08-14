@@ -28,10 +28,6 @@ struct ContentMediaSettingsView: View {
                 ))
                 .tint(.blue)
                 
-                Toggle("Picture in Picture", isOn: Binding(
-                    get: { appState.appSettings.enablePictureInPicture },
-                    set: { appState.appSettings.enablePictureInPicture = $0 }
-                ))
                 .tint(.blue)
                 
                 Toggle("Open Links In-App", isOn: Binding(
@@ -41,9 +37,6 @@ struct ContentMediaSettingsView: View {
                 .tint(.blue)
             }
             
-            // Picture in Picture Settings
-            Section("Picture in Picture") {
-                if appState.appSettings.enablePictureInPicture {
                     Toggle("Auto-start PiP when navigating away", isOn: Binding(
                         get: { appState.appSettings.autoStartPiP },
                         set: { appState.appSettings.autoStartPiP = $0 }
@@ -162,10 +155,6 @@ struct ContentMediaSettingsView: View {
                 ))
                 .tint(.blue)
                 
-                Toggle("Picture in Picture", isOn: Binding(
-                    get: { appState.appSettings.enablePictureInPicture },
-                    set: { appState.appSettings.enablePictureInPicture = $0 }
-                ))
                 .tint(.blue)
                 .disabled(!appState.appSettings.useWebViewEmbeds)
                 

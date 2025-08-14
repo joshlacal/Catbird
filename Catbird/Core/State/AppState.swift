@@ -109,14 +109,6 @@ final class AppState {
   /// Chat manager for handling Bluesky chat operations
   @ObservationIgnored let chatManager: ChatManager
   
-  /// Backup manager for handling local data backups
-  @ObservationIgnored let backupManager = BackupManager()
-  
-  /// 🧪 EXPERIMENTAL: Repository parsing service for CAR file analysis
-  @ObservationIgnored let repositoryParsingService = RepositoryParsingService()
-  
-  /// 🚨 EXPERIMENTAL: Account migration service for cross-instance migration
-  @ObservationIgnored let migrationService = AccountMigrationService()
   
   /// Network monitor for tracking connectivity status
   @ObservationIgnored let networkMonitor = NetworkMonitor()
@@ -195,7 +187,6 @@ final class AppState {
               self.listManager.updateAppState(self)
               if !isFaultOrderingMode {
                 await self.chatManager.updateClient(client) // Update ChatManager client
-                self.migrationService.updateSourceClient(client) // Update Migration service client
                 self.urlHandler.configure(with: self)
               }
               
@@ -255,7 +246,6 @@ final class AppState {
             self.listManager.updateClient(nil)
             self.listManager.updateAppState(nil)
              await self.chatManager.updateClient(nil)
-            self.migrationService.updateSourceClient(nil)
             
             // Clear widget data on logout
             FeedWidgetDataProvider.shared.clearWidgetData()

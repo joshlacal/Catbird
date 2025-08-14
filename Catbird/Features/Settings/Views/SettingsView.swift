@@ -232,26 +232,6 @@ struct SettingsView: View {
             }
         }
         
-        // Experimental Features Section
-        #if DEBUG
-        Section("🧪 Experimental Features") {
-            NavigationLink {
-                RepositoryBrowserView()
-            } label: {
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Repository Browser")
-                        Text("Browse and analyze CAR backup files")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } icon: {
-                    Image(systemName: "archivebox.fill")
-                        .foregroundStyle(.orange)
-                }
-            }
-        }
-        #endif
 
         Section {
             LogoutButton(isLoggingOut: $isLoggingOut, handleLogout: handleLogout)
