@@ -43,6 +43,7 @@ struct EnhancedFeedPost: View, Equatable {
           .frame(height: EnhancedFeedPost.baseUnit * 8)
           .padding(.horizontal, EnhancedFeedPost.baseUnit * 2)
           .padding(.bottom, EnhancedFeedPost.baseUnit * 2)
+          .fixedSize(horizontal: false, vertical: true)
       }
       
       // Pinned post badge if needed
@@ -258,7 +259,7 @@ struct EnhancedFeedPost: View, Equatable {
         .lineLimit(1)
         .allowsTightening(true)
         .offset(y: -2)
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize(horizontal: false, vertical: true)
     }
     .foregroundColor(.secondary)
     .padding(.vertical, 6)

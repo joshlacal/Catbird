@@ -205,7 +205,7 @@ struct LinkCreationDialog: View {
       }
       .padding()
       .navigationTitle("Create Link")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {

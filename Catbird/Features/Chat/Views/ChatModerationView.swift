@@ -31,7 +31,7 @@ struct ChatModerationView: View {
         .tag(2)
     }
     .navigationTitle("Moderation Tools")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
   }
 }
 

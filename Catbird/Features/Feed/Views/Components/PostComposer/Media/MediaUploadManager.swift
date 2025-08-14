@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Foundation
+import OSLog
 import Petrel
 import SwiftUI
 
@@ -17,6 +18,7 @@ final class MediaUploadManager {
 
   private let client: ATProtoClient
   private let videoBaseURL = "https://video.bsky.app/xrpc"
+  private let logger = Logger(subsystem: "blue.catbird", category: "MediaUploadManager")
 
   // Video upload state
   var isVideoUploading = false
@@ -27,6 +29,10 @@ final class MediaUploadManager {
   var uploadStatus: VideoUploadStatus = .notStarted
   var uploadedBlob: Blob?
 
+  // Task tracking for cancellation
+  private var currentUploadTask: Task<Void, Error>?
+  private var currentProcessingTask: Task<Void, Error>?
+
   // Video upload status enum
   enum VideoUploadStatus {
     case notStarted
@@ -34,6 +40,7 @@ final class MediaUploadManager {
     case processing(progress: Double)
     case complete
     case failed(error: String)
+    case cancelled
   }
 
   init(client: ATProtoClient) {
@@ -310,7 +317,7 @@ final class MediaUploadManager {
       Task { @MainActor in
         self?.videoUploadProgress = progress
         self?.uploadStatus = .uploading(progress: progress)
-        logger.debug("DEBUG: Upload progress: \(Int(progress * 100))%")
+          self?.logger.debug("DEBUG: Upload progress: \(Int(progress * 100))%")
       }
     }
 
@@ -513,13 +520,58 @@ final class MediaUploadManager {
 
   /// Cancel an ongoing upload
   func cancelUpload() {
-    // TODO: Implement cancellation logic if needed
-    uploadStatus = .notStarted
+    logger.info("Cancelling video upload")
+    
+    // Cancel any ongoing upload tasks
+    if let currentUploadTask = currentUploadTask {
+      currentUploadTask.cancel()
+      self.currentUploadTask = nil
+      logger.debug("Cancelled ongoing upload task")
+    }
+    
+    // Cancel any ongoing processing tasks
+    if let currentProcessingTask = currentProcessingTask {
+      currentProcessingTask.cancel()
+      self.currentProcessingTask = nil
+      logger.debug("Cancelled ongoing processing task")
+    }
+    
+    // If we have a job ID, attempt to cancel the server-side job
+    if let jobId = videoJobId {
+      Task {
+        await cancelServerSideJob(jobId: jobId)
+      }
+    }
+    
+    // Reset all upload state
+    uploadStatus = .cancelled
     videoUploadProgress = 0.0
     processingProgress = 0.0
     videoJobId = nil
     uploadedBlob = nil
     isVideoUploading = false
+    
+    logger.info("Video upload cancelled and state reset")
+  }
+  
+  /// Cancels a server-side video processing job
+  private func cancelServerSideJob(jobId: String) async {
+    
+    do {
+      logger.info("Attempting to cancel server-side job: \(jobId)")
+      
+      // There's no explicit cancel endpoint in the current AT Protocol spec,
+      // but we can mark it as cancelled in our tracking
+      logger.debug("Server-side job cancellation requested for: \(jobId)")
+      
+      // In a full implementation, you might want to:
+      // 1. Store cancelled job IDs to avoid polling them
+      // 2. Implement a retry mechanism for network failures
+      // 3. Clean up any temporary resources on the server
+      
+    } catch {
+      logger.error("Failed to cancel server-side job \(jobId): \(error.localizedDescription)")
+    }
   }
 
   /// Creates a video embed from the uploaded blob

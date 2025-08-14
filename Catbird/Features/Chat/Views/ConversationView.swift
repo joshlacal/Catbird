@@ -105,7 +105,7 @@ struct ConversationView: View {
     .frame(maxWidth: 600)  
     .scrollDismissesKeyboard(.interactively)
     .navigationTitle(conversationTitle)
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .navigationBarTrailing) {
         ConversationToolbarMenu(conversation: chatManager.conversations.first { $0.id == convoId })

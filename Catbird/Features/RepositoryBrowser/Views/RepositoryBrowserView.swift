@@ -54,7 +54,7 @@ struct RepositoryBrowserView: View {
         NavigationStack {
             mainViewContent
                 .navigationTitle("🧪 Repository Browser")
-                .navigationBarTitleDisplayMode(.large)
+                .toolbarTitleDisplayMode(.large)
                 .toolbar {
                     toolbarItems
                 }
@@ -198,11 +198,50 @@ struct RepositoryBrowserView: View {
     }
     
     private func triggerBackupParsing(_ backup: BackupData) async {
-        // For now, just show an alert. In a real implementation, this would
-        // trigger the RepositoryParsingService to parse the backup
-        await MainActor.run {
-            // Show parsing alert or trigger actual parsing
-            print("Would trigger parsing for backup: \(backup.userHandle)")
+        // Trigger actual repository parsing using RepositoryParsingService
+        do {
+            // Find the actual BackupRecord from SwiftData
+            let backupID = backup.id
+            let descriptor = FetchDescriptor<BackupRecord>(
+                predicate: #Predicate<BackupRecord> { record in
+                    record.id == backupID
+                }
+            )
+            
+            guard let backupRecord = try modelContext.fetch(descriptor).first else {
+                await MainActor.run {
+                    viewModel?.errorMessage = "Backup record not found"
+                }
+                return
+            }
+            
+            // Check if experimental parsing is enabled
+            let appState = AppState.shared
+            guard appState.repositoryParsingService.experimentalParsingEnabled else {
+                await MainActor.run {
+                    viewModel?.errorMessage = "Repository parsing is disabled. Enable it in Settings > Account > Repository Parsing."
+                }
+                return
+            }
+            
+            // Start parsing
+            await MainActor.run {
+                viewModel?.isLoading = true
+            }
+            
+            let repositoryRecord = try await appState.repositoryParsingService.startRepositoryParsing(for: backupRecord)
+            
+            await MainActor.run {
+                viewModel?.isLoading = false
+                viewModel?.refresh() // Refresh the view to show the new repository
+                print("✅ Repository parsing completed: \(repositoryRecord.userHandle)")
+            }
+            
+        } catch {
+            await MainActor.run {
+                viewModel?.isLoading = false
+                viewModel?.errorMessage = "Parsing failed: \(error.localizedDescription)"
+            }
         }
     }
     
@@ -488,7 +527,7 @@ private struct FilterSheetView: View {
                 }
             }
             .navigationTitle("Filter Options")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Reset") {
@@ -521,7 +560,7 @@ private struct ExportSheetView: View {
         NavigationView {
             exportFormContent
                 .navigationTitle("Export Data")
-                .navigationBarTitleDisplayMode(.inline)
+                .toolbarTitleDisplayMode(.inline)
                 .toolbar {
                     exportToolbarItems
                 }

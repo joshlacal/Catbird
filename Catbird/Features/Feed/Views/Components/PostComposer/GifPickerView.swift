@@ -56,7 +56,7 @@ struct GifPickerView: View {
                 }
             }
             .navigationTitle("Add GIF")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -461,7 +461,6 @@ struct AnimatedCategoryGifView: View {
                 PlayerLayerView(
                     player: player,
                     gravity: .resizeAspectFill,
-                    size: CGSize(width: 200, height: 100),
                     shouldLoop: true
                 )
                 .aspectRatio(2.0, contentMode: .fill) // Good category aspect ratio

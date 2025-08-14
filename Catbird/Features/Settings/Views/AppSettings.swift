@@ -130,6 +130,8 @@ import OSLog
         // Save webview settings for persistence
         defaults.set(useWebViewEmbeds, forKey: "useWebViewEmbeds")
         defaults.set(enablePictureInPicture, forKey: "enablePictureInPicture")
+        defaults.set(autoStartPiP, forKey: "autoStartPiP")
+        defaults.set(rememberPiPPosition, forKey: "rememberPiPPosition")
         defaults.set(allowYouTube, forKey: "allowYouTube")
         defaults.set(allowYouTubeShorts, forKey: "allowYouTubeShorts")
         defaults.set(allowVimeo, forKey: "allowVimeo")
@@ -681,6 +683,32 @@ import OSLog
         }
         set {
             settingsModel?.enablePictureInPicture = newValue
+            saveChanges()
+        }
+    }
+    
+    var autoStartPiP: Bool {
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.autoStartPiP
+            }
+            return UserDefaults.standard.bool(forKey: "autoStartPiP")
+        }
+        set {
+            settingsModel?.autoStartPiP = newValue
+            saveChanges()
+        }
+    }
+    
+    var rememberPiPPosition: Bool {
+        get { 
+            if let settingsModel = settingsModel {
+                return settingsModel.rememberPiPPosition
+            }
+            return UserDefaults.standard.object(forKey: "rememberPiPPosition") != nil ? UserDefaults.standard.bool(forKey: "rememberPiPPosition") : true
+        }
+        set {
+            settingsModel?.rememberPiPPosition = newValue
             saveChanges()
         }
     }

@@ -15,7 +15,6 @@ struct PlayerLayerView: UIViewRepresentable {
 
   let player: AVPlayer
   let gravity: AVLayerVideoGravity
-  let size: CGSize
   let shouldLoop: Bool
   var onLayerReady: ((AVPlayerLayer) -> Void)?
 
@@ -23,19 +22,16 @@ struct PlayerLayerView: UIViewRepresentable {
   /// - Parameters:
   ///   - player: The AVPlayer to use
   ///   - gravity: Video gravity (defaults to resizeAspectFill)
-  ///   - size: The desired size
   ///   - shouldLoop: Whether the video should loop (defaults to true)
   ///   - onLayerReady: Optional callback when the player layer is ready
   init(
     player: AVPlayer,
     gravity: AVLayerVideoGravity = .resizeAspectFill,
-    size: CGSize,
     shouldLoop: Bool = true,
     onLayerReady: ((AVPlayerLayer) -> Void)? = nil
   ) {
     self.player = player
     self.gravity = gravity
-    self.size = size
     self.shouldLoop = shouldLoop
     self.onLayerReady = onLayerReady
   }
@@ -45,7 +41,7 @@ struct PlayerLayerView: UIViewRepresentable {
   }
 
   func makeUIView(context: Context) -> PlayerContainer {
-    let view = PlayerContainer(frame: CGRect(origin: .zero, size: size))
+    let view = PlayerContainer(frame: .zero)
     view.backgroundColor = .black
     view.playerLayer.videoGravity = gravity
     view.coordinator = context.coordinator
@@ -53,8 +49,7 @@ struct PlayerLayerView: UIViewRepresentable {
     // Set player and loop configuration asynchronously to prevent main thread blocking
     context.coordinator.configurePlayerAsync(for: view, player: player, shouldLoop: shouldLoop)
 
-    // Notify when layer is ready for PiP setup
-    onLayerReady?(view.playerLayer)
+    // Note: onLayerReady callback is now called AFTER player is configured in configurePlayerAsync
 
     return view
   }
@@ -67,7 +62,6 @@ struct PlayerLayerView: UIViewRepresentable {
 
     // Update other properties
     uiView.playerLayer.videoGravity = gravity
-    uiView.frame = CGRect(origin: .zero, size: size)
     uiView.shouldLoop = shouldLoop
   }
 
@@ -96,6 +90,9 @@ struct PlayerLayerView: UIViewRepresentable {
         await MainActor.run {
           view.player = player
           view.shouldLoop = shouldLoop
+          
+          // NOW notify that the layer is ready for PiP setup (after player is assigned)
+          parent.onLayerReady?(view.playerLayer)
         }
       }
     }
@@ -110,9 +107,10 @@ struct PlayerLayerView: UIViewRepresentable {
         async let duration = asset.load(.duration)
         async let transform = asset.load(.preferredTransform)
         async let tracks = asset.load(.tracks)
+        async let isPlayable = asset.load(.isPlayable)
 
         // Wait for all to complete
-        _ = try await (duration, transform, tracks)
+        _ = try await (duration, transform, tracks, isPlayable)
 
         // Set reasonable buffer duration
         player.currentItem?.preferredForwardBufferDuration = 5.0

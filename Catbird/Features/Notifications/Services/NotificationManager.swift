@@ -64,6 +64,8 @@ final class NotificationManager: NSObject {
     let follows: Bool
     let reposts: Bool
     let quotes: Bool
+    let likeViaRepost: Bool
+    let repostViaRepost: Bool
   }
 
   /// A payload for updating user relationships (mutes and blocks)
@@ -286,6 +288,10 @@ final class NotificationManager: NSObject {
       newPreferences.reposts.toggle()
     case .quotes:
       newPreferences.quotes.toggle()
+    case .likeViaRepost:
+      newPreferences.likeViaRepost.toggle()
+    case .repostViaRepost:
+      newPreferences.repostViaRepost.toggle()
     }
 
     await updatePreferences(newPreferences)
@@ -677,7 +683,9 @@ final class NotificationManager: NSObject {
         likes: preferences.likes,
         follows: preferences.follows,
         reposts: preferences.reposts,
-        quotes: preferences.quotes
+        quotes: preferences.quotes,
+        likeViaRepost: preferences.likeViaRepost,
+        repostViaRepost: preferences.repostViaRepost
       )
 
       // Create request
@@ -886,6 +894,8 @@ struct NotificationPreferences: Codable, Equatable {
   var follows: Bool = true
   var reposts: Bool = true
   var quotes: Bool = true
+  var likeViaRepost: Bool = true
+  var repostViaRepost: Bool = true
 
   func asDictionary() -> [String: Any] {
     return [
@@ -894,7 +904,9 @@ struct NotificationPreferences: Codable, Equatable {
       "likes": likes,
       "follows": follows,
       "reposts": reposts,
-      "quotes": quotes
+      "quotes": quotes,
+      "likeViaRepost": likeViaRepost,
+      "repostViaRepost": repostViaRepost
     ]
   }
 }
@@ -907,4 +919,6 @@ enum NotificationTypes: String, Codable {
   case follows
   case reposts
   case quotes
+  case likeViaRepost
+  case repostViaRepost
 }

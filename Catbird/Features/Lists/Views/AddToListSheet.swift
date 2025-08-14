@@ -130,7 +130,7 @@ struct AddToListSheet: View {
     NavigationStack {
       contentView
         .navigationTitle("Add to List")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .toolbar {
           ToolbarItem(placement: .navigationBarLeading) {
             Button("Cancel") {

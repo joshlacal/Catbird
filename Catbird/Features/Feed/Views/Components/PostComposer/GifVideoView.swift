@@ -22,7 +22,6 @@ struct GifVideoView: View {
                     PlayerLayerView(
                         player: player,
                         gravity: .resizeAspectFill,
-                        size: CGSize(width: 200, height: 200 / aspectRatio),
                         shouldLoop: true
                     )
                     .aspectRatio(aspectRatio, contentMode: .fit)

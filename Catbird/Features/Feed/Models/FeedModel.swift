@@ -73,6 +73,31 @@ final class FeedModel: StateInvalidationSubscriber {
     NotificationCenter.default.removeObserver(self)
   }
 
+  // MARK: - Data Restoration
+  
+  @MainActor
+  func restorePersistedPosts(_ posts: [CachedFeedViewPost]) async {
+    guard self.posts.isEmpty else {
+      logger.debug("Posts already loaded, skipping restoration")
+      return
+    }
+    
+    self.posts = posts
+    self.isLoading = false
+    self.hasMore = true
+    
+    // When restoring, we don't have the original cursor
+    // Set cursor to nil - it will be updated on next load
+    // This is safe because loadMore will fetch from the server
+    self.cursor = nil
+    
+    logger.debug("Restored \(posts.count) persisted posts to FeedModel")
+    
+    // Refresh shadows for restored posts
+    let feedViewPosts = posts.map { $0.feedViewPost }
+    await refreshPostShadows(feedViewPosts)
+  }
+
   // MARK: - Feed Loading
 
   @MainActor

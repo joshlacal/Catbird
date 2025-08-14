@@ -93,7 +93,7 @@ struct ChatSettingsView: View {
         }
       }
       .navigationTitle("Chat Settings")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button("Done") {
@@ -224,7 +224,7 @@ struct ChatDataExportView: View {
       }
       .padding()
       .navigationTitle("Export Complete")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button("Done") {
@@ -234,23 +234,11 @@ struct ChatDataExportView: View {
       }
       .sheet(isPresented: $showingShareSheet) {
         if let data = exportedData {
-          ShareSheet(items: [data])
+          ChatShareSheet(items: [data])
         }
       }
     }
   }
-}
-
-/// UIKit ShareSheet wrapper
-struct ShareSheet: UIViewControllerRepresentable {
-  let items: [Any]
-  
-  func makeUIViewController(context: Context) -> UIActivityViewController {
-    let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
-    return controller
-  }
-  
-  func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 #Preview {

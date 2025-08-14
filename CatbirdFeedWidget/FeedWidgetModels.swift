@@ -47,6 +47,23 @@ struct FeedWidgetEntry: TimelineEntry {
   }
 }
 
+/// Enhanced widget data with additional metadata
+struct FeedWidgetDataEnhanced: Codable {
+  let posts: [WidgetPost]
+  let feedType: String
+  let lastUpdated: Date
+  let profileHandle: String?
+  let totalPostCount: Int
+  
+  init(posts: [WidgetPost], feedType: String, lastUpdated: Date, profileHandle: String? = nil, totalPostCount: Int = 0) {
+    self.posts = posts
+    self.feedType = feedType
+    self.lastUpdated = lastUpdated
+    self.profileHandle = profileHandle
+    self.totalPostCount = totalPostCount
+  }
+}
+
 // Shared constants
 struct FeedWidgetConstants {
   static let sharedSuiteName = "group.blue.catbird.shared"

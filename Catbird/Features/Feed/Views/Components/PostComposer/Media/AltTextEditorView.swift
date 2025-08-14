@@ -79,7 +79,7 @@ struct AltTextEditorView: View {
             }
             .padding(.vertical)
             .navigationTitle("Edit Description")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

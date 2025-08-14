@@ -262,7 +262,7 @@ struct CreateListView: View {
         }
       }
       .navigationTitle("Create List")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

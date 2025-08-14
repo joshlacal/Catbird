@@ -109,7 +109,7 @@ struct BatchMessageView: View {
         }
       }
       .navigationTitle("Send to Multiple")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

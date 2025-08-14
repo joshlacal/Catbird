@@ -142,7 +142,7 @@ struct AppearanceSettingsView: View {
             }
         }
         .navigationTitle("Appearance")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
         // No manual sync needed - direct binding to AppSettings
     }

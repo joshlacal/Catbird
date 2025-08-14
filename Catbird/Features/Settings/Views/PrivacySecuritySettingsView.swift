@@ -124,7 +124,18 @@ struct PrivacySecuritySettingsView: View {
                         appState.appSettings.loggedOutVisibility = loggedOutVisibility
                     }
                 
+                Toggle("Attribution Tracking", isOn: Binding(
+                    get: { appState.appSettings.enableViaAttribution },
+                    set: { appState.appSettings.enableViaAttribution = $0 }
+                ))
+                .tint(.blue)
+                
                 Text("When enabled, people who aren't signed into Bluesky can view your profile and posts.")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 4)
+                
+                Text("Attribution tracking credits users when you like or repost content you discovered through their reposts.")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
@@ -199,7 +210,7 @@ struct PrivacySecuritySettingsView: View {
             }
         }
         .navigationTitle("Privacy & Security")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .task {
             await loadData()
             // Initialize biometric state
@@ -425,7 +436,7 @@ struct AppPasswordsView: View {
             }
         }
         .navigationTitle("App Passwords")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .refreshable {
             await loadAppPasswords()
         }
@@ -642,7 +653,7 @@ struct CreateAppPasswordView: View {
                 }
             }
             .navigationTitle("Create App Password")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -764,7 +775,7 @@ struct BlockedAccountsView: View {
             }
         }
         .navigationTitle("Blocked Accounts")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .refreshable {
             await loadBlockedAccounts()
         }
@@ -943,7 +954,7 @@ struct MutedAccountsView: View {
             }
         }
         .navigationTitle("Muted Accounts")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .refreshable {
             await loadMutedAccounts()
         }

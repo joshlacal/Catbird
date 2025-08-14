@@ -33,7 +33,7 @@ struct RepositoryMediaGalleryView: View {
                 }
             }
             .navigationTitle("Media Gallery")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Picker("Layout", selection: $selectedLayoutMode) {
@@ -679,7 +679,7 @@ private struct MediaDetailView: View {
                 .padding()
             }
             .navigationTitle("Media Detail")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") {
@@ -828,7 +828,7 @@ private struct MediaRawDataView: View {
                 .padding()
             }
             .navigationTitle("Raw Data")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
@@ -913,7 +913,7 @@ private struct MediaAnalyticsView: View {
                 .padding()
             }
             .navigationTitle("Analytics")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {

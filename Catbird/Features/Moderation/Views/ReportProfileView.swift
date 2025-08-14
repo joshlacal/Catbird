@@ -109,7 +109,7 @@ struct ReportProfileView: View {
                 }
             }
             .navigationTitle("Report User")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -145,7 +145,7 @@ struct ReportProfileView: View {
             
             // If no labelers found, try to get the default Bluesky moderation service
             if availableLabelers.isEmpty {
-                if let bskyLabeler = try await reportingService.getBlueSkyModerationService() {
+                if let bskyLabeler = try await reportingService.getBlueskyModerationService() {
                     availableLabelers = [bskyLabeler]
                 }
             }

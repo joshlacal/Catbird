@@ -81,7 +81,7 @@ struct NotificationSettingsView: View {
             }
         }
         .navigationTitle("Notifications")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .alert("Enable Notifications", isPresented: $showSystemSettingsPrompt) {
             Button("Cancel", role: .cancel) { }
             Button("Open Settings") {
@@ -162,6 +162,28 @@ struct NotificationSettingsView: View {
                         Task {
                             var prefs = notificationManager.preferences
                             prefs.quotes = newValue
+                            await notificationManager.updatePreferences(prefs)
+                        }
+                    }
+                ))
+                
+                Toggle("Likes on Reposts", isOn: Binding(
+                    get: { notificationManager.preferences.likeViaRepost },
+                    set: { newValue in
+                        Task {
+                            var prefs = notificationManager.preferences
+                            prefs.likeViaRepost = newValue
+                            await notificationManager.updatePreferences(prefs)
+                        }
+                    }
+                ))
+                
+                Toggle("Reposts of Reposts", isOn: Binding(
+                    get: { notificationManager.preferences.repostViaRepost },
+                    set: { newValue in
+                        Task {
+                            var prefs = notificationManager.preferences
+                            prefs.repostViaRepost = newValue
                             await notificationManager.updatePreferences(prefs)
                         }
                     }

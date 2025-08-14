@@ -20,38 +20,8 @@ final class FeedWidgetDataProvider {
   
   /// Updates widget data from a feed's posts
   func updateWidgetData(from posts: [CachedFeedViewPost], feedType: FetchType) {
-    guard let sharedDefaults = sharedDefaults else {
-      logger.error("Failed to access shared defaults")
-      return
-    }
-    
-    // Convert posts to widget format - split complex closure to avoid compiler crash
-    let limitedPosts = Array(posts.prefix(10))
-    let widgetPosts = limitedPosts.compactMap { cachedPost in
-      convertToWidgetPost(cachedPost)
-    }
-    
-    // Create feed widget data
-    let feedWidgetData = FeedWidgetData(
-      posts: widgetPosts,
-      feedType: mapFeedType(feedType),
-      lastUpdated: Date()
-    )
-    
-    // Save to shared defaults
-    do {
-      let encoder = JSONEncoder()
-      encoder.dateEncodingStrategy = .iso8601
-      let data = try encoder.encode(feedWidgetData)
-      sharedDefaults.set(data, forKey: FeedWidgetConstants.feedDataKey)
-      
-      logger.info("Updated widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName)")
-      
-      // Reload widget timelines
-      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
-    } catch {
-      logger.error("Failed to encode widget data: \(error.localizedDescription)")
-    }
+    // Use the enhanced version by default for better functionality
+    updateWidgetDataEnhanced(from: posts, feedType: feedType)
   }
   
   /// Helper method to convert a cached post to widget format
@@ -137,44 +107,8 @@ final class FeedWidgetDataProvider {
   
   /// Updates widget data for a specific profile
   func updateWidgetDataForProfile(handle: String, posts: [CachedFeedViewPost]) {
-    guard let sharedDefaults = sharedDefaults else {
-      logger.error("Failed to access shared defaults")
-      return
-    }
-    
-    // Convert posts to widget format
-    let limitedPosts = Array(posts.prefix(10))
-    let widgetPosts = limitedPosts.compactMap { cachedPost in
-      convertToWidgetPost(cachedPost)
-    }
-    
-    // Create profile-specific feed widget data
-    let feedWidgetData = FeedWidgetData(
-      posts: widgetPosts,
-      feedType: "profile",
-      lastUpdated: Date()
-    )
-    
-    // Save to shared defaults with profile-specific key
-    do {
-      let encoder = JSONEncoder()
-      encoder.dateEncodingStrategy = .iso8601
-      let data = try encoder.encode(feedWidgetData)
-      
-      // Store both general and profile-specific data
-      sharedDefaults.set(data, forKey: FeedWidgetConstants.feedDataKey)
-      sharedDefaults.set(data, forKey: "profileWidgetData_\(handle)")
-      
-      logger.info("Updated widget data with \(widgetPosts.count) posts for profile: \(handle)")
-      
-      // Store theme and font preferences for widget access
-      updateSharedPreferences()
-      
-      // Reload widget timelines
-      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
-    } catch {
-      logger.error("Failed to encode profile widget data: \(error.localizedDescription)")
-    }
+    // Use the enhanced version with profile handle
+    updateWidgetDataEnhanced(from: posts, feedType: .timeline, profileHandle: handle)
   }
   
   /// Updates shared preferences for widget theme and font settings
@@ -274,14 +208,20 @@ final class FeedWidgetDataProvider {
       totalPostCount: posts.count
     )
     
-    // Save to shared defaults
+    // Save to shared defaults with both general and configuration-specific keys
     do {
       let encoder = JSONEncoder()
       encoder.dateEncodingStrategy = .iso8601
       let data = try encoder.encode(feedWidgetData)
+      
+      // Save to general key for fallback
       sharedDefaults.set(data, forKey: FeedWidgetConstants.feedDataKey)
       
-      logger.info("Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName)")
+      // Save to configuration-specific key for targeted widgets
+      let configKey = createConfigurationKey(feedType: feedType, profileHandle: profileHandle)
+      sharedDefaults.set(data, forKey: configKey)
+      
+      logger.info("Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName) (keys: general + \(configKey))")
       
       // Update shared preferences
       updateSharedPreferences()
@@ -352,6 +292,34 @@ final class FeedWidgetDataProvider {
     default:
       return []
     }
+  }
+  
+  /// Creates a configuration key that matches the widget's key generation logic
+  private func createConfigurationKey(feedType: FetchType, profileHandle: String? = nil) -> String {
+    var keyComponents = ["widgetData"]
+    
+    switch feedType {
+    case .timeline:
+      keyComponents.append("timeline")
+    case .feed(let uri):
+      let uriString = uri.uriString()
+      if uriString.contains("discover") {
+        keyComponents.append("discover")
+      } else if uriString.contains("popular") || uriString.contains("hot") {
+        keyComponents.append("popular")
+      } else {
+        keyComponents.append("custom")
+        keyComponents.append(uriString.replacingOccurrences(of: "at://", with: "").replacingOccurrences(of: "/", with: "_"))
+      }
+    default:
+      keyComponents.append("timeline")
+    }
+    
+    if let handle = profileHandle {
+      keyComponents.append(handle.replacingOccurrences(of: "@", with: ""))
+    }
+    
+    return keyComponents.joined(separator: "_")
   }
   
   /// Clears widget data

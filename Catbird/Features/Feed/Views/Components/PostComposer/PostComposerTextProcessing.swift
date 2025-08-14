@@ -31,20 +31,22 @@ extension PostComposerViewModel {
         let newText = nsAttributedText.string
         
         // Only update if text actually changed to avoid infinite loops
-        if newText != postText {
-            postText = newText
+        if newText != postText && !isUpdatingText {
+            isUpdatingText = true
             
-            // Update the NSAttributedString property
+            postText = newText
             richAttributedText = nsAttributedText
             
             // Trigger standard post content update
             updatePostContent()
+            
+            isUpdatingText = false
         }
     }
     
     func syncAttributedTextFromPlainText() {
         // Update NSAttributedString when plain text changes
-        if postText != richAttributedText.string {
+        if postText != richAttributedText.string && !isUpdatingText {
             richAttributedText = NSAttributedString(string: postText)
         }
     }

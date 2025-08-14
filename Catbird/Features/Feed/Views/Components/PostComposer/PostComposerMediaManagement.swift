@@ -13,6 +13,11 @@ extension PostComposerViewModel {
     func addMediaItems(_ items: [PhotosPickerItem]) async {
         logger.debug("DEBUG: addMediaItems called with \(items.count) items")
         
+        // Clear selected GIF when adding other media
+        if selectedGif != nil {
+            selectedGif = nil
+        }
+        
         // Check each item for GIFs before processing as regular images
         for (index, item) in items.enumerated() {
             logger.debug("DEBUG: Checking item \(index) for GIF content")
@@ -22,7 +27,10 @@ extension PostComposerViewModel {
                 
                 if isDataAnimatedGIF(data) {
                     logger.debug("DEBUG: Item \(index) is an animated GIF! Converting to video")
+                    // Clear other media when adding GIF
+                    mediaItems.removeAll()
                     await processGIFAsVideoFromData(data)
+                    syncMediaStateToCurrentThread()
                     return
                 } else {
                     logger.debug("DEBUG: Item \(index) is not an animated GIF")
@@ -32,6 +40,9 @@ extension PostComposerViewModel {
         
         // If no GIFs found, process as regular images
         logger.debug("DEBUG: No animated GIFs found, processing as regular images")
+        
+        // Clear video when adding images
+        videoItem = nil
         
         let availableSlots = maxImagesAllowed - mediaItems.count
         guard availableSlots > 0 else { return }
@@ -44,6 +55,19 @@ extension PostComposerViewModel {
         // Load each image asynchronously
         for i in mediaItems.indices where mediaItems[i].image == nil {
             await loadImageForItem(at: i)
+        }
+        
+        // Sync media state to current thread
+        syncMediaStateToCurrentThread()
+    }
+    
+    // MARK: - Media State Synchronization
+    
+    private func syncMediaStateToCurrentThread() {
+        if isThreadMode && threadEntries.indices.contains(currentThreadIndex) {
+            threadEntries[currentThreadIndex].mediaItems = mediaItems
+            threadEntries[currentThreadIndex].videoItem = videoItem
+            threadEntries[currentThreadIndex].selectedGif = selectedGif
         }
     }
 
@@ -128,6 +152,9 @@ extension PostComposerViewModel {
         } else {
             mediaItems.removeAll(where: { $0.id == id })
         }
+        
+        // Sync media state to current thread
+        syncMediaStateToCurrentThread()
     }
     
     // MARK: - Alt Text Management

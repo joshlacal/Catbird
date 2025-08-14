@@ -23,7 +23,7 @@ struct FontSettingsTestView: View {
                 .padding()
             }
             .navigationTitle("Font Settings Demo")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
         }
     }
     

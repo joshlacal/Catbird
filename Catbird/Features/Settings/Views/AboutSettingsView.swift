@@ -133,7 +133,7 @@ struct AboutSettingsView: View {
             }
         }
         .navigationTitle("About")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .confirmationDialog("Support Development", isPresented: $isShowingSupportOptions, titleVisibility: .visible) {
             Button("Support Catbird (Pay What You Wish)") {
                 openSupportLink(SupportTier.support.stripeURL)

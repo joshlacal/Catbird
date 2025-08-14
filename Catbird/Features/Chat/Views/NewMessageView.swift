@@ -98,7 +98,7 @@ struct NewMessageView: View {
         .listStyle(.plain)
       }
       .navigationTitle("New Message")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

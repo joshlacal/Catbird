@@ -87,7 +87,7 @@ struct RefinedSearchView: View {
             }
         }
         .navigationTitle("Search")
-        .navigationBarTitleDisplayMode(.large)
+        .toolbarTitleDisplayMode(.large)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),

@@ -26,7 +26,7 @@ struct RepositoryDetailView: View {
                 }
             }
             .navigationTitle(repository?.userHandle ?? "Repository")
-            .navigationBarTitleDisplayMode(.large)
+            .toolbarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") {
@@ -47,6 +47,10 @@ struct RepositoryDetailView: View {
                             
                             Button("Repository Info", systemImage: "info.circle") {
                                 selectedTab = .overview
+                            }
+                            
+                            Button("Run Diagnostics", systemImage: "stethoscope") {
+                                selectedTab = .diagnostics
                             }
                         } label: {
                             Image(systemName: "ellipsis.circle")
@@ -113,6 +117,8 @@ struct RepositoryDetailView: View {
             RepositoryMediaGalleryView(repository: repository)
         case .search:
             RepositoryUniversalSearchView(repository: repository)
+        case .diagnostics:
+            RepositoryDiagnosticsView(repository: repository)
         }
     }
     
@@ -546,6 +552,7 @@ private enum DetailTab: String, CaseIterable {
     case connections = "connections"
     case media = "media"
     case search = "search"
+    case diagnostics = "diagnostics"
     
     var displayName: String {
         switch self {
@@ -559,6 +566,8 @@ private enum DetailTab: String, CaseIterable {
             return "Media"
         case .search:
             return "Search"
+        case .diagnostics:
+            return "Diagnostics"
         }
     }
     
@@ -574,6 +583,8 @@ private enum DetailTab: String, CaseIterable {
             return "photo.stack"
         case .search:
             return "magnifyingglass"
+        case .diagnostics:
+            return "stethoscope"
         }
     }
 }

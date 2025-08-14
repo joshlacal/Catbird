@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Defines notification types
 enum NotificationType: String, CaseIterable {
-  case like, repost, follow, mention, reply, quote
+  case like, repost, follow, mention, reply, quote, likeViaRepost, repostViaRepost
 
   var icon: String {
     switch self {
@@ -19,6 +19,8 @@ enum NotificationType: String, CaseIterable {
     case .mention: return "at"
     case .reply: return "arrowshape.turn.up.left.fill"
     case .quote: return "quote.bubble"
+    case .likeViaRepost: return "heart.fill"
+    case .repostViaRepost: return "arrow.2.squarepath"
     }
   }
 
@@ -30,13 +32,15 @@ enum NotificationType: String, CaseIterable {
     case .mention: return .purple
     case .reply: return .orange
     case .quote: return .cyan
+    case .likeViaRepost: return .red
+    case .repostViaRepost: return .green
     }
   }
 
   /// Determines if this notification type should be grouped
   var isGroupable: Bool {
     switch self {
-    case .like, .repost, .follow:
+    case .like, .repost, .follow, .likeViaRepost, .repostViaRepost:
       return true
     case .mention, .reply, .quote:
       // Don't group replies and quotes per requirement
@@ -255,6 +259,7 @@ struct GroupedNotification: Identifiable {
         currentPage += 1
       }
 
+      
       // Process the fetched notifications
       let newGroupedNotifications = await groupNotifications(
         output.notifications, pageNumber: currentPage)
@@ -303,9 +308,18 @@ struct GroupedNotification: Identifiable {
 
     for notification in notifications {
       switch notification.reason {
-      case "like", "repost":  // Added repost to also fetch posts for reposts
+      case "like", "repost":
         if let reasonSubject = notification.reasonSubject {
           urisToFetch.insert(reasonSubject)
+        }
+      case "like-via-repost", "repost-via-repost":
+        // For via repost notifications, the original post URI is directly in record.subject.uri
+        if case .knownType(let record) = notification.record,
+           let likeRecord = record as? AppBskyFeedLike {
+          urisToFetch.insert(likeRecord.subject.uri)
+        } else if case .knownType(let record) = notification.record,
+                  let repostRecord = record as? AppBskyFeedRepost {
+          urisToFetch.insert(repostRecord.subject.uri)
         }
       case "reply", "mention", "quote":
         urisToFetch.insert(notification.uri)
@@ -329,7 +343,7 @@ struct GroupedNotification: Identifiable {
         let key: String
 
         switch type {
-        case .like, .repost:  // Modified to handle reposts similar to likes
+        case .like, .repost, .likeViaRepost, .repostViaRepost:  // Added new notification types
           key = "\(notification.reason)_\(notification.reasonSubject?.uriString() ?? "")"
         case .follow:
           key = notification.reason
@@ -370,9 +384,20 @@ struct GroupedNotification: Identifiable {
       var subjectPost: AppBskyFeedDefs.PostView?
 
       switch type {
-      case .like, .repost:  // Modified to handle reposts similar to likes
+      case .like, .repost:
         if let reasonSubject = sortedNotifications.first?.reasonSubject {
           subjectPost = fetchedPosts[reasonSubject]
+        }
+      case .likeViaRepost, .repostViaRepost:
+        // For via repost notifications, get the original post URI from the record
+        if let firstNotification = sortedNotifications.first {
+          if case .knownType(let record) = firstNotification.record,
+             let likeRecord = record as? AppBskyFeedLike {
+            subjectPost = fetchedPosts[likeRecord.subject.uri]
+          } else if case .knownType(let record) = firstNotification.record,
+                    let repostRecord = record as? AppBskyFeedRepost {
+            subjectPost = fetchedPosts[repostRecord.subject.uri]
+          }
         }
       case .reply, .mention, .quote:
         subjectPost = fetchedPosts[sortedNotifications.first!.uri]
@@ -410,6 +435,8 @@ struct GroupedNotification: Identifiable {
     case "mention": return .mention
     case "reply": return .reply
     case "quote": return .quote
+    case "like-via-repost": return .likeViaRepost
+    case "repost-via-repost": return .repostViaRepost
     default: return nil
     }
   }

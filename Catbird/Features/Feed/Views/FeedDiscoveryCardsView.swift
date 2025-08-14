@@ -46,7 +46,7 @@ struct FeedDiscoveryCardsView: View {
         }
       }
       .navigationTitle("Discover Feeds")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Close") {
@@ -551,7 +551,7 @@ struct FeedDiscoveryCard: View {
             navigationPath: .constant(NavigationPath())
           )
           .navigationTitle(feed.displayName)
-          .navigationBarTitleDisplayMode(.inline)
+          .toolbarTitleDisplayMode(.inline)
           .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
               Button("Close") {

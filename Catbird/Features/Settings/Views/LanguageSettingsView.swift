@@ -364,7 +364,7 @@ struct LanguageSettingsView: View {
             }
         }
         .navigationTitle("Languages")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .appDisplayScale(appState: appState)
         .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
         .onAppear {
@@ -510,7 +510,7 @@ struct EnhancedLanguageSelectionView: View {
         }
         .searchable(text: $searchText, prompt: "Search languages...")
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
 }
 
@@ -655,7 +655,7 @@ struct EnhancedContentLanguagesView: View {
             }
             .searchable(text: $searchText, prompt: "Search languages...")
             .navigationTitle("Content Languages")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {

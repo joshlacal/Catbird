@@ -367,7 +367,7 @@ struct AccountSettingsView: View {
                 }
             }
             .navigationTitle("Account Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .task {
                 logger.info("AccountSettingsView appeared, loading data...")
                 await loadAccountDetails()
@@ -829,7 +829,7 @@ struct BackupSettingsSheet: View {
                 }
             }
             .navigationTitle("Backup Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -1048,7 +1048,7 @@ struct BackupDetailsSheet: View {
                 }
             }
             .navigationTitle("Backup Details")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {

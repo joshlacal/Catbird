@@ -112,6 +112,11 @@ struct VideoPickerView: View {
                             Text("Ready to upload")
                                 .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
+                        case .cancelled:
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            Text("Cancelled")
+                                .appFont(AppTextRole.caption)
                         }
                     }
                     .padding(.vertical, 8)

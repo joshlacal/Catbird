@@ -9,9 +9,23 @@ import PhotosUI
 final class PostComposerViewModel {
   private let logger = Logger(subsystem: "blue.catbird", category: "PostComposerViewModel")
   
+  // MARK: - State Management Control
+  
+   var isUpdatingText: Bool = false
+  private var isDraftMode: Bool = false
+  
   // MARK: - Post Content Properties
   
-  var postText: String = ""
+  var postText: String = "" {
+    didSet {
+      if !isUpdatingText {
+        syncAttributedTextFromPlainText()
+        if !isDraftMode {
+          updatePostContent()
+        }
+      }
+    }
+  }
   var richAttributedText: NSAttributedString = NSAttributedString()
   var attributedPostText: AttributedString = AttributedString()
   var selectedLanguages: [LanguageCodeContainer] = []
@@ -56,6 +70,11 @@ final class PostComposerViewModel {
   var detectedURLs: [String] = []
   var urlCards: [String: URLCardResponse] = [:]
   var isLoadingURLCard: Bool = false
+  
+  // MARK: - Thumbnail Cache
+  
+  /// Cache for uploaded thumbnail blobs by URL
+  var thumbnailCache: [String: Blob] = [:]
   
   // MARK: - Mention Properties
   
@@ -133,6 +152,72 @@ final class PostComposerViewModel {
     }
     
     self.richAttributedText = NSAttributedString(string: postText)
+    
+    // Initialize thread mode properly
+    setupInitialState()
+  }
+  
+  // MARK: - Initialization and State Management
+  
+  private func setupInitialState() {
+    // Ensure thread entries are properly initialized
+    if threadEntries.isEmpty {
+      threadEntries = [ThreadEntry()]
+    }
+    currentThreadIndex = 0
+    
+    // Set up reply context if this is a reply
+    if parentPost != nil {
+      replyTo = parentPost
+    }
+  }
+  
+  func enterDraftMode() {
+    isDraftMode = true
+  }
+  
+  func exitDraftMode() {
+    isDraftMode = false
+    updatePostContent()
+  }
+  
+  func saveDraftState() -> PostComposerDraft {
+    return PostComposerDraft(
+      postText: postText,
+      mediaItems: mediaItems,
+      videoItem: videoItem,
+      selectedGif: selectedGif,
+      selectedLanguages: selectedLanguages,
+      selectedLabels: selectedLabels,
+      outlineTags: outlineTags,
+      threadEntries: threadEntries,
+      isThreadMode: isThreadMode,
+      currentThreadIndex: currentThreadIndex
+    )
+  }
+  
+  func restoreDraftState(_ draft: PostComposerDraft) {
+    isUpdatingText = true
+    isDraftMode = true
+    
+    defer {
+      isUpdatingText = false
+      isDraftMode = false
+    }
+    
+    postText = draft.postText
+    mediaItems = draft.mediaItems
+    videoItem = draft.videoItem
+    selectedGif = draft.selectedGif
+    selectedLanguages = draft.selectedLanguages
+    selectedLabels = draft.selectedLabels
+    outlineTags = draft.outlineTags
+    threadEntries = draft.threadEntries
+    isThreadMode = draft.isThreadMode
+    currentThreadIndex = draft.currentThreadIndex
+    
+    richAttributedText = NSAttributedString(string: postText)
+    updatePostContent()
   }
   
   // MARK: - Media Item Model

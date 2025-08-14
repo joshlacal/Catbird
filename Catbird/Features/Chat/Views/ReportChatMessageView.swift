@@ -54,7 +54,7 @@ struct ReportChatMessageView: View {
         }
       }
       .navigationTitle("Report Message")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

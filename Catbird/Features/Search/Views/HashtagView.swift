@@ -93,7 +93,7 @@ struct HashtagView: View {
             }
         }
         .navigationTitle("#\(tag)")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .sheet(isPresented: $showFilterSheet) {
             HashtagFilterView(languageFilter: $languageFilter, onApply: {
                 posts = []
@@ -448,7 +448,7 @@ struct HashtagFilterView: View {
                 // Could add more filter options
             }
             .navigationTitle("Filter Posts")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

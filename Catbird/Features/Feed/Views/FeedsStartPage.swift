@@ -978,14 +978,12 @@ struct FeedsStartPage: View {
               }
 
           }
-          .padding(.horizontal, horizontalPadding)
           .padding(.top, 24) // Add top padding to separate from banner
           .padding(.bottom, 24)
 
           // Search bar
           if isSearchBarVisible {
               searchBar()
-                  .padding(.horizontal, horizontalPadding)
                   .padding(.bottom, gridSpacing)
                   .transition(
                       .asymmetric(
@@ -998,33 +996,28 @@ struct FeedsStartPage: View {
               // Add Feed button in edit mode
               if editMode.isEditing {
                   addFeedButton()
-                      .padding(.horizontal, horizontalPadding)
               }
 
               // Big default feed button as first feed in hierarchy
               bigDefaultFeedButton
-                  .padding(.horizontal, horizontalPadding)
 
               // Pinned feeds section - continue the hierarchy
               if !filteredPinnedFeeds.isEmpty {
                   sectionHeader("Pinned")
-                      .padding(.horizontal, horizontalPadding)
                   gridSection(for: filteredPinnedFeeds, category: "pinned")
-                      .padding(.horizontal, horizontalPadding)
               }
 
               // Saved feeds section
               if !filteredSavedFeeds.isEmpty {
                   sectionHeader("Saved")
-                      .padding(.horizontal, horizontalPadding)
                   gridSection(for: filteredSavedFeeds, category: "saved")
-                      .padding(.horizontal, horizontalPadding)
               }
 
               // Extra space at bottom
               Spacer(minLength: 200)
           }
       }
+      .padding(30)
       .background(Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))) // Add background to content
   }
 
@@ -1155,9 +1148,15 @@ extension View {
             }
             .sheet(isPresented: showAddFeedSheet) {
                 AddFeedSheet()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(.thinMaterial)
             }
             .sheet(isPresented: isShowingAccountSwitcher) {
                 AccountSwitcherView()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(.thinMaterial)
             }
             .alert("System Feed Protected", isPresented: showProtectedSystemFeedAlert) {
                 Button("OK", role: .cancel) {}

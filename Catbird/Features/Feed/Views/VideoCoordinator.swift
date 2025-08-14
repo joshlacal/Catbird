@@ -492,6 +492,12 @@ final class VideoCoordinator {
 
   /// Clean up PiP controller for a video
   private func cleanupPiPController(for modelId: String) {
+    // CRITICAL: Only clean up if NOT in PiP mode
+    if isInPiPMode(modelId) {
+      logger.debug("📺 Refusing to cleanup PiP controller for active PiP video \(modelId)")
+      return
+    }
+    
     // Remove PiP controller and delegate
     if let controller = pipControllers.removeValue(forKey: modelId) {
       controller.delegate = nil
@@ -499,7 +505,7 @@ final class VideoCoordinator {
     }
     pipDelegates.removeValue(forKey: modelId)
 
-    // Clean up persistent player layer
+    // Clean up persistent player layer only if not in PiP
     if let persistentLayer = persistentPlayerLayers.removeValue(forKey: modelId) {
       persistentLayer.player = nil
       logger.debug("📺 Cleaned up persistent player layer for \(modelId)")
@@ -644,9 +650,93 @@ final class VideoCoordinator {
   }
 
   // MARK: - PiP Management
+  
+  /// Transfer player to persistent storage during PiP mode
+  func transferPlayerToPersistentStorage(_ player: AVPlayer, for modelId: String) {
+    logger.debug("📺 Transferring player \(modelId) to persistent storage for PiP")
+    
+    // Update the activeVideos entry to keep the player reference
+    if var (model, _, lastPlaybackTime) = activeVideos[modelId] {
+      activeVideos[modelId] = (model, player, lastPlaybackTime)
+      
+      // Ensure persistent layer is also updated
+      if let persistentLayer = persistentPlayerLayers[modelId] {
+        persistentLayer.player = player
+        logger.debug("📺 Updated persistent layer for \(modelId)")
+      } else {
+        // Create persistent layer if it doesn't exist
+        let newPersistentLayer = AVPlayerLayer()
+        newPersistentLayer.player = player
+        newPersistentLayer.videoGravity = .resizeAspect
+        persistentPlayerLayers[modelId] = newPersistentLayer
+        logger.debug("📺 Created new persistent layer for \(modelId)")
+      }
+    }
+  }
+  
+  /// Restore player from persistent storage when view returns
+  func restorePlayerFromPersistentStorage(for modelId: String) -> AVPlayer? {
+    logger.debug("📺 Attempting to restore player \(modelId) from persistent storage")
+    
+    if let (_, player, _) = activeVideos[modelId] {
+      logger.debug("📺 Successfully restored player for \(modelId)")
+      return player
+    }
+    
+    logger.debug("⚠️ No persistent player found for \(modelId)")
+    return nil
+  }
+  
+  // MARK: - PiP Delegate Methods
+  
+  /// Called when PiP will start
+  func willStartPiP(for modelId: String) {
+    logger.debug("📺 Will start PiP for video: \(modelId)")
+    AudioSessionManager.shared.configureForPictureInPicture()
+  }
+  
+  /// Called when PiP did start
+  func didStartPiP(for modelId: String) {
+    logger.debug("📺 Did start PiP for video: \(modelId)")
+    updatePiPState(for: modelId, isActive: true)
+  }
+  
+  /// Called when PiP will stop
+  func willStopPiP(for modelId: String) {
+    logger.debug("📺 Will stop PiP for video: \(modelId)")
+  }
+  
+  /// Called when PiP did stop
+  func didStopPiP(for modelId: String) {
+    logger.debug("📺 Did stop PiP for video: \(modelId)")
+    updatePiPState(for: modelId, isActive: false)
+    AudioSessionManager.shared.resetPiPAudioSession()
+    forceCleanupPiP(for: modelId)
+  }
+  
+  /// Called when PiP failed to start
+  func didFailToStartPiP(for modelId: String, error: Error) {
+    logger.error("❌ PiP failed to start for video \(modelId): \(error.localizedDescription)")
+    updatePiPState(for: modelId, isActive: false)
+  }
+  
+  /// Called when PiP needs to restore user interface
+  func restoreUserInterface(for modelId: String, completion: @escaping (Bool) -> Void) {
+    logger.debug("📺 Restoring UI for video: \(modelId)")
+    
+    // Post notification to restore UI - this will be handled by the app's navigation system
+    NotificationCenter.default.post(
+      name: NSNotification.Name("RestorePiPInterface"),
+      object: nil,
+      userInfo: ["videoId": modelId]
+    )
+    
+    // For now, always return success
+    completion(true)
+  }
 
   /// Register a PiP controller for a video
-  func registerPiPController(_ controller: AVPictureInPictureController, for modelId: String) {
+  func registerPiPController(_ controller: AVPictureInPictureController, for modelId: String, with delegate: VideoPiPDelegate? = nil) {
     guard let (model, player, _) = activeVideos[modelId] else { return }
 
     // Create a persistent player layer that survives view deallocation
@@ -657,44 +747,64 @@ final class VideoCoordinator {
     // Store the persistent layer
     persistentPlayerLayers[modelId] = persistentLayer
 
-    // Create NEW PiP controller with persistent layer instead of view layer
-    let persistentPiPController = AVPictureInPictureController(playerLayer: persistentLayer)
-    persistentPiPController?.canStartPictureInPictureAutomaticallyFromInline = false
+    // Use provided delegate or create new one
+    let pipDelegate = delegate ?? VideoPiPDelegate(modelId: modelId, coordinator: self)
+    
+    // Set delegate on the provided controller
+    controller.delegate = pipDelegate
 
-    // Create and set delegate
-    let delegate = VideoPiPDelegate(modelId: modelId, coordinator: self)
-    persistentPiPController?.delegate = delegate
-
-    // Store NEW controller and delegate (replacing any existing ones)
-    pipControllers[modelId] = persistentPiPController
-    pipDelegates[modelId] = delegate
+    // Store controller and delegate
+    pipControllers[modelId] = controller
+    pipDelegates[modelId] = pipDelegate
 
     // Update model state
     model.isPiPSupported = true
 
-    logger.debug("📺 Registered PERSISTENT PiP controller for \(modelId)")
+    logger.debug("📺 Registered PiP controller for \(modelId)")
   }
 
   /// Create PiP setup for a video from player layer info (simplified interface)
   func setupPiPController(for modelId: String, validatedPlayerLayer: AVPlayerLayer) {
-    guard let (model, player, _) = activeVideos[modelId] else { return }
+    guard let (model, player, _) = activeVideos[modelId] else { 
+      logger.debug("❌ No active video found for \(modelId)")
+      return 
+    }
+
+    logger.debug("📺 Setting up PiP controller for \(modelId)")
 
     // Create a persistent player layer that survives view deallocation
     let persistentLayer = AVPlayerLayer()
     persistentLayer.player = player
     persistentLayer.videoGravity = validatedPlayerLayer.videoGravity
-    persistentLayer.frame = validatedPlayerLayer.frame
+    
+    // CRITICAL: Set proper frame using server-provided aspect ratio if the original layer has zero dimensions
+    if validatedPlayerLayer.frame.width == 0 || validatedPlayerLayer.frame.height == 0 {
+      // Use the server-provided aspect ratio to calculate proper dimensions
+      let aspectRatio = model.aspectRatio
+      let baseWidth: CGFloat = 320 // Base width for PiP
+      let calculatedHeight = baseWidth / aspectRatio
+      
+      persistentLayer.frame = CGRect(x: 0, y: 0, width: baseWidth, height: calculatedHeight)
+      logger.debug("📺 Using server aspect ratio \(aspectRatio) for persistent layer: \(persistentLayer.frame.debugDescription)")
+    } else {
+      persistentLayer.frame = validatedPlayerLayer.frame
+      logger.debug("📺 Using validated frame for persistent layer: \(persistentLayer.frame.debugDescription)")
+    }
 
     // Store the persistent layer
     persistentPlayerLayers[modelId] = persistentLayer
 
     // Create PiP controller with persistent layer
-    let persistentPiPController = AVPictureInPictureController(playerLayer: persistentLayer)
-    persistentPiPController?.canStartPictureInPictureAutomaticallyFromInline = false
+    guard let persistentPiPController = AVPictureInPictureController(playerLayer: persistentLayer) else {
+      logger.debug("❌ Failed to create PiP controller for \(modelId)")
+      return
+    }
+    
+    persistentPiPController.canStartPictureInPictureAutomaticallyFromInline = false
 
     // Create and set delegate
     let delegate = VideoPiPDelegate(modelId: modelId, coordinator: self)
-    persistentPiPController?.delegate = delegate
+    persistentPiPController.delegate = delegate
 
     // Store controller and delegate
     pipControllers[modelId] = persistentPiPController
@@ -703,7 +813,14 @@ final class VideoCoordinator {
     // Update model state
     model.isPiPSupported = true
 
-    logger.debug("📺 Created PERSISTENT PiP controller for \(modelId)")
+    logger.debug("📺 Created PERSISTENT PiP controller for \(modelId) - isPossible: \(persistentPiPController.isPictureInPicturePossible)")
+    
+    // Add validation for player layer setup
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      let playerStatus = persistentLayer.player?.currentItem?.status.rawValue ?? -1
+      let hasVideoTracks = persistentLayer.player?.currentItem?.tracks.contains { $0.assetTrack?.mediaType == .video } ?? false
+        self.logger.debug("📺 PiP validation - status: \(playerStatus), hasVideo: \(hasVideoTracks), frame: \(persistentLayer.frame.debugDescription)")
+    }
   }
 
   /// Get PiP controller for a video
@@ -735,6 +852,7 @@ final class VideoCoordinator {
 // MARK: - PiP Delegate
 
 class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
+  private let pipLogger = Logger(subsystem: "blue.catbird", category: "VideoPiPDelegate")
   let modelId: String
   weak var coordinator: VideoCoordinator?
 
@@ -747,35 +865,36 @@ class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
   func pictureInPictureControllerWillStartPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
+      pipLogger.debug("📺 PiP will start for video: \(self.modelId)")
     Task { @MainActor in
-      // Configure audio session only when PiP is actually starting
-      AudioSessionManager.shared.configureForPictureInPicture()
-      coordinator?.updatePiPState(for: modelId, isActive: true)
+      coordinator?.willStartPiP(for: modelId)
     }
   }
 
   func pictureInPictureControllerDidStartPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
-    // PiP is now active
+      pipLogger.debug("📺 PiP did start for video: \(self.modelId)")
+    Task { @MainActor in
+      coordinator?.didStartPiP(for: modelId)
+    }
   }
 
   func pictureInPictureControllerWillStopPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
+      pipLogger.debug("📺 PiP will stop for video: \(self.modelId)")
     Task { @MainActor in
-      coordinator?.updatePiPState(for: modelId, isActive: false)
+      coordinator?.willStopPiP(for: modelId)
     }
   }
 
   func pictureInPictureControllerDidStopPictureInPicture(
     _ pictureInPictureController: AVPictureInPictureController
   ) {
-    // PiP has ended, can now clean up if needed
+      pipLogger.debug("📺 PiP did stop for video: \(self.modelId)")
     Task { @MainActor in
-      // Reset audio session when PiP stops
-      AudioSessionManager.shared.resetPiPAudioSession()
-      coordinator?.forceCleanupPiP(for: modelId)
+      coordinator?.didStopPiP(for: modelId)
     }
   }
 
@@ -783,9 +902,24 @@ class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
     _ pictureInPictureController: AVPictureInPictureController,
     failedToStartPictureInPictureWithError error: Error
   ) {
+      pipLogger.error("❌ PiP failed to start for video \(self.modelId): \(error.localizedDescription)")
+      pipLogger.error("❌ PiP error code: \((error as NSError).code), domain: \((error as NSError).domain)")
+      pipLogger.error("❌ PiP userInfo: \((error as NSError).userInfo)")
+      print("❌ PiP DETAILED ERROR - Code: \((error as NSError).code), Domain: \((error as NSError).domain), Description: \(error.localizedDescription)")
     Task { @MainActor in
+      coordinator?.didFailToStartPiP(for: modelId, error: error)
+    }
+  }
 
-      coordinator?.updatePiPState(for: modelId, isActive: false)
+  func pictureInPictureController(
+    _ pictureInPictureController: AVPictureInPictureController,
+    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+  ) {
+      pipLogger.debug("📺 Restoring UI for video: \(self.modelId)")
+    Task { @MainActor in
+      coordinator?.restoreUserInterface(for: modelId) { success in
+        completionHandler(success)
+      }
     }
   }
 }

@@ -36,17 +36,46 @@ struct PostComposerView: View {
     @State private var selectedRangeForLink = NSRange()
     @State private var linkFacets: [RichTextFacetUtils.LinkFacet] = []
     
-    init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
+    // Minimize functionality
+    @State private var dragOffset: CGFloat = 0
+    private let minimizeThreshold: CGFloat = 100
+    
+    // Minimize callback - called when composer should be minimized
+    let onMinimize: ((PostComposerViewModel) -> Void)?
+    
+    init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
         self._viewModel = State(
             wrappedValue: PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState))
+        self.onMinimize = onMinimize
+    }
+    
+    init(restoringFrom draft: ComposerDraft, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
+        let viewModel = PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState)
+        // Restore text content
+        viewModel.postText = draft.text
+        viewModel.richAttributedText = NSAttributedString(string: draft.text)
+        // NOTE: In a full implementation, we would also restore media items, GIF selection, etc.
+        // This would require serializing those components in the ComposerDraft struct
+        
+        self._viewModel = State(wrappedValue: viewModel)
+        self.onMinimize = onMinimize
     }
     
     var body: some View {
         NavigationStack {
-            mainContentView
+            configuredMainView
+        }
+    }
+    
+    private var configuredMainView: some View {
+        configuredWithModifiers
+    }
+    
+    private var baseMainView: some View {
+        mainContentView
             .interactiveDismissDisabled(true)
             .navigationTitle(getNavigationTitle())
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -58,6 +87,15 @@ struct PostComposerView: View {
                         }
                     }
                 }
+                
+                // Minimize button (only show if minimize callback is provided)
+                if onMinimize != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Minimize") {
+                            handleMinimize()
+                        }
+                    }
+                }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: createPost) {
@@ -66,11 +104,12 @@ struct PostComposerView: View {
                             .foregroundColor(.white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(viewModel.isPostButtonDisabled || isSubmitting ? Color.accentColor.opacity(0.5) : Color.accentColor)
-                            )
                     }
+                    .adaptiveGlassEffect(
+                        style: .tinted(.accentColor),
+                        in: Capsule(),
+                        interactive: true
+                    )
                     .disabled(viewModel.isPostButtonDisabled || isSubmitting)
                     .opacity(isSubmitting ? 0.5 : 1)
                     .overlay(
@@ -82,11 +121,14 @@ struct PostComposerView: View {
                         }
                     )
                 }
-                
             }
             .task {
                 await viewModel.loadUserLanguagePreference()
             }
+    }
+    
+    private var configuredWithModifiers: some View {
+        baseMainView
             .confirmationDialog(
                 "Discard post?",
                 isPresented: $showingDismissAlert,
@@ -131,7 +173,12 @@ struct PostComposerView: View {
                 }
             }
             // Sheets
-            .sheet(isPresented: $viewModel.showLabelSelector) {
+            .sheet(isPresented: $viewModel.showLabelSelector, onDismiss: {
+                // Restore focus when sheet dismisses
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
                 LabelSelectorView(selectedLabels: $viewModel.selectedLabels)
             }
             .sheet(isPresented: $viewModel.isAltTextEditorPresented) {
@@ -156,11 +203,21 @@ struct PostComposerView: View {
                 }
             }
             // Add the threadgate options sheet
-            .sheet(isPresented: $viewModel.showThreadgateOptions) {
+            .sheet(isPresented: $viewModel.showThreadgateOptions, onDismiss: {
+                // Restore focus when threadgate sheet dismisses
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
                 ThreadgateOptionsView(settings: $viewModel.threadgateSettings)
             }
             // GIF picker sheet
-            .sheet(isPresented: $viewModel.showingGifPicker) {
+            .sheet(isPresented: $viewModel.showingGifPicker, onDismiss: {
+                // Restore focus when GIF picker dismisses
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
                 GifPickerView { gif in
                     viewModel.selectGif(gif)
                 }
@@ -177,7 +234,12 @@ struct PostComposerView: View {
                 viewModel.insertEmoji(emoji)
             }
             // Link creation sheet
-            .sheet(isPresented: $showingLinkCreation) {
+            .sheet(isPresented: $showingLinkCreation, onDismiss: {
+                // Restore focus when link creation sheet dismisses
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
                 LinkCreationDialog(
                     selectedText: selectedTextForLink,
                     onComplete: { url in
@@ -189,13 +251,17 @@ struct PostComposerView: View {
                     }
                 )
             }
-        }
     }
     
     // MARK: - Main Content Views
     
     private var mainContentView: some View {
         VStack(spacing: 0) {
+            // Drag handle for minimize gesture (only show if minimize callback is provided)
+            if onMinimize != nil {
+                dragHandle
+            }
+            
             // Main content area with scrollable content
             ZStack {
                 Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
@@ -212,6 +278,49 @@ struct PostComposerView: View {
             // Toolbar pinned to bottom
             keyboardToolbar
         }
+        .offset(y: dragOffset)
+        .gesture(
+            // Only add drag gesture if minimize callback is provided
+            onMinimize != nil ? 
+            DragGesture()
+                .onChanged { value in
+                    // Only allow downward drag for minimize
+                    if value.translation.height > 0 {
+                        dragOffset = value.translation.height
+                    }
+                }
+                .onEnded { value in
+                    if value.translation.height > minimizeThreshold {
+                        handleMinimize()
+                    } else {
+                        // Snap back to original position
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+            : nil
+        )
+    }
+    
+    private var dragHandle: some View {
+        VStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 40, height: 5)
+                .padding(.top, 12)
+            
+            HStack {
+                Text("Drag down to minimize")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+        .background(Color(.systemBackground))
     }
     
     @ViewBuilder
@@ -735,9 +844,9 @@ struct PostComposerView: View {
                         
                         Button(action: {
                             if viewModel.isThreadMode {
-                                viewModel.isThreadMode = false
+                                viewModel.exitThreadMode()
                             } else {
-                                viewModel.isThreadMode = true
+                                viewModel.enterThreadMode()
                             }
                         }) {
                             Label(
@@ -770,6 +879,7 @@ struct PostComposerView: View {
             .background(Color(.secondarySystemBackground))
         }
         .background(Color(.secondarySystemBackground))
+        .id("postComposerToolbar") // Stable identity to prevent SwiftUI from recreating
     }
     
     // Get the appropriate text for the post button
@@ -822,6 +932,13 @@ struct PostComposerView: View {
                 )
             }
         }
+    }
+    
+    // MARK: - Minimize Functionality
+    
+    private func handleMinimize() {
+        onMinimize?(viewModel)
+        dismiss()
     }
     
     // ✅ CLEANED: Removed legacy handleImagePaste() and handleVideoPaste() methods

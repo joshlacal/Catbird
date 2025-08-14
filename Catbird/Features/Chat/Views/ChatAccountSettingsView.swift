@@ -17,7 +17,7 @@ struct ChatAccountSettingsView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatAccountSettings")
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       Form {
         Section {
           Text("Manage your chat account data and settings")
@@ -57,7 +57,7 @@ struct ChatAccountSettingsView: View {
         }
       }
       .navigationTitle("Chat Account")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button("Done") {
@@ -101,7 +101,7 @@ struct ChatAccountSettingsView: View {
       }
       .sheet(isPresented: $showingShareSheet) {
         if let data = exportedData {
-          ShareSheet(items: [data])
+          ChatShareSheet(items: [data])
         }
       }
     }
@@ -190,7 +190,7 @@ struct ChatActivityLogView: View {
       }
     }
     .navigationTitle("Activity Log")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     .overlay {
       if isLoading && logEntries.isEmpty {
         ProgressView("Loading activity...")
@@ -252,4 +252,15 @@ struct ChatLogEntry: Identifiable {
   let type: String
   let description: String
   let timestamp: Date
+}
+
+struct ChatShareSheet: UIViewControllerRepresentable {
+  let items: [Any]
+  
+  func makeUIViewController(context: Context) -> UIActivityViewController {
+    let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+    return controller
+  }
+  
+  func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

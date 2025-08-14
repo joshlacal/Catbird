@@ -49,7 +49,7 @@ struct MigrationWizardView: View {
         }
       }
       .navigationTitle("Account Migration")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

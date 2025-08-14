@@ -125,7 +125,7 @@ struct AllTrendingTopicsView: View {
             }
             .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
             .navigationTitle("Trending Topics")
-            .navigationBarTitleDisplayMode(.large)
+            .toolbarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {

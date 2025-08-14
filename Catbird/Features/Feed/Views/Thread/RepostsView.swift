@@ -78,7 +78,30 @@ struct RepostsView: View {
     }
     
     private func loadMoreReposts() async {
-        // TODO: Similar implementation to loadMoreLikes
-        // ...
+        guard let client = appState.atProtoClient,
+              let currentCursor = cursor,
+              !loading else { return }
+        
+        loading = true
+        
+        do {
+            let uri = try ATProtocolURI(uriString: postUri)
+            let input = AppBskyFeedGetRepostedBy.Parameters(
+                uri: uri,
+                limit: 50,
+                cursor: currentCursor
+            )
+            
+            let (_, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
+            
+            if let result = result {
+                reposts.append(contentsOf: result.repostedBy)
+                cursor = result.cursor
+            }
+        } catch {
+            self.error = error
+        }
+        
+        loading = false
     }
 }

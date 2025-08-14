@@ -503,7 +503,7 @@ struct CustomServerSheet: View {
         }
       }
       .navigationTitle("Custom Server")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

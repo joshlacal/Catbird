@@ -175,6 +175,11 @@ struct AddFeedSheet: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .adaptiveGlassEffect(
+                        style: .regular,
+                        in: Capsule(),
+                        interactive: true
+                    )
                 }
                 
 //                ToolbarItem(placement: .navigationBarTrailing) {
@@ -370,7 +375,7 @@ struct AddFeedSheet: View {
             }
             .padding()
             .navigationTitle("Add Feed")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
         }
     }
     

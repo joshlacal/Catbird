@@ -37,7 +37,7 @@ struct ThemeTestView: View {
             }
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
             .navigationTitle("Theme Test")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
         }
         .applyTheme(appState.themeManager)
     }

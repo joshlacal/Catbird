@@ -48,6 +48,9 @@ final class RepositoryRecord: @unchecked Sendable {
     /// Raw parsing logs for debugging
     var parsingLogs: String
     
+    /// Optional path to parsing log file (for large log files)
+    var parsingLogFileURL: URL?
+    
     /// Size of original CAR data in bytes
     var originalCarSize: Int64
     
@@ -89,6 +92,7 @@ final class RepositoryRecord: @unchecked Sendable {
         parsingErrorMessage: String? = nil,
         parsingConfidenceScore: Double = 0.0,
         parsingLogs: String = "",
+        parsingLogFileURL: URL? = nil,
         originalCarSize: Int64,
         repositoryCommit: String? = nil,
         repositoryLastModified: Date? = nil,
@@ -112,6 +116,7 @@ final class RepositoryRecord: @unchecked Sendable {
         self.parsingErrorMessage = parsingErrorMessage
         self.parsingConfidenceScore = parsingConfidenceScore
         self.parsingLogs = parsingLogs
+        self.parsingLogFileURL = parsingLogFileURL
         self.originalCarSize = originalCarSize
         self.repositoryCommit = repositoryCommit
         self.repositoryLastModified = repositoryLastModified

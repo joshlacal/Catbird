@@ -47,7 +47,7 @@ struct ConversationInvitationsView: View {
       }
     }
     .navigationTitle("Invitations")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     .refreshable {
       await loadInvitations()
     }

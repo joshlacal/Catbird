@@ -103,7 +103,7 @@ final class PostViewModel {
         repostUri = post.viewer?.repost
         
         // Check if shadow already exists to avoid redundant initialization
-        let existingShadow = await appState.postShadowManager.getShadow(forUri: postId)
+        let existingShadow = await appState.postShadowManager.getShadow(forUri: post.uri.uriString())
         
         // Batch shadow updates if needed
         var needsShadowUpdate = false
@@ -121,7 +121,7 @@ final class PostViewModel {
         }
         
         if needsShadowUpdate {
-            await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+            await appState.postShadowManager.updateShadow(forUri: post.uri.uriString()) { shadow in
                 if let likeUri = likeUriToSet {
                     shadow.likeUri = likeUri
                     shadow.likeCount = post.likeCount
@@ -175,7 +175,7 @@ final class PostViewModel {
                 // but shadow manager handles count revert.
             }
             
-            group.addTask {
+            group.addTask { 
                 await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: wasLiked)
                 await self.appState.postShadowManager.setLikeCount(postUri: self.postId, count: originalCount)
             }

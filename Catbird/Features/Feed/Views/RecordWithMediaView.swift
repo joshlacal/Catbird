@@ -9,14 +9,6 @@ struct RecordWithMediaView: View {
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     
-    private var shouldBlur: Bool {
-        guard !appState.isAdultContentEnabled else { return false }
-        return labels?.contains { label in
-            let lowercasedValue = label.val.lowercased()
-            return lowercasedValue == "porn" || lowercasedValue == "nsfw" || lowercasedValue == "nudity"
-        } ?? false
-    }
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Media content first
@@ -35,22 +27,47 @@ struct RecordWithMediaView: View {
     private var mediaContent: some View {
         switch recordWithMedia.media {
         case .appBskyEmbedImagesView(let imageView):
-            ViewImageGridView(viewImages: imageView.images, shouldBlur: shouldBlur)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            ContentLabelManager(
+                labels: labels,
+                contentType: "image"
+            ) {
+                ViewImageGridView(
+                    viewImages: imageView.images,
+                    shouldBlur: false // ContentLabelManager handles blur decisions
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             
         case .appBskyEmbedExternalView(let externalView):
-            ExternalEmbedView(external: externalView.external, shouldBlur: shouldBlur, postID: postID)
+            ContentLabelManager(
+                labels: labels,
+                contentType: "link"
+            ) {
+                ExternalEmbedView(
+                    external: externalView.external,
+                    shouldBlur: false, // ContentLabelManager handles blur decisions
+                    postID: postID
+                )
+            }
             
         case .appBskyEmbedVideoView(let video):
-            if let url = video.playlist.url {
-//                ModernVideoPlayerView(
-//                    url: url,
-//                    aspectRatio: video.aspectRatio.map { CGFloat($0.width) / CGFloat($0.height) } ?? 16/9
-//                )
-                ModernVideoPlayerView(bskyVideo: video, postID: postID)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            ContentLabelManager(
+                labels: labels,
+                contentType: "video"
+            ) {
+                if let playerView = ModernVideoPlayerView(
+                    bskyVideo: video,
+                    postID: postID
+                ) {
+                    playerView
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("Unable to load video")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             
         case .unexpected:
             EmptyView()

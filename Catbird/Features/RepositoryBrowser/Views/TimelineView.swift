@@ -1,6 +1,8 @@
 import SwiftUI
 import SwiftData
 import Foundation
+import OSLog
+import Petrel
 
 // MARK: - ⚠️ EXPERIMENTAL TIMELINE BROWSER ⚠️
 
@@ -33,7 +35,7 @@ struct RepositoryTimelineView: View {
                 }
             }
             .navigationTitle("Timeline")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -80,6 +82,12 @@ struct RepositoryTimelineView: View {
                         TimelinePostRow(post: post, repository: repository) {
                             selectedPost = post
                         }
+                        .onAppear {
+                            // Trigger loading more posts when approaching the end
+                            if post == viewModel.posts.last {
+                                viewModel.loadMorePosts()
+                            }
+                        }
                     }
                 }
             }
@@ -98,6 +106,7 @@ struct RepositoryTimelineView: View {
         }
         .listStyle(PlainListStyle())
         .refreshable {
+            viewModel.resetPagination()
             viewModel.loadPosts()
         }
     }
@@ -114,9 +123,45 @@ struct RepositoryTimelineView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             
-            Text("🧪 EXPERIMENTAL FEATURE\n\nNo posts found in this repository's timeline. This could indicate parsing issues or an empty repository.")
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
+            if let errorMessage = viewModel.errorMessage {
+                Text("Error: \(errorMessage)")
+                    .foregroundColor(.red)
+                    .padding()
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(8)
+            } else {
+                Text("🧪 EXPERIMENTAL FEATURE\n\nNo posts found in this repository's timeline. This could indicate parsing issues or an empty repository.")
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+            }
+            
+            // Debug information
+            VStack(spacing: 8) {
+                Text("Debug Information")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                
+                Text("Repository ID: \(repository.id.uuidString)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Text("Expected Posts: \(repository.postCount)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Text("Parsing Status: \(repository.parsingStatus.displayName)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                if repository.parsingConfidenceScore > 0 {
+                    Text("Parsing Confidence: \(String(format: "%.1f%%", repository.parsingConfidenceScore * 100))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding()
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(8)
             
             Button("Retry Loading") {
                 viewModel.loadPosts()
@@ -135,6 +180,7 @@ struct RepositoryTimelineView: View {
 final class TimelineViewModel {
     private let repositoryID: UUID
     private var modelContext: ModelContext?
+    private let logger = Logger(subsystem: "Catbird", category: "TimelineViewModel")
     
     var posts: [ParsedPost] = []
     var isLoading = false
@@ -144,12 +190,19 @@ final class TimelineViewModel {
     var postTypeFilter: PostTypeFilter = .all
     var showParseErrors = false
     
+    // Pagination properties
+    private var currentPage = 0
+    private let pageSize = 100
+    private var hasMorePosts = true
+    
     init(repositoryID: UUID) {
         self.repositoryID = repositoryID
+        logger.debug("TimelineViewModel initialized for repository: \(repositoryID.uuidString)")
     }
     
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
+        logger.debug("TimelineViewModel received ModelContext")
     }
     
     var filteredPosts: [ParsedPost] {
@@ -207,22 +260,99 @@ final class TimelineViewModel {
     }
     
     func loadPosts() {
-        guard let modelContext = modelContext else { return }
+        guard let modelContext = modelContext else {
+            logger.error("loadPosts called but modelContext is nil")
+            errorMessage = "ModelContext not available"
+            return
+        }
         
+        logger.debug("Loading posts for repository: \(self.repositoryID.uuidString)")
         isLoading = true
         errorMessage = nil
         
         do {
-            let descriptor = FetchDescriptor<ParsedPost>(
+            // First, let's check if the repository exists
+            let repoDescriptor = FetchDescriptor<RepositoryRecord>(
+                predicate: #Predicate { $0.id == repositoryID }
+            )
+            let repositories = try modelContext.fetch(repoDescriptor)
+            
+            if let repo = repositories.first {
+                logger.debug("Found repository: \(repo.userHandle) with \(repo.postCount) posts")
+            } else {
+                logger.error("Repository not found for ID: \(self.repositoryID.uuidString)")
+                errorMessage = "Repository not found"
+                isLoading = false
+                return
+            }
+            
+            // Now fetch the posts with pagination to prevent memory issues
+            var descriptor = FetchDescriptor<ParsedPost>(
                 predicate: #Predicate { $0.repositoryRecordID == repositoryID },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
-            posts = try modelContext.fetch(descriptor)
+            
+            // CRITICAL: Use pagination to prevent memory overflow
+            descriptor.fetchLimit = pageSize
+            descriptor.fetchOffset = currentPage * pageSize
+            
+            let fetchedPosts = try modelContext.fetch(descriptor)
+            logger.debug("Fetched \(fetchedPosts.count) posts from SwiftData (page \(self.currentPage))")
+            
+            // Check if we have more posts available
+            if fetchedPosts.count < pageSize {
+                hasMorePosts = false
+                logger.debug("Reached end of posts - no more pages available")
+            }
+            
+            // Log details about the first few posts for debugging
+            for (index, post) in fetchedPosts.prefix(3).enumerated() {
+                logger.debug("Post \(index): '\(post.displayText.prefix(30))...' created: \(post.createdAt)")
+            }
+            
+            // For first page, replace posts; for subsequent pages, append
+            if currentPage == 0 {
+                posts = fetchedPosts
+            } else {
+                posts.append(contentsOf: fetchedPosts)
+            }
+            
+            if posts.isEmpty {
+                logger.warning("No posts found for repository \(self.repositoryID.uuidString)")
+                // Let's also check if there are ANY ParsedPost records in the database
+                let allPostsDescriptor = FetchDescriptor<ParsedPost>()
+                let allPosts = try modelContext.fetch(allPostsDescriptor)
+                logger.debug("Total ParsedPost records in database: \(allPosts.count)")
+                
+                // Check if any posts belong to different repositories
+                let groupedByRepo = Dictionary(grouping: allPosts) { $0.repositoryRecordID }
+                logger.debug("Posts grouped by repository: \(groupedByRepo.mapValues { $0.count })")
+            }
+            
         } catch {
+            logger.error("Failed to load posts: \(error.localizedDescription)")
             errorMessage = "Failed to load timeline: \(error.localizedDescription)"
         }
         
         isLoading = false
+        logger.debug("loadPosts completed with \(self.posts.count) posts")
+    }
+    
+    func loadMorePosts() {
+        guard !isLoading && hasMorePosts else {
+            logger.debug("Cannot load more posts: isLoading=\(self.isLoading), hasMorePosts=\(self.hasMorePosts)")
+            return
+        }
+        
+        currentPage += 1
+        logger.debug("Loading page \(self.currentPage)")
+        loadPosts()
+    }
+    
+    func resetPagination() {
+        currentPage = 0
+        hasMorePosts = true
+        posts.removeAll()
     }
 }
 
@@ -315,8 +445,8 @@ private struct TimelinePostRow: View {
                     ConfidenceBadge(confidence: post.parseConfidence)
                 }
                 
-                // Post content
-                Text(post.text)
+                // Post content (using safe display text)
+                Text(post.displayText)
                     .font(.body)
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.leading)
@@ -464,7 +594,7 @@ private struct PostDetailView: View {
                         Text("Content")
                             .font(.headline)
                         
-                        Text(post.text)
+                        Text(post.displayText)
                             .font(.body)
                             .padding()
                             .background(Color(UIColor.secondarySystemGroupedBackground))
@@ -505,7 +635,7 @@ private struct PostDetailView: View {
                 .padding()
             }
             .navigationTitle("Post Detail")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") {
@@ -674,7 +804,7 @@ private struct RawDataView: View {
                 .padding()
             }
             .navigationTitle("Raw Data")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {

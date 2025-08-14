@@ -32,6 +32,7 @@ struct ChatTabView: View {
       chatDetailContent
     }
     .navigationSplitViewStyle(.automatic)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
     .onChange(of: selectedConvoId) { oldValue, newValue in
@@ -75,7 +76,9 @@ struct ChatTabView: View {
       }
     }
     .listStyle(.plain)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle("Messages")
+    .themedNavigationBar(appState.themeManager)
     .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 400)
     .searchable(text: $searchText, prompt: "Search")
     .onChange(of: searchText) { _, newValue in

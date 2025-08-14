@@ -55,7 +55,7 @@ struct AccountSwitcherView: View {
         }
       }
       .navigationTitle("Accounts")
-      .navigationBarTitleDisplayMode(.large)
+      .toolbarTitleDisplayMode(.large)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Button("Done") {
@@ -302,7 +302,7 @@ struct AccountSwitcherView: View {
 
         Spacer()
       }
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
           Button("Cancel") {

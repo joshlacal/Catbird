@@ -318,17 +318,17 @@ struct ThemedNavigationBarModifier: ViewModifier {
                 applyNavigationBarTheme()
             }
             // Apply toolbar background based on theme using SwiftUI approach
-            .toolbarBackground(
-                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
-                for: .navigationBar
-            )
-            .toolbarBackground(
-                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
-                for: .tabBar
-            )
-            .toolbarBackgroundVisibility(.visible, for: .tabBar)
-            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
-            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .tabBar)
+//            .toolbarBackground(
+//                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
+//                for: .navigationBar
+//            )
+//            .toolbarBackground(
+//                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
+//                for: .tabBar
+//            )
+//            .toolbarBackgroundVisibility(.visible, for: .tabBar)
+//            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
+//            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .tabBar)
             // Ensure tab bar icons use the correct tint color
             .tint(isDarkMode && isBlackMode ? Color.blue.opacity(0.9) : nil)
     }

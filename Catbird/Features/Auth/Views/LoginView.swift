@@ -310,7 +310,7 @@ struct LoginView: View {
                     .ignoresSafeArea()
             }
                 .scrollBounceBehavior(.basedOnSize)
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             }
         }
         .onChange(of: appState.authState) { _, newValue in

@@ -31,7 +31,7 @@ struct SystemLogView: View {
         }
       }
       .navigationTitle("System Logs")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Done") {
@@ -388,7 +388,7 @@ private struct LogFilterView: View {
         }
       }
       .navigationTitle("Log Filters")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {
@@ -461,7 +461,7 @@ private struct LogDetailView: View {
         .padding()
       }
       .navigationTitle("Log Entry")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button("Done") {
@@ -508,7 +508,7 @@ private struct LogExportView: View {
           .padding()
       }
       .navigationTitle("Export Logs")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Done") {

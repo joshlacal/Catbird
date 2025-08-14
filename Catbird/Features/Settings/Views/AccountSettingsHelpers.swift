@@ -39,7 +39,7 @@ struct EmailUpdateSheet: View {
                 }
             }
             .navigationTitle("Update Email")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -188,7 +188,7 @@ struct HandleUpdateSheet: View {
                 }
             }
             .navigationTitle("Update Handle")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {

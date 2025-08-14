@@ -12,18 +12,33 @@ struct FAB: View {
     let feedsAction: () -> Void
     let showFeedsButton: Bool
     @Environment(\.colorScheme) var colorScheme
+    @Namespace private var glassNamespace
 
     private let circleSize: CGFloat = 60
     
     var body: some View {
         VStack {
             Spacer()
-            HStack {
-                if showFeedsButton {
-                    feedsButton
+            .adaptiveGlassContainer(spacing: 12) {
+                HStack {
+                    if showFeedsButton {
+                        feedsButton
+                            .adaptiveGlassEffect(
+                                style: .tinted(.secondary),
+                                in: Circle(),
+                                interactive: true
+                            )
+                            .catbirdGlassMorphing(id: "feeds", namespace: glassNamespace)
+                    }
+                    Spacer()
+                    composeButton
+                        .adaptiveGlassEffect(
+                            style: .tinted(.accentColor), 
+                            in: Circle(),
+                            interactive: true
+                        )
+                        .catbirdGlassMorphing(id: "compose", namespace: glassNamespace)
                 }
-                Spacer()
-                composeButton
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
@@ -35,56 +50,27 @@ struct FAB: View {
     
     private var feedsButton: some View {
         Button(action: feedsAction) {
-            fabButtonContent(
-                "square.grid.3x3.square", 
-                color: .primary,
-                backgroundColor: Color(UIColor.systemBackground)
-            )
+            Image(systemName: "square.grid.3x3.square")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+                .foregroundStyle(.primary)
+                .frame(width: circleSize, height: circleSize)
+                .contentShape(Circle())
         }
     }
     
     private var composeButton: some View {
         Button(action: composeAction) {
-            fabButtonContent(
-                "pencil", 
-                color: colorScheme == .dark ? .black : .white,
-                backgroundColor: .accentColor
-            )
+            Image(systemName: "pencil")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+                .foregroundStyle(.white)
+                .frame(width: circleSize, height: circleSize)
+                .background(.blue, in: Circle()) // Ensure visibility
+                .contentShape(Circle())
         }
     }
     
-    private func fabButtonContent(_ iconName: String, color: Color, backgroundColor: Color) -> some View {
-        Image(systemName: iconName)
-            .resizable()
-            .scaledToFit()
-            .frame(width: 24, height: 24)
-            .foregroundStyle(color)
-            .frame(width: circleSize, height: circleSize)
-            .background(
-                ZStack {
-                    Circle()
-                        .fill(backgroundColor)
-                    
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.2),
-                                    Color.clear,
-                                    Color.black.opacity(0.1)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    
-                    Circle()
-                        .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
-                }
-                .clipShape(Circle())
-                .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
-                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-            )
-            .contentShape(Circle())
-    }
 }

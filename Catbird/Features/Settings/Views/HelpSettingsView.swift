@@ -64,7 +64,7 @@ struct HelpSettingsView: View {
             }
         }
         .navigationTitle("Help")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
 }
 

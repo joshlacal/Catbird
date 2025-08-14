@@ -33,7 +33,7 @@ struct RepositoryConnectionsView: View {
                 }
             }
             .navigationTitle("Social Connections")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -522,7 +522,7 @@ private struct ConnectionDetailView: View {
                 .padding()
             }
             .navigationTitle("Connection Detail")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") {
@@ -627,7 +627,7 @@ private struct ConnectionRawDataView: View {
                 .padding()
             }
             .navigationTitle("Raw Data")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
@@ -723,7 +723,7 @@ private struct ConnectionsAnalyticsView: View {
                 .padding()
             }
             .navigationTitle("Analytics")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {

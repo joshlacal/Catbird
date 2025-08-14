@@ -38,7 +38,7 @@ final class ExperimentalFeaturesCoordinator {
     @ObservationIgnored private var accountMigrationService: AccountMigrationService?
     
     /// Performance monitoring
-    @ObservationIgnored private var performanceMetrics = PerformanceMetrics()
+    @ObservationIgnored private var performanceMetrics = ExperimentalPerformanceMetrics()
     
     /// Background task coordination
     @ObservationIgnored private var backgroundTaskManager = BackgroundTaskManager()
@@ -111,8 +111,12 @@ final class ExperimentalFeaturesCoordinator {
         backupManager = BackupManager()
         backupManager?.configure(with: modelContext)
         
-        // Initialize CAR parser
-        carParser = CARParser()
+        // Initialize CAR parser with debug mode in development
+        #if DEBUG
+        carParser = CARParser(enableVerboseLogging: true)
+        #else
+        carParser = CARParser(enableVerboseLogging: false)
+        #endif
         
         // Initialize repository parsing service
         repositoryParsingService = RepositoryParsingService()
@@ -525,7 +529,7 @@ enum ServiceHealth: Equatable {
 }
 
 /// Performance metrics tracking
-private class PerformanceMetrics {
+private class ExperimentalPerformanceMetrics {
     private var operationDurations: [ExperimentalOperation: [TimeInterval]] = [:]
     private var memoryUsageHistory: [Double] = []
     private var peakMemoryUsage: Double = 0.0

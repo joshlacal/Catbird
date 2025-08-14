@@ -242,16 +242,10 @@ struct AccessibilitySettingsView: View {
                     set: { appState.appSettings.shakeToUndo = $0 }
                 ))
                 .tint(.blue)
-                
-                Toggle("Attribution Tracking", isOn: Binding(
-                    get: { appState.appSettings.enableViaAttribution },
-                    set: { appState.appSettings.enableViaAttribution = $0 }
-                ))
-                .tint(.blue)
             } header: {
                 Text("Interaction Settings")
             } footer: {
-                Text("Confirm Before Actions shows alerts for destructive actions like deleting posts. Long press duration affects context menus. Attribution Tracking credits users when you like/repost content you discovered through their reposts.")
+                Text("Confirm Before Actions shows alerts for destructive actions like deleting posts. Long press duration affects context menus.")
                     .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -282,7 +276,7 @@ struct AccessibilitySettingsView: View {
             }
         }
         .navigationTitle("Accessibility")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
 }
 

@@ -122,6 +122,30 @@ actor FeedPrefetchingManager {
     }
   }
 
+    func prefetchPostData(post: AppBskyFeedDefs.PostView, client: ATProtoClient) async {
+        // Prefetch avatar image
+        await prefetchAvatarImage(for: post.author)
+        
+        // Prefetch embedded content if present
+        if let embed = post.embed {
+            await prefetchEmbedContent(embed: embed)
+        }
+
+    }
+    
+    
+    
+    func prefetchPostData(post: AppBskyEmbedRecord.ViewRecord, client: ATProtoClient) async {
+        // Prefetch avatar image
+        await prefetchAvatarImage(for: post.author)
+        
+        // Prefetch embedded content if present
+        if let embeds = post.embeds {
+            await prefetchEmbedContent(embeds: embeds)
+        }
+    }
+
+    
   // MARK: - Private Helper Methods
 
   /// Prefetch assets for a collection of posts
@@ -194,6 +218,82 @@ actor FeedPrefetchingManager {
   /// Prefetch content for post embeds
   private func prefetchEmbedContent(embed: AppBskyFeedDefs.PostViewEmbedUnion) async {
     await prefetchEmbedContentOptimized(embed: embed)
+  }
+  
+  private func prefetchEmbedContent(embeds: [AppBskyEmbedRecord.ViewRecordEmbedsUnion]) async {
+      for embed in embeds {
+          switch embed {
+          case .appBskyEmbedImagesView(let imagesView):
+            // Prefetch all images in the embed with deduplication
+            let imageURLs = imagesView.images.compactMap {
+              URL(string: $0.thumb.uriString())
+            }.filter { url in
+              !prefetchedAssets.contains(url.absoluteString)
+            }
+
+            if !imageURLs.isEmpty {
+              // Mark as prefetched
+              for url in imageURLs {
+                prefetchedAssets.insert(url.absoluteString)
+              }
+              
+              let manager = ImageLoadingManager.shared
+              await manager.startPrefetching(urls: imageURLs)
+            }
+
+          case .appBskyEmbedExternalView(let externalView):
+            // Prefetch external thumbnail if available
+            if let thumbURL = externalView.external.thumb.flatMap({ URL(string: $0.uriString()) }),
+               !prefetchedAssets.contains(thumbURL.absoluteString) {
+              prefetchedAssets.insert(thumbURL.absoluteString)
+              
+              let manager = ImageLoadingManager.shared
+              await manager.startPrefetching(urls: [thumbURL])
+            }
+
+          case .appBskyEmbedRecordView(let recordView):
+            // For record embeds, prefetch the author's avatar
+            switch recordView.record {
+            case .appBskyEmbedRecordViewRecord(let record):
+              await prefetchAvatarImageOptimized(for: record.author)
+            default:
+              break
+            }
+
+          case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
+            // Prefetch media in record with media embeds
+            switch recordWithMediaView.media {
+            case .appBskyEmbedImagesView(let imagesView):
+              let imageURLs = imagesView.images.compactMap {
+                URL(string: $0.thumb.uriString())
+              }.filter { url in
+                !prefetchedAssets.contains(url.absoluteString)
+              }
+
+              if !imageURLs.isEmpty {
+                // Mark as prefetched
+                for url in imageURLs {
+                  prefetchedAssets.insert(url.absoluteString)
+                }
+                
+                let manager = ImageLoadingManager.shared
+                await manager.startPrefetching(urls: imageURLs)
+              }
+            default:
+              break
+            }
+
+          case .appBskyEmbedVideoView:
+            // For video embeds, we could potentially prefetch video thumbnails
+            // but actual video prefetching would likely use too much data
+            break
+
+          case .unexpected:
+            break
+          }
+
+      }
+
   }
   
   /// Optimized embed content prefetching with deduplication

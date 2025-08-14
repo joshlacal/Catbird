@@ -58,7 +58,7 @@ struct MessageRequestsView: View {
         }
       }
       .navigationTitle("Message Requests")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           RequestsToolbarMenu(
@@ -552,7 +552,7 @@ struct MessageRequestPreviewView: View {
         .padding()
       }
       .navigationTitle("Request Preview")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button("Done") {

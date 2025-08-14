@@ -94,7 +94,7 @@ struct SmartFeedDiscoveryView: View {
                 }
             }
             .navigationTitle("Discover Feeds")
-            .navigationBarTitleDisplayMode(.large)
+            .toolbarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Settings") {
@@ -772,7 +772,7 @@ struct EnhancedRecommendationCard: View {
                 navigationPath: .constant(NavigationPath())
             )
             .navigationTitle(recommendation.feed.displayName)
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Close") {
@@ -1147,7 +1147,7 @@ struct InterestPickerSheet: View {
                 .padding()
             }
             .navigationTitle("Your Interests")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {

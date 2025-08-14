@@ -12,13 +12,13 @@ import UIKit
 import Petrel
 import os
 
-/// SwiftUI wrapper for the UIKit-based feed collection view
+/// SwiftUI wrapper for the feed collection view with automatic controller selection
 @available(iOS 16.0, *)
-struct FeedCollectionView: UIViewControllerRepresentable {
+struct FeedCollectionView: View {
     // MARK: - Properties
     
     /// The state manager that coordinates feed data and ViewModels
-    let stateManager: FeedStateManager
+    @Bindable var stateManager: FeedStateManager
     
     /// Navigation path for SwiftUI navigation
     @Binding var navigationPath: NavigationPath
@@ -38,40 +38,16 @@ struct FeedCollectionView: UIViewControllerRepresentable {
         self.onScrollOffsetChanged = onScrollOffsetChanged
     }
     
-    // MARK: - UIViewControllerRepresentable
+    // MARK: - Body
     
-    func makeUIViewController(context: Context) -> FeedCollectionViewController {
-        // Create controller directly with our stateManager (don't use the manager which creates its own)
-        let controller = FeedCollectionViewController(
+    var body: some View {
+        // Use the wrapper that automatically selects the appropriate controller
+        FeedCollectionViewWrapper(
             stateManager: stateManager,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged
         )
-        
-        // Set up coordinator for communication
-        context.coordinator.controller = controller
-        
-        return controller
-    }
-    
-    func updateUIViewController(_ controller: FeedCollectionViewController, context: Context) {
-        // Update the collection view when state changes
-        controller.updateFromState()
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    // MARK: - Coordinator
-    
-    class Coordinator: NSObject {
-        var parent: FeedCollectionView
-        weak var controller: FeedCollectionViewController?
-        
-        init(_ parent: FeedCollectionView) {
-            self.parent = parent
-        }
+        .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
     }
 }
 
@@ -109,7 +85,7 @@ extension FeedCollectionView {
 // MARK: - Preview Support
 
 #Preview {
-    @State var navigationPath = NavigationPath()
+    @Previewable @State var navigationPath = NavigationPath()
     
     // Mock state manager for preview
     let mockFeedManager = FeedManager(
@@ -134,7 +110,7 @@ extension FeedCollectionView {
             navigationPath: $navigationPath
         )
         .navigationTitle("Feed")
-        .navigationBarTitleDisplayMode(.large)
+        .toolbarTitleDisplayMode(.large)
     }
 }
 
@@ -173,6 +149,7 @@ struct SimpleFeedCollectionWrapper: View {
                 stateManager: stateManager,
                 navigationPath: $navigationPath
             )
+            .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
             .task {
                 if !isInitialized {
                     isInitialized = true
@@ -224,6 +201,7 @@ struct FeedCollectionWrapper: View {
                 stateManager: stateManager,
                 navigationPath: $navigationPath
             )
+            .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
             .task {
                 if !isInitialized {
                     isInitialized = true

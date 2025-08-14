@@ -84,7 +84,7 @@ struct ConversationManagementView: View {
         }
       }
       .navigationTitle("Conversation Settings")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarLeading) {
           Button("Cancel") {

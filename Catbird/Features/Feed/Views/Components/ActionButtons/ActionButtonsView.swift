@@ -114,7 +114,7 @@ struct ActionButtonsView: View {
         color: .secondary,
         isBig: isBig
       ) {
-        showingPostComposer = true
+        handleReplyTap()
       }
       .accessibilityIdentifier("replyButton")
         .accessibilityLabel("Reply. Replies count: \(post.replyCount ?? 0)")
@@ -224,10 +224,32 @@ struct ActionButtonsView: View {
         .presentationCornerRadius(12)
     }
     .sheet(isPresented: $showingPostComposer) {
-      PostComposerView(parentPost: post, appState: appState)
+      PostComposerView(
+        parentPost: post, 
+        appState: appState,
+        onMinimize: { composer in
+          appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
+          showingPostComposer = false
+        }
+      )
     }
   }
 
+  // MARK: - Reply Handling
+  
+  private func handleReplyTap() {
+    let parentPostURI = post.uri.uriString()
+    
+    // Check for conflicting draft
+    if appState.composerDraftManager.hasConflictingDraft(parentPostURI: parentPostURI, quotedPostURI: nil) {
+      // Show alert asking user what to do with existing draft
+      // For now, just clear the existing draft and proceed
+      appState.composerDraftManager.clearDraft()
+    }
+    
+    showingPostComposer = true
+  }
+  
   // MARK: - State Management
   private func refreshState() async {
     let mergedPost = await appState.postShadowManager.mergeShadow(post: post)

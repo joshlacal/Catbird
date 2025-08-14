@@ -242,7 +242,7 @@ struct ModerationSettingsView: View {
             }
         }
         .navigationTitle("Moderation")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .appDisplayScale(appState: appState)
         .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
         .task {
@@ -526,7 +526,7 @@ struct ModerationListView<T: Identifiable>: View {
             }
         }
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
     
     private func removeModerationAction(forId id: String) async {
@@ -699,7 +699,7 @@ struct AddLabelerView: View {
             }
         }
         .navigationTitle("Add Labeler")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
     
     private func addLabeler() {
@@ -820,7 +820,7 @@ struct LabelerDetailView: View {
             }
         }
         .navigationTitle("Labeler Settings")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
     
     private func updateLabelerStatus() {

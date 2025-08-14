@@ -1,6 +1,7 @@
 import SwiftUI
 import Petrel
 import NukeUI
+import OSLog
 
 struct ListView: View {
     let listURI: ATProtocolURI
@@ -9,13 +10,35 @@ struct ListView: View {
     @State private var listItems: [AppBskyGraphDefs.ListItemView] = []
     @State private var isLoading = true
     @State private var cursor: String?
+    @State private var error: String?
+    @Environment(AppState.self) private var appState
+    
+    private let logger = Logger(subsystem: "blue.catbird", category: "ListView")
     
     var body: some View {
         Group {
             if isLoading && listData == nil {
-                ProgressView()
+                ProgressView("Loading list...")
                     .scaleEffect(1.5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = error {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                        .font(.title2)
+                    Text("Failed to load list")
+                        .font(.headline)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Try Again") {
+                        Task { await loadList() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let list = listData {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -35,7 +58,7 @@ struct ListView: View {
                             Divider()
                         }
                         
-                        if cursor != nil {
+                        if let cursor = cursor, !isLoading {
                             Button("Load More") {
                                 Task {
                                     await loadMoreItems()
@@ -44,11 +67,15 @@ struct ListView: View {
                             .buttonStyle(.bordered)
                             .frame(maxWidth: .infinity)
                             .padding()
+                        } else if isLoading && !listItems.isEmpty {
+                            ProgressView("Loading more...")
+                                .frame(maxWidth: .infinity)
+                                .padding()
                         }
                     }
                 }
                 .navigationTitle(list.name)
-                .navigationBarTitleDisplayMode(.inline)
+                .toolbarTitleDisplayMode(.inline)
             } else {
                 Text("Could not load list")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -60,14 +87,98 @@ struct ListView: View {
     }
     
     private func loadList() async {
-        // This would fetch the list details and initial items
-        isLoading = false
+        guard let client = appState.atProtoClient else {
+            await MainActor.run {
+                error = "Not connected to AT Protocol"
+                isLoading = false
+            }
+            return
+        }
         
-        // TODO: load list data
+        await MainActor.run {
+            isLoading = true
+            error = nil
+        }
+        
+        do {
+            logger.info("Loading list: \(listURI.uriString())")
+            
+            // First, get the list details
+            let listParams = AppBskyGraphGetList.Parameters(
+                list: listURI,
+                limit: 50,
+                cursor: nil
+            )
+            
+            let (responseCode, response) = try await client.app.bsky.graph.getList(input: listParams)
+            
+            await MainActor.run {
+                guard responseCode >= 200 && responseCode < 300, let response = response else {
+                    error = "Failed to load list (HTTP \(responseCode))"
+                    isLoading = false
+                    logger.error("Failed to load list: HTTP \(responseCode)")
+                    return
+                }
+                
+                listData = response.list
+                listItems = response.items
+                cursor = response.cursor
+                isLoading = false
+                
+                logger.info("Loaded list '\(response.list.name)' with \(response.items.count) items")
+            }
+            
+        } catch {
+            await MainActor.run {
+                self.error = error.localizedDescription
+                isLoading = false
+                logger.error("Error loading list: \(error.localizedDescription)")
+            }
+        }
     }
     
     private func loadMoreItems() async {
-        // This would load more list items with pagination
+        guard let client = appState.atProtoClient,
+              let currentCursor = cursor,
+              !isLoading else { return }
+        
+        await MainActor.run {
+            isLoading = true
+        }
+        
+        do {
+            logger.info("Loading more list items with cursor: \(currentCursor)")
+            
+            let listParams = AppBskyGraphGetList.Parameters(
+                list: listURI,
+                limit: 50,
+                cursor: currentCursor
+            )
+            
+            let (responseCode, response) = try await client.app.bsky.graph.getList(input: listParams)
+            
+            await MainActor.run {
+                guard responseCode >= 200 && responseCode < 300, let response = response else {
+                    error = "Failed to load more items (HTTP \(responseCode))"
+                    isLoading = false
+                    logger.error("Failed to load more items: HTTP \(responseCode)")
+                    return
+                }
+                
+                listItems.append(contentsOf: response.items)
+                cursor = response.cursor
+                isLoading = false
+                
+                logger.info("Loaded \(response.items.count) more items, total: \(listItems.count)")
+            }
+            
+        } catch {
+            await MainActor.run {
+                self.error = error.localizedDescription
+                isLoading = false
+                logger.error("Error loading more items: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

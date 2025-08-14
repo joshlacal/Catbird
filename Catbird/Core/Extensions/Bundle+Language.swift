@@ -29,7 +29,7 @@ extension Bundle {
 
 // MARK: - Private Language Bundle
 
-private class LanguageBundle: Bundle {
+private class LanguageBundle: Bundle, @unchecked Sendable {
     override func localizedString(forKey key: String, value: String?, table tableName: String?) -> String {
         if let path = Bundle.main.path(forResource: currentLanguageCode, ofType: "lproj"),
            let bundle = Bundle(path: path) {

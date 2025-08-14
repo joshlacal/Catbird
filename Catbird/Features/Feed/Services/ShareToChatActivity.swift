@@ -193,7 +193,7 @@ struct ModernChatSelectionView: View {
                 }
             }
             .navigationTitle("Share to Chat")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
@@ -735,7 +735,7 @@ struct PostPreviewSheet: View {
                 .padding()
             }
             .navigationTitle("Post Preview")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
@@ -793,7 +793,7 @@ struct LegacyChatSelectionView: View {
                 }
             }
             .navigationTitle("Share to Chat")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {

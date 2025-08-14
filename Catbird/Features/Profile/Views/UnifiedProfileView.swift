@@ -92,6 +92,8 @@ struct UnifiedProfileView: View {
         lastTappedTab: $lastTappedTab,
         path: $navigationPath
       )
+      .ignoresSafeArea()
+
     } else {
       // Fallback to SwiftUI implementation
       swiftUIImplementation
@@ -499,16 +501,46 @@ struct UnifiedProfileView: View {
   }
 
   private func initialLoad() async {
-    await viewModel.loadProfile()
-    // Check if user has multiple accounts
-
-    // Check muting and blocking status
-    if let did = viewModel.profile?.did.didString(), !viewModel.isCurrentUser {
-      self.isBlocking = await appState.isBlocking(did: did)
-      self.isMuting = await appState.isMuting(did: did)
+    do {
+      await viewModel.loadProfile()
       
-      // Load known followers for other users
-      await viewModel.loadKnownFollowers()
+      // Check muting and blocking status
+      if let did = viewModel.profile?.did.didString(), !viewModel.isCurrentUser {
+        self.isBlocking = await appState.isBlocking(did: did)
+        self.isMuting = await appState.isMuting(did: did)
+        
+        // Load known followers for other users
+        await viewModel.loadKnownFollowers()
+      }
+      
+      // Load initial content for current tab
+      await refreshCurrentTabContent()
+      
+    } catch {
+      logger.error("Failed to load initial profile data: \(error.localizedDescription)")
+    }
+  }
+  
+  private func refreshCurrentTabContent() async {
+    switch viewModel.selectedProfileTab {
+    case .posts:
+      if viewModel.posts.isEmpty {
+        await viewModel.loadPosts()
+      }
+    case .replies:
+      if viewModel.replies.isEmpty {
+        await viewModel.loadReplies()
+      }
+    case .media:
+      if viewModel.postsWithMedia.isEmpty {
+        await viewModel.loadMediaPosts()
+      }
+    case .likes:
+      if viewModel.likes.isEmpty {
+        await viewModel.loadLikes()
+      }
+    default:
+      break
     }
   }
 
@@ -702,7 +734,7 @@ struct UnifiedProfileView: View {
     }
     .id(viewModel.userDID) // Use stable userDID instead of profile?.did
     .navigationTitle("")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     .toolbarBackground(.hidden, for: .navigationBar)
     .ensureDeepNavigationFonts()
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
@@ -874,18 +906,13 @@ struct ProfileHeader: View {
                 bannerView
             }
             
-            // Add padding for overlapping avatar when hidden (avatar is in UIKit header)
-            if hideAvatar {
-                Spacer()
-                    .frame(height: 40) // Half of avatar height for overlap space
-            }
+            // No additional spacing needed when avatar is hidden
+            // The UIKit header handles avatar positioning and overlap properly
             
             // Profile info content
             profileInfoContent
-            
-            // Divider()
         }
-        .frame(maxWidth: .infinity)  // Use responsive width for better iPad support
+        .frame(maxWidth: .infinity)
 //        .sheet(isPresented: $showingFollowersSheet) {
 //            followersSheet
 //        }
@@ -909,46 +936,48 @@ struct ProfileHeader: View {
     }
     
     private var bannerView: some View {
-        ZStack(alignment: .bottom) {
-            HStack(alignment: .bottom) {
-                // Avatar
-                LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-                    if let image = state.image {
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } else {
-                        Circle().fill(Color.secondary.opacity(0.3))
+        Group {
+            if !hideAvatar {
+                // Show avatar only when not handled by UIKit header
+                ZStack(alignment: .bottomLeading) {
+                    // Banner background
+                    Color.clear
+                        .frame(height: bannerHeight)
+                    
+                    // Avatar positioned at bottom left, overlapping banner
+                    LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                        if let image = state.image {
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            Circle().fill(Color.secondary.opacity(0.3))
+                        }
                     }
+                    .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+                    .allowsHitTesting(true)
+                    .onTapGesture {
+                        isShowingProfileImageViewer = true
+                    }
+                    .frame(width: avatarSize, height: avatarSize)
+                    .clipShape(Circle())
+                    .background(
+                        Circle()
+                            .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
+                            .scaleEffect((avatarSize + 8) / avatarSize)
+                    )
+                    .offset(x: responsivePadding, y: avatarSize / 2)
+                    .zIndex(1000)
                 }
-                .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
-                .allowsHitTesting(true)
-                .onTapGesture {
-                    isShowingProfileImageViewer = true
-                }
-                .frame(width: avatarSize, height: avatarSize)
-                .clipShape(Circle())
-                .background(
-                    Circle()
-                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
-                        .scaleEffect((avatarSize + 4) / avatarSize)
-                )
-                .offset(y: -avatarSize / 2)
-                .padding(.leading, responsivePadding)
-                .zIndex(1000)
-                
-                Spacer()
+            } else {
+                // Empty when avatar is in UIKit header
+                EmptyView()
             }
-            .frame(maxWidth: .infinity)
         }
     }
     
     private var profileInfoContent: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            // Add space for the avatar overflow and position follow button
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            // Top section with edit/follow button aligned to trailing edge
             HStack(alignment: .top) {
-                // Space for avatar overflow
-                Color.clear
-                    .frame(width: avatarSize, height: avatarSize / 2)
-                
                 Spacer()
                 
                 // Follow/Edit button at the trailing edge
@@ -961,6 +990,7 @@ struct ProfileHeader: View {
                 }
             }
             .padding(.horizontal, responsivePadding)
+            .padding(.top, hideAvatar ? DesignTokens.Spacing.xs : DesignTokens.Spacing.none) // Minimal spacing when avatar is in header
             
             // Display name and handle
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
@@ -1042,7 +1072,7 @@ struct ProfileHeader: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, responsivePadding)
         }
-        .padding(.bottom, DesignTokens.Spacing.sm)
+        .padding(.bottom, hideAvatar ? 0 : DesignTokens.Spacing.xs) // No bottom padding when avatar is in header for tighter spacing
     }
     
     private var editProfileButton: some View {
@@ -1055,12 +1085,11 @@ struct ProfileHeader: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .foregroundColor(.accentColor)
-                .cornerRadius(16)
         }
-        .overlay {
-            Capsule().stroke(Color.accentColor, lineWidth: 1.5)
-        }
-        .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
+        .background(
+            Capsule()
+                .stroke(Color.accentColor, lineWidth: 1.5)
+        )
     }
     
     @ViewBuilder
@@ -1087,10 +1116,10 @@ struct ProfileHeader: View {
                 .foregroundColor(.red)
                 .cornerRadius(16)
             }
-            .overlay {
-                Capsule().stroke(Color.red, lineWidth: 1.5)
-            }
-            .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
+            .background(
+                Capsule()
+                    .stroke(Color.red, lineWidth: 1.5)
+            )
         } else if profile.viewer?.muted == true {
             // Show muted state
             Button(action: {
@@ -1109,10 +1138,10 @@ struct ProfileHeader: View {
                 .foregroundColor(.orange)
                 .cornerRadius(16)
             }
-            .overlay {
-                Capsule().stroke(Color.orange, lineWidth: 1.5)
-            }
-            .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
+            .background(
+                Capsule()
+                    .stroke(Color.orange, lineWidth: 1.5)
+            )
         } else if localIsFollowing {
             Button(action: {
                 Task(priority: .userInitiated) {  // Explicit priority
@@ -1155,10 +1184,10 @@ struct ProfileHeader: View {
                 .foregroundColor(.accentColor)
                 .cornerRadius(16)
             }
-            .overlay {
-                Capsule().stroke(Color.accentColor, lineWidth: 1.5)
-            }
-            .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
+            .background(
+                Capsule()
+                    .stroke(Color.accentColor, lineWidth: 1.5)
+            )
             
         } else {
             Button(action: {

@@ -134,7 +134,7 @@ struct SettingsTestView: View {
                 .padding()
             }
             .navigationTitle("Settings Test")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
         }
     }
     

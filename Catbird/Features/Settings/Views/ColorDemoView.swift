@@ -115,7 +115,7 @@ struct ColorDemoView: View {
             }
         }
         .navigationTitle("Color Demo")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
 }
 

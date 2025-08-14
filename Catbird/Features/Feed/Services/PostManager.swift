@@ -297,7 +297,8 @@ final class PostManager {
           blockingByList: nil,
           following: nil,
           followedBy: nil,
-          knownFollowers: nil
+          knownFollowers: nil,
+          activitySubscription: nil
         ),
         labels: [],
         createdAt: nil,

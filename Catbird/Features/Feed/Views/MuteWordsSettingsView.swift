@@ -44,7 +44,7 @@ struct MuteWordsSettingsView: View {
       }
     }
     .navigationTitle("Mute Words")
-    .navigationBarTitleDisplayMode(.large)
+    .toolbarTitleDisplayMode(.large)
     .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .alert("Delete Mute Word", isPresented: $showingDeleteConfirmation) {
       Button("Delete", role: .destructive) {

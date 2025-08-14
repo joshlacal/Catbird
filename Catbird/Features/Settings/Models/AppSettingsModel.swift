@@ -78,6 +78,8 @@ final class AppSettingsModel {
     // WebView Embeds
     var useWebViewEmbeds: Bool = true
     var enablePictureInPicture: Bool = true
+    var autoStartPiP: Bool = false
+    var rememberPiPPosition: Bool = true
     
     // Languages
     var appLanguage: String = "system"
@@ -201,6 +203,11 @@ final class AppSettingsModel {
         if enablePictureInPicture == false && defaults.object(forKey: "enablePictureInPicture") == nil {
             enablePictureInPicture = true // Default to true if not set
         }
+        autoStartPiP = defaults.bool(forKey: "autoStartPiP")
+        rememberPiPPosition = defaults.bool(forKey: "rememberPiPPosition")
+        if rememberPiPPosition == false && defaults.object(forKey: "rememberPiPPosition") == nil {
+            rememberPiPPosition = true // Default to true if not set
+        }
         
         // Languages
         if let value = defaults.string(forKey: "appLanguage") { appLanguage = value }
@@ -297,6 +304,8 @@ final class AppSettingsModel {
         // WebView Embeds
         useWebViewEmbeds = true
         enablePictureInPicture = true
+        autoStartPiP = false
+        rememberPiPPosition = true
         
         // Languages
         appLanguage = "system"

@@ -7,7 +7,10 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
   private let layoutLogger = Logger(subsystem: "blue.catbird", category: "FixedStretchyLayout")
   
   private var lastScrollOffset: CGFloat = 0
-  private let scrollThreshold: CGFloat = 1.0 // Only invalidate if scroll change is significant
+  private let scrollThreshold: CGFloat = 5.0 // Balanced threshold for responsive stretching
+  private var isInvalidating: Bool = false // Guard against recursive invalidation
+  private var lastInvalidationTime: CFTimeInterval = 0
+  private var lastStretchAmount: CGFloat = 0 // Track stretch to reduce redundant updates
   
   override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
     guard let collectionView = collectionView,
@@ -17,6 +20,10 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
     
     let contentOffsetY = collectionView.contentOffset.y
     let adjustedContentInset = collectionView.adjustedContentInset.top
+    let overscrollOffset = contentOffsetY + adjustedContentInset
+    
+    // Only process if we're actually overscrolling or have a header
+    let isOverscrolling = overscrollOffset < 0
     
     for attributes in layoutAttributes {
       // Only modify the first section header (banner)
@@ -27,19 +34,17 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
                              contentOffsetY: contentOffsetY, 
                              adjustedContentInset: adjustedContentInset)
         
-        // Notify header view of stretch amount
-        notifyHeaderViewOfStretch(at: attributes.indexPath, 
-                                contentOffsetY: contentOffsetY, 
-                                adjustedContentInset: adjustedContentInset)
-      } else {
-        // Lower z-index for all content below header
-        if attributes.indexPath.section == 1 {
-          // Profile info section should be above banner but avatar should be on top
-          attributes.zIndex = 100
-        } else {
-          // Other sections get lower z-index
-          attributes.zIndex = attributes.indexPath.section * 100 + attributes.indexPath.item
+        // Only notify if stretch amount changed significantly
+        let currentStretch = isOverscrolling ? abs(overscrollOffset) : 0
+        if abs(currentStretch - lastStretchAmount) > 1.0 {
+          notifyHeaderViewOfStretch(at: attributes.indexPath, 
+                                  contentOffsetY: contentOffsetY, 
+                                  adjustedContentInset: adjustedContentInset)
+          lastStretchAmount = currentStretch
         }
+      } else {
+        // Simplified Z-index to prevent overlapping issues
+        attributes.zIndex = 1
       }
     }
     
@@ -49,23 +54,22 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
   private func updateHeaderAttributes(_ attributes: UICollectionViewLayoutAttributes,
                                     contentOffsetY: CGFloat,
                                     adjustedContentInset: CGFloat) {
-    // When pulling down (overscroll)
+    // Calculate overscroll amount
     let overscrollOffset = contentOffsetY + adjustedContentInset
     
     if overscrollOffset < 0 {
+      // Pulling down - stretch the header
       let stretchAmount = abs(overscrollOffset)
       
       var frame = attributes.frame
       
-      // Safe stretch calculation with bounds checking
-      let originalHeight = attributes.frame.height
-      let maxStretch = originalHeight * 2.0 // Limit stretch to 2x original height
-      let clampedStretch = min(stretchAmount, maxStretch)
+      // Elastic stretch effect:
+      // Pin header to top and expand height
+      frame.origin.y = contentOffsetY // Pin to current scroll position
       
-      // Ensure frame dimensions are always valid
-      frame.size.height = max(originalHeight, originalHeight + clampedStretch)
-      frame.size.width = max(1.0, frame.size.width) // Ensure positive width
-      frame.origin.y = min(contentOffsetY, frame.origin.y) // Prevent invalid Y position
+      // Expand height to create stretchy effect
+      let originalHeight = attributes.frame.height
+      frame.size.height = originalHeight + stretchAmount
       
       // Validate frame before applying
       if frame.size.height > 0 && frame.size.width > 0 && 
@@ -74,38 +78,44 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
         attributes.frame = frame
       }
       
-      attributes.zIndex = 50 // Much lower z-index so avatar can appear on top
+      attributes.zIndex = 0 // At base level, let header view handle internal z-ordering
       
-      if stretchAmount > 10 {
-        layoutLogger.debug("Header stretching: offset=\(contentOffsetY, privacy: .public), stretch=\(clampedStretch, privacy: .public)")
-      }
     } else {
-      // Normal state - much lower z-index so avatar can appear on top
-      attributes.zIndex = 50
+      // Normal scrolling - no parallax to keep it simple and performant
+      // Header stays at its original position
+      attributes.zIndex = 0
     }
   }
   
   private func notifyHeaderViewOfStretch(at indexPath: IndexPath,
                                        contentOffsetY: CGFloat,
                                        adjustedContentInset: CGFloat) {
-    guard let collectionView = collectionView,
-          let headerView = collectionView.supplementaryView(
-            forElementKind: UICollectionView.elementKindSectionHeader,
-            at: indexPath
-          ) as? FixedProfileHeaderView else {
-      return
-    }
+    guard let collectionView = collectionView else { return }
     
+    // Get the header view
+    let headerView = collectionView.supplementaryView(
+      forElementKind: UICollectionView.elementKindSectionHeader,
+      at: indexPath
+    )
+    
+    // Calculate overscroll amount
     let overscrollOffset = contentOffsetY + adjustedContentInset
     
-    if overscrollOffset < 0 {
-      let stretchAmount = abs(overscrollOffset)
-      Task { @MainActor in
-        headerView.updateForStretch(stretchAmount: stretchAmount)
+    if let enhancedHeader = headerView as? EnhancedProfileHeaderView {
+      // Direct call without Task for immediate response
+      if overscrollOffset < 0 {
+        let stretchAmount = abs(overscrollOffset)
+        enhancedHeader.updateForStretch(stretchAmount: stretchAmount)
+      } else {
+        enhancedHeader.resetStretch()
       }
-    } else {
-      Task { @MainActor in
-        headerView.resetStretch()
+    } else if let fixedHeader = headerView as? FixedProfileHeaderView {
+      // Support for the alternative header view
+      if overscrollOffset < 0 {
+        let stretchAmount = abs(overscrollOffset)
+        fixedHeader.updateForStretch(stretchAmount: stretchAmount)
+      } else {
+        fixedHeader.resetStretch()
       }
     }
   }
@@ -113,25 +123,53 @@ final class FixedStretchyLayout: UICollectionViewCompositionalLayout {
   override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
     guard let collectionView = collectionView else { return false }
     
+    // Prevent recursive invalidation
+    guard !isInvalidating else { 
+      return false 
+    }
+    
+    // Throttle invalidations for performance
+    let currentTime = CFAbsoluteTimeGetCurrent()
+    guard currentTime - lastInvalidationTime > 0.016 else { // 60 FPS max for smoother feel
+      return false
+    }
+    
     let currentOffset = collectionView.contentOffset.y
     let newOffset = newBounds.origin.y
-    let sizeChanged = abs(collectionView.bounds.height - newBounds.height) > 0.1 ||
-                     abs(collectionView.bounds.width - newBounds.width) > 0.1
     
-    // Only invalidate for significant scroll changes or size changes
-    let shouldInvalidate = abs(currentOffset - newOffset) > scrollThreshold || sizeChanged
+    // Check for significant size changes (orientation, etc)
+    let sizeChanged = abs(collectionView.bounds.height - newBounds.height) > 1.0 ||
+                     abs(collectionView.bounds.width - newBounds.width) > 1.0
+    
+    // Only invalidate for overscroll (when we need to stretch the header)
+    let adjustedTop = collectionView.adjustedContentInset.top
+    let isOverscrolling = newOffset < -adjustedTop
+    
+    // Invalidate only when necessary
+    let shouldInvalidate = sizeChanged || isOverscrolling
     
     if shouldInvalidate {
       lastScrollOffset = newOffset
+      lastInvalidationTime = currentTime
     }
     
     return shouldInvalidate
   }
   
   override func invalidateLayout(with context: UICollectionViewLayoutInvalidationContext) {
+    // Guard against recursive invalidation
+    guard !isInvalidating else {
+      layoutLogger.debug("Skipping recursive invalidation")
+      return
+    }
+    
+    isInvalidating = true
+    defer { isInvalidating = false }
+    
     if context.invalidateEverything || context.invalidateDataSourceCounts {
       layoutLogger.debug("Layout invalidated completely")
     }
+    
     super.invalidateLayout(with: context)
   }
 }

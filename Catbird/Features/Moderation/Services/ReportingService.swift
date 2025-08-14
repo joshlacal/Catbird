@@ -97,7 +97,7 @@ final class ReportingService {
     
     /// Get information about the Bluesky moderation service (as a fallback)
     /// - Returns: Detailed information about the Bluesky moderation service
-    func getBlueSkyModerationService() async throws -> AppBskyLabelerDefs.LabelerViewDetailed? {
+    func getBlueskyModerationService() async throws -> AppBskyLabelerDefs.LabelerViewDetailed? {
         // The official Bluesky moderation service has a known DID
         let params = AppBskyLabelerGetServices.Parameters(
             dids: [try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")],

@@ -82,8 +82,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   private static let mainPostID = "main-post-id"
   
-  // Estimated height for parent posts (used for scroll position preservation)
-  private let estimatedParentPostHeight: CGFloat = 120.0
+  // Height calculator for precise post height estimations
+  private let postHeightCalculator = PostHeightCalculator.shared
   
   // Optimized scroll system for iOS 18+
   @available(iOS 18.0, *)
@@ -97,7 +97,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     private lazy var collectionView: UICollectionView = {
         let layout = createCompositionalLayout()
         let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.backgroundColor = .systemBackground
+        collectionView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.showsVerticalScrollIndicator = true
         collectionView.prefetchDataSource = self
@@ -111,7 +111,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private lazy var loadingView: UIView = {
     let container = UIView()
     container.translatesAutoresizingMaskIntoConstraints = false
-      container.backgroundColor = .systemBackground
+      container.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
 
     let activityIndicator = UIActivityIndicatorView(style: .medium)
     activityIndicator.translatesAutoresizingMaskIntoConstraints = false
@@ -186,6 +186,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
     }
     
+    // Remove theme observer
+    NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ThemeChanged"), object: nil)
+    
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
   }
@@ -200,6 +203,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Prevent VoiceOver from auto-scrolling
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
+    
+    // Observe theme changes
+    setupThemeObserver()
     
     loadInitialThread()
   }
@@ -239,13 +245,42 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       configureNavigationAndToolbarTheme()
       
       // Update collection view background
-        collectionView.backgroundColor = .systemBackground
-        view.backgroundColor = .systemBackground
-        loadingView.backgroundColor = .systemBackground
+        let currentScheme = getCurrentColorScheme()
+        let dynamicBackgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: currentScheme))
+        collectionView.backgroundColor = dynamicBackgroundColor
+        view.backgroundColor = dynamicBackgroundColor
+        loadingView.backgroundColor = dynamicBackgroundColor
     }
   }
   
   // MARK: - Theme Configuration
+  
+  private func setupThemeObserver() {
+    // Listen for theme changes from ThemeManager
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleThemeChange),
+      name: NSNotification.Name("ThemeChanged"),
+      object: nil
+    )
+  }
+  
+  @objc private func handleThemeChange() {
+    DispatchQueue.main.async { [weak self] in
+      self?.updateBackgroundColors()
+    }
+  }
+  
+  private func updateBackgroundColors() {
+    let currentScheme = getCurrentColorScheme()
+    let dynamicBackgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: currentScheme))
+    
+    collectionView.backgroundColor = dynamicBackgroundColor
+    view.backgroundColor = dynamicBackgroundColor
+    loadingView.backgroundColor = dynamicBackgroundColor
+    
+    controllerLogger.debug("Updated thread view background colors for theme change")
+  }
   
   private func configureNavigationAndToolbarTheme() {
     let currentScheme = getCurrentColorScheme()
@@ -353,7 +388,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   // MARK: - UI Setup
   private func setupUI() {
-      view.backgroundColor = .systemBackground
+      view.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
 
     // Initially hide collection view to prevent content flickering
     collectionView.alpha = 0
@@ -1258,7 +1293,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let currentPostIds = (
       parentPosts.map { $0.post.uri.uriString() } + 
       [mainPost?.uri.uriString()].compactMap { $0 } +
-      replyWrappers.map { $0.post.uri.uriString() }
+      replyWrappers.map { $0.id }
     )
     
     // Apply atomic update with position preservation (like feed view does)
@@ -1343,15 +1378,22 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   @MainActor
   private func applyParentPostsWithSimplePreservation(newParentsCount: Int) async {
-    // Fallback implementation for iOS < 18
-    let newParentHeight = CGFloat(newParentsCount) * estimatedParentPostHeight
+    // Fallback implementation for iOS < 18 - now with precise height calculations
+    var totalNewParentHeight: CGFloat = 0
+    
+    // Calculate precise height for each new parent post
+    let newParents = Array(parentPosts.suffix(newParentsCount))
+    for parent in newParents {
+      totalNewParentHeight += postHeightCalculator.calculateParentPostHeight(for: parent)
+    }
+    
     let currentOffset = collectionView.contentOffset.y
-    let adjustedOffset = CGPoint(x: 0, y: currentOffset + newParentHeight)
+    let adjustedOffset = CGPoint(x: 0, y: currentOffset + totalNewParentHeight)
     
     // Preserve scroll position by offsetting for new content above
     collectionView.setContentOffset(adjustedOffset, animated: false)
     
-    controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts")
+    controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts with precise height: \(totalNewParentHeight)")
   }
   
   // MARK: - Thread-Specific Anchor Capture
@@ -1388,7 +1430,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         controllerLogger.debug("⚠️ Reply index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      postId = replyWrappers[firstVisibleIndexPath.item].post.uri.uriString()
+      postId = replyWrappers[firstVisibleIndexPath.item].id
       
     default:
       controllerLogger.debug("⚠️ Unknown section for anchor capture: \(firstVisibleIndexPath.section)")
@@ -1441,7 +1483,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       // Replies section (section 2)
       for (index, replyWrapper) in replyWrappers.enumerated() {
-        mapping[replyWrapper.post.uri.uriString()] = IndexPath(item: index, section: 2)
+        mapping[replyWrapper.id] = IndexPath(item: index, section: 2)
       }
       
       return mapping

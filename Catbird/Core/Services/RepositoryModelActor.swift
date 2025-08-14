@@ -62,7 +62,7 @@ actor RepositoryModelActor {
         logger.info("Saving \(parsedRecords.count) parsed records to database")
         
         var batchCount = 0
-        let batchSize = 100
+        let batchSize = 5  // Smaller batches to reduce memory pressure
         
         for record in parsedRecords {
             try saveIndividualParsedRecord(record, to: repositoryRecord)
@@ -296,5 +296,127 @@ actor RepositoryModelActor {
             parseErrorMessage: record.parseError,
             parseConfidence: record.parseConfidence
         )
+    }
+    
+    // MARK: - Enhanced Batch Operations
+    
+    /// Save all parsed records in a single transaction
+    func saveParsedRecords(
+        repositoryRecordID: UUID,
+        atProtocolRecords: [ParsedATProtocolRecord],
+        posts: [ParsedPost],
+        profiles: [ParsedProfile],
+        connections: [ParsedConnection],
+        media: [ParsedMedia],
+        unknownRecords: [ParsedUnknownRecord]
+    ) throws {
+        logger.info("Batch saving parsed records for repository \(repositoryRecordID)")
+        
+        var totalRecords = 0
+        
+        // Insert AT Protocol records
+        for record in atProtocolRecords {
+            modelContext.insert(record)
+            totalRecords += 1
+        }
+        
+        // Insert posts
+        for post in posts {
+            modelContext.insert(post)
+            totalRecords += 1
+        }
+        
+        // Insert profiles
+        for profile in profiles {
+            modelContext.insert(profile)
+            totalRecords += 1
+        }
+        
+        // Insert connections
+        for connection in connections {
+            modelContext.insert(connection)
+            totalRecords += 1
+        }
+        
+        // Insert media
+        for mediaItem in media {
+            modelContext.insert(mediaItem)
+            totalRecords += 1
+        }
+        
+        // Insert unknown records
+        for unknownRecord in unknownRecords {
+            modelContext.insert(unknownRecord)
+            totalRecords += 1
+        }
+        
+        // Save all at once
+        try modelContext.save()
+        
+        logger.info("Successfully saved \(totalRecords) parsed records to database")
+    }
+    
+    /// Delete all parsed records for a repository
+    func deleteAllParsedRecords(for repositoryRecordID: UUID) throws {
+        logger.info("Deleting all parsed records for repository \(repositoryRecordID)")
+        
+        // Delete AT Protocol records
+        let atProtoDescriptor = FetchDescriptor<ParsedATProtocolRecord>(
+            predicate: #Predicate { $0.repositoryRecordID == repositoryRecordID }
+        )
+        let atProtoRecords = try modelContext.fetch(atProtoDescriptor)
+        for record in atProtoRecords {
+            modelContext.delete(record)
+        }
+        
+        // Delete posts
+        let postDescriptor = FetchDescriptor<ParsedPost>(
+            predicate: #Predicate { $0.repositoryRecordID == repositoryRecordID }
+        )
+        let posts = try modelContext.fetch(postDescriptor)
+        for post in posts {
+            modelContext.delete(post)
+        }
+        
+        // Delete profiles
+        let profileDescriptor = FetchDescriptor<ParsedProfile>(
+            predicate: #Predicate { $0.repositoryRecordID == repositoryRecordID }
+        )
+        let profiles = try modelContext.fetch(profileDescriptor)
+        for profile in profiles {
+            modelContext.delete(profile)
+        }
+        
+        // Delete connections
+        let connectionDescriptor = FetchDescriptor<ParsedConnection>(
+            predicate: #Predicate { $0.repositoryRecordID == repositoryRecordID }
+        )
+        let connections = try modelContext.fetch(connectionDescriptor)
+        for connection in connections {
+            modelContext.delete(connection)
+        }
+        
+        // Delete media
+        let mediaDescriptor = FetchDescriptor<ParsedMedia>(
+            predicate: #Predicate { $0.repositoryRecordID == repositoryRecordID }
+        )
+        let mediaItems = try modelContext.fetch(mediaDescriptor)
+        for mediaItem in mediaItems {
+            modelContext.delete(mediaItem)
+        }
+        
+        // Delete unknown records
+        let unknownDescriptor = FetchDescriptor<ParsedUnknownRecord>(
+            predicate: #Predicate { $0.repositoryRecordID == repositoryRecordID }
+        )
+        let unknownRecords = try modelContext.fetch(unknownDescriptor)
+        for unknownRecord in unknownRecords {
+            modelContext.delete(unknownRecord)
+        }
+        
+        // Save all deletions
+        try modelContext.save()
+        
+        logger.info("Successfully deleted all parsed records for repository \(repositoryRecordID)")
     }
 }

@@ -11,8 +11,12 @@ extension PostComposerViewModel {
     // MARK: - Post Management
     
     func resetPost() {
+        isUpdatingText = true
+        defer { isUpdatingText = false }
+        
         postText = ""
         richAttributedText = NSAttributedString()
+        attributedPostText = AttributedString()
         selectedLanguages = []
         suggestedLanguage = nil
         selectedLabels = []
@@ -21,10 +25,18 @@ extension PostComposerViewModel {
         selectedGif = nil
         detectedURLs.removeAll()
         urlCards.removeAll()
+        thumbnailCache.removeAll()
         mentionSuggestions.removeAll()
         resolvedProfiles.removeAll()
         alertItem = nil
         mediaSourceTracker.removeAll()
+        outlineTags.removeAll()
+        
+        // Reset thread mode state
+        threadEntries = [ThreadEntry()]
+        currentThreadIndex = 0
+        isThread = false
+        isThreadMode = false
     }
     
     // MARK: - Thread Management
@@ -91,7 +103,59 @@ extension PostComposerViewModel {
     // MARK: - Thread Management
     
     func addNewThreadEntry() {
+        // Save current state to current thread entry before switching
+        updateCurrentThreadEntry()
         addThreadPost()
+    }
+    
+    // MARK: - Thread Mode Management
+    
+    func enterThreadMode() {
+        guard !isThreadMode else { return }
+        
+        // Save current post content to first thread entry
+        threadEntries[0].text = postText
+        threadEntries[0].mediaItems = mediaItems
+        threadEntries[0].videoItem = videoItem
+        threadEntries[0].selectedGif = selectedGif
+        threadEntries[0].detectedURLs = detectedURLs
+        threadEntries[0].urlCards = urlCards
+        threadEntries[0].hashtags = outlineTags
+        
+        isThreadMode = true
+        isThread = true
+        currentThreadIndex = 0
+    }
+    
+    func exitThreadMode() {
+        guard isThreadMode else { return }
+        
+        // Load first thread entry back to main composer state
+        if !threadEntries.isEmpty {
+            let firstEntry = threadEntries[0]
+            
+            isUpdatingText = true
+            defer { isUpdatingText = false }
+            
+            postText = firstEntry.text
+            mediaItems = firstEntry.mediaItems
+            videoItem = firstEntry.videoItem
+            selectedGif = firstEntry.selectedGif
+            detectedURLs = firstEntry.detectedURLs
+            urlCards = firstEntry.urlCards
+            outlineTags = firstEntry.hashtags
+            
+            richAttributedText = NSAttributedString(string: postText)
+        }
+        
+        // Reset to single post mode
+        threadEntries = [ThreadEntry()]
+        isThreadMode = false
+        isThread = false
+        currentThreadIndex = 0
+        
+        // Update content
+        updatePostContent()
     }
     
     // MARK: - Media Paste Handling
@@ -202,7 +266,7 @@ extension PostComposerViewModel {
                 embed = try await createVideoEmbed()
                 self.videoItem = nil // Clear it
             } else if let urlCard = entry.urlCards.values.first {
-                embed = createExternalEmbed(urlCard)
+                embed = await createExternalEmbedWithThumbnail(urlCard)
             }
             
             // Create self labels
@@ -291,8 +355,8 @@ extension PostComposerViewModel {
             embed = createQuoteEmbed(quotedPost)
         } else if let urlCard = urlCards.values.first {
             logger.debug("Creating external link embed")
-            // Handle external link embed
-            embed = createExternalEmbed(urlCard)
+            // Handle external link embed with thumbnail support
+            embed = await createExternalEmbedWithThumbnail(urlCard)
         } else {
             logger.debug("No embed needed")
         }
@@ -324,6 +388,42 @@ extension PostComposerViewModel {
         logger.info("Post created successfully")
     }
     
+    // MARK: - Thumbnail Management
+    
+    /// Pre-upload thumbnails for all URL cards that don't have them yet
+    @MainActor
+    func preUploadThumbnails() async {
+        for urlCard in urlCards.values {
+            if !urlCard.image.isEmpty && thumbnailCache[urlCard.url] == nil && urlCard.thumbnailBlob == nil {
+                await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+            }
+        }
+    }
+    
+    /// Check if thumbnail is available for a URL
+    func hasThumbnail(for url: String) -> Bool {
+        return thumbnailCache[url] != nil || urlCards[url]?.thumbnailBlob != nil
+    }
+    
+    /// Get thumbnail blob for a URL
+    func getThumbnail(for url: String) -> Blob? {
+        return urlCards[url]?.thumbnailBlob ?? thumbnailCache[url]
+    }
+    
+    /// Retry thumbnail upload for a specific URL
+    @MainActor
+    func retryThumbnailUpload(for url: String) async {
+        guard let urlCard = urlCards[url], 
+              !urlCard.image.isEmpty,
+              thumbnailCache[url] == nil,
+              urlCard.thumbnailBlob == nil else {
+            return
+        }
+        
+        logger.info("Retrying thumbnail upload for: \(url)")
+        await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+    }
+    
     // MARK: - Additional Helper Methods
     
     func insertEmoji(_ emoji: String) {
@@ -337,6 +437,13 @@ extension PostComposerViewModel {
         // Clear other media when GIF is selected
         mediaItems.removeAll()
         videoItem = nil
+        
+        // Sync media state to current thread
+        if isThreadMode && threadEntries.indices.contains(currentThreadIndex) {
+            threadEntries[currentThreadIndex].selectedGif = selectedGif
+            threadEntries[currentThreadIndex].mediaItems = []
+            threadEntries[currentThreadIndex].videoItem = nil
+        }
     }
     
     var isPostButtonDisabled: Bool {
@@ -356,23 +463,38 @@ extension PostComposerViewModel {
     
     func updateCurrentThreadEntry() {
         // Save current post content to the current thread entry
-        if threadEntries.indices.contains(currentThreadIndex) {
-            threadEntries[currentThreadIndex].text = postText
-            threadEntries[currentThreadIndex].mediaItems = mediaItems
-            threadEntries[currentThreadIndex].videoItem = videoItem
-            threadEntries[currentThreadIndex].selectedGif = selectedGif
-        }
+        guard threadEntries.indices.contains(currentThreadIndex) else { return }
+        
+        threadEntries[currentThreadIndex].text = postText
+        threadEntries[currentThreadIndex].mediaItems = mediaItems
+        threadEntries[currentThreadIndex].videoItem = videoItem
+        threadEntries[currentThreadIndex].selectedGif = selectedGif
+        threadEntries[currentThreadIndex].detectedURLs = detectedURLs
+        threadEntries[currentThreadIndex].urlCards = urlCards
+        threadEntries[currentThreadIndex].hashtags = outlineTags
     }
     
     func loadEntryState() {
         // Load the current thread entry state into the composer
-        if threadEntries.indices.contains(currentThreadIndex) {
-            let entry = threadEntries[currentThreadIndex]
-            postText = entry.text
-            mediaItems = entry.mediaItems
-            videoItem = entry.videoItem
-            selectedGif = entry.selectedGif
-        }
+        guard threadEntries.indices.contains(currentThreadIndex) else { return }
+        
+        isUpdatingText = true
+        defer { isUpdatingText = false }
+        
+        let entry = threadEntries[currentThreadIndex]
+        postText = entry.text
+        mediaItems = entry.mediaItems
+        videoItem = entry.videoItem
+        selectedGif = entry.selectedGif
+        detectedURLs = entry.detectedURLs
+        urlCards = entry.urlCards
+        outlineTags = entry.hashtags
+        
+        // Sync attributed text
+        richAttributedText = NSAttributedString(string: postText)
+        
+        // Update content after loading
+        updatePostContent()
     }
     
     func removeThreadEntry(at index: Int) {
@@ -394,7 +516,15 @@ extension PostComposerViewModel {
         
         let gifURL: String
         if let gifFormat = gif.media_formats.gif {
-            gifURL = gifFormat.url
+            // Add size parameters to match Bluesky app format
+            let baseURL = gifFormat.url
+            if !baseURL.contains("?") && gifFormat.dims.count >= 2 {
+                let width = gifFormat.dims[0]
+                let height = gifFormat.dims[1]
+                gifURL = "\(baseURL)?hh=\(height)&ww=\(width)"
+            } else {
+                gifURL = baseURL
+            }
         } else if let mediumGif = gif.media_formats.mediumgif {
             gifURL = mediumGif.url
         } else if let tinyGif = gif.media_formats.tinygif {
@@ -440,15 +570,163 @@ extension PostComposerViewModel {
     }
     
     private func createExternalEmbed(_ urlCard: URLCardResponse) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        // TODO: Upload thumbnail if available
+        // Priority order for thumbnail:
+        // 1. URLCard's cached thumbnailBlob
+        // 2. Thumbnail cache by URL 
+        // 3. Async upload if needed
+        let thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[urlCard.url]
+        
         let external = AppBskyEmbedExternal.External(
             uri: URI(uriString: urlCard.url),
             title: urlCard.title,
             description: urlCard.description,
-            thumb: nil // Would need to upload urlCard.image
+            thumb: thumbBlob
+        )
+        
+        // Start async thumbnail upload if image is available and not cached
+        if !urlCard.image.isEmpty && thumbBlob == nil {
+            Task {
+                await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+            }
+        }
+        
+        return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
+    }
+    
+    /// Create external embed with synchronous thumbnail if available
+    @MainActor
+    private func createExternalEmbedWithThumbnail(_ urlCard: URLCardResponse) async -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        // Check for existing thumbnail
+        var thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[urlCard.url]
+        
+        // If no thumbnail exists but image URL is available, try to upload synchronously
+        if thumbBlob == nil && !urlCard.image.isEmpty {
+            await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+            thumbBlob = thumbnailCache[urlCard.url]
+        }
+        
+        let external = AppBskyEmbedExternal.External(
+            uri: URI(uriString: urlCard.url),
+            title: urlCard.title,
+            description: urlCard.description,
+            thumb: thumbBlob
         )
         
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
+    }
+    
+    /// Uploads thumbnail for external embed and caches the blob reference
+    private func uploadAndCacheThumbnail(imageURL: String, urlCard: URLCardResponse) async {
+        guard let client = appState.atProtoClient,
+              let url = URL(string: imageURL) else {
+            logger.warning("Cannot upload thumbnail: invalid URL or missing client")
+            return
+        }
+        
+        do {
+            logger.debug("Downloading thumbnail from: \(imageURL)")
+            
+            // Download the image data
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                logger.warning("Failed to download thumbnail: invalid HTTP response")
+                return
+            }
+            
+            // Validate it's an image
+            guard data.count > 0 else {
+                logger.warning("Downloaded thumbnail is empty")
+                return
+            }
+            
+            // Determine MIME type from response or data
+            let mimeType = httpResponse.mimeType ?? "image/jpeg"
+            
+            // Resize image if too large (max 1MB for thumbnails)
+            let processedData: Data
+            if data.count > 1_000_000 {
+                processedData = try await resizeImageData(data, maxSizeBytes: 1_000_000)
+            } else {
+                processedData = data
+            }
+            
+            logger.debug("Uploading thumbnail (\(processedData.count) bytes) with MIME type: \(mimeType)")
+            
+            // Upload to AT Protocol
+            let (uploadCode, uploadResult) = try await client.com.atproto.repo.uploadBlob(
+                data: processedData,
+                mimeType: mimeType
+            )
+            
+            guard uploadCode >= 200 && uploadCode < 300,
+                  let blob = uploadResult?.blob else {
+                logger.error("Failed to upload thumbnail: HTTP \(uploadCode)")
+                return
+            }
+            
+            logger.info("Successfully uploaded thumbnail for external embed: \(String(describing:blob.ref?.cid.string))")
+            
+            // Cache the blob reference for future use
+            await MainActor.run {
+                self.thumbnailCache[urlCard.url] = blob
+                
+                // Update the URL card if it still exists in current cards
+                if var existingCard = self.urlCards[urlCard.url] {
+                    existingCard.thumbnailBlob = blob
+                    self.urlCards[urlCard.url] = existingCard
+                }
+            }
+            
+        } catch {
+            logger.error("Failed to upload thumbnail: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Resizes image data to fit within specified byte limit
+    private func resizeImageData(_ data: Data, maxSizeBytes: Int) async throws -> Data {
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let image = UIImage(data: data) else {
+                    continuation.resume(throwing: ThumbnailUploadError.invalidImageData)
+                    return
+                }
+                
+                var compressionQuality: CGFloat = 1.0
+                var resizedData = data
+                
+                // Try different compression qualities
+                while resizedData.count > maxSizeBytes && compressionQuality > 0.1 {
+                    compressionQuality -= 0.1
+                    
+                    if let compressed = image.jpegData(compressionQuality: compressionQuality) {
+                        resizedData = compressed
+                    }
+                }
+                
+                // If still too large, resize the image dimensions
+                if resizedData.count > maxSizeBytes {
+                    let scale = sqrt(Double(maxSizeBytes) / Double(resizedData.count))
+                    let newSize = CGSize(
+                        width: image.size.width * scale,
+                        height: image.size.height * scale
+                    )
+                    
+                    UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+                    image.draw(in: CGRect(origin: .zero, size: newSize))
+                    let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
+                    UIGraphicsEndImageContext()
+                    
+                    if let resizedImage = resizedImage,
+                       let finalData = resizedImage.jpegData(compressionQuality: 0.8) {
+                        resizedData = finalData
+                    }
+                }
+                
+                continuation.resume(returning: resizedData)
+            }
+        }
     }
     
     // MARK: - Facet Processing
@@ -542,5 +820,24 @@ extension PostComposerViewModel {
         let bytesBefore = nsString.substring(to: range.location).data(using: .utf8)?.count ?? 0
         let bytesInRange = substring.data(using: .utf8)?.count ?? 0
         return NSRange(location: bytesBefore, length: bytesInRange)
+    }
+}
+
+// MARK: - Thumbnail Upload Error
+
+enum ThumbnailUploadError: LocalizedError {
+    case invalidImageData
+    case resizeFailed
+    case uploadFailed(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidImageData:
+            return "Invalid image data provided"
+        case .resizeFailed:
+            return "Failed to resize image"
+        case .uploadFailed(let message):
+            return "Upload failed: \(message)"
+        }
     }
 }

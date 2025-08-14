@@ -36,7 +36,7 @@ struct RepositoryUniversalSearchView: View {
                 }
             }
             .navigationTitle("Universal Search")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
@@ -942,7 +942,7 @@ private struct AdvancedSearchView: View {
                 }
             }
             .navigationTitle("Advanced Search")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Reset") {
@@ -1017,7 +1017,7 @@ private struct SearchResultDetailView: View {
                 .padding()
             }
             .navigationTitle("Search Result")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {

@@ -28,11 +28,38 @@ struct ContentMediaSettingsView: View {
                 ))
                 .tint(.blue)
                 
+                Toggle("Picture in Picture", isOn: Binding(
+                    get: { appState.appSettings.enablePictureInPicture },
+                    set: { appState.appSettings.enablePictureInPicture = $0 }
+                ))
+                .tint(.blue)
+                
                 Toggle("Open Links In-App", isOn: Binding(
                     get: { appState.appSettings.useInAppBrowser },
                     set: { appState.appSettings.useInAppBrowser = $0 }
                 ))
                 .tint(.blue)
+            }
+            
+            // Picture in Picture Settings
+            Section("Picture in Picture") {
+                if appState.appSettings.enablePictureInPicture {
+                    Toggle("Auto-start PiP when navigating away", isOn: Binding(
+                        get: { appState.appSettings.autoStartPiP },
+                        set: { appState.appSettings.autoStartPiP = $0 }
+                    ))
+                    .tint(.blue)
+                    
+                    Toggle("Remember PiP window position", isOn: Binding(
+                        get: { appState.appSettings.rememberPiPPosition },
+                        set: { appState.appSettings.rememberPiPPosition = $0 }
+                    ))
+                    .tint(.blue)
+                } else {
+                    Text("Enable Picture in Picture above to access additional settings")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
             }
             
             // Feed Content Settings
@@ -226,7 +253,7 @@ struct ContentMediaSettingsView: View {
             }
         }
         .navigationTitle("Content & Media")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .task {
             await loadServerPreferences()
         }

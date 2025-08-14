@@ -34,7 +34,8 @@ struct ExternalEmbedView: View {
             .environment(
                 \.openURL,
                  OpenURLAction { url in
-                     return appState.urlHandler.handle(url)
+                     let result = appState.urlHandler.handle(url)
+                     return result
                  })
             .onAppear {
                 setupVideoIfNeeded()
@@ -65,44 +66,45 @@ struct ExternalEmbedView: View {
     
     @ViewBuilder
     private func videoPlayerContent(videoModel: VideoModel) -> some View {
-        if shouldBlur {
-            ZStack(alignment: .topTrailing) {
-                ModernVideoPlayerView(
-                    model: videoModel,
-                    postID: postID
-                )
-                .frame(maxWidth: .infinity)
-                .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
-                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-                .blur(radius: isBlurred ? 60 : 0)
-                
-                blurToggleButton
-                
-                if isBlurred {
-                    sensitiveContentOverlay
-                }
-            }
-        } else {
-            ModernVideoPlayerView(
-                model: videoModel,
-                postID: postID
-            )
-            .frame(maxWidth: .infinity)
-            .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
-            .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-        }
+        // ContentLabelManager handles all blur logic now
+        ModernVideoPlayerView(
+            model: videoModel,
+            postID: postID
+        )
+        .frame(maxWidth: .infinity)
+        .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
     }
     
     @ViewBuilder
     private func webViewEmbedContent(url: URL, embedType: ExternalMediaType) -> some View {
         VStack(spacing: 0) {
-            EnhancedEmbeddedMediaWebView(
-                url: url,
-                embedType: embedType,
-                shouldBlur: shouldBlur
-            )
+            ZStack {
+                EnhancedEmbeddedMediaWebView(
+                    url: url,
+                    embedType: embedType,
+                    shouldBlur: shouldBlur
+                )
+                
+                // Add PiP indicator for supported types
+                if embedType.supportsPiP && appState.appSettings.enablePictureInPicture {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            
+                            Image(systemName: "pip.enter")
+                                .foregroundColor(.white.opacity(0.8))
+                                .font(.caption)
+                                .padding(4)
+                                .background(Circle().fill(Color.black.opacity(0.6)))
+                                .padding(.top, 8)
+                                .padding(.trailing, 8)
+                        }
+                        Spacer()
+                    }
+                }
+            }
             .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             
@@ -136,57 +138,26 @@ struct ExternalEmbedView: View {
                           ExternalMediaType.detect(from: URL(string: external.uri.uriString())!) != nil &&
                           shouldShowWebViewEmbed(for: ExternalMediaType.detect(from: URL(string: external.uri.uriString())!)!)
         
-        if shouldBlur {
-            VStack(alignment: .leading, spacing: 3) {
-                ZStack(alignment: .topTrailing) {
-                    thumbnailImageContent
-                        .blur(radius: isBlurred ? 60 : 0)
-                    
-                    blurToggleButton
-                    
-                    if isBlurred {
-                        sensitiveContentOverlay
-                    }
+        // ContentLabelManager handles all blur logic now - no need for shouldBlur checks
+        VStack(alignment: .leading, spacing: 3) {
+            thumbnailImageContent
+            linkDetails
+        }
+        .padding(6)
+        .background(Color.gray.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+        )
+        .onTapGesture {
+            if canShowEmbed {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    userTappedToShowEmbed = true
                 }
-                
-                linkDetails
-                
-                linkActionButtons(canShowEmbed: canShowEmbed)
-            }
-            .padding(6)
-            .background(Color.gray.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(canShowEmbed && !isBlurred ? Color.blue.opacity(0.3) : Color.gray.opacity(0.3), lineWidth: 1)
-            )
-            .scaleEffect(canShowEmbed && !isBlurred ? 1.0 : 1.0)
-            .onTapGesture {
-                if canShowEmbed && !isBlurred {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        userTappedToShowEmbed = true
-                    }
-                }
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 3) {
-                thumbnailImageContent
-                linkDetails
-                
-                linkActionButtons(canShowEmbed: canShowEmbed)
-            }
-            .padding(6)
-            .background(Color.gray.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(canShowEmbed ? Color.blue.opacity(0.3) : Color.gray.opacity(0.3), lineWidth: 1)
-            )
-            .onTapGesture {
-                if canShowEmbed {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        userTappedToShowEmbed = true
-                    }
+            } else if let url = URL(string: external.uri.uriString()) {
+                Task {
+                    _ = await appState.urlHandler.handleURL(url)
                 }
             }
         }
@@ -214,7 +185,6 @@ struct ExternalEmbedView: View {
                                 EmptyView()
                             }
                         }
-                        .animation(.default, value: isBlurred)
                         .cornerRadius(7)
                     )
                     .clipped()
@@ -280,40 +250,6 @@ struct ExternalEmbedView: View {
         .zIndex(1)
     }
     
-    // Link Action Buttons
-    @ViewBuilder
-    private func linkActionButtons(canShowEmbed: Bool) -> some View {
-        HStack(spacing: 12) {
-            if canShowEmbed {
-                // Visual indicator that card is tappable
-                HStack(spacing: 4) {
-                    Image(systemName: "hand.tap.fill")
-                        .imageScale(.small)
-                    Text("Tap to show embed")
-                        .appFont(AppTextRole.caption)
-                }
-                .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            // Open link button
-            Button(action: {
-                if let url = URL(string: external.uri.uriString()) {
-                    openURL(url)
-                }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.forward.square")
-                        .imageScale(.small)
-                    Text("Open Link")
-                        .appFont(AppTextRole.caption)
-                }
-                .foregroundStyle(.blue)
-            }
-        }
-        .padding(.top, 4)
-    }
 
     private func setupVideoIfNeeded() {
         guard let url = URL(string: external.uri.uriString()) else {
@@ -568,13 +504,11 @@ struct ExternalEmbedView: View {
                                     .scaledToFill()
                                     .frame(maxWidth: .infinity)
                                     .clipped()
-                                    .blur(radius: isBlurred ? 60 : 0)
                             } else {
                                 // Don't show spinner for chat embeds - just use empty view
                                 EmptyView()
                             }
                         }
-                            .animation(.default, value: isBlurred)
                             .cornerRadius(7)
                     )
                     .clipped()
@@ -621,9 +555,47 @@ struct ExternalEmbedView: View {
                     .lineLimit(3)
                     .truncationMode(.tail)
             }
+            
+            // Show subtle indicator if embed is available
+            if appState.appSettings.useWebViewEmbeds,
+               let url = URL(string: external.uri.uriString()),
+               let embedType = ExternalMediaType.detect(from: url),
+               shouldShowWebViewEmbed(for: embedType) {
+                HStack(spacing: 4) {
+                    Image(systemName: "play.rectangle")
+                        .imageScale(.small)
+                    Text(embedTypeLabel(embedType))
+                        .appFont(AppTextRole.caption)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+            }
         }
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    
+    private func embedTypeLabel(_ embedType: ExternalMediaType) -> String {
+        switch embedType {
+        case .youtube, .youtubeShorts:
+            return "YouTube"
+        case .vimeo:
+            return "Vimeo"
+        case .twitch:
+            return "Twitch"
+        case .spotify:
+            return "Spotify"
+        case .appleMusic:
+            return "Apple Music"
+        case .soundcloud:
+            return "SoundCloud"
+        case .giphy:
+            return "GIPHY"
+        case .tenor:
+            return "Tenor"
+        case .flickr:
+            return "Flickr"
+        }
     }
     
     private func handleTap() {
@@ -634,7 +606,9 @@ struct ExternalEmbedView: View {
             }
         } else if let url = URL(string: external.uri.uriString()) {
             // Handle URL tap when content is visible
-            openURL(url)
+            Task {
+                _ = await appState.urlHandler.handleURL(url)
+            }
         }
     }
     
@@ -732,7 +706,9 @@ struct ExternalEmbedView: View {
                 
                 Button("Open Link") {
                     if let url = URL(string: external.uri.uriString()) {
-                        openURL(url)
+                        Task {
+                            _ = await appState.urlHandler.handleURL(url)
+                        }
                     }
                 }
                 .appFont(AppTextRole.caption)
@@ -823,6 +799,20 @@ extension URL {
               let queryItems = components.queryItems else { return nil }
         return queryItems.reduce(into: [String: String]()) { result, item in
             result[item.name] = item.value
+        }
+    }
+}
+
+// MARK: - PiP Support Extension
+
+extension ExternalMediaType {
+    /// Indicates whether this media type supports Picture-in-Picture
+    var supportsPiP: Bool {
+        switch self {
+        case .youtube, .youtubeShorts, .vimeo, .twitch:
+            return true
+        case .spotify, .appleMusic, .soundcloud, .giphy, .tenor, .flickr:
+            return false
         }
     }
 }

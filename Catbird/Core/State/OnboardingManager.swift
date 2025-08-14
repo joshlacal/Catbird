@@ -57,7 +57,7 @@ final class OnboardingManager {
     // Invalidate tip if already seen
     Task {
       if self.hasSeenSettingsTip {
-        await self.settingsAccessTip.invalidate(reason: .actionPerformed)
+        self.settingsAccessTip.invalidate(reason: .actionPerformed)
       }
     }
     
@@ -109,7 +109,7 @@ final class OnboardingManager {
     saveOnboardingState()
     
     Task {
-      await settingsAccessTip.invalidate(reason: .actionPerformed)
+    settingsAccessTip.invalidate(reason: .actionPerformed)
     }
     
     logger.info("Settings tip marked as seen")
@@ -130,7 +130,7 @@ final class OnboardingManager {
     
     // Reset TipKit tips to make them eligible to show again
     Task {
-      try? await Tips.resetDatastore()
+      try? Tips.resetDatastore()
       logger.info("TipKit datastore reset")
     }
     
@@ -144,7 +144,7 @@ final class OnboardingManager {
     saveOnboardingState()
     
     Task {
-        await settingsAccessTip.invalidate(reason: .actionPerformed)
+         settingsAccessTip.invalidate(reason: .actionPerformed)
       logger.info("Settings tip invalidated and reset for debugging")
     }
   }

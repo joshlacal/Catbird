@@ -39,23 +39,23 @@ struct SettingsView: View {
 
         // Main settings categories
         Section("Settings") {
-            // NavigationLink(destination: AccountSettingsView()) {
-            //     Label {
-            //         Text("Account")
-            //     } icon: {
-            //         Image(systemName: "person.fill")
-            //             .foregroundStyle(.blue)
-            //     }
-            // }
+            NavigationLink(destination: AccountSettingsView()) {
+                Label {
+                    Text("Account")
+                } icon: {
+                    Image(systemName: "person.fill")
+                        .foregroundStyle(.blue)
+                }
+            }
 
-            // NavigationLink(destination: PrivacySecuritySettingsView()) {
-            //     Label {
-            //         Text("Privacy & Security")
-            //     } icon: {
-            //         Image(systemName: "lock.fill")
-            //             .foregroundStyle(.green)
-            //     }
-            // }
+            NavigationLink(destination: PrivacySecuritySettingsView()) {
+                Label {
+                    Text("Privacy & Security")
+                } icon: {
+                    Image(systemName: "lock.fill")
+                        .foregroundStyle(.green)
+                }
+            }
 
             NavigationLink(destination: ModerationSettingsView()) {
                 Label {
@@ -231,6 +231,27 @@ struct SettingsView: View {
                 }
             }
         }
+        
+        // Experimental Features Section
+        #if DEBUG
+        Section("🧪 Experimental Features") {
+            NavigationLink {
+                RepositoryBrowserView()
+            } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Repository Browser")
+                        Text("Browse and analyze CAR backup files")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "archivebox.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        #endif
 
         Section {
             LogoutButton(isLoggingOut: $isLoggingOut, handleLogout: handleLogout)
@@ -238,7 +259,7 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .appDisplayScale(appState: appState)
       .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
       .toolbar {

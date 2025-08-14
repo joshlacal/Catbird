@@ -48,9 +48,11 @@ struct UIKitProfileView: View {
       isEditingProfile: $isEditingProfile,
       scrollOffset: $scrollOffset
     )
+    .ignoresSafeArea()
+
     .id(viewModel.userDID) // Use stable userDID for view identity
     .navigationTitle(viewModel.profile != nil ? "@\(viewModel.profile!.handle)" : "Profile")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     .ensureDeepNavigationFonts()
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {

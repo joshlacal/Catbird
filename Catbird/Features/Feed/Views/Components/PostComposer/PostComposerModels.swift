@@ -1,5 +1,6 @@
 import Foundation
 import Petrel
+import SwiftUI
 
 // MARK: - Tenor API Models (shared with GifPickerView)
 
@@ -77,6 +78,21 @@ extension PlatformImage {
     }
 }
 #endif
+
+// MARK: - Draft State Management
+
+struct PostComposerDraft {
+  let postText: String
+  let mediaItems: [PostComposerViewModel.MediaItem]
+  let videoItem: PostComposerViewModel.MediaItem?
+  let selectedGif: TenorGif?
+  let selectedLanguages: [LanguageCodeContainer]
+  let selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>
+  let outlineTags: [String]
+  let threadEntries: [ThreadEntry]
+  let isThreadMode: Bool
+  let currentThreadIndex: Int
+}
 
 // MARK: - Language Utilities
 

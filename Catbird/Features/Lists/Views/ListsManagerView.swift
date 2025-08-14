@@ -144,7 +144,7 @@ struct ListsManagerView: View {
     NavigationStack(path: $navigationPath) {
       contentView
         .navigationTitle("My Lists")
-        .navigationBarTitleDisplayMode(.large)
+        .toolbarTitleDisplayMode(.large)
         .toolbar {
           ToolbarItem(placement: .navigationBarTrailing) {
             Button {

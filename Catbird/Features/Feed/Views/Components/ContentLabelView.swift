@@ -70,51 +70,22 @@ struct ContentLabelBadge: View {
     }
 }
 
-/// A view that displays content labels with appropriate styling and interaction
+/// A view that displays content labels directly with clear visual styling
 struct ContentLabelView: View {
     let labels: [ComAtprotoLabelDefs.Label]?
-    @State private var isExpanded: Bool = false
     
     var body: some View {
         if let labels = labels, !labels.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    
-                    Text("Content Warning")
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                    
-                    Spacer()
-                    
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isExpanded.toggle()
-                        }
-                    } label: {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                
-                if isExpanded {
-                    HStack(spacing: 4) {
-                        ForEach(labels, id: \.val) { label in
-                            ContentLabelBadge(label: label)
-                        }
-                    }
-                    .padding(.top, 2)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            HStack(spacing: 6) {
+                // Always show labels directly - no hiding under caret
+                ForEach(labels, id: \.val) { label in
+                    ContentLabelBadge(label: label)
                 }
             }
-            .padding(8)
-            .background(Color(.secondarySystemBackground).opacity(0.5))
-            .cornerRadius(8)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(.secondarySystemBackground).opacity(0.7))
+            .cornerRadius(6)
         }
     }
 }
@@ -157,15 +128,9 @@ struct ContentLabelManager<Content: View>: View {
     }
     
     private var strongBlurOverlay: some View {
-        let blurredContent = content
-            .blur(radius: 100)
-            .scaleEffect(1.5)
-            .clipped()
-        
+        // Create completely opaque overlay - no blurred content visible through
         return Rectangle()
-            .fill(Color.clear)
-            .background(blurredContent)
-            .overlay(Color.black.opacity(0.8))
+            .fill(Color.black.opacity(0.95)) // Almost completely opaque
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
                 VStack {
@@ -218,7 +183,7 @@ struct ContentLabelManager<Content: View>: View {
                 
             case .warn:
                 VStack(spacing: 0) {
-                    // Show labels for embeds since PostView won't show them
+                    // Always show labels at the top - direct visibility
                     if let labels = labels, !labels.isEmpty {
                         ContentLabelView(labels: labels)
                             .padding(.bottom, 6)
@@ -261,7 +226,7 @@ struct ContentLabelManager<Content: View>: View {
                 }
                 
             case .show:
-                // Show content normally with labels for embeds
+                // Show content normally with labels always visible at top
                 VStack(spacing: 0) {
                     if let labels = labels, !labels.isEmpty {
                         ContentLabelView(labels: labels)

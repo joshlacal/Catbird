@@ -2,7 +2,7 @@ import SwiftUI
 import WebKit
 import AVKit
 
-// MARK: - PiP Manager
+// MARK: - Web PiP Manager (Legacy - use EnhancedPiPManager for new implementations)
 
 @Observable
 class PiPManager {
@@ -15,11 +15,15 @@ class PiPManager {
     private init() {}
     
     func startPiP(withId viewId: String) {
+        // Coordinate with the enhanced PiP manager
+        EnhancedPiPManager.shared.startPiP(withVideoId: viewId)
         currentPiPViewId = viewId
         isPiPActive = true
     }
     
     func stopPiP() {
+        // Coordinate with the enhanced PiP manager
+        EnhancedPiPManager.shared.stopPiP()
         currentPiPViewId = nil
         isPiPActive = false
     }
@@ -70,32 +74,116 @@ struct PiPVideoWebView: UIViewRepresentable, Equatable {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.allowsPictureInPictureMediaPlayback = true
         
-        // Add JavaScript for PiP control
+        // Enhanced JavaScript for PiP control with better platform detection
         let pipScript = """
+        // Enhanced PiP support with fallback detection
+        let pipController = null;
+        let currentVideo = null;
+        
         // Function to enable PiP for video elements
         function enablePiP() {
             const videos = document.querySelectorAll('video');
-            videos.forEach(video => {
-                if (video.webkitSupportsPresentationMode && 
-                    video.webkitSupportsPresentationMode('picture-in-picture')) {
-                    video.setAttribute('playsinline', '');
-                    video.addEventListener('loadedmetadata', () => {
-                        if (video.videoWidth > 0 && video.videoHeight > 0) {
-                            window.webkit.messageHandlers.pipHandler.postMessage('ready');
+            videos.forEach((video, index) => {
+                // Set attributes for better iOS compatibility
+                video.setAttribute('playsinline', '');
+                video.setAttribute('webkit-playsinline', '');
+                video.setAttribute('controls', '');
+                
+                // Listen for video ready events
+                video.addEventListener('loadedmetadata', () => {
+                    if (video.videoWidth > 0 && video.videoHeight > 0) {
+                        currentVideo = video;
+                        
+                        // Check for native PiP support
+                        if (video.webkitSupportsPresentationMode && 
+                            video.webkitSupportsPresentationMode('picture-in-picture')) {
+                            
+                            window.webkit.messageHandlers.pipHandler.postMessage({
+                                type: 'ready',
+                                supportsNativePiP: true,
+                                videoIndex: index
+                            });
+                            
+                            // Add PiP event listeners
+                            video.addEventListener('webkitpresentationmodechanged', (e) => {
+                                const mode = e.target.webkitPresentationMode;
+                                window.webkit.messageHandlers.pipHandler.postMessage({
+                                    type: 'presentationModeChanged',
+                                    mode: mode,
+                                    videoIndex: index
+                                });
+                            });
+                        } else {
+                            // Check for newer API
+                            if ('pictureInPictureEnabled' in document) {
+                                video.addEventListener('enterpictureinpicture', () => {
+                                    window.webkit.messageHandlers.pipHandler.postMessage({
+                                        type: 'pipEntered',
+                                        videoIndex: index
+                                    });
+                                });
+                                
+                                video.addEventListener('leavepictureinpicture', () => {
+                                    window.webkit.messageHandlers.pipHandler.postMessage({
+                                        type: 'pipExited',
+                                        videoIndex: index
+                                    });
+                                });
+                            }
+                            
+                            window.webkit.messageHandlers.pipHandler.postMessage({
+                                type: 'ready',
+                                supportsNativePiP: false,
+                                videoIndex: index
+                            });
                         }
-                    });
+                    }
+                });
+                
+                // Also check if video is already loaded
+                if (video.readyState >= 1) {
+                    video.dispatchEvent(new Event('loadedmetadata'));
                 }
             });
         }
         
-        // Function to start PiP
+        // Function to start PiP with enhanced error handling
         function startPiP() {
-            const videos = document.querySelectorAll('video');
-            if (videos.length > 0) {
-                const video = videos[0];
-                if (video.webkitSupportsPresentationMode('picture-in-picture')) {
-                    video.webkitSetPresentationMode('picture-in-picture');
-                    return true;
+            if (!currentVideo) {
+                const videos = document.querySelectorAll('video');
+                if (videos.length > 0) {
+                    currentVideo = videos[0];
+                }
+            }
+            
+            if (currentVideo) {
+                try {
+                    // Try webkit API first (iOS Safari)
+                    if (currentVideo.webkitSupportsPresentationMode && 
+                        currentVideo.webkitSupportsPresentationMode('picture-in-picture')) {
+                        currentVideo.webkitSetPresentationMode('picture-in-picture');
+                        return true;
+                    }
+                    
+                    // Try standard API (other browsers)
+                    if (currentVideo.requestPictureInPicture) {
+                        currentVideo.requestPictureInPicture().then(() => {
+                            window.webkit.messageHandlers.pipHandler.postMessage({
+                                type: 'pipStarted'
+                            });
+                        }).catch((error) => {
+                            window.webkit.messageHandlers.pipHandler.postMessage({
+                                type: 'pipError',
+                                error: error.message
+                            });
+                        });
+                        return true;
+                    }
+                } catch (error) {
+                    window.webkit.messageHandlers.pipHandler.postMessage({
+                        type: 'pipError',
+                        error: error.message
+                    });
                 }
             }
             return false;
@@ -103,24 +191,54 @@ struct PiPVideoWebView: UIViewRepresentable, Equatable {
         
         // Function to exit PiP
         function exitPiP() {
-            const videos = document.querySelectorAll('video');
-            if (videos.length > 0) {
-                const video = videos[0];
-                if (video.webkitPresentationMode === 'picture-in-picture') {
-                    video.webkitSetPresentationMode('inline');
-                    return true;
+            if (currentVideo) {
+                try {
+                    // Try webkit API
+                    if (currentVideo.webkitPresentationMode === 'picture-in-picture') {
+                        currentVideo.webkitSetPresentationMode('inline');
+                        return true;
+                    }
+                    
+                    // Try standard API
+                    if (document.pictureInPictureElement === currentVideo) {
+                        document.exitPictureInPicture();
+                        return true;
+                    }
+                } catch (error) {
+                    window.webkit.messageHandlers.pipHandler.postMessage({
+                        type: 'pipError',
+                        error: error.message
+                    });
                 }
             }
             return false;
         }
         
-        // Initialize when page loads
-        document.addEventListener('DOMContentLoaded', enablePiP);
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', enablePiP);
-        } else {
-            enablePiP();
+        // Function to check if PiP is currently active
+        function isPiPActive() {
+            if (currentVideo) {
+                return currentVideo.webkitPresentationMode === 'picture-in-picture' ||
+                       document.pictureInPictureElement === currentVideo;
+            }
+            return false;
         }
+        
+        // Initialize when page loads with multiple checks
+        function initializePiP() {
+            enablePiP();
+            // Also try again after a short delay for dynamic content
+            setTimeout(enablePiP, 1000);
+            setTimeout(enablePiP, 3000);
+        }
+        
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializePiP);
+        } else {
+            initializePiP();
+        }
+        
+        // Re-check for new videos periodically (for dynamic content)
+        setInterval(enablePiP, 5000);
         """
         
         let userScript = WKUserScript(source: pipScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -153,6 +271,13 @@ struct PiPVideoWebView: UIViewRepresentable, Equatable {
         if PiPManager.shared.currentPiPViewId == viewId {
             PiPManager.shared.stopPiP()
         }
+    }
+    
+    // Helper method to access the underlying WKWebView
+    func getUIView() -> WKWebView? {
+        // This is a workaround - in practice you'd need to store a reference
+        // For now, this will be handled by the JavaScript calls
+        return nil
     }
     
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
@@ -213,7 +338,43 @@ struct PiPVideoWebView: UIViewRepresentable, Equatable {
         // Handle PiP messages from JavaScript
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "pipHandler" {
-                // Video is ready for PiP
+                guard let messageBody = message.body as? [String: Any],
+                      let messageType = messageBody["type"] as? String else {
+                    return
+                }
+                
+                DispatchQueue.main.async {
+                    switch messageType {
+                    case "ready":
+                        let supportsNativePiP = messageBody["supportsNativePiP"] as? Bool ?? false
+                        // Video is ready for PiP - could update UI here
+                        print("📺 WebView video ready for PiP, native support: \(supportsNativePiP)")
+                        
+                    case "presentationModeChanged":
+                        let mode = messageBody["mode"] as? String ?? ""
+                        if mode == "picture-in-picture" {
+                            self.parent.enterPiP()
+                        } else if mode == "inline" {
+                            self.parent.exitPiP()
+                        }
+                        
+                    case "pipEntered":
+                        self.parent.enterPiP()
+                        
+                    case "pipExited":
+                        self.parent.exitPiP()
+                        
+                    case "pipStarted":
+                        self.parent.enterPiP()
+                        
+                    case "pipError":
+                        let error = messageBody["error"] as? String ?? "Unknown error"
+                        print("❌ WebView PiP error: \(error)")
+                        
+                    default:
+                        break
+                    }
+                }
             }
         }
     }
@@ -336,10 +497,10 @@ struct EnhancedEmbeddedMediaWebView: View {
                     Button(action: {
                         if isInPiP {
                             pipWebView?.exitPiP()
-                            isInPiP = false
+                            // JavaScript will handle state change via message handler
                         } else {
+                            // Start custom PiP for web embeds
                             pipWebView?.enterPiP()
-                            isInPiP = true
                         }
                         showControls = false
                     }) {

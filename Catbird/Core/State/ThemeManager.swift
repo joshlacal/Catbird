@@ -122,83 +122,30 @@ import OSLog
         }
     }
     
-    /// Apply theme to navigation bars
+    /// Apply typography theming to navigation bars (colors handled by system)
     private func applyToNavigationBar() async {
         await MainActor.run {
-            // Create new appearances to ensure clean state
+            // Create base appearances with system defaults (no custom colors)
             let standardAppearance = UINavigationBarAppearance()
             let scrollEdgeAppearance = UINavigationBarAppearance()
             let compactAppearance = UINavigationBarAppearance()
             
-            Task {
-                let isDarkMode = await getCurrentEffectiveDarkMode()
-                
-                await MainActor.run {
-                    // Configure based on theme
-                    if isDarkMode {
-                        if darkThemeMode == .black {
-                            // True black mode - specific configuration per appearance type
-                            standardAppearance.configureWithDefaultBackground()    // standard = default
-                            standardAppearance.backgroundColor = UIColor.black
-                            standardAppearance.shadowColor = .clear
-                            
-                            scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
-                            scrollEdgeAppearance.backgroundColor = UIColor.black
-                            scrollEdgeAppearance.shadowColor = .clear
-                            
-                            compactAppearance.configureWithOpaqueBackground()      // compact = opaque
-                            compactAppearance.backgroundColor = UIColor.black
-                            compactAppearance.shadowColor = .clear
-                        } else {
-                            // Dim mode - specific configuration per appearance type
-                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0) // Proper gray for dim mode
-                            
-                            standardAppearance.configureWithDefaultBackground()    // standard = default
-                            standardAppearance.backgroundColor = dimBackground
-                            standardAppearance.shadowColor = .clear
-                            
-                            scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
-                            scrollEdgeAppearance.backgroundColor = dimBackground
-                            scrollEdgeAppearance.shadowColor = .clear
-                            
-                            compactAppearance.configureWithOpaqueBackground()      // compact = opaque
-                            compactAppearance.backgroundColor = dimBackground
-                            compactAppearance.shadowColor = .clear
-                        }
-                    } else {
-                        // Light mode - specific configuration per appearance type
-                        standardAppearance.configureWithDefaultBackground()     // standard = default
-                        scrollEdgeAppearance.configureWithTransparentBackground() // scrollEdge = transparent
-                        compactAppearance.configureWithOpaqueBackground()      // compact = opaque
-                    }
-                    
-                    // Apply custom fonts to all appearances with FontManager integration
-                    NavigationFontConfig.applyFonts(to: standardAppearance, fontManager: fontManager)
-                    NavigationFontConfig.applyFonts(to: scrollEdgeAppearance, fontManager: fontManager)
-                    NavigationFontConfig.applyFonts(to: compactAppearance, fontManager: fontManager)
-                    
-                    // Apply text color based on theme
-                    let textColor = isDarkMode
-                        ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark, increaseContrast: false))
-                        : UIColor.label
-                    
-                    [standardAppearance, scrollEdgeAppearance, compactAppearance].forEach { appearance in
-                        // Update colors while preserving fonts
-                        var titleAttrs = appearance.titleTextAttributes
-                        titleAttrs[.foregroundColor] = textColor
-                        appearance.titleTextAttributes = titleAttrs
-                        
-                        var largeTitleAttrs = appearance.largeTitleTextAttributes
-                        largeTitleAttrs[.foregroundColor] = textColor
-                        appearance.largeTitleTextAttributes = largeTitleAttrs
-                    }
-                    
-                    // Apply the appearances
-                    UINavigationBar.appearance().standardAppearance = standardAppearance
-                    UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
-                    UINavigationBar.appearance().compactAppearance = compactAppearance
-                }
-            }
+            // Configure with system defaults - no custom colors
+            standardAppearance.configureWithDefaultBackground()
+            scrollEdgeAppearance.configureWithTransparentBackground()  // Proper for large titles
+            compactAppearance.configureWithOpaqueBackground()
+            
+            // Apply custom typography to all appearances
+            NavigationFontConfig.applyFonts(to: standardAppearance, fontManager: fontManager)
+            NavigationFontConfig.applyFonts(to: scrollEdgeAppearance, fontManager: fontManager)
+            NavigationFontConfig.applyFonts(to: compactAppearance, fontManager: fontManager)
+            
+            // Set the appearances (now with typography but system colors)
+            UINavigationBar.appearance().standardAppearance = standardAppearance
+            UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
+            UINavigationBar.appearance().compactAppearance = compactAppearance
+            
+            logger.info("Applied typography theming to navigation bars (system colors preserved)")
         }
     }
     
@@ -311,7 +258,7 @@ import OSLog
         navBar.setNeedsLayout()
     }
     
-    /// Force update all navigation bars in the app
+    /// Force update all navigation bars typography (colors handled by system)
     func forceUpdateNavigationBars() {
         let now = Date()
         
@@ -322,14 +269,14 @@ import OSLog
         }
         
         lastForceUpdateTime = now
-        logger.info("Force updating all navigation bars")
+        logger.info("Force updating navigation bar typography")
         
-        // Re-apply navigation bar theme
+        // Re-apply navigation bar typography theme (not colors)
         Task {
             await applyToNavigationBar()
         }
         
-        // Force all existing navigation bars to update (ensure main thread)
+        // Force all existing navigation bars to update typography (ensure main thread)
         if Thread.isMainThread {
             performLegacyForceUpdate()
         } else {
@@ -356,16 +303,16 @@ import OSLog
         }
     }
     
-    /// Aggressively find and update all UINavigationBar instances
+    /// Aggressively find and update all UINavigationBar typography
     private func forceUpdateAllNavigationBarInstances(in window: UIWindow) {
         func findNavigationBars(in view: UIView) {
             if let navBar = view as? UINavigationBar {
-                // Get current appearances
+                // Get current appearances (now only contain typography, not color overrides)
                 let standard = UINavigationBar.appearance().standardAppearance
                 let scrollEdge = UINavigationBar.appearance().scrollEdgeAppearance ?? standard
                 let compact = UINavigationBar.appearance().compactAppearance ?? standard
                 
-                // Force apply to this specific navigation bar
+                // Force apply typography to this specific navigation bar
                 navBar.standardAppearance = standard
                 navBar.scrollEdgeAppearance = scrollEdge
                 navBar.compactAppearance = compact
@@ -377,7 +324,7 @@ import OSLog
                     navBar.setNeedsDisplay()
                 }
                 
-                logger.debug("Force updated navigation bar: \(navBar)")
+                logger.debug("Force updated navigation bar typography: \(navBar)")
             }
             
             // Recursively check all subviews
@@ -472,20 +419,20 @@ import OSLog
                 let isDarkMode = await getCurrentEffectiveDarkMode()
                 
                 await MainActor.run {
-                    if isDarkMode {
-                        if darkThemeMode == .black {
-                            appearance.backgroundColor = UIColor.black
-                            appearance.shadowColor = .clear
-                        } else {
-                            // Dim mode
-                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                            appearance.configureWithOpaqueBackground()
-                            appearance.backgroundColor = dimBackground
-                            appearance.shadowColor = .clear
-                        }
-                    } else {
+//                    if isDarkMode {
+//                        if darkThemeMode == .black {
+//                            appearance.backgroundColor = UIColor.black
+//                            appearance.shadowColor = .clear
+//                        } else {
+//                            // Dim mode
+//                            let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+//                            appearance.configureWithOpaqueBackground()
+//                            appearance.backgroundColor = dimBackground
+//                            appearance.shadowColor = .clear
+//                        }
+//                    } else {
                         appearance.configureWithTransparentBackground()
-                    }
+//                    }
                     
                     UIToolbar.appearance().standardAppearance = appearance
                     UIToolbar.appearance().scrollEdgeAppearance = appearance
@@ -561,54 +508,11 @@ import OSLog
     
     // MARK: - UIKit Bridge Methods
     
-    /// Apply theme to a specific navigation bar instance
-    /// This is useful for UIKit views embedded in SwiftUI
+    /// Apply typography theming to a specific navigation bar instance
+    /// This is useful for UIKit views embedded in SwiftUI (only applies fonts, not colors)
     func applyTheme(to navigationBar: UINavigationBar) {
-        let appearance = UINavigationBarAppearance()
-        
-        Task { @MainActor in
-            let isDark = await getCurrentEffectiveDarkMode()
-            self.configureNavigationAppearance(appearance, isDark: isDark)
-            navigationBar.standardAppearance = appearance
-            navigationBar.scrollEdgeAppearance = appearance
-            navigationBar.compactAppearance = appearance
-        }
-    }
-    
-    private func configureNavigationAppearance(_ appearance: UINavigationBarAppearance, isDark: Bool) {
-        if isDark {
-            if darkThemeMode == .black {
-                // True black mode
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = .clear
-            } else {
-                // Dim mode
-                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = dimBackground
-                appearance.shadowColor = .clear
-            }
-        } else {
-            // Light mode - transparent to avoid hairlines
-            appearance.configureWithTransparentBackground()
-        }
-        
-        // Apply fonts
-        NavigationFontConfig.applyFonts(to: appearance, fontManager: fontManager)
-        
-        // Apply text color
-        let textColor = isDark 
-            ? UIColor(Color.dynamicText(self, style: .primary, currentScheme: .dark, increaseContrast: false))
-            : UIColor.label
-        
-        var titleAttrs = appearance.titleTextAttributes
-        titleAttrs[.foregroundColor] = textColor
-        appearance.titleTextAttributes = titleAttrs
-        
-        var largeTitleAttrs = appearance.largeTitleTextAttributes
-        largeTitleAttrs[.foregroundColor] = textColor
-        appearance.largeTitleTextAttributes = largeTitleAttrs
+        // Only apply typography - let SwiftUI handle colors for proper translucency
+        NavigationFontConfig.applyFonts(to: navigationBar, fontManager: fontManager)
     }
     
     /// Apply theme to a specific toolbar instance
@@ -624,20 +528,20 @@ import OSLog
     }
     
     private func configureToolbarAppearance(_ appearance: UIToolbarAppearance, isDark: Bool) {
-        if isDark {
-            if darkThemeMode == .black {
-                appearance.backgroundColor = UIColor.black
-                appearance.shadowColor = .clear
-            } else {
-                // Dim mode
-                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
-                appearance.configureWithOpaqueBackground()
-                appearance.backgroundColor = dimBackground
-                appearance.shadowColor = .clear
-            }
-        } else {
+//        if isDark {
+//            if darkThemeMode == .black {
+//                appearance.backgroundColor = UIColor.black
+//                appearance.shadowColor = .clear
+//            } else {
+//                // Dim mode
+//                let dimBackground = UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1.0)
+//                appearance.configureWithOpaqueBackground()
+//                appearance.backgroundColor = dimBackground
+//                appearance.shadowColor = .clear
+//            }
+//        } else {
             appearance.configureWithTransparentBackground()
-        }
+//        }
     }
 }
 

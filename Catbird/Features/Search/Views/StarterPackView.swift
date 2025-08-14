@@ -23,7 +23,7 @@ struct StarterPackView: View {
             }
         }
         .navigationTitle("Starter Pack")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .task {
             await fetchStarterPack()
         }

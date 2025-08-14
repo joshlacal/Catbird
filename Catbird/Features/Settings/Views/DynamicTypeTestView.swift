@@ -124,7 +124,7 @@ struct DynamicTypeTestView: View {
             .padding()
         }
         .navigationTitle("Dynamic Type Test")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
 }
 

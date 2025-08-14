@@ -24,14 +24,17 @@ struct NavigationHandler {
         appState: appState,
         path: path
       )
-      .navigationBarTitleDisplayMode(.inline)
+      .ignoresSafeArea()
+      .toolbarTitleDisplayMode(.inline)
       .id(did)
 
     case .post(let uri):
       ThreadView(postURI: uri, path: path)
+            .ignoresSafeArea()
+
         //                .toolbarVisibility(.visible, for: .automatic)
         //                .toolbarBackgroundVisibility(.visible, for: .automatic)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         //                .themedNavigationBar(appState.themeManager)
         .navigationTitle("Post")
         //                .ensureDeepNavigationFonts() // Use deep navigation fonts for thread views
@@ -39,6 +42,8 @@ struct NavigationHandler {
 
     case .hashtag(let tag):
       HashtagView(tag: tag, path: path)
+            .ignoresSafeArea()
+
         //                .themedNavigationBar(appState.themeManager)
         .id(tag)
 
@@ -48,9 +53,11 @@ struct NavigationHandler {
         appState: appState,
         navigationPath: path
       )
+      .ignoresSafeArea()
+
       .id("timeline")  // Add stable identity
       .navigationTitle("Timeline")
-      .navigationBarTitleDisplayMode(.large)
+      .toolbarTitleDisplayMode(.large)
 
     case .feed(let uri):
       FeedCollectionView.create(
@@ -58,6 +65,8 @@ struct NavigationHandler {
         appState: appState,
         navigationPath: path
       )
+      .ignoresSafeArea()
+
       .id(uri.uriString())
 
     case .list(let uri):
@@ -112,31 +121,31 @@ struct NavigationHandler {
     case .createList:
       CreateListView()
         .navigationTitle("Create List")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .id("createList")
     
     case .editList(let listURI):
       EditListView(listURI: listURI.uriString())
         .navigationTitle("Edit List")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .id(listURI.uriString())
     
     case .listManager:
       ListsManagerView()
         .navigationTitle("My Lists")
-        .navigationBarTitleDisplayMode(.large)
+        .toolbarTitleDisplayMode(.large)
         .id("listManager")
     
     case .listDiscovery:
       ListDiscoveryView()
         .navigationTitle("Discover Lists")
-        .navigationBarTitleDisplayMode(.large)
+        .toolbarTitleDisplayMode(.large)
         .id("listDiscovery")
     
     case .listFeed(let listURI):
       ListFeedView(listURI: listURI.uriString())
         .navigationTitle("List Feed")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .id(listURI.uriString())
     
     case .listMembers(let listURI):

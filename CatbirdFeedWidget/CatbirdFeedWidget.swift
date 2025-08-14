@@ -112,12 +112,15 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             
-            // Try basic format first since enhanced isn't properly defined yet
-            if let basicData = try? decoder.decode(FeedWidgetData.self, from: feedData) {
+            // Try enhanced format first, then fallback to basic format
+            if let enhancedData = try? decoder.decode(FeedWidgetDataEnhanced.self, from: feedData) {
+                widgetLogger.info("Loaded \(enhancedData.posts.count) posts from enhanced data")
+                return filterPosts(enhancedData.posts, for: configuration, feedType: enhancedData.feedType)
+            } else if let basicData = try? decoder.decode(FeedWidgetData.self, from: feedData) {
                 widgetLogger.info("Loaded \(basicData.posts.count) posts from basic data")
                 return filterPosts(basicData.posts, for: configuration, feedType: basicData.feedType)
             } else {
-                throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: [], debugDescription: "Unable to decode feed data"))
+                throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: [], debugDescription: "Unable to decode feed data in either format"))
             }
         } catch {
             widgetLogger.error("Failed to decode feed data: \(error.localizedDescription)")

@@ -10,13 +10,31 @@ Catbird is a **PRODUCTION-READY** iOS client for Bluesky built with SwiftUI and 
 - **Catbird**: Main iOS app with SwiftUI interface for Bluesky
 - **Petrel**: Swift library providing AT Protocol networking and data models (auto-generated from Lexicon JSON files)
 - **CatbirdNotificationWidget**: iOS widget extension for notifications
+- **CatbirdFeedWidget**: Feed widget extension (in development)
 
 ## Build and Development Commands
+
+### Building the App
+- **Quick incremental build**: `./quick-build.sh [scheme]`
+- **Build for simulator by name**: Use MCP tools with `build_sim_name_proj` command
+- **Build for physical device**: Use MCP tools with `build_dev_proj` command
+- **Clean build**: Use MCP tools with `clean_proj` command
+
+### Testing
+- **Run tests on simulator**: Use MCP tools with `test_sim_name_proj` command
+- **Run tests on device**: Use MCP tools with `test_device_proj` command
+- **Test framework**: Swift Testing (NOT XCTest) - use `@Test` attribute
+- **Check Swift syntax errors**: `./swift-check.sh` or `./quick-error-check.sh`
 
 ### Petrel Code Generation
 - **Generate AT Protocol models**: `cd Petrel && python Generator/main.py`
 - Generated files go to `Petrel/Sources/Petrel/Generated/`
 - Lexicon definitions in `Petrel/Generator/lexicons/`
+
+### Code Quality Checks
+- **Swift syntax check**: `swift -frontend -parse [filename]`
+- **Full typecheck with iOS SDK**: `swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios18.0 [filename]`
+- **Linting**: SwiftLint configuration in `.swiftlint.yml`
 
 ## Architecture
 
@@ -27,7 +45,8 @@ AppState (@Observable)
 ├── PostShadowManager (Actor - thread-safe post interactions)
 ├── PreferencesManager (user preferences with server sync)
 ├── GraphManager (social graph cache)
-└── NotificationManager (push notifications)
+├── NotificationManager (push notifications)
+└── ABTestingFramework (A/B testing and experiments)
 ```
 
 ### Key Architectural Patterns
@@ -36,6 +55,7 @@ AppState (@Observable)
 - **Structured concurrency** with async/await throughout
 - **NavigationHandler protocol** for decoupled navigation
 - **FeedTuner** for intelligent thread consolidation in feeds
+- **A/B Testing** framework for feature experimentation
 
 ## Code Organization
 
@@ -48,6 +68,7 @@ AppState (@Observable)
 │   ├── Models/            # Data models
 │   ├── Navigation/        # Navigation system
 │   ├── Networking/        # URL handling
+│   ├── Services/          # Core services (includes ABTestingFramework)
 │   ├── State/             # State management
 │   ├── UI/                # Reusable UI components
 │   └── Utilities/         # Helper utilities
@@ -56,9 +77,11 @@ AppState (@Observable)
 │   ├── Chat/              # Direct messaging
 │   ├── Feed/              # Timeline and feeds
 │   ├── Media/             # Video/image handling
+│   ├── Migration/         # Data migration tools
 │   ├── Moderation/        # Content moderation
 │   ├── Notifications/     # Push notifications
 │   ├── Profile/           # User profiles
+│   ├── RepositoryBrowser/ # CAR file browser (experimental)
 │   ├── Search/            # Search functionality
 │   └── Settings/          # App settings
 └── Resources/             # Assets and preview data
@@ -88,6 +111,7 @@ AppState (@Observable)
 - **FeedTuner**: Consolidates related posts into thread views
 - **FeedManager**: Coordinates multiple feed sources
 - **FeedConfiguration**: Defines feed types and settings
+- **FeedPrefetchingManager**: Handles intelligent content prefetching
 
 ### Post Interactions
 - **PostViewModel**: Handles individual post actions
@@ -99,16 +123,38 @@ AppState (@Observable)
 - **NavigationDestination**: Type-safe navigation targets
 - **NavigationHandler** protocol: Decouples navigation from views
 
+### A/B Testing Framework
+- **ABTestingFramework**: Manages experiments and feature flags
+- Type-safe experiment definitions with `ExperimentConfig`
+- User bucketing with consistent assignment
+- Performance metrics tracking per experiment
+- Integration with analytics for conversion tracking
+
 ## Testing Guidelines
 
 ### Unit Tests
-- Test ViewModels and business logic
+- Test framework: **Swift Testing** (NOT XCTest)
+- Use `@Test` attribute for test functions
 - Mock ATProtoClient for network tests
 - Use `@MainActor` for UI-related tests
+- Test file: `CatbirdTests/CatbirdTests.swift`
 
 ### UI Tests
 - Test critical user flows (login, post, navigate)
 - Use accessibility identifiers for reliable element selection
+- Simulator automation via MCP tools
+
+### Testing Commands
+```bash
+# Run tests on simulator
+# Use MCP: test_sim_name_proj with simulatorName: "iPhone 16 Pro"
+
+# Check syntax errors quickly
+./swift-check.sh
+
+# Run specific test
+# Use Swift Testing filter parameter
+```
 
 ## Common Development Tasks
 
@@ -117,7 +163,8 @@ AppState (@Observable)
 2. Add Observable ViewModel if needed
 3. Implement SwiftUI views
 4. Wire up navigation in AppNavigationManager
-5. Add unit tests
+5. Add unit tests using Swift Testing
+6. Consider A/B test wrapper if experimental
 
 ### Working with AT Protocol
 - AT Protocol models are in `Petrel/Sources/Petrel/Generated/`
@@ -135,11 +182,19 @@ AppState (@Observable)
 - Check for retain cycles in closures
 - Verify @Observable dependencies are minimal
 - Use task cancellation for async operations
+- Profile with order files: `./generate_order_file.sh`
 
 ## Widget Development
-- Widget extension in `/CatbirdNotificationWidget` (and others in progress)
+- Widget extensions in `/CatbirdNotificationWidget` and `/CatbirdFeedWidget`
 - Shares data via App Groups
 - Keep widget timeline updates minimal for battery
+- Test on both simulator and device
+
+## Experimental Features
+- **Repository Browser**: CAR file parsing and browsing
+- **Migration System**: Import/export user data
+- Controlled via `ExperimentalFeaturesCoordinator`
+- Enable via Settings > Advanced > Experimental Features
 
 ## Important Notes
 
@@ -165,11 +220,7 @@ The app should be modified to always be in a production-ready state with all maj
 - **NO "TODO" comments or unfinished features**
 - **Every feature must be fully functional from the first implementation**
 
----
-
-*This document is focused on essential information for effective development. For detailed MCP server usage, worktree workflows, and testing patterns, see the full documentation in project files.*
-
-## Tooling for Shell Interactions
+## Shell Tooling
 
 ### General Purpose Tools
 - **Finding FILES**: use `fd` (faster than find)
@@ -268,14 +319,20 @@ rg "ATProtoClient" --type swift Catbird/ | fzf
 swift -frontend -parse filename.swift
 
 # Full typecheck with iOS SDK (shows all compilation errors)
-swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios17.0 filename.swift
+swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios18.0 filename.swift
 
 # Batch check multiple files for syntax errors
 find Catbird/ -name "*.swift" | head -10 | xargs -I {} swift -frontend -parse {}
 
 # Check specific file with full error context
-swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios17.0 -I /path/to/modules filename.swift
+swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios18.0 -I /path/to/modules filename.swift
 ```
 
 ## Development Warnings
-- **DO NOT BUILD**, instead use the frontend error checking.
+- **DO NOT BUILD**, instead use the frontend error checking
+- **AVOID** full xcodebuild unless necessary - use incremental builds or syntax checking
+- **ALWAYS** run syntax checks before committing
+
+---
+
+*This document is focused on essential information for effective development. For detailed MCP server usage, simulator automation, and testing patterns, see TESTING_COOKBOOK.md and other documentation files.*

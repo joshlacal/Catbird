@@ -83,7 +83,41 @@ struct CatbirdApp: App {
         WidgetCenter.shared.reloadAllTimelines()
         logger.info("🔄 Requested widget refresh at app launch")
       }
+      
+      // Tell UIKit that state restoration setup is complete
+      application.completeStateRestoration()
+      
       return true
+    }
+
+    func application(
+      _ application: UIApplication, 
+      shouldSaveApplicationState coder: NSCoder
+    ) -> Bool {
+      // Enable state saving - always save unless in testing mode
+      let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+      logger.debug("State restoration: shouldSaveApplicationState = \(!isTesting)")
+      return !isTesting
+    }
+
+    func application(
+      _ application: UIApplication, 
+      shouldRestoreApplicationState coder: NSCoder
+    ) -> Bool {
+      // Enable state restoration - always restore unless in testing mode
+      let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+      logger.debug("State restoration: shouldRestoreApplicationState = \(!isTesting)")
+      return !isTesting
+    }
+
+    func application(
+      _ application: UIApplication,
+      viewControllerWithRestorationIdentifierPath identifierComponents: [String],
+      coder: NSCoder
+    ) -> UIViewController? {
+      // Let view controllers handle their own restoration
+      logger.debug("State restoration: viewControllerWithRestorationIdentifierPath = \(identifierComponents)")
+      return nil
     }
 
     func application(
@@ -117,6 +151,7 @@ struct CatbirdApp: App {
   let modelContainer: ModelContainer
 
   @Environment(\.modelContext) private var modelContext
+  @Environment(\.scenePhase) private var scenePhase
 
   // App delegate instance
   @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
@@ -280,13 +315,27 @@ struct CatbirdApp: App {
           let window = windowScene.windows.first,
           let rootVC = window.rootViewController {
           appState.urlHandler.registerTopViewController(rootVC)
+          
+          // Configure window for state restoration
+          window.restorationIdentifier = "MainWindow"
         }
         
         // Setup background notification observer
         setupBackgroundNotification()
+        
+        // Initialize FeedStateStore with model context for persistence
+        Task { @MainActor in
+          FeedStateStore.shared.setModelContext(modelContext)
+        }
       }
       .environment(appState)
       .modelContainer(modelContainer)
+      // Monitor scene phase for feed state persistence
+      .onChange(of: scenePhase) { oldPhase, newPhase in
+        Task { @MainActor in
+          await FeedStateStore.shared.handleScenePhaseChange(newPhase)
+        }
+      }
       // Handle biometric authentication when app becomes active
       .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
         Task {

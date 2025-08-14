@@ -27,6 +27,20 @@ struct WidgetDebugView: View {
         }
       }
 
+      Section("Feed Widget Debug") {
+        Button("Test Feed Widget Data") {
+          testFeedWidgetData()
+        }
+        
+        Button("Check Feed Widget Data") {
+          checkFeedWidgetData()
+        }
+        
+        Button("Clear Feed Widget Data") {
+          FeedWidgetDataProvider.shared.clearWidgetData()
+        }
+      }
+
       Section("Diagnostics") {
         Button("Check App Group Access") {
           checkAppGroup()
@@ -38,7 +52,7 @@ struct WidgetDebugView: View {
       }
     }
     .navigationTitle("Widget Debugger")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
   }
 
   // Force reload all widgets
@@ -62,6 +76,89 @@ struct WidgetDebugView: View {
       }
     } else {
       logger.error("❌ Failed to access App Group UserDefaults")
+    }
+  }
+
+  // Test feed widget data creation and saving
+  private func testFeedWidgetData() {
+    // Create some test posts
+    let testPosts = [
+      WidgetPost(
+        id: "test1",
+        authorName: "Test User",
+        authorHandle: "@test.bsky.social",
+        authorAvatarURL: nil,
+        text: "This is a test post for widget debugging!",
+        timestamp: Date(),
+        likeCount: 42,
+        repostCount: 5,
+        replyCount: 3,
+        imageURLs: [],
+        isRepost: false,
+        repostAuthorName: nil
+      ),
+      WidgetPost(
+        id: "test2",
+        authorName: "Debug Bot",
+        authorHandle: "@debug.bsky.social",
+        authorAvatarURL: nil,
+        text: "Widget debugging in progress... 🔧",
+        timestamp: Date().addingTimeInterval(-3600),
+        likeCount: 21,
+        repostCount: 2,
+        replyCount: 1,
+        imageURLs: [],
+        isRepost: false,
+        repostAuthorName: nil
+      )
+    ]
+    
+    let testData = FeedWidgetDataEnhanced(
+      posts: testPosts,
+      feedType: "timeline",
+      lastUpdated: Date(),
+      profileHandle: nil,
+      totalPostCount: testPosts.count
+    )
+    
+    do {
+      let encoder = JSONEncoder()
+      encoder.dateEncodingStrategy = .iso8601
+      let encoded = try encoder.encode(testData)
+      let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+      defaults?.set(encoded, forKey: "feedWidgetData")
+      defaults?.synchronize()
+      
+      logger.info("✅ Successfully wrote test feed widget data with \(testPosts.count) posts")
+      
+      // Force reload
+      WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+    } catch {
+      logger.error("❌ Failed to encode feed widget data: \(error.localizedDescription)")
+    }
+  }
+  
+  // Check current feed widget data
+  private func checkFeedWidgetData() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+    
+    if let data = defaults?.data(forKey: "feedWidgetData") {
+      do {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
+        if let enhancedData = try? decoder.decode(FeedWidgetDataEnhanced.self, from: data) {
+          logger.info("✅ Found enhanced feed widget data: \(enhancedData.posts.count) posts, feedType: \(enhancedData.feedType), updated: \(enhancedData.lastUpdated)")
+        } else if let basicData = try? decoder.decode(FeedWidgetData.self, from: data) {
+          logger.info("✅ Found basic feed widget data: \(basicData.posts.count) posts, feedType: \(basicData.feedType), updated: \(basicData.lastUpdated)")
+        } else {
+          logger.error("❌ Found widget data but unable to decode it")
+        }
+      } catch {
+        logger.error("❌ Error checking feed widget data: \(error.localizedDescription)")
+      }
+    } else {
+      logger.info("ℹ️ No feed widget data found")
     }
   }
 

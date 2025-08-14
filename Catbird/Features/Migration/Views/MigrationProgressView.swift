@@ -45,7 +45,7 @@ struct MigrationProgressView: View {
       .padding()
     }
     .navigationTitle("Migration in Progress")
-    .navigationBarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .navigationBarTrailing) {
         Button {
@@ -634,7 +634,7 @@ struct MigrationLogsView: View {
         .padding()
       }
       .navigationTitle("Migration Logs")
-      .navigationBarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .navigationBarTrailing) {
           Button("Done") {

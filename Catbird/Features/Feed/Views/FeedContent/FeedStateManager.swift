@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Observation
 import SwiftUI
 import Petrel
 import os
@@ -65,6 +66,12 @@ final class FeedStateManager: StateInvalidationSubscriber {
         self.posts.isEmpty && !isLoading
     }
     
+    /// New posts tracking for indicator
+    private(set) var newPostsCount: Int = 0
+    private(set) var newPostsAuthorAvatars: [String] = []
+    private(set) var hasNewPosts: Bool = false
+    private var newPostsDetectedTime: Date? = nil
+    
     /// Whether any loading operation is in progress
     var isLoading: Bool {
         switch loadingState {
@@ -86,7 +93,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private var viewModelCache: [String: FeedPostViewModel] = [:]
     
     /// Dependencies
-    private let appState: AppState
+    let appState: AppState
     private let feedModel: FeedModel
     private var feedType: FetchType
     
@@ -102,6 +109,17 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private var isAppInBackground = false
     private var backgroundNotificationObserver: NSObjectProtocol?
     private var foregroundNotificationObserver: NSObjectProtocol?
+    
+    /// User action tracking to prevent unwanted automatic refreshes
+    private var lastUserAction: Date = Date.distantPast
+    private var isUserInitiatedAction = false
+    private let userActionCooldownInterval: TimeInterval = 2.0 // 2 seconds
+    
+    /// New posts tracking
+    private var postsBeforeRefresh: [CachedFeedViewPost] = []
+    private var isTrackingNewPosts = false // Prevent multiple tracking calls
+    /// Callback for scrolling to top
+    var scrollToTopCallback: (() -> Void)?
     
     // MARK: - Logging
     
@@ -136,8 +154,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // The SwiftUI view will automatically observe changes
     }
     
-    /// Setup app lifecycle observers to handle background/foreground transitions
+    /// Setup app lifecycle observers (legacy support - main lifecycle now handled via SwiftUI scene phase)
     private func setupAppLifecycleObservers() {
+        // Keep UIKit observers for compatibility but rely primarily on scene phase coordination
         backgroundNotificationObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -175,6 +194,15 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private func handleAppWillEnterForeground() {
         isAppInBackground = false
         logger.debug("App entering foreground")
+        
+        // Don't automatically refresh when returning from navigation
+        // Only refresh if user hasn't taken any action recently
+        let timeSinceLastUserAction = Date().timeIntervalSince(lastUserAction)
+        if timeSinceLastUserAction > 30.0 { // 30 seconds
+            logger.debug("App returned to foreground after long time since user action, allowing potential refresh")
+        } else {
+            logger.debug("App returned to foreground recently after user action, skipping automatic refresh")
+        }
     }
     
     // MARK: - ViewModel Management
@@ -223,6 +251,14 @@ final class FeedStateManager: StateInvalidationSubscriber {
     func loadInitialData() async {
         guard case .idle = loadingState else { return }
         
+        // Only load if posts are empty or this is a user-initiated action
+        guard posts.isEmpty || isUserInitiatedAction else {
+            logger.debug("Skipping initial load - posts exist and not user-initiated")
+            return
+        }
+        
+        markUserAction()
+        
         loadingState = .loading
         errorMessage = nil
         hasReachedEnd = false  // Reset when loading fresh data
@@ -240,7 +276,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("Initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
     }
     
-    /// Refreshes the feed data
+    /// Refreshes the feed data (user-initiated)
     @MainActor
     func refresh() async {
         // Don't start new tasks if app is in background
@@ -248,6 +284,15 @@ final class FeedStateManager: StateInvalidationSubscriber {
             logger.debug("Skipping refresh - app is in background")
             return
         }
+        
+        // Mark this as a user-initiated action
+        markUserAction()
+        
+        // Store posts before refresh to track new posts
+        postsBeforeRefresh = posts
+        isTrackingNewPosts = false // Reset tracking flag for new refresh
+        logger.debug("🔍 NEW_POSTS_DEBUG: Stored \(self.postsBeforeRefresh.count) posts before refresh for comparison")
+        logger.debug("🔍 NEW_POSTS_DEBUG: First 3 post IDs before refresh: \(self.postsBeforeRefresh.prefix(3).map { $0.id })")
         
         // Cancel any existing refresh task
         refreshTask?.cancel()
@@ -267,6 +312,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
             guard !Task.isCancelled && !isAppInBackground else { return }
             
             await updatePostsFromModel()
+            
+            // Track new posts after refresh
+            await trackNewPostsAfterRefresh()
+            
+            // Debug: Print current indicator state after tracking
+            logger.debug("🔍 POST_TRACKING_FINAL: After trackNewPosts - hasNewPosts=\(self.hasNewPosts), count=\(self.newPostsCount), avatars=\(self.newPostsAuthorAvatars.count)")
+            
             loadingState = .idle
             
             logger.debug("Feed refreshed successfully")
@@ -275,7 +327,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         try? await refreshTask?.value
     }
     
-    /// Loads more posts for infinite scroll
+    /// Loads more posts for infinite scroll (user-initiated)
     @MainActor
     func loadMore() async {
         // More specific check - only prevent if already loading more
@@ -285,6 +337,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
             logger.debug("loadMore skipped - state: \(String(describing: self.loadingState)), hasReachedEnd: \(self.hasReachedEnd)")
             return
         }
+        
+        // Mark this as a user-initiated action
+        markUserAction()
         
         // Cancel any existing load more task
         loadMoreTask?.cancel()
@@ -296,30 +351,26 @@ final class FeedStateManager: StateInvalidationSubscriber {
             
             let previousCount = posts.count
             
-            do {
-                await feedModel.loadMore()
-                
-                guard !Task.isCancelled && !isAppInBackground else { 
-                    loadingState = .idle
-                    return 
-                }
-                
-                await updatePostsFromModel()
-                
-                // Check if we've reached the end
-                // Only set hasReachedEnd if feedModel says there's no more data
-                if !feedModel.hasMore {
-                    hasReachedEnd = true
-                    logger.debug("Reached end of feed - no more cursor")
-                } else if posts.count == previousCount {
-                    // Posts were filtered out, but there might be more
-                    logger.debug("No new posts after filtering, but more data available")
-                }
-                
-                logger.debug("Loaded more posts successfully - total posts: \(self.posts.count)")
-            } catch {
-                logger.error("Error in loadMore: \(error)")
+            await feedModel.loadMore()
+            
+            guard !Task.isCancelled && !isAppInBackground else { 
+                loadingState = .idle
+                return 
             }
+            
+            await updatePostsFromModel()
+            
+            // Check if we've reached the end
+            // Only set hasReachedEnd if feedModel says there's no more data
+            if !feedModel.hasMore {
+                hasReachedEnd = true
+                logger.debug("Reached end of feed - no more cursor")
+            } else if posts.count == previousCount {
+                // Posts were filtered out, but there might be more
+                logger.debug("No new posts after filtering, but more data available")
+            }
+            
+            logger.debug("Loaded more posts successfully - total posts: \(self.posts.count)")
             
             // Always reset state to idle
             loadingState = .idle
@@ -423,6 +474,422 @@ final class FeedStateManager: StateInvalidationSubscriber {
         posts.contains { $0.id == postID }
     }
     
+    // MARK: - Data Restoration
+    
+    /// Restores persisted posts without triggering network requests
+    @MainActor
+    func restorePersistedPosts(_ posts: [CachedFeedViewPost]) async {
+        guard self.posts.isEmpty else {
+            logger.debug("Posts already loaded, skipping restoration")
+            return
+        }
+        
+        self.posts = posts
+        self.loadingState = .idle
+        self.hasReachedEnd = false
+        
+        // Update feed model's posts to match
+        await feedModel.restorePersistedPosts(posts)
+        
+        logger.debug("Restored \(posts.count) persisted posts")
+    }
+    
+    // MARK: - iOS 18+ Smart Refresh Methods
+    
+    /// Smart refresh that preserves scroll position and UI state
+    @MainActor
+    func smartRefresh() async {
+        // Don't start new tasks if app is in background
+        guard !isAppInBackground else {
+            logger.debug("Skipping smart refresh - app is in background")
+            return
+        }
+        
+        // Cancel any existing tasks
+        refreshTask?.cancel()
+        
+        refreshTask = Task {
+            guard !Task.isCancelled && !isAppInBackground else { return }
+            
+            // Capture current scroll position before refresh
+            captureScrollAnchor()
+            
+            // Use background refresh strategy to preserve UI continuity
+            loadingState = .refreshing
+            errorMessage = nil
+            hasReachedEnd = false
+            
+            logger.debug("Starting smart refresh for feed: \(self.feedType.identifier)")
+            
+            // Load fresh data using the feed model
+            await feedModel.loadFeed(fetch: feedType, forceRefresh: true, strategy: .backgroundRefresh)
+            
+            guard !Task.isCancelled && !isAppInBackground else { 
+                loadingState = .idle
+                return 
+            }
+            
+            // Update posts from the model
+            await updatePostsFromModel()
+            
+            // Reset pagination state if needed
+            if !feedModel.hasMore {
+                hasReachedEnd = true
+            }
+            
+            logger.debug("Smart refresh completed successfully for feed: \(self.feedType.identifier)")
+            
+            if !Task.isCancelled {
+                loadingState = .idle
+            }
+        }
+        
+        try? await refreshTask?.value
+    }
+    
+    /// Background refresh that doesn't disrupt the current UI state
+    @MainActor
+    func backgroundRefresh() async {
+        // Don't start if already refreshing or app is in background
+        guard !isAppInBackground, 
+              loadingState != .refreshing,
+              loadingState != .loading else {
+            logger.debug("Skipping background refresh - conditions not met")
+            return
+        }
+        
+        logger.debug("Starting background refresh for feed: \(self.feedType.identifier)")
+        
+        // Don't change UI loading state for background refresh
+        let originalLoadingState = loadingState
+        
+        // Use the feed model's background refresh capability
+        await feedModel.loadFeed(fetch: feedType, forceRefresh: false, strategy: .backgroundRefresh)
+        
+        // Only update if we're not cancelled and app is still active
+        guard !isAppInBackground else { return }
+        
+        // Update posts from the model (this will only update if there are significant changes)
+        await updatePostsFromModel()
+        
+        logger.debug("Background refresh completed for feed: \(self.feedType.identifier)")
+        
+        // Restore original loading state if it wasn't changed by user action
+        if loadingState == originalLoadingState {
+            loadingState = .idle
+        }
+    }
+    
+    // MARK: - New Posts Tracking
+    
+    /// Tracks new posts that were added after a refresh
+    @MainActor
+    private func trackNewPostsAfterRefresh() async {
+        logger.debug("🔍 NEW_POSTS_DEBUG: trackNewPostsAfterRefresh called - postsBeforeRefresh.count=\(self.postsBeforeRefresh.count), currentPosts.count=\(self.posts.count), isTrackingNewPosts=\(self.isTrackingNewPosts)")
+        
+        // Don't show new posts indicator for non-chronological feeds
+        guard currentFeedType.isChronological else {
+            logger.debug("🔍 NEW_POSTS_DEBUG: Non-chronological feed - skipping new posts tracking")
+            clearNewPostsIndicator()
+            postsBeforeRefresh.removeAll()
+            return
+        }
+        
+        // Prevent multiple calls during the same refresh cycle
+        guard !isTrackingNewPosts else {
+            logger.debug("🔍 NEW_POSTS_DEBUG: Already tracking new posts - skipping duplicate call")
+            return
+        }
+        
+        guard !postsBeforeRefresh.isEmpty else {
+            // First load, no previous posts to compare
+            logger.debug("🔍 NEW_POSTS_DEBUG: No previous posts to compare - this is first load")
+            return
+        }
+        
+        isTrackingNewPosts = true
+        
+        // FIXED: Instead of comparing IDs, compare timestamps to find genuinely newer posts
+        // Get the timestamp of the most recent post before refresh
+        // Note: indexedAt is never nil - it's an ATProtocolDate, not optional
+        let mostRecentTimestampBefore: Date = postsBeforeRefresh.first?.feedViewPost.post.indexedAt.date ?? Date.distantPast
+        
+        // If we couldn't find any timestamps, fallback to ID comparison
+        if mostRecentTimestampBefore == Date.distantPast {
+            logger.debug("🔍 NEW_POSTS_DEBUG: No valid timestamps in previous posts, using ID comparison fallback")
+            let oldPostIds = Set(postsBeforeRefresh.map { $0.id })
+            let topPosts = Array(posts.prefix(20))
+            let newPosts = topPosts.filter { !oldPostIds.contains($0.id) }
+            
+            if !newPosts.isEmpty && newPosts.count < 10 {
+                newPostsCount = newPosts.count
+                hasNewPosts = true
+                newPostsDetectedTime = Date()
+                
+                // Extract author avatars for the indicator
+                var authorAvatars: [String] = []
+                var seenAuthors: Set<String> = []
+                for post in newPosts.prefix(10) {
+                    let authorDid = post.feedViewPost.post.author.did.didString()
+                    if !seenAuthors.contains(authorDid) {
+                        seenAuthors.insert(authorDid)
+                        if let avatarURL = post.feedViewPost.post.author.avatar?.uriString() {
+                            authorAvatars.append(avatarURL)
+                        }
+                        if authorAvatars.count >= 3 { break }
+                    }
+                }
+                newPostsAuthorAvatars = authorAvatars
+                
+                logger.debug("🔍 NEW_POSTS_DEBUG: (Fallback) Found \(newPosts.count) new posts by ID comparison with \(authorAvatars.count) avatars")
+            } else {
+                clearNewPostsIndicator()
+            }
+            postsBeforeRefresh.removeAll()
+            isTrackingNewPosts = false
+            return
+        }
+        
+        logger.debug("🔍 NEW_POSTS_DEBUG: Most recent post before refresh was at: \(mostRecentTimestampBefore)")
+        
+        // Find posts that are newer than the most recent one before refresh
+        // Also check that they're at the beginning of the feed (first 20 posts)
+        let topPosts = Array(posts.prefix(20))
+        let newPosts = topPosts.filter { post in
+            return post.feedViewPost.post.indexedAt.date > mostRecentTimestampBefore
+        }
+        
+        logger.debug("🔍 NEW_POSTS_DEBUG: Found \(newPosts.count) posts newer than \(mostRecentTimestampBefore)")
+        logger.debug("🔍 NEW_POSTS_DEBUG: Current feed has \(self.posts.count) total posts")
+        
+        if !newPosts.isEmpty {
+            logger.debug("🔍 NEW_POSTS_DEBUG: New posts timestamps: \(newPosts.prefix(3).compactMap { $0.feedViewPost.post.indexedAt })")
+        }
+        
+        // Only show indicator if:
+        // 1. There are new posts
+        // 2. They're at the top of the feed (not buried)
+        // 3. There's a reasonable number (not the entire feed)
+        if !newPosts.isEmpty && newPosts.count < 15 {
+            newPostsCount = newPosts.count
+            hasNewPosts = true
+            newPostsDetectedTime = Date()
+            
+            logger.debug("🔍 NEW_POSTS_DEBUG: Setting hasNewPosts=true with newPostsCount=\(self.newPostsCount)")
+            
+            // Extract author avatars from new posts (up to 3 unique avatars)
+            var authorAvatars: [String] = []
+            var seenAuthors: Set<String> = []
+            
+            for post in newPosts.prefix(10) { // Check first 10 new posts
+                let authorDid = post.feedViewPost.post.author.did.didString()
+                if !seenAuthors.contains(authorDid) {
+                    seenAuthors.insert(authorDid)
+                    if let avatarURL = post.feedViewPost.post.author.avatar?.uriString() {
+                        authorAvatars.append(avatarURL)
+                    }
+                    if authorAvatars.count >= 3 {
+                        break
+                    }
+                }
+            }
+            
+            newPostsAuthorAvatars = authorAvatars
+            
+            logger.debug("✅ NEW_POSTS_DEBUG: Successfully tracked \(self.newPostsCount) new posts with \(authorAvatars.count) unique author avatars - hasNewPosts=\(self.hasNewPosts)")
+        } else {
+            // No new posts or too many (entire feed changed)
+            if newPosts.count >= 15 {
+                logger.debug("🔍 NEW_POSTS_DEBUG: Too many new posts (\(newPosts.count)) - likely entire feed changed, not showing indicator")
+            } else {
+                logger.debug("🔍 NEW_POSTS_DEBUG: No new posts found - clearing indicator")
+            }
+            clearNewPostsIndicator()
+        }
+        
+        // Clear the before-refresh snapshot and reset tracking flag
+        postsBeforeRefresh.removeAll()
+        isTrackingNewPosts = false
+    }
+    
+    /// Clears the new posts indicator
+    @MainActor
+    func clearNewPostsIndicator() {
+        logger.debug("🔍 NEW_POSTS_DEBUG: clearNewPostsIndicator called - was hasNewPosts=\(self.hasNewPosts)")
+        hasNewPosts = false
+        newPostsCount = 0
+        newPostsAuthorAvatars.removeAll()
+        newPostsDetectedTime = nil
+    }
+    
+    /// Checks if the new posts indicator should be dismissed based on scroll position
+    @MainActor
+    func shouldDismissNewPostsIndicator(for scrollOffset: CGFloat) -> Bool {
+        // Don't dismiss immediately after detecting new posts (give it 2 seconds to show)
+        if let detectedTime = newPostsDetectedTime {
+            let timeSinceDetection = Date().timeIntervalSince(detectedTime)
+            if timeSinceDetection < 2.0 {
+                return false
+            }
+        }
+        
+        // Only dismiss when scrolled to very top
+        return hasNewPosts && scrollOffset <= -50 // More negative = higher up (past the top)
+    }
+    
+    /// Scrolls to top and clears new posts indicator
+    @MainActor
+    func scrollToTopAndClearNewPosts() {
+        clearNewPostsIndicator()
+        scrollToTopCallback?()
+    }
+    
+    /// DEBUG: Manually trigger new posts indicator for testing
+    @MainActor
+    public func debugTriggerNewPostsIndicator(count: Int = 3) {
+        logger.debug("🐛 DEBUG: Manually triggering new posts indicator with count=\(count)")
+        hasNewPosts = true
+        newPostsCount = count
+        
+        // Use real avatars from current posts if available
+        var avatars: [String] = []
+        var seenAuthors: Set<String> = []
+        for post in posts.prefix(5) {
+            let authorDid = post.feedViewPost.post.author.did.didString()
+            if !seenAuthors.contains(authorDid) {
+                seenAuthors.insert(authorDid)
+                if let avatarURL = post.feedViewPost.post.author.avatar?.uriString() {
+                    avatars.append(avatarURL)
+                }
+                if avatars.count >= 3 { break }
+            }
+        }
+        
+        // Fallback to example avatars if no real ones available
+        if avatars.isEmpty {
+            avatars = ["https://example.com/avatar1.jpg", "https://example.com/avatar2.jpg"]
+        }
+        
+        newPostsAuthorAvatars = avatars
+        logger.debug("🐛 DEBUG: Set hasNewPosts=\(self.hasNewPosts), newPostsCount=\(self.newPostsCount), avatars=\(self.newPostsAuthorAvatars.count)")
+        
+        // @Observable automatically tracks state changes, no manual notification needed
+    }
+    
+    /// DEBUG: Get current new posts state for debugging
+    @MainActor
+    func debugGetNewPostsState() -> (hasNewPosts: Bool, count: Int, avatars: Int) {
+        return (hasNewPosts: self.hasNewPosts, count: self.newPostsCount, avatars: self.newPostsAuthorAvatars.count)
+    }
+    
+    /// DEBUG: Force refresh and track what happens with real API data
+    @MainActor
+    func debugForceRefreshAndTrack() async {
+        logger.debug("🐛 DEBUG: Force refreshing to test real new posts tracking")
+        await refresh()
+    }
+    
+    // MARK: - Scene Phase Coordination (iOS 18+)
+    
+    /// Handle scene phase transitions coordinated by FeedStateStore
+    @MainActor
+    func handleScenePhaseTransition(_ phase: ScenePhase) async {
+        logger.debug("🎭 Scene phase transition: \(String(describing: phase))")
+        
+        switch phase {
+        case .background:
+            await handleScenePhaseBackground()
+        case .active:
+            await handleScenePhaseActive()
+        case .inactive:
+            await handleScenePhaseInactive()
+        @unknown default:
+            logger.debug("⚠️ Unknown scene phase: \(String(describing: phase))")
+        }
+    }
+    
+    /// Handle background scene phase - preserve state without disruption
+    @MainActor
+    private func handleScenePhaseBackground() async {
+        logger.debug("📱 Scene entering background - preserving state")
+        isAppInBackground = true
+        
+        // Cancel ongoing operations to prevent crashes
+        refreshTask?.cancel()
+        loadMoreTask?.cancel()
+        updateTask?.cancel()
+        
+        // Capture current scroll anchor for restoration
+        captureScrollAnchor()
+        
+        logger.debug("✅ Background state preserved")
+    }
+    
+    /// Handle active scene phase - restore state intelligently
+    @MainActor  
+    private func handleScenePhaseActive() async {
+        logger.debug("📱 Scene becoming active - restoring state")
+        isAppInBackground = false
+        
+        // State restoration is handled by the store's intelligent refresh logic
+        // Individual state managers don't need to refresh automatically
+        logger.debug("✅ Active state restored (refresh controlled by FeedStateStore)")
+    }
+    
+    /// Handle inactive scene phase - prepare for potential backgrounding
+    @MainActor
+    private func handleScenePhaseInactive() async {
+        logger.debug("📱 Scene becoming inactive - preparing for backgrounding")
+        
+        // Capture current scroll position proactively
+        captureScrollAnchor()
+        
+        // Don't cancel tasks here as inactive might be temporary (Control Center, etc.)
+        logger.debug("✅ Inactive state prepared")
+    }
+    
+    /// Restore UI state without triggering network refresh
+    @MainActor
+    func restoreUIStateWithoutRefresh() async {
+        logger.debug("🔄 Restoring UI state without refresh")
+        
+        // Ensure we're not in a loading state
+        if loadingState == .loading || loadingState == .refreshing {
+            loadingState = .idle
+        }
+        
+        // Don't trigger network operations - just ensure UI is consistent
+        logger.debug("✅ UI state restored without refresh")
+    }
+    
+    /// Get associated UIKit controller for restoration coordination
+    func getAssociatedUIKitController() -> FeedCollectionViewControllerIntegrated? {
+        // This would be set by the UIKit controller when it's created
+        // Implementation depends on how you want to establish the connection
+        return nil // Placeholder - would need proper implementation
+    }
+    
+    // MARK: - User Action Tracking
+    
+    /// Marks a user-initiated action to prevent unwanted automatic refreshes
+    private func markUserAction() {
+        lastUserAction = Date()
+        isUserInitiatedAction = true
+        logger.debug("Marked user action at \(self.lastUserAction)")
+        
+        // Reset the flag after cooldown period
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(userActionCooldownInterval * 1_000_000_000))
+            isUserInitiatedAction = false
+        }
+    }
+    
+    /// Checks if enough time has passed since last user action to allow automatic operations
+    private func canPerformAutomaticAction() -> Bool {
+        let timeSinceLastUserAction = Date().timeIntervalSince(lastUserAction)
+        return timeSinceLastUserAction > userActionCooldownInterval
+    }
+    
     // MARK: - Cleanup
     
     /// Clears all cached data and cancels ongoing tasks
@@ -468,7 +935,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     // MARK: - Feed Type Updates
     
-    /// Updates the fetch type while preserving scroll position
+    /// Updates the fetch type while preserving scroll position (user-initiated)
     @MainActor
     func updateFetchType(_ newFetchType: FetchType, preserveScrollPosition: Bool = true) async {
         guard newFetchType.identifier != self.feedType.identifier else {
@@ -477,6 +944,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
         
         logger.debug("Updating feed type from \(self.feedType.identifier) to \(newFetchType.identifier)")
+        
+        // Mark this as a user-initiated action
+        markUserAction()
         
         // Save current scroll position if requested
         let savedScrollAnchor = preserveScrollPosition ? scrollAnchor : nil
@@ -554,40 +1024,44 @@ extension FeedStateManager {
 // MARK: - StateInvalidationSubscriber
 
 extension FeedStateManager {
-    /// Handle state invalidation events
+    /// Handle state invalidation events (restricted to prevent unwanted refreshes)
     func handleStateInvalidation(_ event: StateInvalidationEvent) async {
         switch event {
         case .feedUpdated(let fetchType):
-            // Refresh if this is the same feed type we're managing
-            if fetchType.identifier == self.feedType.identifier {
+            // Only refresh if this is the same feed type AND user hasn't acted recently
+            if fetchType.identifier == self.feedType.identifier && canPerformAutomaticAction() {
                 logger.debug("Received feed update for \(fetchType.identifier), refreshing")
-                await refresh()
+                await backgroundRefresh() // Use background refresh to avoid disrupting UI
+            } else {
+                logger.debug("Skipping feed update refresh - recent user action or different feed")
             }
             
         case .feedListChanged:
-            // When feed list changes, we might need to refresh to get updated feed data
-            logger.debug("Feed list changed, refreshing current feed")
-            await refresh()
+            // Feed list changes shouldn't automatically refresh individual feeds
+            // The user will refresh when they want to see changes
+            logger.debug("Feed list changed, but skipping automatic refresh")
             
         case .accountSwitched:
-            // When account switches, clear everything and reload
+            // Account switches are critical - always clear and reload
             logger.debug("Account switched, clearing and reloading feed")
             posts.removeAll()
             viewModelCache.removeAll()
             hasReachedEnd = false
+            markUserAction() // Mark as user action since account switch is user-initiated
             await loadInitialData()
             
         case .authenticationCompleted:
             // When authentication completes, load initial data if we don't have any
             if posts.isEmpty {
                 logger.debug("Authentication completed, loading initial feed data")
+                markUserAction() // Mark as user action since auth completion is user-initiated
                 await loadInitialData()
             }
             
         case .postCreated, .replyCreated:
-            // Refresh to show new posts
-            logger.debug("New post created, refreshing to show it")
-            await refresh()
+            // Don't automatically refresh for new posts - let user pull to refresh
+            // This prevents disrupting scroll position when user returns from post creation
+            logger.debug("New post created, but skipping automatic refresh to preserve scroll position")
             
         default:
             // Other events don't require action for feed state

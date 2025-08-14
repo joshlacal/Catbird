@@ -97,6 +97,9 @@ final class AppState {
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
   
+  /// Composer draft manager for handling minimized post composer drafts
+  let composerDraftManager = ComposerDraftManager()
+  
   /// List manager for handling list operations
   @ObservationIgnored var listManager: ListManager
   
@@ -233,6 +236,11 @@ final class AppState {
                       client: client
                     )
                   }
+                  
+                  // Clear any stale widget data and trigger fresh load
+                  Task {
+                    FeedWidgetDataProvider.shared.clearWidgetData()
+                  }
                 }
               }
             }
@@ -248,7 +256,9 @@ final class AppState {
             self.listManager.updateAppState(nil)
              await self.chatManager.updateClient(nil)
             self.migrationService.updateSourceClient(nil)
-            // Add profile reset if needed
+            
+            // Clear widget data on logout
+            FeedWidgetDataProvider.shared.clearWidgetData()
           } else if case .initializing = state {
             // Handle initializing state if needed
             self.logger.info("Auth state changed to initializing.")
@@ -603,7 +613,7 @@ final class AppState {
   private func configureImagePipeline() {
     Task {
       // Use the custom pipeline from ImageLoadingManager which has GIF support enabled
-      let pipeline = await ImageLoadingManager.shared.pipeline
+      let pipeline = ImageLoadingManager.shared.pipeline
       await MainActor.run {
         ImagePipeline.shared = pipeline
         logger.info("Configured Nuke image pipeline with GIF animation support")

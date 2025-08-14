@@ -398,34 +398,50 @@ final class RepositoryBrowserViewModel {
         exportProgress = 1.0
     }
     
-    // MARK: - Data Fetching Helpers (Actor-based)
+    // MARK: - Data Fetching Helpers (Direct ModelContext access for UI consistency)
     
     private func fetchPosts(for repository: RepositoryRecord, using repositoryActor: RepositoryModelActor) async throws -> [ParsedPost] {
-        // Use the RepositoryParsingService methods through the actor pattern
-        let repositoryParsingService = RepositoryParsingService()
-        repositoryParsingService.configure(with: modelContext)
-        return try repositoryParsingService.getParsedPosts(for: repository.id)
+        // Use direct ModelContext access to ensure UI consistency
+        let repositoryID = repository.id
+        let descriptor = FetchDescriptor<ParsedPost>(
+            predicate: #Predicate { post in
+                post.repositoryRecordID == repositoryID
+            },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor)
     }
     
     private func fetchProfiles(for repository: RepositoryRecord, using repositoryActor: RepositoryModelActor) async throws -> [ParsedProfile] {
-        let repositoryParsingService = RepositoryParsingService()
-        repositoryParsingService.configure(with: modelContext)
-        if let profile = try repositoryParsingService.getParsedProfile(for: repository.id) {
-            return [profile]
-        }
-        return []
+        let repositoryID = repository.id
+        let descriptor = FetchDescriptor<ParsedProfile>(
+            predicate: #Predicate { profile in
+                profile.repositoryRecordID == repositoryID
+            }
+        )
+        return try modelContext.fetch(descriptor)
     }
     
     private func fetchConnections(for repository: RepositoryRecord, using repositoryActor: RepositoryModelActor) async throws -> [ParsedConnection] {
-        let repositoryParsingService = RepositoryParsingService()
-        repositoryParsingService.configure(with: modelContext)
-        return try repositoryParsingService.getParsedConnections(for: repository.id)
+        let repositoryID = repository.id
+        let descriptor = FetchDescriptor<ParsedConnection>(
+            predicate: #Predicate { connection in
+                connection.repositoryRecordID == repositoryID
+            },
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor)
     }
     
     private func fetchMedia(for repository: RepositoryRecord, using repositoryActor: RepositoryModelActor) async throws -> [ParsedMedia] {
-        let repositoryParsingService = RepositoryParsingService()
-        repositoryParsingService.configure(with: modelContext)
-        return try repositoryParsingService.getParsedMedia(for: repository.id)
+        let repositoryID = repository.id
+        let descriptor = FetchDescriptor<ParsedMedia>(
+            predicate: #Predicate { media in
+                media.repositoryRecordID == repositoryID
+            },
+            sortBy: [SortDescriptor(\.discoveredAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor)
     }
 }
 

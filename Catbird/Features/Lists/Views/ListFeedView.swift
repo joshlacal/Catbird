@@ -190,7 +190,7 @@ struct ListFeedView: View {
     NavigationStack(path: $navigationPath) {
       contentView
         .navigationTitle(viewModel.listDetails?.name ?? "List Feed")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
         .toolbar {
           ToolbarItem(placement: .navigationBarTrailing) {
             Menu {

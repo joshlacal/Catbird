@@ -16,6 +16,9 @@ struct URLCardResponse: Codable, Identifiable {
   let title: String
   let description: String
   let image: String
+  
+  /// Cached thumbnail blob after upload (not persisted)
+  var thumbnailBlob: Blob? = nil
 
   enum CodingKeys: String, CodingKey {
     case error
@@ -24,6 +27,7 @@ struct URLCardResponse: Codable, Identifiable {
     case title
     case description
     case image
+    // thumbnailBlob is excluded from coding
   }
 }
 
