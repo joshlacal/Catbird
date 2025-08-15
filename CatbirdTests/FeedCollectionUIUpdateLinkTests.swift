@@ -22,7 +22,7 @@ struct FeedCollectionUIUpdateLinkTests {
         let appState = AppState.shared
         let feedManager = FeedManager(client: appState.atProtoClient, fetchType: .timeline)
         let feedModel = FeedModel(feedManager: feedManager, appState: appState)
-        let stateManager = FeedStateManager(appState: appState, feedModel: feedModel, feedType: .timeline)
+        let stateManager = await FeedStateManager(appState: appState, feedModel: feedModel, feedType: .timeline)
         
         @State var navigationPath = NavigationPath()
         let controller = FeedCollectionViewController(
@@ -373,7 +373,7 @@ struct UIUpdateLinkPerformanceTests {
         let appState = AppState.shared
         let feedManager = FeedManager(client: appState.atProtoClient, fetchType: .timeline)
         let feedModel = FeedModel(feedManager: feedManager, appState: appState)
-        let stateManager = FeedStateManager(appState: appState, feedModel: feedModel, feedType: .timeline)
+        let stateManager = await FeedStateManager(appState: appState, feedModel: feedModel, feedType: .timeline)
         
         @State var navigationPath = NavigationPath()
         let controller = FeedCollectionViewController(

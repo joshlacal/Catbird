@@ -720,22 +720,6 @@ import OSLog
         }
     }
     
-    // Debug and Development
-    var enableHeightValidation: Bool {
-        get { settingsModel?.enableHeightValidation ?? defaults.enableHeightValidation }
-        set {
-            settingsModel?.enableHeightValidation = newValue
-            saveChanges()
-        }
-    }
-    
-    var showHeightValidationOverlay: Bool {
-        get { settingsModel?.showHeightValidationOverlay ?? defaults.showHeightValidationOverlay }
-        set {
-            settingsModel?.showHeightValidationOverlay = newValue
-            saveChanges()
-        }
-    }
     
     // MARK: - Public Methods
     

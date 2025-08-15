@@ -246,14 +246,19 @@ extension PostComposerViewModel {
             throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Thread has no valid posts"])
         }
         
-        var previousPost: AppBskyFeedDefs.PostView?
+        // Extract just the text from each entry for the batch thread creation
+        let postTexts = validEntries.map { $0.text }
         
-        // Create each post in the thread
-        for (index, entry) in validEntries.enumerated() {
-            // Process facets for this entry
+        // Process facets for each post
+        var allFacets: [[AppBskyRichtextFacet]] = []
+        for entry in validEntries {
             let facets = await processFacetsForText(entry.text)
-            
-            // Create embed for this entry
+            allFacets.append(facets)
+        }
+        
+        // Process embeds for each post
+        var allEmbeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?] = []
+        for entry in validEntries {
             var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
             if let gif = entry.selectedGif {
                 embed = try await createGifEmbed(gif)
@@ -268,37 +273,28 @@ extension PostComposerViewModel {
             } else if let urlCard = entry.urlCards.values.first {
                 embed = await createExternalEmbedWithThumbnail(urlCard)
             }
-            
-            // Create self labels
-            let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
-            
-            // Only apply threadgate to the first post
-            var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
-            if index == 0 && !threadgateSettings.allowEverybody {
-                threadgateRules = threadgateSettings.toAllowUnions()
-            }
-            
-            // Create the post
-            try await postManager.createPost(
-                entry.text,
-                languages: selectedLanguages,
-                metadata: [:],
-                hashtags: outlineTags,
-                facets: facets,
-                parentPost: previousPost,
-                selfLabels: selfLabels,
-                embed: embed,
-                threadgateAllowRules: threadgateRules
-            )
-            
-            // For thread posts, we need to wait a bit and get the created post
-            // to use as parent for the next one. This is a limitation of the current
-            // implementation - ideally we'd get the created post back from createPost
-            if index < validEntries.count - 1 {
-                // Small delay to ensure post is created
-                try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            }
+            allEmbeds.append(embed)
         }
+        
+        // Create self labels
+        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
+        
+        // Set up threadgate for the first post
+        var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
+        if !threadgateSettings.allowEverybody {
+            threadgateRules = threadgateSettings.toAllowUnions()
+        }
+        
+        // Create the entire thread in one batch operation
+        try await postManager.createThread(
+            posts: postTexts,
+            languages: selectedLanguages,
+            selfLabels: selfLabels,
+            hashtags: outlineTags,
+            facets: allFacets,
+            embeds: allEmbeds,
+            threadgateAllowRules: threadgateRules
+        )
     }
     
     private func processFacetsForText(_ text: String) async -> [AppBskyRichtextFacet] {

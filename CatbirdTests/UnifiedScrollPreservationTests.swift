@@ -59,7 +59,7 @@ struct UnifiedScrollPreservationTests {
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(initialData)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
         // Scroll to middle
         collectionView.setContentOffset(CGPoint(x: 0, y: 500), animated: false)
@@ -106,7 +106,7 @@ struct UnifiedScrollPreservationTests {
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(initialData)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
         // Scroll near bottom
         collectionView.setContentOffset(CGPoint(x: 0, y: 1500), animated: false)
@@ -147,7 +147,7 @@ struct UnifiedScrollPreservationTests {
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(data)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
         // Scroll to specific position
         collectionView.setContentOffset(CGPoint(x: 0, y: 1000), animated: false)
@@ -188,7 +188,7 @@ struct UnifiedScrollPreservationTests {
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(initialData)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
         // Simulate pull to refresh (negative offset)
         collectionView.setContentOffset(CGPoint(x: 0, y: -100), animated: false)
@@ -263,7 +263,7 @@ struct UnifiedScrollPreservationTests {
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(initialData)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
         // Scroll to bottom
         let maxOffset = 50 * 100 - 667 // items * height - viewport height
@@ -287,7 +287,7 @@ struct UnifiedScrollPreservationTests {
         #expect(result.success == true)
         
         // Offset should be clamped to new max
-        let newMaxOffset = max(0, 5 * 100 - 667)
+        _ = max(0, 5 * 100 - 667)
         #expect(result.finalOffset.y <= 0) // With only 5 items, content fits in viewport
     }
     
@@ -338,7 +338,7 @@ struct UnifiedScrollPreservationTests {
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(data)
-        dataSource.apply(snapshot, animatingDifferences: false)
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
         // Set non-pixel-aligned offset
         let unalignedOffset: CGFloat = 123.456789

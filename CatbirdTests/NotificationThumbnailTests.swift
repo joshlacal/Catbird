@@ -16,8 +16,8 @@ struct NotificationThumbnailTests {
   @Test("Extract image thumbnails from embed")
   func testImageThumbnailExtraction() {
     // Create a mock image embed
-    let mockImageThumbURI = ATProtocolURI(uriString: "https://cdn.bsky.app/img/feed_thumbnail/plain/test.jpg")!
-    let mockImageFullURI = ATProtocolURI(uriString: "https://cdn.bsky.app/img/feed_fullsize/plain/test.jpg")!
+    let mockImageThumbURI = ATProtocolURI(uriString: "https://cdn.bsky.app/img/feed_thumbnail/plain/test.jpg")
+    let mockImageFullURI = ATProtocolURI(uriString: "https://cdn.bsky.app/img/feed_fullsize/plain/test.jpg")
     
     let mockImage = AppBskyEmbedImages.ViewImage(
       thumb: mockImageThumbURI,
@@ -43,8 +43,8 @@ struct NotificationThumbnailTests {
   @Test("Extract video thumbnails from embed")
   func testVideoThumbnailExtraction() {
     // Create a mock video embed
-    let mockVideoThumbnailURI = ATProtocolURI(uriString: "https://video.bsky.app/thumbnail.jpg")!
-    let mockVideoPlaylistURI = ATProtocolURI(uriString: "https://video.bsky.app/playlist.m3u8")!
+    let mockVideoThumbnailURI = ATProtocolURI(uriString: "https://video.bsky.app/thumbnail.jpg")
+    let mockVideoPlaylistURI = ATProtocolURI(uriString: "https://video.bsky.app/playlist.m3u8")
     
     let mockVideoView = AppBskyEmbedVideo.View(
       cid: CID(string: "bafyreitest"),
@@ -69,8 +69,8 @@ struct NotificationThumbnailTests {
   @Test("Extract external link thumbnails from embed")
   func testExternalThumbnailExtraction() {
     // Create a mock external embed
-    let mockExternalURI = ATProtocolURI(uriString: "https://example.com")!
-    let mockThumbURI = ATProtocolURI(uriString: "https://example.com/thumb.jpg")!
+    let mockExternalURI = ATProtocolURI(uriString: "https://example.com")
+    let mockThumbURI = ATProtocolURI(uriString: "https://example.com/thumb.jpg")
     
     let mockExternal = AppBskyEmbedExternal.ViewExternal(
       uri: mockExternalURI,
@@ -99,10 +99,10 @@ struct NotificationThumbnailTests {
       AppBskyEmbedRecord.View(
         record: .appBskyEmbedRecordViewRecord(
           AppBskyEmbedRecord.ViewRecord(
-            uri: ATProtocolURI(uriString: "at://test.bsky.social/app.bsky.feed.post/test")!,
+            uri: ATProtocolURI(uriString: "at://test.bsky.social/app.bsky.feed.post/test"),
             cid: CID(string: "bafyreitest"),
             author: createMockProfile(),
-            value: .knownType(AppBskyFeedPost(text: "Test post", createdAt: ATProtocolDate.now)),
+            value: .knownType(AppBskyFeedPost(text: "Test post", entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate.now)),
             labels: [],
             embeds: nil,
             indexedAt: ATProtocolDate.now
@@ -124,10 +124,10 @@ struct NotificationThumbnailTests {
   
   private func createMockPost(with embed: AppBskyEmbedDefs.ViewUnion) -> AppBskyFeedDefs.PostView {
     return AppBskyFeedDefs.PostView(
-      uri: ATProtocolURI(uriString: "at://test.bsky.social/app.bsky.feed.post/test")!,
+      uri: ATProtocolURI(uriString: "at://test.bsky.social/app.bsky.feed.post/test"),
       cid: CID(string: "bafyreitest"),
       author: createMockProfile(),
-      record: .knownType(AppBskyFeedPost(text: "Test post", createdAt: ATProtocolDate.now)),
+      record: .knownType(AppBskyFeedPost(text: "Test post", entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate.now)),
       embed: embed,
       replyCount: 0,
       repostCount: 0,
@@ -143,7 +143,7 @@ struct NotificationThumbnailTests {
   private func createMockProfile() -> AppBskyActorDefs.ProfileViewBasic {
     return AppBskyActorDefs.ProfileViewBasic(
       did: DID(didString: "did:plc:test"),
-      handle: Handle(handle: "test.bsky.social"),
+      handle: Handle(handleString: "test.bsky.social"),
       displayName: "Test User",
       avatar: nil,
       associated: nil,

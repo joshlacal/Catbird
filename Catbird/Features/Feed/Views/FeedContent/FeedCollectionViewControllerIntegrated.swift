@@ -82,8 +82,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     /// Logging
     let controllerLogger = Logger(subsystem: "blue.catbird", category: "FeedCollectionIntegrated")
     
-    /// Height validation manager for debugging
-    @MainActor private let heightValidationManager = HeightValidationManager()
     
     // MARK: - Initialization
     
@@ -154,7 +152,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         setupAppLifecycleObservers()
         setupThemeObserver()
         setupAutomaticPersistence()
-        setupHeightValidation()
         
         // Register with iOS 18+ state restoration coordinator
         if #available(iOS 18.0, *) {
@@ -299,10 +296,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             // Remove cell state handler to reduce memory overhead (match legacy)
             cell.configurationUpdateHandler = nil
             
-            // Perform height validation if enabled
-            if self.heightValidationManager.isValidationEnabled {
-                self.scheduleHeightValidation(for: cell, post: post, indexPath: indexPath)
-            }
         }
         
         dataSource = UICollectionViewDiffableDataSource<Section, PostItem>(
@@ -393,154 +386,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         }
     }
     
-    private func setupHeightValidation() {
-        // Sync validation state with app settings
-        heightValidationManager.isValidationEnabled = stateManager.appState.appSettings.enableHeightValidation
-        
-        // Set up observation for settings changes
-        Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // Check every 1 second
-                
-                guard let self = self else { return }
-                
-                // Update validation state based on app settings
-                let shouldEnable = self.stateManager.appState.appSettings.enableHeightValidation
-                if self.heightValidationManager.isValidationEnabled != shouldEnable {
-                    self.heightValidationManager.isValidationEnabled = shouldEnable
-                    self.controllerLogger.info("📏 Height validation \(shouldEnable ? "enabled" : "disabled")")
-                }
-            }
-        }
-        
-        // Set up notification observers for debug UI
-        setupValidationNotificationHandlers()
-    }
-    
-    private func setupValidationNotificationHandlers() {
-        // Handle validation report generation requests
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("GenerateValidationReport"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
-            let report = self.generateValidationReport()
-            NotificationCenter.default.post(
-                name: NSNotification.Name("ValidationReportGenerated"),
-                object: report
-            )
-        }
-        
-        // Handle clear validation data requests
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("ClearValidationData"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.clearValidationResults()
-        }
-    }
-    
-    /// Schedule height validation for a specific cell after layout
-    private func scheduleHeightValidation(for cell: UICollectionViewListCell, post: CachedFeedViewPost, indexPath: IndexPath) {
-        // Use a very short delay to allow the cell to complete its layout
-        DispatchQueue.main.async { [weak self, weak cell] in
-            guard let self = self, let cell = cell else { return }
-            self.validateCellHeight(cell: cell, post: post, indexPath: indexPath)
-        }
-    }
-    
-    /// Perform the actual height validation
-    private func validateCellHeight(cell: UICollectionViewListCell, post: CachedFeedViewPost, indexPath: IndexPath) {
-        guard heightValidationManager.isValidationEnabled else { return }
-        
-        // Get the actual rendered height
-        let actualHeight = cell.bounds.height
-        
-        // Skip validation if cell hasn't been laid out yet
-        guard actualHeight > 0 else {
-            // Try again after a short delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak cell] in
-                guard let self = self, let cell = cell else { return }
-                self.validateCellHeight(cell: cell, post: post, indexPath: indexPath)
-            }
-            return
-        }
-        
-        // Perform thread-aware validation
-        let feedTypeString = stateManager.currentFeedType.identifier
-        let threadContext = PostHeightCalculator.ThreadContext(from: post)
-        
-        heightValidationManager.validateThreadHeight(
-            for: post.feedViewPost.post,
-            actualHeight: actualHeight,
-            feedType: feedTypeString,
-            threadContext: threadContext,
-            mode: .compact
-        )
-        
-        // Add visual indicator if enabled and there's a significant error
-        if stateManager.appState.appSettings.showHeightValidationOverlay {
-            addValidationOverlay(to: cell, post: post)
-        }
-    }
-    
-    /// Add visual overlay to indicate height validation results
-    private func addValidationOverlay(to cell: UICollectionViewListCell, post: CachedFeedViewPost) {
-        guard let statistics = heightValidationManager.currentStatistics else { return }
-        
-        // Find if this specific post has significant errors
-        // For now, just show a general indicator for debugging
-        
-        // Remove existing overlay
-        cell.subviews.forEach { view in
-            if view.tag == 9999 { // Tag for validation overlay
-                view.removeFromSuperview()
-            }
-        }
-        
-        // Add new overlay if validation shows significant error
-        if statistics.significantErrors > 0 {
-            let overlay = UIView()
-            overlay.tag = 9999
-            overlay.backgroundColor = UIColor.systemRed.withAlphaComponent(0.1)
-            overlay.layer.borderColor = UIColor.systemRed.cgColor
-            overlay.layer.borderWidth = 1.0
-            overlay.isUserInteractionEnabled = false
-            
-            cell.addSubview(overlay)
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                overlay.topAnchor.constraint(equalTo: cell.topAnchor),
-                overlay.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
-                overlay.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
-                overlay.bottomAnchor.constraint(equalTo: cell.bottomAnchor)
-            ])
-        }
-    }
-    
-    // MARK: - Height Validation Public API
-    
-    /// Generate a validation report for debugging
-    func generateValidationReport() -> String {
-        return heightValidationManager.generateReport()
-    }
-    
-    /// Export validation results as JSON
-    func exportValidationResults() -> Data? {
-        return heightValidationManager.exportResults()
-    }
-    
-    /// Clear validation results
-    func clearValidationResults() {
-        heightValidationManager.clearResults()
-    }
-    
-    /// Get current validation statistics
-    var currentValidationStatistics: ValidationStatistics? {
-        return heightValidationManager.currentStatistics
-    }
     
     private func startAutomaticPersistence() {
         persistenceTimer?.fire()

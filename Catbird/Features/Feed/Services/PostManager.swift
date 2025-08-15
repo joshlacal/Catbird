@@ -90,38 +90,77 @@ final class PostManager {
       var reply: AppBskyFeedPost.ReplyRef?
       if let parentPost = parentPost {
         reply = try createReplyRef(for: parentPost)
+        logger.debug("Created reply reference: root=\(reply!.root.uri), parent=\(reply!.parent.uri)")
+      } else {
+        logger.debug("No parent post - creating root post")
       }
 
-      // Create post labels
-      let postLabels = AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(
-        selfLabels)
+      // Create post labels only if selfLabels has content
+      let postLabels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion?
+      if !selfLabels.values.isEmpty {
+        postLabels = AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(selfLabels)
+      } else {
+        postLabels = nil
+      }
 
       // Create the post object
       let newPost = AppBskyFeedPost(
         text: postText,
         entities: nil,
-        facets: facets,
+        facets: facets.isEmpty ? nil : facets,
         reply: reply,
         embed: embed,
         langs: languages,
         labels: postLabels,
-        tags: hashtags,
+        tags: hashtags.isEmpty ? nil : hashtags,
         createdAt: currentATProtocolDate
       )
+      
+      logger.debug("Created post object - reply field: \(reply != nil ? "present" : "nil")")
+      if let reply = reply {
+        logger.debug("Reply details - root: \(reply.root.uri), parent: \(reply.parent.uri)")
+      }
 
       // Prepare writes array for batched operation
       var writes: [ComAtprotoRepoApplyWrites.InputWritesUnion] = []
 
       // Encode post to CBOR to generate CID
+      logger.debug("Encoding post to CBOR...")
       let postData = try newPost.encodedDAGCBOR()
       let cid = CID.fromDAGCBOR(postData)
       logger.debug("Post CID: \(cid)")
+      logger.debug("Post CBOR length: \(postData.count) bytes")
+      
+      // Debug: check what fields are in the CBOR value
+      let cborValue = try newPost.toCBORValue()
+      if let orderedMap = cborValue as? OrderedCBORMap {
+        logger.debug("CBOR fields in post:")
+        for (key, _) in orderedMap.entries {
+          logger.debug("  - \(key)")
+        }
+      }
 
       // Add post creation to writes
+      let valueContainer = ATProtocolValueContainer.knownType(newPost)
+      logger.debug("Wrapped post in ATProtocolValueContainer")
+      
+      // Debug: check if reply field survives the container wrapping
+      let containerCBOR = try valueContainer.toCBORValue()
+      if let orderedMap = containerCBOR as? OrderedCBORMap {
+        logger.debug("ATProtocolValueContainer CBOR fields:")
+        for (key, _) in orderedMap.entries {
+          logger.debug("  - \(key)")
+        }
+        
+        // Check specifically for reply field
+        let hasReply = orderedMap.entries.contains { $0.key == "reply" }
+        logger.debug("Reply field in container: \(hasReply)")
+      }
+      
       let createPost = ComAtprotoRepoApplyWrites.Create(
         collection: try NSID(nsidString: "app.bsky.feed.post"),
         rkey: try RecordKey(keyString: tid.description),
-        value: ATProtocolValueContainer.knownType(newPost)
+        value: valueContainer
       )
       writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createPost))
 
@@ -307,16 +346,24 @@ final class PostManager {
       )
     }
     
+    // Create post labels only if labels has content
+    let postLabels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion?
+    if !labels.values.isEmpty {
+      postLabels = AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(labels)
+    } else {
+      postLabels = nil
+    }
+    
     // Create the post record
     let postRecord = AppBskyFeedPost(
       text: text,
       entities: nil,
-      facets: [],
+      facets: nil,
       reply: parentPost != nil ? try createReplyRef(for: parentPost!) : nil,
       embed: embed,
       langs: languages,
-      labels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(labels),
-      tags: [],
+      labels: postLabels,
+      tags: nil,
       createdAt: createdAt
     )
     
@@ -502,10 +549,15 @@ final class PostManager {
           logger.debug("Reply reference - root: \(root.uri), parent: \(parent.uri)")
         }
 
-        // Create post labels
-        let postLabels = AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(
-          selfLabels)
-        logger.debug("Applied content labels to post #\(index+1)")
+        // Create post labels only if selfLabels has content
+        let postLabels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion?
+        if !selfLabels.values.isEmpty {
+          postLabels = AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(selfLabels)
+          logger.debug("Applied content labels to post #\(index+1)")
+        } else {
+          postLabels = nil
+          logger.debug("No content labels for post #\(index+1)")
+        }
 
         // Get facets for this post if available
         let postFacets = facets != nil && index < facets!.count ? facets![index] : nil
@@ -521,12 +573,12 @@ final class PostManager {
         let post = AppBskyFeedPost(
           text: postText,
           entities: nil,
-          facets: postFacets,
+          facets: postFacets?.isEmpty == true ? nil : postFacets,
           reply: reply,
           embed: postEmbed,
           langs: languages,
           labels: postLabels,
-          tags: hashtags,
+          tags: hashtags.isEmpty ? nil : hashtags,
           createdAt: postATProtocolDate
         )
         logger.debug("Post #\(index+1) object created")

@@ -41,7 +41,7 @@ struct FAB: View {
             Image(systemName: "square.grid.3x3.square")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 24, height: 24)
+                .frame(width: 30, height: 30)
                 .foregroundStyle(.primary)
                 .frame(width: circleSize, height: circleSize)
                 .contentShape(Circle())
@@ -53,7 +53,7 @@ struct FAB: View {
             Image(systemName: "pencil")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 24, height: 24)
+                .frame(width: 30, height: 30)
                 .foregroundStyle(.white)
                 .frame(width: circleSize, height: circleSize)
                 .background(.blue, in: Circle()) // Ensure visibility

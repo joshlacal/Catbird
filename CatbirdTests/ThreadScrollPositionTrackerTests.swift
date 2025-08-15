@@ -63,8 +63,8 @@ struct ThreadScrollPositionTrackerTests {
         let collectionView = createMockCollectionView()
         
         // Position so main post (section 2) is visible
-        collectionView.setContentOffset(CGPoint(x: 0, y: 250), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 250), animated: false)
+        await collectionView.layoutIfNeeded()
         
         let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
         
@@ -81,8 +81,8 @@ struct ThreadScrollPositionTrackerTests {
         let collectionView = createMockCollectionView()
         
         // Position so only parent posts (section 1) are visible
-        collectionView.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
+        await collectionView.layoutIfNeeded()
         
         let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
         
@@ -97,8 +97,8 @@ struct ThreadScrollPositionTrackerTests {
         let collectionView = createMockCollectionView()
         
         // Position to show parent posts
-        collectionView.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 120), animated: false)
+        await collectionView.layoutIfNeeded()
         
         let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
         
@@ -113,7 +113,7 @@ struct ThreadScrollPositionTrackerTests {
     @Test("Fail gracefully when no anchor can be captured")
     func failGracefullyNoAnchor() async {
         let tracker = ThreadScrollPositionTracker()
-        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
+        let collectionView = await UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         
         let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
         
@@ -128,8 +128,8 @@ struct ThreadScrollPositionTrackerTests {
         let collectionView = createMockCollectionView()
         
         // Capture anchor with main post visible
-        collectionView.setContentOffset(CGPoint(x: 0, y: 250), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 250), animated: false)
+        await collectionView.layoutIfNeeded()
         
         guard let originalAnchor = tracker.captureScrollAnchor(collectionView: collectionView) else {
             Issue.record("Failed to capture anchor")
@@ -153,7 +153,7 @@ struct ThreadScrollPositionTrackerTests {
         // Restore position
         tracker.restoreScrollPosition(collectionView: collectionView, to: mockAnchorAfterChange)
         
-        let finalOffset = collectionView.contentOffset.y
+        let finalOffset = await collectionView.contentOffset.y
         let expectedOffset = originalAnchor.offsetY + 200 // Should adjust for main post movement
         
         #expect(abs(finalOffset - expectedOffset) < 10, "Should restore position accounting for main post movement")
@@ -165,8 +165,8 @@ struct ThreadScrollPositionTrackerTests {
         let collectionView = createMockCollectionView()
         
         // Capture anchor with parent post visible
-        collectionView.setContentOffset(CGPoint(x: 0, y: 150), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 150), animated: false)
+        await collectionView.layoutIfNeeded()
         
         guard let originalAnchor = tracker.captureScrollAnchor(collectionView: collectionView) else {
             Issue.record("Failed to capture anchor")
@@ -189,7 +189,7 @@ struct ThreadScrollPositionTrackerTests {
         // Restore position
         tracker.restoreScrollPosition(collectionView: collectionView, to: mockAnchorAfterChange)
         
-        let finalOffset = collectionView.contentOffset.y
+        let finalOffset = await collectionView.contentOffset.y
         
         // Should maintain viewport-relative position
         #expect(finalOffset > originalAnchor.offsetY, "Should adjust scroll position for content changes")
@@ -211,12 +211,12 @@ struct ThreadScrollPositionTrackerTests {
             sectionType: .parentPosts
         )
         
-        let originalOffset = collectionView.contentOffset.y
+        _ = await collectionView.contentOffset.y
         
         // Attempt restoration
         tracker.restoreScrollPosition(collectionView: collectionView, to: invalidAnchor)
         
-        let finalOffset = collectionView.contentOffset.y
+        let finalOffset = await collectionView.contentOffset.y
         
         // Should have attempted some form of restoration (fallback)
         #expect(finalOffset >= 0, "Should maintain valid scroll position")
@@ -231,8 +231,8 @@ struct ThreadScrollPositionTrackerTests {
         let collectionView = createMockCollectionView()
         
         // Test scenario: user is viewing main post, then scrolls up to load more parents
-        collectionView.setContentOffset(CGPoint(x: 0, y: 350), animated: false) // Main post mostly visible
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 350), animated: false) // Main post mostly visible
+        await collectionView.layoutIfNeeded()
         
         guard let anchor = tracker.captureScrollAnchor(collectionView: collectionView) else {
             Issue.record("Failed to capture anchor")
@@ -243,10 +243,10 @@ struct ThreadScrollPositionTrackerTests {
         
         // Verify main post visibility calculation
         let mainPostIndexPath = IndexPath(item: 0, section: 2)
-        if let attributes = collectionView.layoutAttributesForItem(at: mainPostIndexPath) {
-            let visibleBounds = collectionView.bounds
-            let visibleArea = attributes.frame.intersection(visibleBounds)
-            let visibilityRatio = visibleArea.height / attributes.frame.height
+        if let attributes = await collectionView.layoutAttributesForItem(at: mainPostIndexPath) {
+            let visibleBounds = await collectionView.bounds
+            let visibleArea = await attributes.frame.intersection(visibleBounds)
+            let visibilityRatio = await visibleArea.height / attributes.frame.height
             
             #expect(visibilityRatio >= 0.1, "Main post should meet minimum visibility threshold")
         }
@@ -266,8 +266,8 @@ struct ThreadScrollPositionTrackerTests {
         ]
         
         for (position, expectedSection) in testPositions {
-            collectionView.setContentOffset(CGPoint(x: 0, y: position), animated: false)
-            collectionView.layoutIfNeeded()
+            await collectionView.setContentOffset(CGPoint(x: 0, y: position), animated: false)
+            await collectionView.layoutIfNeeded()
             
             let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
             
@@ -294,8 +294,8 @@ struct ThreadScrollPositionTrackerTests {
     @Test("Handle empty collection view")
     func handleEmptyCollectionView() async {
         let tracker = ThreadScrollPositionTracker()
-        let layout = UICollectionViewFlowLayout()
-        let collectionView = UICollectionView(frame: CGRect(x: 0, y: 0, width: 320, height: 568), collectionViewLayout: layout)
+        let layout = await UICollectionViewFlowLayout()
+        let collectionView = await UICollectionView(frame: CGRect(x: 0, y: 0, width: 320, height: 568), collectionViewLayout: layout)
         
         // No data source - empty collection view
         let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
@@ -324,7 +324,7 @@ struct ThreadScrollPositionTrackerTests {
             sectionType: .mainPost
         )
         
-        let originalOffset = collectionView.contentOffset.y
+        let originalOffset = await collectionView.contentOffset.y
         tracker.restoreScrollPosition(collectionView: collectionView, to: mockAnchor)
         
         #expect(collectionView.contentOffset.y == originalOffset, "Should not restore when tracking is disabled")
@@ -338,20 +338,20 @@ struct ThreadScrollPositionTrackerTests {
     @Test("Handle extremely large content")
     func handleLargeContent() async {
         let tracker = ThreadScrollPositionTracker()
-        let layout = UICollectionViewFlowLayout()
+        let layout = await UICollectionViewFlowLayout()
         layout.itemSize = CGSize(width: 320, height: 1000) // Very tall items
         
-        let collectionView = UICollectionView(frame: CGRect(x: 0, y: 0, width: 320, height: 568), collectionViewLayout: layout)
-        collectionView.dataSource = createMockCollectionView().dataSource
-        collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "Cell")
+        let collectionView = await UICollectionView(frame: CGRect(x: 0, y: 0, width: 320, height: 568), collectionViewLayout: layout)
+        collectionView.dataSource = await createMockCollectionView().dataSource
+        await collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "Cell")
         
-        collectionView.reloadData()
-        collectionView.layoutIfNeeded()
+        await collectionView.reloadData()
+        await collectionView.layoutIfNeeded()
         
         // Scroll to large offset
         let largeOffset: CGFloat = 3000
-        collectionView.setContentOffset(CGPoint(x: 0, y: largeOffset), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: largeOffset), animated: false)
+        await collectionView.layoutIfNeeded()
         
         let anchor = tracker.captureScrollAnchor(collectionView: collectionView)
         
@@ -370,8 +370,8 @@ struct ThreadScrollPositionTrackerTests {
         let tracker = ThreadScrollPositionTracker()
         let collectionView = createMockCollectionView()
         
-        collectionView.setContentOffset(CGPoint(x: 0, y: 250), animated: false)
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 250), animated: false)
+        await collectionView.layoutIfNeeded()
         
         let startTime = CFAbsoluteTimeGetCurrent()
         
@@ -399,8 +399,8 @@ struct ThreadScrollPositionTrackerIntegrationTests {
         let collectionView = createCollectionViewWithDynamicContent()
         
         // Initial state: 3 parent posts, 1 main post, 2 replies
-        collectionView.setContentOffset(CGPoint(x: 0, y: 300), animated: false) // Main post visible
-        collectionView.layoutIfNeeded()
+        await collectionView.setContentOffset(CGPoint(x: 0, y: 300), animated: false) // Main post visible
+        await collectionView.layoutIfNeeded()
         
         // Capture anchor before loading more parents
         guard let anchorBeforeLoad = tracker.captureScrollAnchor(collectionView: collectionView) else {
@@ -429,9 +429,9 @@ struct ThreadScrollPositionTrackerIntegrationTests {
         
         // Verify main post is still visible in similar viewport position
         let mainPostIndexPath = IndexPath(item: 0, section: 2)
-        if let mainPostAttributes = collectionView.layoutAttributesForItem(at: mainPostIndexPath) {
-            let mainPostVisibleY = mainPostAttributes.frame.origin.y - collectionView.contentOffset.y
-            let viewportHeight = collectionView.bounds.height
+        if let mainPostAttributes = await collectionView.layoutAttributesForItem(at: mainPostIndexPath) {
+            let mainPostVisibleY = await mainPostAttributes.frame.origin.y - collectionView.contentOffset.y
+            let viewportHeight = await collectionView.bounds.height
             
             #expect(mainPostVisibleY >= 0 && mainPostVisibleY <= viewportHeight, "Main post should remain visible after parent loading")
             

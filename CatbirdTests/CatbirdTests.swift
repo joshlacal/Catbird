@@ -21,8 +21,9 @@ struct CatbirdTests {
     func testContentWarningForNSFWLabels() async throws {
         // Create a test label for NSFW content
         let nsfwLabel = ComAtprotoLabelDefs.Label(
+            ver: nil,
             src: try DID(didString: "did:plc:test"),
-            uri: "at://test.example/app.bsky.feed.post/1",
+            uri: try URI(uriString: "at://test.example/app.bsky.feed.post/1"),
             cid: nil,
             val: "nsfw",
             neg: nil,
@@ -51,10 +52,12 @@ struct CatbirdTests {
     func testContentWarningInitialBlurState() async throws {
         // Create a test label for graphic content
         let graphicLabel = ComAtprotoLabelDefs.Label(
+            ver: nil,
             src: try DID(didString: "did:plc:test"),
-            uri: "at://test.example/app.bsky.feed.post/1",
+            uri: try URI(uriString: "at://test.example/app.bsky.feed.post/1"),
             cid: nil,
             val: "graphic",
+            neg: nil,
             cts: ATProtocolDate(date: Date()),
             exp: nil,
             sig: nil

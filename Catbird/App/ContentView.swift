@@ -371,7 +371,7 @@ struct MainContentView18: View {
               feedsAction: {},
               showFeedsButton: false
             )
-            .offset(y: -80)  // Position FAB above tab bar
+            .offset(y: -100)  // Position FAB above tab bar
           }
         } else {
           // If no FAB, still provide space for tab bar
@@ -625,7 +625,7 @@ struct MainContentView17: View {
               feedsAction: {},
               showFeedsButton: false
             )
-            .offset(y: -80)  // Position FAB above tab bar
+            .offset(y: -100)  // Position FAB above tab bar
           }
         } else {
           // If no FAB, still provide space for tab bar
