@@ -142,8 +142,10 @@ struct AppearanceSettingsView: View {
             }
         }
         .navigationTitle("Appearance")
-        .toolbarTitleDisplayMode(.inline)
-        .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+        .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
         // No manual sync needed - direct binding to AppSettings
     }
 }
@@ -265,15 +267,15 @@ struct ColorSchemePreview: View {
         if !isDarkMode {
             return .white
         } else {
-            return isBlackMode ? .black : Color(.systemGray6)
+            return isBlackMode ? .black : Color.systemGray6
         }
     }
     
     var cardBackgroundColor: Color {
         if !isDarkMode {
-            return Color(.secondarySystemBackground)
+            return Color(platformColor: PlatformColor.platformSecondarySystemBackground)
         } else {
-            return isBlackMode ? Color(.systemGray6) : Color(.systemGray5)
+            return isBlackMode ? Color.systemGray6 : Color.systemGray5
         }
     }
     

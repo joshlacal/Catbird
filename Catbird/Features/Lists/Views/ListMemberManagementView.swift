@@ -273,7 +273,7 @@ struct ListMemberManagementView: View {
       }
     }
     .toolbar {
-      ToolbarItem(placement: .navigationBarTrailing) {
+      ToolbarItem(placement: .primaryAction) {
         if !viewModel.members.isEmpty {
           Menu {
             Button("Refresh") {
@@ -487,7 +487,11 @@ struct ListMemberManagementView: View {
           }
         }
       }
+#if os(iOS)
       .listStyle(.insetGrouped)
+#elseif os(macOS)
+      .listStyle(.inset)
+#endif
     }
   }
   

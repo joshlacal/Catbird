@@ -452,7 +452,7 @@ struct SolariumShimmerModifier: ViewModifier {
                         )
                     )
                     .rotationEffect(.degrees(angle))
-                    .offset(x: shimmerOffset * UIScreen.main.bounds.width)
+                    .offset(x: shimmerOffset * PlatformScreenInfo.width)
                     .animation(
                         .easeInOut(duration: 2)
                         .repeatForever(autoreverses: false),

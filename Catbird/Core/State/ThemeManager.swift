@@ -1,5 +1,9 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import OSLog
 
 /// Manages theme application throughout the app
@@ -89,6 +93,7 @@ import OSLog
     
     /// Apply current theme settings to all windows
     private func applyToAllWindows() async {
+        #if os(iOS)
         await MainActor.run {
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
                 logger.warning("No window scene found")
@@ -120,10 +125,24 @@ import OSLog
             
             logger.info("Theme applied to \(windowScene.windows.count) windows")
         }
+        #elseif os(macOS)
+        await MainActor.run {
+            // macOS window appearance handling
+            for window in NSApplication.shared.windows {
+                if let override = colorSchemeOverride {
+                    window.appearance = override == .dark ? NSAppearance(named: .darkAqua) : NSAppearance(named: .aqua)
+                } else {
+                    window.appearance = nil  // Use system appearance
+                }
+            }
+            logger.info("Theme applied to \(NSApplication.shared.windows.count) windows")
+        }
+        #endif
     }
     
     /// Apply typography theming to navigation bars (colors handled by system)
     private func applyToNavigationBar() async {
+        #if os(iOS)
         await MainActor.run {
             // Create base appearances with system defaults (no custom colors)
             let standardAppearance = UINavigationBarAppearance()
@@ -147,6 +166,7 @@ import OSLog
             
             logger.info("Applied typography theming to navigation bars (system colors preserved)")
         }
+        #endif
     }
     
     /// Apply UI component themes in batches to reduce blocking
@@ -168,6 +188,7 @@ import OSLog
     
     /// Optimized navigation bar update that reduces redundant work
     private func optimizedNavigationBarUpdate() async {
+        #if os(iOS)
         let now = Date()
         
         // Debounce to prevent infinite loops
@@ -188,10 +209,12 @@ import OSLog
         
         // Do the force update with minimal recursion
         await performOptimizedForceUpdate()
+        #endif
     }
     
     /// Perform force update with minimal recursion and better performance
     private func performOptimizedForceUpdate() async {
+        #if os(iOS)
         // Ensure we're on the main thread for UI operations
         await MainActor.run {
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
@@ -206,9 +229,11 @@ import OSLog
                 }
             }
         }
+        #endif
     }
     
     /// Efficiently find all navigation controllers without deep recursion
+    #if os(iOS)
     private func findAllNavigationControllers(in viewController: UIViewController?) -> [UINavigationController] {
         var navControllers: [UINavigationController] = []
         var queue: [UIViewController] = []
@@ -233,8 +258,10 @@ import OSLog
         
         return navControllers
     }
+    #endif
     
     /// Update a single navigation bar efficiently
+    #if os(iOS)
     private func updateSingleNavigationBar(_ navBar: UINavigationBar) {
         // Ensure we're on the main thread for UI operations
         guard Thread.isMainThread else {
@@ -257,9 +284,11 @@ import OSLog
         // Force immediate update (only on main thread)
         navBar.setNeedsLayout()
     }
+    #endif
     
     /// Force update all navigation bars typography (colors handled by system)
     func forceUpdateNavigationBars() {
+        #if os(iOS)
         let now = Date()
         
         // Debounce to prevent infinite loops
@@ -284,10 +313,12 @@ import OSLog
                 self.performLegacyForceUpdate()
             }
         }
+        #endif
     }
     
     /// Perform the legacy force update on main thread
     private func performLegacyForceUpdate() {
+        #if os(iOS)
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
         
         for window in windowScene.windows {
@@ -301,8 +332,10 @@ import OSLog
             window.setNeedsDisplay()
             window.layoutIfNeeded()
         }
+        #endif
     }
-    
+#if os(iOS)
+
     /// Aggressively find and update all UINavigationBar typography
     private func forceUpdateAllNavigationBarInstances(in window: UIWindow) {
         func findNavigationBars(in view: UIView) {
@@ -335,8 +368,10 @@ import OSLog
         
         findNavigationBars(in: window)
     }
-    
+#endif // os(iOS)
+
     /// Recursively update navigation bars in view controller hierarchy
+    #if os(iOS)
     private func updateNavigationBarsRecursively(in viewController: UIViewController?) {
         guard let vc = viewController else { return }
         
@@ -372,6 +407,7 @@ import OSLog
             updateNavigationBarsRecursively(in: presented)
         }
     }
+    #endif
     
     // MARK: - SwiftUI Theme Colors
     
@@ -385,9 +421,9 @@ import OSLog
         case (.dark, .dim):
             return Color(red: 0.18, green: 0.18, blue: 0.20)
         case (.light, _):
-            return Color(.systemBackground)
+            return Color.systemBackground
         default:
-            return Color(.systemBackground)
+            return Color.systemBackground
         }
     }
     
@@ -412,6 +448,7 @@ import OSLog
     
     /// Apply theme to toolbars
     private func applyToToolbar() async {
+        #if os(iOS)
         await MainActor.run {
             let appearance = UIToolbarAppearance()
             
@@ -439,10 +476,12 @@ import OSLog
                 }
             }
         }
+        #endif
     }
     
     /// Apply theme to table views
     private func applyToTableView() async {
+        #if os(iOS)
         let isDarkMode = await getCurrentEffectiveDarkMode()
         await MainActor.run {
             if isDarkMode {
@@ -455,16 +494,19 @@ import OSLog
                 UITableViewHeaderFooterView.appearance().tintColor = UIColor(Color.dynamicSecondaryBackground(self, currentScheme: .dark))
             }
         }
+        #endif
     }
     
     /// Apply theme to collection views
     private func applyToCollectionView() async {
+        #if os(iOS)
         let isDarkMode = await getCurrentEffectiveDarkMode()
         await MainActor.run {
             if isDarkMode {
                 UICollectionView.appearance().backgroundColor = UIColor(Color.dynamicBackground(self, currentScheme: .dark))
             }
         }
+        #endif
     }
     
     /// Get current effective dark mode state
@@ -476,6 +518,7 @@ import OSLog
             return true
         case nil:
             // Follow system
+            #if os(iOS)
             return await MainActor.run {
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first {
@@ -483,6 +526,16 @@ import OSLog
                 }
                 return false
             }
+            #elseif os(macOS)
+            return await MainActor.run {
+                if let window = NSApplication.shared.mainWindow {
+                    return window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                }
+                return false
+            }
+            #else
+            return false
+            #endif
         @unknown default:
             return false
         }
@@ -508,6 +561,7 @@ import OSLog
     
     // MARK: - UIKit Bridge Methods
     
+    #if os(iOS)
     /// Apply typography theming to a specific navigation bar instance
     /// This is useful for UIKit views embedded in SwiftUI (only applies fonts, not colors)
     func applyTheme(to navigationBar: UINavigationBar) {
@@ -526,7 +580,9 @@ import OSLog
             toolbar.scrollEdgeAppearance = appearance
         }
     }
+    #endif
     
+    #if os(iOS)
     private func configureToolbarAppearance(_ appearance: UIToolbarAppearance, isDark: Bool) {
 //        if isDark {
 //            if darkThemeMode == .black {
@@ -543,6 +599,7 @@ import OSLog
             appearance.configureWithTransparentBackground()
 //        }
     }
+    #endif
 }
 
 // MARK: - View Modifiers

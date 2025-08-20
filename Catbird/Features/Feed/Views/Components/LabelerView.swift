@@ -64,8 +64,8 @@ struct LabelerView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground))
-                .shadow(color: Color(.systemGray4).opacity(0.2), radius: 8, x: 0, y: 2)
+                .fill(colorScheme == .dark ? Color.systemGray6 : Color.systemBackground)
+                .shadow(color: Color.systemGray4.opacity(0.2), radius: 8, x: 0, y: 2)
         )
     }
     
@@ -208,8 +208,8 @@ struct LabelerDetailedView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground))
-                .shadow(color: Color(.systemGray4).opacity(0.2), radius: 8, x: 0, y: 2)
+                .fill(colorScheme == .dark ? Color.systemGray6 : Color.systemBackground)
+                .shadow(color: Color.systemGray4.opacity(0.2), radius: 8, x: 0, y: 2)
         )
     }
     

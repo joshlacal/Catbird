@@ -40,6 +40,13 @@ struct GifPickerView: View {
     
     let onGifSelected: (TenorGif) -> Void
     
+    private var gridColumns: [GridItem] {
+        [
+            GridItem(.flexible(), spacing: 12),
+            GridItem(.flexible(), spacing: 12)
+        ]
+    }
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -56,9 +63,11 @@ struct GifPickerView: View {
                 }
             }
             .navigationTitle("Add GIF")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
@@ -120,13 +129,13 @@ struct GifPickerView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(.systemGray6))
+            .background(Color(platformColor: .platformSystemGray6))
             .cornerRadius(10)
             .padding(.horizontal, 16)
             .padding(.top, 8)
             
             Rectangle()
-                .fill(Color(.systemGray4))
+                .fill(Color(platformColor: .platformSystemGray4))
                 .frame(height: 0.5)
                 .padding(.top, 16)
         }
@@ -137,13 +146,10 @@ struct GifPickerView: View {
     private var categoriesSection: some View {
         ScrollView {
             LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 12),
-                    GridItem(.flexible(), spacing: 12)
-                ],
+                columns: gridColumns,
                 spacing: 16
             ) {
-                ForEach(categories) { category in
+                ForEach(categories, id: \.id) { (category: TenorCategory) in
                     CategoryCardView(category: category) {
                         Task {
                             await searchGifs(query: category.searchterm)
@@ -162,7 +168,7 @@ struct GifPickerView: View {
     private var suggestionsSection: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(suggestions, id: \.self) { suggestion in
+                ForEach(suggestions, id: \.self) { (suggestion: String) in
                     Button(action: {
                         searchText = suggestion
                         showingSuggestions = false
@@ -194,7 +200,7 @@ struct GifPickerView: View {
                 }
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color(platformColor: .platformSystemBackground))
     }
     
     // MARK: - Search Results Section
@@ -232,7 +238,7 @@ struct GifPickerView: View {
     private var gifGridSection: some View {
         ScrollView {
             MasonryLayout(columns: 2, spacing: 8) {
-                ForEach(gifs) { gif in
+                ForEach(gifs, id: \.id) { (gif: TenorGif) in
                     GifGridItemView(gif: gif) {
                         onGifSelected(gif)
                         dismiss()
@@ -393,7 +399,7 @@ struct CategoryCardView: View {
     @ViewBuilder
     private var loadingView: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(Color(.systemGray6))
+            .fill(Color(platformColor: .platformSystemGray6))
             .frame(height: 100)
             .overlay(
                 ProgressView()
@@ -404,7 +410,7 @@ struct CategoryCardView: View {
     @ViewBuilder
     private var placeholderView: some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(Color(.systemGray5))
+            .fill(Color(platformColor: .platformSystemGray5))
             .frame(height: 100)
             .overlay(
                 VStack(spacing: 4) {
@@ -468,7 +474,7 @@ struct AnimatedCategoryGifView: View {
             } else {
                 // Loading state
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
+                    .fill(Color(platformColor: .platformSystemGray6))
                     .overlay(
                         ProgressView()
                             .controlSize(.regular)

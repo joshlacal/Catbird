@@ -2,6 +2,8 @@ import SwiftUI
 import OSLog
 import Petrel
 
+#if os(iOS)
+
 // MARK: - Conversation List View
 
 struct ConversationListView: View {
@@ -221,3 +223,5 @@ struct ConversationListView: View {
     }
   }
 }
+
+#endif

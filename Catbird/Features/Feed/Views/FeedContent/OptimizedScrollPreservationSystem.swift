@@ -5,6 +5,7 @@
 //  Optimized scroll preservation using iOS 18 UIUpdateLink for pixel-perfect, frame-synchronized updates
 //
 
+#if os(iOS)
 import UIKit
 import os
 
@@ -63,7 +64,7 @@ final class OptimizedScrollPreservationSystem {
     private let logger = Logger(subsystem: "blue.catbird", category: "OptimizedScrollPreservation")
     private var activeUpdateLink: UIUpdateLink?
     private var activeUpdateContext: UpdateContext?
-    private let displayScale = UIScreen.main.scale
+    private let displayScale = PlatformScreenInfo.scale
     private let frameRateManager = AdaptiveFrameRateManager()
     private let telemetryActor = ScrollPerformanceTelemetryActor()
     
@@ -79,9 +80,9 @@ final class OptimizedScrollPreservationSystem {
         self.abTestingFramework = abTestingFramework
         
         // Detect ProMotion display capability
-        self.isProMotionDisplay = UIScreen.main.maximumFramesPerSecond > 60
+        self.isProMotionDisplay = PlatformScreenInfo.isProMotionDisplay
         
-        logger.info("📱 Initialized with ProMotion: \(self.isProMotionDisplay), max FPS: \(UIScreen.main.maximumFramesPerSecond)")
+        logger.info("📱 Initialized with ProMotion: \(self.isProMotionDisplay), max FPS: \(PlatformScreenInfo.maximumFramesPerSecond)")
     }
     
     // MARK: - UIUpdateLink Management
@@ -125,7 +126,7 @@ final class OptimizedScrollPreservationSystem {
         let adaptiveFrameRate = frameRateManager.getOptimalFrameRate(
             for: .scrollRestoration,
             isProMotionDisplay: isProMotionDisplay,
-            batteryLevel: UIDevice.current.batteryLevel
+            batteryLevel: PlatformDeviceInfo.batteryLevel
         )
         updateLink.preferredFrameRateRange = adaptiveFrameRate
         
@@ -204,7 +205,7 @@ final class OptimizedScrollPreservationSystem {
                     await telemetryActor.recordScrollRestoration(
                         success: true,
                         error: error,
-                        frameRate: Double(UIScreen.main.maximumFramesPerSecond),
+                        frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
                         duration: currentTime - (context?.startTime ?? currentTime)
                     )
                     
@@ -783,3 +784,26 @@ extension FeedGapLoadingManager.GapLoadingStrategy {
         useBackgroundLoading: false
     )
 }
+
+#else
+
+// MARK: - macOS Stub
+
+@available(macOS 15.0, *)
+@MainActor
+final class OptimizedScrollPreservationSystem {
+    
+    init() {
+        // No-op on macOS
+    }
+    
+    func preserveScrollPosition() {
+        // No-op on macOS
+    }
+    
+    func restoreScrollPosition() {
+        // No-op on macOS
+    }
+}
+
+#endif

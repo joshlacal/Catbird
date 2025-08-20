@@ -1,6 +1,9 @@
 import SwiftUI
 import OSLog
 
+#if os(iOS)
+import UIKit
+
 struct ChatAccountSettingsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
@@ -57,9 +60,11 @@ struct ChatAccountSettingsView: View {
         }
       }
       .navigationTitle("Chat Account")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Done") {
             dismiss()
           }
@@ -190,7 +195,9 @@ struct ChatActivityLogView: View {
       }
     }
     .navigationTitle("Activity Log")
+    #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
+    #endif
     .overlay {
       if isLoading && logEntries.isEmpty {
         ProgressView("Loading activity...")
@@ -264,3 +271,5 @@ struct ChatShareSheet: UIViewControllerRepresentable {
   
   func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+
+#endif

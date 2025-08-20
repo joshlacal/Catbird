@@ -5,8 +5,10 @@
 //  Created by Claude Code on 6/11/25.
 //
 
+#if os(iOS)
 import SwiftUI
 import WidgetKit
+import UIKit
 
 // MARK: - Widget Theme Provider
 
@@ -86,7 +88,7 @@ extension Color {
         case (.dark, .dim):
             return Color(red: 0.18, green: 0.18, blue: 0.20)
         default:
-            return Color(.systemBackground)
+            return Color(UIColor.systemBackground)
         }
     }
     
@@ -101,7 +103,7 @@ extension Color {
         case (.dark, .dim):
             return Color(red: 0.25, green: 0.25, blue: 0.27)
         default:
-            return Color(.secondarySystemBackground)
+            return Color(UIColor.secondarySystemBackground)
         }
     }
     
@@ -116,7 +118,7 @@ extension Color {
         case (.dark, .dim):
             return Color(red: 0.22, green: 0.22, blue: 0.24)
         default:
-            return Color(.tertiarySystemBackground)
+            return Color(UIColor.tertiarySystemBackground)
         }
     }
     
@@ -163,7 +165,7 @@ extension Color {
         } else if colorScheme == .dark {
             return Color(white: 0.45)
         } else {
-            return Color(.tertiaryLabel)
+            return Color(UIColor.tertiaryLabel)
         }
     }
     
@@ -180,7 +182,7 @@ extension Color {
         case (.dark, .dim):
             return Color(white: 0.40, opacity: 0.5)
         default:
-            return Color(.systemGray5)
+            return Color(UIColor.systemGray5)
         }
     }
     
@@ -195,7 +197,7 @@ extension Color {
         case (.dark, .dim):
             return Color(white: 0.45, opacity: 0.6)
         default:
-            return Color(.separator)
+            return Color(UIColor.separator)
         }
     }
 }
@@ -284,3 +286,4 @@ extension View {
             .widgetCornerRadius()
     }
 }
+#endif

@@ -55,7 +55,7 @@ struct AltTextEditorView: View {
                 VStack(alignment: .trailing) {
                     TextField("Describe this content...", text: $editedText, axis: .vertical)
                         .padding()
-                        .background(Color(.systemGray6))
+                        .background(Color(platformColor: PlatformColor.platformSystemGray6))
                         .cornerRadius(12)
                         .frame(minHeight: 100, maxHeight: 150)
                         .onChange(of: editedText) { _, newValue in
@@ -79,7 +79,9 @@ struct AltTextEditorView: View {
             }
             .padding(.vertical)
             .navigationTitle("Edit Description")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

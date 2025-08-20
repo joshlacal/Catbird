@@ -72,7 +72,7 @@ struct ExternalEmbedView: View {
             postID: postID
         )
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
+        .frame(maxHeight: PlatformScreenInfo.height * 0.6)
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }

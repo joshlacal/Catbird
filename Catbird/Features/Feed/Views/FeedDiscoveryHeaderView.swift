@@ -1,6 +1,12 @@
 import SwiftUI
 import Petrel
 import OSLog
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 
 struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
@@ -23,11 +29,11 @@ struct FeedDiscoveryHeaderView: View {
     .background(
       // Simplified background for debugging - removed shadow that might block touches
       Rectangle()
-        .fill(Color(.systemBackground))
+        .fill(Color(platformColor: .platformSystemBackground))
     )
     .overlay(
       Rectangle()
-        .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+        .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.1), lineWidth: 0.5)
     )
     // Removed explicit hit testing configurations - let SwiftUI handle naturally
   }
@@ -53,7 +59,7 @@ struct FeedDiscoveryHeaderView: View {
     .clipShape(RoundedRectangle(cornerRadius: 12))
     .overlay(
       RoundedRectangle(cornerRadius: 12)
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+        .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.2), lineWidth: 0.5)
     )
   }
   
@@ -226,8 +232,13 @@ struct FeedDiscoveryHeaderView: View {
   private func likeFeed() {
     logger.info("Like button tapped for feed: \(feed.uri)")
     
+    // Provide haptic feedback
+    #if os(iOS)
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
+    #elseif os(macOS)
+    NSSound.beep()
+    #endif
     
     Task {
       do {
@@ -272,33 +283,58 @@ struct FeedDiscoveryHeaderView: View {
   private func shareFeed() {
     logger.info("Share button tapped for feed: \(feed.uri)")
     
+    // Provide haptic feedback
+    #if os(iOS)
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
+    #elseif os(macOS)
+    NSSound.beep()
+    #endif
     
     guard let url = URL(string: feed.uri.uriString()) else { 
       logger.error("Failed to create URL from feed URI: \(feed.uri.uriString())")
       return 
     }
     
-    let activityVC = UIActivityViewController(
-      activityItems: [url],
-      applicationActivities: nil
-    )
-    
-    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-       let window = windowScene.windows.first {
-      window.rootViewController?.present(activityVC, animated: true)
-      logger.info("Presented share sheet for feed")
-    } else {
-      logger.error("Could not find window to present share sheet")
+    // Use platform-specific sharing
+    #if os(iOS)
+    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let rootViewController = windowScene.windows.first?.rootViewController else {
+      logger.error("Could not find root view controller for sharing")
+      return
     }
+    
+    let activityViewController = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    
+    // Handle iPad presentation
+    if let popover = activityViewController.popoverPresentationController {
+      popover.sourceView = rootViewController.view
+      popover.sourceRect = CGRect(x: rootViewController.view.bounds.midX, 
+                                  y: rootViewController.view.bounds.midY, 
+                                  width: 0, height: 0)
+      popover.permittedArrowDirections = []
+    }
+    
+    rootViewController.present(activityViewController, animated: true) {
+      self.logger.info("Share sheet presented for feed")
+    }
+    #elseif os(macOS)
+    let sharingService = NSSharingService.sharingServices(forItems: [url]).first
+    sharingService?.perform(withItems: [url])
+    self.logger.info("Share sheet presented for feed")
+    #endif
   }
   
   private func reportFeed() {
     logger.info("Report button tapped for feed: \(feed.uri)")
     
+    // Provide haptic feedback
+    #if os(iOS)
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
+    #elseif os(macOS)
+    NSSound.beep()
+    #endif
     
     Task {
       do {

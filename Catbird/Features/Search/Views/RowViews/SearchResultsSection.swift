@@ -21,7 +21,7 @@ struct ResultsSection<Content: View>: View {
                 .padding(.vertical, 10)
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
         }
     }
 }

@@ -84,7 +84,7 @@ struct ContentLabelView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(.secondarySystemBackground).opacity(0.7))
+            .background(Color.secondary.opacity(0.1))
             .cornerRadius(6)
         }
     }
@@ -287,7 +287,7 @@ struct ContentLabelManager<Content: View>: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 140)
-        .background(Color(.systemGray6))
+        .background(Color(platformColor: .platformSystemGray6))
         .cornerRadius(12)
     }
     

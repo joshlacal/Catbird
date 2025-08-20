@@ -7,9 +7,14 @@
 //  Coordinates batch updates with display refresh cycle for smooth animations
 //
 
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
 
+#if os(iOS)
 @available(iOS 16.0, *)
 final class BatchUpdateCoordinator {
     
@@ -95,12 +100,21 @@ final class BatchUpdateCoordinator {
 extension BatchUpdateCoordinator {
     
     /// Configuration for different update scenarios
-    enum UpdateScenario {
+    enum UpdateScenario: CustomStringConvertible {
         case refresh          // Pull-to-refresh with new content
         case loadMore        // Infinite scroll loading
         case liveUpdate      // Real-time content changes
         case userAction      // User-initiated changes
         
+        public var description: String {
+            switch self {
+            case .refresh: return "refresh"
+            case .loadMore: return "loadMore"
+            case .liveUpdate: return "liveUpdate"
+            case .userAction: return "userAction"
+            }
+        }
+
         var stabilityDuration: CFTimeInterval {
             switch self {
             case .refresh:
@@ -141,3 +155,75 @@ extension BatchUpdateCoordinator {
         return stableDuration >= scenario.stabilityDuration
     }
 }
+#else
+// macOS stub implementation
+@available(macOS 13.0, *)
+final class BatchUpdateCoordinator {
+    private let logger = Logger(subsystem: "blue.catbird", category: "BatchUpdateCoordinator")
+    private var lastStableFrameTime: CFTimeInterval = 0
+    private let stabilityRequiredDuration: CFTimeInterval = 0.033
+    
+    /// Determines if the collection view is ready for batch updates (macOS stub)
+    /// - Parameter collectionView: The collection view to check (Any type for macOS compatibility)
+    /// - Returns: Always true on macOS since batch update coordination is not needed
+    func isReadyForBatchUpdate(_ collectionView: Any) -> Bool {
+        logger.debug("BatchUpdateCoordinator returning ready state for macOS (stub implementation)")
+        return true
+    }
+    
+    /// Resets the stability timer (macOS stub)
+    func resetStabilityTimer() {
+        lastStableFrameTime = CACurrentMediaTime()
+        logger.debug("Reset stability timer (macOS stub)")
+    }
+    
+    /// Configuration for different update scenarios
+    enum UpdateScenario: CustomStringConvertible {
+        case refresh          // Pull-to-refresh with new content
+        case loadMore        // Infinite scroll loading
+        case liveUpdate      // Real-time content changes
+        case userAction      // User-initiated changes
+        
+        public var description: String {
+            switch self {
+            case .refresh: return "refresh"
+            case .loadMore: return "loadMore"
+            case .liveUpdate: return "liveUpdate"
+            case .userAction: return "userAction"
+            }
+        }
+
+        var stabilityDuration: CFTimeInterval {
+            switch self {
+            case .refresh:
+                return 0.050 // ~3 frames - allow for refresh animation
+            case .loadMore:
+                return 0.016 // ~1 frame - immediate for smooth scrolling
+            case .liveUpdate:
+                return 0.033 // ~2 frames - balance responsiveness with stability
+            case .userAction:
+                return 0.016 // ~1 frame - immediate feedback
+            }
+        }
+    }
+    
+    /// Checks readiness for specific update scenario (macOS stub)
+    /// - Parameters:
+    ///   - scenario: The update scenario to check
+    ///   - collectionView: The collection view (Any type for macOS compatibility)
+    /// - Returns: Always true on macOS
+    func isReady(for scenario: UpdateScenario, collectionView: Any) -> Bool {
+        logger.debug("BatchUpdateCoordinator ready for scenario \(scenario) on macOS (stub implementation)")
+        return true
+    }
+}
+
+// MARK: - Performance Configuration Extension for macOS
+@available(macOS 13.0, *)
+extension BatchUpdateCoordinator {
+    /// Convenience method for checking readiness with scenario
+    func canPerformUpdate(for scenario: UpdateScenario, collectionView: Any = NSObject()) -> Bool {
+        return isReady(for: scenario, collectionView: collectionView)
+    }
+}
+#endif

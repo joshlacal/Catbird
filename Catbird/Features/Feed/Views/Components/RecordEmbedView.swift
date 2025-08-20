@@ -88,7 +88,7 @@ struct RecordEmbedView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemBackground))
+            .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 18))
             .overlay(
                 RoundedRectangle(cornerRadius: 18)
@@ -298,7 +298,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
@@ -312,7 +312,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
@@ -326,7 +326,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)
@@ -352,7 +352,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onTapGesture {
             path.append(NavigationDestination.feed(generator.uri))
@@ -381,7 +381,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onTapGesture {
             path.append(NavigationDestination.list(list.uri))
@@ -397,7 +397,7 @@ struct RecordEmbedView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         // Use fixed sizing to prevent layout jumps
         .fixedSize(horizontal: false, vertical: true)

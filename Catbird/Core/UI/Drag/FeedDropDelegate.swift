@@ -1,5 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 struct FeedDropDelegate: DropDelegate {
@@ -14,14 +17,18 @@ struct FeedDropDelegate: DropDelegate {
   let resetDragState: () -> Void
   let appSettings: AppSettings
 
+#if os(iOS)
   let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+#endif
 
   func dropEntered(info: DropInfo) {
     guard draggedItem != nil, draggedItem != item else { return }
     MotionManager.withSpringAnimation(for: appSettings, duration: 0.3) {
       dropTargetItem = item
     }
+#if os(iOS)
     feedbackGenerator.impactOccurred(intensity: 0.7)
+#endif
   }
 
   func performDrop(info: DropInfo) -> Bool {
@@ -37,7 +44,9 @@ struct FeedDropDelegate: DropDelegate {
     let fromCategory = currentDraggedCategory
     let toCategory = category
 
+#if os(iOS)
     feedbackGenerator.impactOccurred(intensity: 1.0)
+#endif
 
     // Then do the database operations async
     Task {

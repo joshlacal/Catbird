@@ -5,6 +5,7 @@
 //  Created on 6/7/25.
 //
 
+#if os(iOS)
 import Foundation
 import SwiftUI
 import WidgetKit
@@ -70,3 +71,4 @@ struct FeedWidgetConstants {
   static let feedDataKey = "feedWidgetData"
   static let updateInterval: TimeInterval = 15 * 60 // 15 minutes
 }
+#endif

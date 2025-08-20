@@ -1,5 +1,8 @@
 import SwiftUI
 import Petrel
+#if os(iOS)
+import UIKit
+#endif
 
 struct RepostOptionsView: View {
     let post: AppBskyFeedDefs.PostView
@@ -15,9 +18,11 @@ struct RepostOptionsView: View {
             }
             .padding()
             .navigationTitle("Repost")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
@@ -30,8 +35,10 @@ struct RepostOptionsView: View {
         VStack(spacing: 20) {
             Button {
                 // Haptic feedback immediately
+#if os(iOS)
                 let generator = UIImpactFeedbackGenerator(style: .medium)
                 generator.impactOccurred()
+#endif
 
                 // Dismiss the sheet
                 dismiss()
@@ -54,7 +61,7 @@ struct RepostOptionsView: View {
                 }
                 .foregroundColor(.primary)
                 .padding()
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
                 .cornerRadius(12)
             }
 
@@ -75,7 +82,7 @@ struct RepostOptionsView: View {
                 }
                 .foregroundColor(.primary)
                 .padding()
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
                 .cornerRadius(12)
                 .opacity(post.viewer?.embeddingDisabled ?? false ? 0.3 : 1)
             }

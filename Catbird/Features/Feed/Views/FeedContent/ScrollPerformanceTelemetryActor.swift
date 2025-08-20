@@ -7,7 +7,11 @@
 //
 
 import Foundation
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
 
 /// Swift 6 Actor for thread-safe scroll performance telemetry
@@ -162,8 +166,8 @@ actor ScrollPerformanceTelemetryActor {
         scrollStrategy: String = "default"
     ) async {
         let memoryUsage = memoryMonitor.getCurrentMemoryUsage()
-        let isProMotionDisplay = await MainActor.run { UIScreen.main.maximumFramesPerSecond > 60 }
-        let batteryLevel = await MainActor.run { UIDevice.current.batteryLevel }
+        let isProMotionDisplay = await MainActor.run { PlatformScreenInfo.isProMotionDisplay }
+        let batteryLevel = await MainActor.run { PlatformDeviceInfo.batteryLevel }
         
         let metrics = ScrollRestorationMetrics(
             timestamp: CACurrentMediaTime(),

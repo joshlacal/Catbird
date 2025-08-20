@@ -280,7 +280,11 @@ final class ListManager {
       }
       
       // Parse current record
-      guard let currentList = recordData.value as? AppBskyGraphList else {
+        guard case let .knownType(value) = recordData.value else {
+        throw ListError.invalidResponse
+      }
+        
+        guard let currentList = value as? AppBskyGraphList else {
         throw ListError.invalidResponse
       }
       
@@ -478,18 +482,21 @@ final class ListManager {
         throw ListError.invalidResponse
       }
       
+        
       // Find the matching listitem record
       var targetRecord: ComAtprotoRepoListRecords.Record?
       for record in recordsData.records {
-        if let listItem = record.value as? AppBskyGraphListitem,
+          
+          if case let .knownType(listItemRecord) = record.value,
+             let listItem = listItemRecord as? AppBskyGraphListitem,
            listItem.subject.didString() == userDID,
            listItem.list.description == listURI {
           targetRecord = record
           break
         }
       }
-      
-      guard let targetRecord = targetRecord else {
+
+    guard let targetRecord = targetRecord else {
         throw ListError.memberNotInList
       }
       

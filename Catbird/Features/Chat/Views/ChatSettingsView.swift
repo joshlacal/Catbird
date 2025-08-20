@@ -1,6 +1,8 @@
 import OSLog
 import SwiftUI
 
+#if os(iOS)
+
 /// Settings view for chat-related options and actions
 struct ChatSettingsView: View {
   @Environment(AppState.self) private var appState
@@ -93,9 +95,11 @@ struct ChatSettingsView: View {
         }
       }
       .navigationTitle("Chat Settings")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Done") {
             dismiss()
           }
@@ -224,9 +228,11 @@ struct ChatDataExportView: View {
       }
       .padding()
       .navigationTitle("Export Complete")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Done") {
             dismiss()
           }
@@ -245,3 +251,4 @@ struct ChatDataExportView: View {
   ChatSettingsView()
     .environment(AppState.shared)
 }
+#endif

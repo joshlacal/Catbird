@@ -242,7 +242,7 @@ extension BlockedPostView {
     }
     
     private var blockCardBackground: Color {
-        Color(UIColor.secondarySystemGroupedBackground)
+        Color.systemGroupedBackground
     }
     
     private var blockBorderColor: Color {

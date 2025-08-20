@@ -1,9 +1,11 @@
+#if os(iOS)
 import ExyteChat
+import UIKit
+#endif
 import Foundation
 import OSLog
 import Petrel
 import SwiftUI
-import UIKit
 
 /// Data structure for post embeds in chat messages
 struct PostEmbedData: Codable {
@@ -12,6 +14,7 @@ struct PostEmbedData: Codable {
   let displayText: String
 }
 
+#if os(iOS)
 /// Manages chat operations for the Bluesky chat feature
 @Observable
 final class ChatManager: StateInvalidationSubscriber {
@@ -80,6 +83,7 @@ final class ChatManager: StateInvalidationSubscriber {
   }
   
   private func setupNotificationObservers() {
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(appDidBecomeActive),
@@ -93,6 +97,21 @@ final class ChatManager: StateInvalidationSubscriber {
       name: UIApplication.didEnterBackgroundNotification,
       object: nil
     )
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(appDidBecomeActive),
+      name: NSApplication.didBecomeActiveNotification,
+      object: nil
+    )
+    
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(appDidEnterBackground),
+      name: NSApplication.didResignActiveNotification,
+      object: nil
+    )
+    #endif
   }
   
   @objc private func appDidBecomeActive() {
@@ -1795,3 +1814,4 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 }
+#endif

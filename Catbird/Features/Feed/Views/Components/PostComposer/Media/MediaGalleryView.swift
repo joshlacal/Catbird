@@ -94,7 +94,7 @@ struct MediaGalleryView: View {
             }
             .frame(width: itemSize, height: itemSize)
             .foregroundStyle(Color.accentColor)
-            .background(Color(.systemGray6))
+            .background(Color(platformColor: PlatformColor.platformSystemGray6))
             .cornerRadius(12)
         }
         .accessibilityLabel("Add more images")

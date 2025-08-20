@@ -130,15 +130,17 @@ struct AddToListSheet: View {
     NavigationStack {
       contentView
         .navigationTitle("Add to List")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .toolbar {
-          ToolbarItem(placement: .navigationBarLeading) {
+          ToolbarItem(placement: .cancellationAction) {
             Button("Cancel") {
               dismiss()
             }
           }
           
-          ToolbarItem(placement: .navigationBarTrailing) {
+          ToolbarItem(placement: .primaryAction) {
             Button("New List") {
               viewModel.showingCreateList = true
             }
@@ -163,7 +165,9 @@ struct AddToListSheet: View {
           CreateListView()
         }
     }
+    #if os(iOS)
     .presentationDetents([.medium, .large])
+    #endif
     .presentationDragIndicator(.visible)
   }
   
@@ -238,7 +242,11 @@ struct AddToListSheet: View {
           Text("Your Lists")
         }
       }
+      #if os(iOS)
       .listStyle(.insetGrouped)
+      #else
+      .listStyle(.sidebar)
+      #endif
     }
   }
   

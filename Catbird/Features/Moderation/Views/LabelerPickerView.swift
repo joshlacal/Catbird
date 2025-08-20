@@ -38,7 +38,9 @@ struct LabelerPickerView: View {
                 }
             }
             .navigationTitle("Select Moderation Service")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

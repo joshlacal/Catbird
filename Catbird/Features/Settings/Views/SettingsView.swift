@@ -240,11 +240,13 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .appDisplayScale(appState: appState)
-      .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+      .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Done") {
             dismiss()
           }

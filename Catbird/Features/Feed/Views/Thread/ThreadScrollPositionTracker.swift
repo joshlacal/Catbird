@@ -5,9 +5,14 @@
 //  Created by Claude on 8/1/25.
 //
 
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import OSLog
 
+#if os(iOS)
 /// Specialized scroll position tracker for thread view's unique multi-section reverse infinite scroll pattern.
 /// Maintains visual position relative to the main post when parent posts are loaded above existing content.
 @available(iOS 16.0, *)
@@ -392,3 +397,52 @@ final class ThreadScrollPositionTracker {
     isTracking = true
   }
 }
+#else
+/// macOS stub implementation - Thread scroll position tracking not available on macOS
+@available(macOS 13.0, *)
+final class ThreadScrollPositionTracker {
+  private let logger = Logger(
+    subsystem: "blue.catbird", category: "ThreadScrollPositionTracker")
+  
+  enum ThreadSection: Int, CaseIterable {
+    case loadMoreParents = 0
+    case parentPosts = 1
+    case mainPost = 2
+    case replies = 3
+    case bottomSpacer = 4
+  }
+  
+  struct ScrollAnchor {
+    let indexPath: IndexPath
+    let offsetY: CGFloat
+    let itemFrameY: CGFloat
+    let timestamp: Date
+    let postId: String?
+    let mainPostFrameY: CGFloat
+    let sectionType: ThreadSection
+    
+    var isMainPostAnchor: Bool {
+      return sectionType == .mainPost
+    }
+  }
+  
+  private(set) var isTracking = true
+  
+  func captureScrollAnchor(collectionView: Any) -> ScrollAnchor? {
+    logger.debug("ThreadScrollPositionTracker captureScrollAnchor called on macOS (stub implementation)")
+    return nil
+  }
+  
+  func restoreScrollPosition(collectionView: Any, to anchor: ScrollAnchor) {
+    logger.debug("ThreadScrollPositionTracker restoreScrollPosition called on macOS (stub implementation)")
+  }
+  
+  func pauseTracking() {
+    isTracking = false
+  }
+  
+  func resumeTracking() {
+    isTracking = true
+  }
+}
+#endif

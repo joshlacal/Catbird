@@ -4,6 +4,12 @@ import os
 import Petrel
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 // MARK: - Upload and Image Processing Extension
 
 extension PostComposerViewModel {
@@ -166,7 +172,7 @@ extension PostComposerViewModel {
             }
         }
 
-        if let image = UIImage(data: processedData),
+        if let image = PlatformImage(data: processedData),
            let compressed = compressImage(image, maxSizeInBytes: 900_000) {
             processedData = compressed
         }
@@ -196,22 +202,25 @@ extension PostComposerViewModel {
     }
     
     private func convertHEICToJPEG(_ data: Data) -> Data? {
-        guard let image = UIImage(data: data),
-              let jpegData = image.jpegData(compressionQuality: 0.8) else {
+        guard let image = PlatformImage(data: data) else {
             return nil
         }
+        
+        #if os(iOS)
+        guard let jpegData = image.jpegData(compressionQuality: 0.8) else {
+            return nil
+        }
+        #elseif os(macOS)
+        guard let jpegData = image.jpegImageData(compressionQuality: 0.8) else {
+            return nil
+        }
+        #endif
+        
         return jpegData
     }
     
-    private func compressImage(_ image: UIImage, maxSizeInBytes: Int) -> Data? {
-        var compressionQuality: CGFloat = 0.8
-        var imageData = image.jpegData(compressionQuality: compressionQuality)
-        
-        while let data = imageData, data.count > maxSizeInBytes && compressionQuality > 0.1 {
-            compressionQuality -= 0.1
-            imageData = image.jpegData(compressionQuality: compressionQuality)
-        }
-        
-        return imageData
+    private func compressImage(_ image: PlatformImage, maxSizeInBytes: Int) -> Data? {
+        // Use the built-in compression method from CrossPlatformImage
+        return image.compressed(maxSizeInBytes: maxSizeInBytes)
     }
 }

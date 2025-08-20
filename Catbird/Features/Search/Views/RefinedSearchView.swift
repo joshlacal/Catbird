@@ -87,12 +87,19 @@ struct RefinedSearchView: View {
             }
         }
         .navigationTitle("Search")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Users, keywords, hashtags, or feeds"
         )
+        #else
+        .searchable(
+            text: $searchText,
+            prompt: "Users, keywords, hashtags, or feeds"
+        )
+        #endif
         .searchSuggestions {
             searchSuggestionsContent
         }
@@ -100,7 +107,7 @@ struct RefinedSearchView: View {
             commitSearch()
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 searchMenuButton
             }
         }

@@ -39,8 +39,10 @@ struct AddFeedSheet: View {
                     
                     TextField("Search feeds...", text: $searchText)
                         .foregroundColor(.primary)
+                        #if os(iOS)
                         .autocapitalization(.none)
-                        .autocorrectionDisabled()
+                        #endif
+                        .autocorrectionDisabled(true)
                         .onSubmit {
                             searchForFeeds()
                         }
@@ -56,8 +58,8 @@ struct AddFeedSheet: View {
                     }
                 }
                 .padding(10)
-                .background(Color(UIColor.secondarySystemBackground))
-                .cornerRadius(10)
+                .background(Color.secondarySystemBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .padding(.horizontal)
                 .padding(.top, 10)
                 .padding(.bottom, 8)
@@ -171,18 +173,24 @@ struct AddFeedSheet: View {
             }
             .navigationTitle("Discover Feeds")
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        dismiss()
+                ToolbarItem(placement: .cancellationAction) {
+                    if #available(macOS 26.0, *) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                        .adaptiveGlassEffect(
+                            style: .regular,
+                            in: Capsule(),
+                            interactive: true
+                        )
+                    } else {
+                        Button("Done") {
+                            dismiss()
+                        }
                     }
-                    .adaptiveGlassEffect(
-                        style: .regular,
-                        in: Capsule(),
-                        interactive: true
-                    )
                 }
                 
-//                ToolbarItem(placement: .navigationBarTrailing) {
+//                ToolbarItem(placement: .primaryAction) {
 //                    Button(action: {
 //                        showSwipeableCards = true
 //                    }) {
@@ -291,7 +299,7 @@ struct AddFeedSheet: View {
         }
         .padding()
         .frame(maxWidth: .infinity)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color.secondarySystemBackground)
         .cornerRadius(16)
     }
     
@@ -375,7 +383,9 @@ struct AddFeedSheet: View {
             }
             .padding()
             .navigationTitle("Add Feed")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         }
     }
     

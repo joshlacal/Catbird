@@ -5,9 +5,14 @@
 //  Created by Josh LaCalamito on 7/4/25.
 //
 
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import OSLog
 
+#if os(iOS)
 @available(iOS 16.0, *)
 final class ScrollPositionTracker {
   private let logger = Logger(
@@ -268,3 +273,38 @@ final class ScrollPositionTracker {
     isTracking = true
   }
 }
+#else
+/// macOS stub implementation - Scroll position tracking not available on macOS
+@available(macOS 13.0, *)
+final class ScrollPositionTracker {
+  private let logger = Logger(
+    subsystem: "blue.catbird", category: "ScrollPositionTracker")
+
+  struct ScrollAnchor {
+    let indexPath: IndexPath
+    let offsetY: CGFloat
+    let itemFrameY: CGFloat
+    let timestamp: Date
+    let postId: String?
+  }
+
+  private(set) var isTracking = true
+
+  func captureScrollAnchor(collectionView: Any) -> ScrollAnchor? {
+    logger.debug("ScrollPositionTracker captureScrollAnchor called on macOS (stub implementation)")
+    return nil
+  }
+
+  func restoreScrollPosition(collectionView: Any, to anchor: ScrollAnchor) {
+    logger.debug("ScrollPositionTracker restoreScrollPosition called on macOS (stub implementation)")
+  }
+
+  func pauseTracking() {
+    isTracking = false
+  }
+
+  func resumeTracking() {
+    isTracking = true
+  }
+}
+#endif

@@ -11,12 +11,18 @@ import NukeUI
 import PhotosUI
 import OSLog
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 struct EditProfileView: View {
     @Environment(AppState.self) private var appState
     @State private var displayName: String = ""
     @State private var description: String = ""
-    @State private var avatarImage: UIImage?
-    @State private var bannerImage: UIImage?
+    @State private var avatarImage: PlatformImage?
+    @State private var bannerImage: PlatformImage?
     @State private var selectedAvatarItem: PhotosPickerItem?
     @State private var selectedBannerItem: PhotosPickerItem?
     @State private var isUploading = false
@@ -76,15 +82,17 @@ struct EditProfileView: View {
                 }
             }
             .navigationTitle("Edit Profile")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         isPresented = false
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Save") {
                         saveProfile()
                     }
@@ -112,9 +120,15 @@ struct EditProfileView: View {
             // Current/Selected Avatar
             Group {
                 if let avatarImage = avatarImage {
+                    #if os(iOS)
                     Image(uiImage: avatarImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
+                    #else
+                    Image(nsImage: avatarImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                    #endif
                 } else if let currentAvatarURL = viewModel.profile?.avatar?.uriString(),
                           let url = URL(string: currentAvatarURL) {
                     LazyImage(url: url) { state in
@@ -168,9 +182,15 @@ struct EditProfileView: View {
             // Current/Selected Banner
             Group {
                 if let bannerImage = bannerImage {
+                    #if os(iOS)
                     Image(uiImage: bannerImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
+                    #else
+                    Image(nsImage: bannerImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                    #endif
                 } else if let currentBannerURL = viewModel.profile?.banner?.uriString(),
                           let url = URL(string: currentBannerURL) {
                     LazyImage(url: url) { state in
@@ -224,7 +244,7 @@ struct EditProfileView: View {
         Task {
             do {
                 if let data = try await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
+                   let image = PlatformImage(data: data) {
                     await MainActor.run {
                         switch type {
                         case .avatar:

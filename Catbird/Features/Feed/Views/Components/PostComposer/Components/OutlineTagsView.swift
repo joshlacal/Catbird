@@ -63,7 +63,7 @@ struct OutlineTagsView: View {
       }
     }
     .padding()
-    .background(Color(.systemGray6))
+    .background(Color(platformColor: PlatformColor.platformSystemGray6))
     .cornerRadius(12)
   }
   
@@ -123,7 +123,7 @@ struct TagChip: View {
 }
 
 #Preview {
-  @State var tags: [String] = ["swift", "ios", "development"]
+  @Previewable @State var tags: [String] = ["swift", "ios", "development"]
   
   return OutlineTagsView(tags: $tags)
     .padding()

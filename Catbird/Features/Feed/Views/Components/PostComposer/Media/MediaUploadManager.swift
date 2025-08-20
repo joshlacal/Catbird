@@ -11,6 +11,12 @@ import OSLog
 import Petrel
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 /// Manages media upload operations including image and video processing
 @Observable
 final class MediaUploadManager {
@@ -62,7 +68,7 @@ final class MediaUploadManager {
     }
 
     // Compress if needed (AT Protocol limit is 1MB)
-    if let image = UIImage(data: processedData),
+    if let image = PlatformImage(data: processedData),
       let compressed = compressImage(image, maxSizeInBytes: 900_000) {
       processedData = compressed
     }
@@ -389,13 +395,12 @@ final class MediaUploadManager {
   /// Poll for video job status until complete using direct URLSession
   private func pollVideoJobStatus(jobId: String, token: String) async throws -> Blob {
     logger.debug("DEBUG: Polling video job status for jobId: \(jobId)")
-    var blob: Blob?
     var attempts = 0
     let maxAttempts = 30  // Timeout after 5 minutes (30 * 10 seconds)
     var consecutiveErrorCount = 0
     let maxConsecutiveErrors = 3
     
-    while blob == nil && attempts < maxAttempts {
+    while attempts < maxAttempts {
       attempts += 1
       logger.debug("DEBUG: Polling attempt \(attempts) of \(maxAttempts)")
 
@@ -556,22 +561,16 @@ final class MediaUploadManager {
   
   /// Cancels a server-side video processing job
   private func cancelServerSideJob(jobId: String) async {
+    logger.info("Attempting to cancel server-side job: \(jobId)")
     
-    do {
-      logger.info("Attempting to cancel server-side job: \(jobId)")
-      
-      // There's no explicit cancel endpoint in the current AT Protocol spec,
-      // but we can mark it as cancelled in our tracking
-      logger.debug("Server-side job cancellation requested for: \(jobId)")
-      
-      // In a full implementation, you might want to:
-      // 1. Store cancelled job IDs to avoid polling them
-      // 2. Implement a retry mechanism for network failures
-      // 3. Clean up any temporary resources on the server
-      
-    } catch {
-      logger.error("Failed to cancel server-side job \(jobId): \(error.localizedDescription)")
-    }
+    // There's no explicit cancel endpoint in the current AT Protocol spec,
+    // but we can mark it as cancelled in our tracking
+    logger.debug("Server-side job cancellation requested for: \(jobId)")
+    
+    // In a full implementation, you might want to:
+    // 1. Store cancelled job IDs to avoid polling them
+    // 2. Implement a retry mechanism for network failures
+    // 3. Clean up any temporary resources on the server
   }
 
   /// Creates a video embed from the uploaded blob
@@ -622,18 +621,42 @@ final class MediaUploadManager {
       return nil
     }
 
+    #if os(iOS)
     let image = UIImage(cgImage: cgImage)
     return image.jpegData(compressionQuality: 0.9)
+    #elseif os(macOS)
+    let image = NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
+    guard let tiffData = image.tiffRepresentation,
+          let bitmapRep = NSBitmapImageRep(data: tiffData) else {
+      return nil
+    }
+    return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+    #endif
   }
 
-  func compressImage(_ image: UIImage, maxSizeInBytes: Int = 900_000) -> Data? {
+  func compressImage(_ image: PlatformImage, maxSizeInBytes: Int = 900_000) -> Data? {
     var compression: CGFloat = 1.0
+    #if os(iOS)
     var imageData = image.jpegData(compressionQuality: compression)
+    #elseif os(macOS)
+    var imageData: Data?
+    if let tiffData = image.tiffRepresentation,
+       let bitmapRep = NSBitmapImageRep(data: tiffData) {
+      imageData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compression])
+    }
+    #endif
 
     // Gradually lower quality until we get under target size
     while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
       compression -= 0.1
+      #if os(iOS)
       imageData = image.jpegData(compressionQuality: compression)
+      #elseif os(macOS)
+      if let tiffData = image.tiffRepresentation,
+         let bitmapRep = NSBitmapImageRep(data: tiffData) {
+        imageData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compression])
+      }
+      #endif
     }
 
     // If we still exceed the size limit, resize the image
@@ -641,12 +664,23 @@ final class MediaUploadManager {
       let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(bestData.count))
       let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
 
+      #if os(iOS)
       UIGraphicsBeginImageContextWithOptions(newSize, false, image.scale)
       image.draw(in: CGRect(origin: .zero, size: newSize))
       let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
       UIGraphicsEndImageContext()
-
       return resizedImage?.jpegData(compressionQuality: 0.7)
+      #elseif os(macOS)
+      let resizedImage = NSImage(size: newSize, flipped: false) { rect in
+        image.draw(in: rect)
+        return true
+      }
+      if let tiffData = resizedImage.tiffRepresentation,
+         let bitmapRep = NSBitmapImageRep(data: tiffData) {
+        return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
+      }
+      return nil
+      #endif
     }
 
     return imageData

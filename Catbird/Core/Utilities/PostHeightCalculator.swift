@@ -1,9 +1,14 @@
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import Petrel
 import CoreGraphics
 import SwiftUI
 import os
 
+#if os(iOS)
 /// Calculates consistent post heights before rendering to improve scroll stability
 class PostHeightCalculator {
     // Configuration for the calculator with default values
@@ -39,9 +44,10 @@ class PostHeightCalculator {
         // Video player dimensions
         let videoControlsHeight: CGFloat
         
+        @MainActor
         static let standard = Config(
-            maxWidth: min(600, UIScreen.main.bounds.width) - 9,
-            textFont: UIFont.preferredFont(forTextStyle: .body),
+            maxWidth: min(600, PlatformScreenInfo.width) - 9,
+            textFont: UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
             lineSpacing: 1.2,
             letterSpacing: 0.2,
             verticalPadding: 12,
@@ -626,4 +632,80 @@ extension PostHeightCalculator.ThreadContext {
         )
     }
 }
+
+#else
+
+// macOS stubs - simplified height estimation
+class PostHeightCalculator {
+    static let shared = PostHeightCalculator()
+    
+    enum CalculationMode: String {
+        case compact, expanded, parentInThread, mainPost
+    }
+    
+    struct ThreadContext {
+        enum ThreadDisplayMode: String {
+            case standard, expanded, collapsed
+        }
+        
+        struct ThreadSliceItem {
+            let post: AppBskyFeedDefs.PostView
+            let parentAuthor: AppBskyActorDefs.ProfileViewBasic?
+        }
+        
+        let displayMode: ThreadDisplayMode
+        let sliceItems: [ThreadSliceItem]?
+        let hiddenCount: Int
+        
+        init(displayMode: ThreadDisplayMode = .standard, sliceItems: [ThreadSliceItem]? = nil, hiddenCount: Int = 0) {
+            self.displayMode = displayMode
+            self.sliceItems = sliceItems
+            self.hiddenCount = hiddenCount
+        }
+        
+        init(from cachedPost: CachedFeedViewPost) {
+            self.displayMode = .standard
+            self.sliceItems = nil
+            self.hiddenCount = 0
+        }
+    }
+    
+    static func estimatedHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode = .compact) -> CGFloat {
+        return 200 // Simple fixed height for macOS
+    }
+    
+    static func estimatedThreadHeight(for post: AppBskyFeedDefs.PostView, threadContext: ThreadContext, mode: CalculationMode = .compact) -> CGFloat {
+        return 250 // Simple fixed height for threads on macOS
+    }
+    
+    func calculateHeight(for post: AppBskyFeedDefs.PostView, mode: CalculationMode = .compact) -> CGFloat {
+        return 200
+    }
+    
+    func calculateThreadHeight(for post: AppBskyFeedDefs.PostView, threadContext: ThreadContext, mode: CalculationMode = .compact) -> CGFloat {
+        return 250
+    }
+    
+    func calculateParentPostHeight(for parentPost: ParentPost) -> CGFloat {
+        return 180
+    }
+    
+    func calculateReplyHeight(for replyWrapper: ReplyWrapper, showingNestedReply: Bool = false) -> CGFloat {
+        return 160
+    }
+    
+    func invalidateCache() {
+        // No-op on macOS
+    }
+    
+    func batchCalculateHeights(for posts: [AppBskyFeedDefs.PostView], mode: CalculationMode = .compact) -> [String: CGFloat] {
+        var results: [String: CGFloat] = [:]
+        for post in posts {
+            results[post.uri.uriString()] = 200
+        }
+        return results
+    }
+}
+
+#endif
 

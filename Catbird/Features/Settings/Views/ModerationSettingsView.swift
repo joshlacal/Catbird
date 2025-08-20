@@ -242,9 +242,11 @@ struct ModerationSettingsView: View {
             }
         }
         .navigationTitle("Moderation")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .appDisplayScale(appState: appState)
-        .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+        .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
         .task {
             await loadPreferences()
             await loadLabelers()
@@ -526,7 +528,9 @@ struct ModerationListView<T: Identifiable>: View {
             }
         }
         .navigationTitle(title)
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     }
     
     private func removeModerationAction(forId id: String) async {
@@ -630,7 +634,7 @@ struct ModerationAccountRow: View {
                         .appFont(AppTextRole.callout)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(Color(.systemGray5))
+                        .background(Color.systemGray5)
                         .foregroundStyle(.primary)
                         .cornerRadius(6)
                 }
@@ -656,8 +660,10 @@ struct AddLabelerView: View {
         Form {
             Section("Add Labeler") {
                 TextField("Labeler DID", text: $labelerDID)
+                    #if os(iOS)
                     .autocapitalization(.none)
-                    .autocorrectionDisabled()
+                    #endif
+                    .autocorrectionDisabled(true)
                 
                 Text("Enter the DID of the content labeler you want to add to your moderation settings.")
                     .appFont(AppTextRole.caption)
@@ -699,7 +705,9 @@ struct AddLabelerView: View {
             }
         }
         .navigationTitle("Add Labeler")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     }
     
     private func addLabeler() {
@@ -773,7 +781,7 @@ struct LabelerDetailView: View {
                         .appFont(AppTextRole.caption)
                         .fontWeight(.medium)
                         .padding(8)
-                        .background(Color(.systemGray6))
+                        .background(Color.systemGray6)
                         .cornerRadius(6)
                         .textSelection(.enabled)
                     
@@ -820,7 +828,9 @@ struct LabelerDetailView: View {
             }
         }
         .navigationTitle("Labeler Settings")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     }
     
     private func updateLabelerStatus() {
@@ -999,7 +1009,7 @@ struct ContentPreviewView: View {
                     Spacer()
                 }
                 .padding(12)
-                .background(Color(.systemGray6))
+                .background(Color.systemGray6)
                 .cornerRadius(10)
                 
                 // Moderation overlay
@@ -1050,7 +1060,7 @@ struct ContentPreviewView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemBackground).opacity(0.9))
+                        .fill(Color.systemBackground.opacity(0.9))
                         .shadow(radius: 4)
                 )
             }
@@ -1059,7 +1069,7 @@ struct ContentPreviewView: View {
         case .hide:
             // Hidden overlay
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.systemGray5))
+                .fill(Color.systemGray5)
                 .overlay(
                     VStack(spacing: 8) {
                         Image(systemName: "eye.slash.fill")

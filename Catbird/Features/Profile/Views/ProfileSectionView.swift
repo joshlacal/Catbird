@@ -47,7 +47,9 @@ struct ProfileSectionView: View {
             }
         }
         .navigationTitle(tab.title)
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .task {
             // Load content on appearance
             await loadContent()
@@ -97,7 +99,9 @@ struct ProfileSectionView: View {
         }
         .listStyle(.plain)
         .navigationTitle(tab.title)
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .refreshable {
             await loadContent()
         }

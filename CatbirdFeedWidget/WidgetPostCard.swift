@@ -5,6 +5,7 @@
 //  Created by Claude Code on 6/11/25.
 //
 
+#if os(iOS)
 import SwiftUI
 import WidgetKit
 
@@ -305,3 +306,4 @@ struct WidgetPostList: View {
         configuration: ConfigurationAppIntent()
     )
 }
+#endif

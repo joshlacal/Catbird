@@ -21,18 +21,32 @@ struct FAB: View {
             Spacer()
             HStack(spacing: 12) {
                 if showFeedsButton {
-                    feedsButton
-                        .adaptiveGlassEffect(in: Circle())
+                    if #available(macOS 26.0, *) {
+                        feedsButton
+                            .adaptiveGlassEffect(in: Circle())
+                    } else {
+                        feedsButton
+                    }
                 }
                 Spacer()
-                composeButton
-                    .adaptiveGlassEffect(style: .accentTinted, in: Circle(), interactive: true)
+                if #available(macOS 26.0, *) {
+                    
+                    composeButton
+                        .adaptiveGlassEffect(style: .accentTinted, in: Circle(), interactive: true)
+                } else {
+                    composeButton
+
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
+#if os(iOS)
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: 0)
             }
+#elseif os(macOS)
+            .padding(.bottom, 16)
+#endif
         }
     }
     

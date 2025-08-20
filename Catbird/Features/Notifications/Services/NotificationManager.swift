@@ -2,7 +2,11 @@ import Foundation
 import OSLog
 import Petrel
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import UserNotifications
 import WidgetKit
 
@@ -119,12 +123,21 @@ final class NotificationManager: NSObject {
     #endif
 
     // Register for app lifecycle notifications to handle token registration
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(appDidBecomeActive),
       name: UIApplication.didBecomeActiveNotification,
       object: nil
     )
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(appDidBecomeActive),
+      name: NSApplication.didBecomeActiveNotification,
+      object: nil
+    )
+    #endif
   }
 
   /// Configure with app state reference for navigation
@@ -172,7 +185,11 @@ final class NotificationManager: NSObject {
 
         // Register for remote notifications on the main thread
         await MainActor.run {
+          #if os(iOS)
           UIApplication.shared.registerForRemoteNotifications()
+          #elseif os(macOS)
+          NSApplication.shared.registerForRemoteNotifications()
+          #endif
         }
 
         // Check current settings to confirm
@@ -222,7 +239,11 @@ final class NotificationManager: NSObject {
 
       // Make sure we're registered for remote notifications
       await MainActor.run {
+        #if os(iOS)
         UIApplication.shared.registerForRemoteNotifications()
+        #elseif os(macOS)
+        NSApplication.shared.registerForRemoteNotifications()
+        #endif
       }
 
       // If we already have a token, update status accordingly
@@ -341,6 +362,7 @@ final class NotificationManager: NSObject {
         unreadCount = output.count
 
         // Update app badge
+        #if os(iOS)
         if #available(iOS 17.0, *) {
           UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
             if let error = error {
@@ -350,6 +372,18 @@ final class NotificationManager: NSObject {
         } else {
           UIApplication.shared.applicationIconBadgeNumber = self.unreadCount
         }
+        #elseif os(macOS)
+        // macOS badge support
+        if #available(macOS 14.0, *) {
+          UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
+            if let error = error {
+              self.notificationLogger.error("Failed to update badge count: \(error.localizedDescription)")
+            }
+          }
+        } else {
+          NSApplication.shared.dockTile.badgeLabel = self.unreadCount > 0 ? "\(self.unreadCount)" : nil
+        }
+        #endif
 
         // Share data with widget
         updateWidgetUnreadCount(self.unreadCount)
@@ -374,6 +408,7 @@ final class NotificationManager: NSObject {
       unreadCount = 0
 
       // Update app badge
+      #if os(iOS)
       if #available(iOS 17.0, *) {
         UNUserNotificationCenter.current().setBadgeCount(0) { error in
           if let error = error {
@@ -383,6 +418,18 @@ final class NotificationManager: NSObject {
       } else {
         UIApplication.shared.applicationIconBadgeNumber = 0
       }
+      #elseif os(macOS)
+      // macOS badge reset
+      if #available(macOS 14.0, *) {
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+          if let error = error {
+            self.notificationLogger.error("Failed to reset badge count: \(error.localizedDescription)")
+          }
+        }
+      } else {
+        NSApplication.shared.dockTile.badgeLabel = nil
+      }
+      #endif
 
       // Share data with widget
       updateWidgetUnreadCount(0)

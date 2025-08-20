@@ -1,5 +1,7 @@
 import SwiftUI
 import Petrel
+#if os(iOS)
+
 
 // MARK: - Toolbar and Context Menu Components
 
@@ -188,4 +190,4 @@ struct MessageRequestsButton: View {
       MessageRequestsView()
     }
   }
-}
+}#endif

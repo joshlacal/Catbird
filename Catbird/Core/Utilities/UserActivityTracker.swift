@@ -1,5 +1,9 @@
 import Foundation
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
 
 // MARK: - User Activity Tracker
@@ -79,11 +83,19 @@ final class UserActivityTracker {
   
   /// Update tracking with new scroll information
   func updateScrollActivity(
-    scrollView: UIScrollView,
+    scrollView: Any,
     velocity: CGFloat? = nil
   ) {
+    #if os(iOS)
+    guard let uiScrollView = scrollView as? UIScrollView else { return }
+    let currentPosition = uiScrollView.contentOffset.y
+    #elseif os(macOS)
+    guard let nsScrollView = scrollView as? NSScrollView else { return }
+    let currentPosition = nsScrollView.contentView.bounds.origin.y
+    #else
+    return
+    #endif
     let now = Date()
-    let currentPosition = scrollView.contentOffset.y
     let actualVelocity = velocity ?? calculateVelocity(
       from: lastScrollPosition,
       to: currentPosition,
@@ -133,12 +145,22 @@ final class UserActivityTracker {
   }
   
   /// Check if position is considered "at top" for UX purposes
-  func isAtTop(scrollView: UIScrollView, threshold: CGFloat = 100) -> Bool {
-    let topOffset = -scrollView.adjustedContentInset.top
-    return scrollView.contentOffset.y <= topOffset + threshold
+  func isAtTop(scrollView: Any, threshold: CGFloat = 100) -> Bool {
+    #if os(iOS)
+    guard let uiScrollView = scrollView as? UIScrollView else { return false }
+    let topOffset = -uiScrollView.adjustedContentInset.top
+    return uiScrollView.contentOffset.y <= topOffset + threshold
+    #elseif os(macOS)
+    guard let nsScrollView = scrollView as? NSScrollView else { return false }
+    let topOffset: CGFloat = 0 // macOS scroll views start at 0
+    return nsScrollView.contentView.bounds.origin.y <= topOffset + threshold
+    #else
+    return false
+    #endif
   }
   
   /// Check if user is in a good state to show new content notifications
+  #if os(iOS)
   func shouldShowNewContentIndicator(
     scrollView: UIScrollView,
     distanceFromTop: CGFloat = 300,
@@ -161,6 +183,30 @@ final class UserActivityTracker {
     
     return true
   }
+  #else
+  func shouldShowNewContentIndicator(
+    scrollView: NSScrollView,
+    distanceFromTop: CGFloat = 300,
+    minimumIdleTime: TimeInterval = 2.0
+  ) -> Bool {
+    // Don't show if user is at the top
+    if isAtTop(scrollView: scrollView, threshold: distanceFromTop) {
+      return false
+    }
+    
+    // Don't show if user is actively scrolling or engaged
+    if self.isActivelyReading {
+      return false
+    }
+    
+    // Don't show if user hasn't been idle long enough
+    if self.timeSinceLastInteraction < minimumIdleTime {
+      return false
+    }
+    
+    return true
+  }
+  #endif
   
   // MARK: - Private Methods
   

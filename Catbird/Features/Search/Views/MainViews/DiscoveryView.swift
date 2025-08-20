@@ -125,9 +125,11 @@ struct AllTrendingTopicsView: View {
             }
             .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
             .navigationTitle("Trending Topics")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.large)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button(action: { viewMode = .list }) {
                             Label("List View", systemImage: "list.bullet")
@@ -243,7 +245,7 @@ struct AllTrendingTopicsView: View {
     
     private func topicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            onSelect(topic.displayName ?? topic.topic)
+            onSelect(topic.displayName)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 16) {
@@ -342,7 +344,7 @@ struct AllTrendingTopicsView: View {
     
     private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            onSelect(topic.displayName ?? topic.topic)
+            onSelect(topic.displayName)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 12) {

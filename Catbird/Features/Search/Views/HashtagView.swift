@@ -77,7 +77,7 @@ struct HashtagView: View {
                 .padding(.horizontal)
             }
             .padding(.bottom, 4)
-            .background(Color(.systemBackground)) // Keep background consistent
+            .background(Color.systemBackground) // Keep background consistent
             
             // Posts list with improved UI
             if isLoading && posts.isEmpty {
@@ -93,7 +93,9 @@ struct HashtagView: View {
             }
         }
         .navigationTitle("#\(tag)")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .sheet(isPresented: $showFilterSheet) {
             HashtagFilterView(languageFilter: $languageFilter, onApply: {
                 posts = []
@@ -448,7 +450,9 @@ struct HashtagFilterView: View {
                 // Could add more filter options
             }
             .navigationTitle("Filter Posts")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

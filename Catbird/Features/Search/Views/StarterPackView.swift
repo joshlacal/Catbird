@@ -23,7 +23,9 @@ struct StarterPackView: View {
             }
         }
         .navigationTitle("Starter Pack")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .task {
             await fetchStarterPack()
         }
@@ -224,7 +226,7 @@ struct StarterPackView: View {
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.systemGray6)
         .cornerRadius(12)
         .padding(.horizontal)
     }
@@ -280,7 +282,7 @@ struct StarterPackView: View {
                     
                 }
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             .cornerRadius(12)
             .padding(.horizontal)
         }
@@ -353,7 +355,7 @@ struct StarterPackView: View {
                     }
                 }
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             .cornerRadius(12)
             .padding(.horizontal)
         }

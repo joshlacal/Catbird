@@ -1,7 +1,10 @@
+#if os(iOS)
 import ExyteChat
+#endif
 import Foundation
 import OSLog
 
+#if os(iOS)
 class BlueskyMessageReactionDelegate: ReactionDelegate {
   private let chatManager: ChatManager
   private let convoId: String
@@ -70,3 +73,4 @@ class BlueskyMessageReactionDelegate: ReactionDelegate {
     }
   }
 }
+#endif

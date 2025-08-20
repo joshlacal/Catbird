@@ -1,7 +1,13 @@
 import SwiftUI
 import WebKit
 
-struct ExternalMediaWebView: UIViewRepresentable, Equatable {
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+struct ExternalMediaWebView: Equatable {
     let url: URL
     let shouldBlur: Bool
     @Binding var isLoading: Bool
@@ -11,7 +17,12 @@ struct ExternalMediaWebView: UIViewRepresentable, Equatable {
     static func == (lhs: ExternalMediaWebView, rhs: ExternalMediaWebView) -> Bool {
         return lhs.url == rhs.url && lhs.shouldBlur == rhs.shouldBlur
     }
-    
+}
+
+// MARK: - Platform-specific conformances
+
+#if os(iOS)
+extension ExternalMediaWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         
@@ -50,7 +61,44 @@ struct ExternalMediaWebView: UIViewRepresentable, Equatable {
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
+}
+#elseif os(macOS)
+extension ExternalMediaWebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        
+        // Configure for embedded content
+        // Note: Some iOS-specific properties don't exist on macOS
+        configuration.suppressesIncrementalRendering = false
+        
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = false
+        
+        // macOS specific setup
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.setValue(NSColor.clear, forKey: "backgroundColor")
+        
+        return webView
+    }
     
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        if webView.url != url {
+            let request = URLRequest(url: url)
+            webView.load(request)
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+}
+#endif
+
+// MARK: - Coordinator
+
+extension ExternalMediaWebView {
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let parent: ExternalMediaWebView
         
@@ -97,7 +145,11 @@ struct ExternalMediaWebView: UIViewRepresentable, Equatable {
             } else if navigationAction.navigationType == .linkActivated {
                 // Handle external link clicks by opening in Safari
                 if let url = navigationAction.request.url {
+                    #if os(iOS)
                     UIApplication.shared.open(url)
+                    #elseif os(macOS)
+                    NSWorkspace.shared.open(url)
+                    #endif
                 }
                 decisionHandler(.cancel)
             } else {
@@ -110,7 +162,11 @@ struct ExternalMediaWebView: UIViewRepresentable, Equatable {
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             // Open popup content in Safari instead
             if let url = navigationAction.request.url {
+                #if os(iOS)
                 UIApplication.shared.open(url)
+                #elseif os(macOS)
+                NSWorkspace.shared.open(url)
+                #endif
             }
             return nil
         }
@@ -254,6 +310,14 @@ struct EmbeddedMediaWebView: View {
         }
     }
     
+    private var systemBackgroundColor: Color {
+        #if os(iOS)
+        return Color(platformColor: PlatformColor.platformSystemBackground)
+        #elseif os(macOS)
+        return Color(NSColor.windowBackgroundColor)
+        #endif
+    }
+    
     private var loadingView: some View {
         VStack(spacing: 8) {
             ProgressView()
@@ -264,7 +328,7 @@ struct EmbeddedMediaWebView: View {
                 .foregroundColor(.secondary)
         }
         .padding(12)
-        .background(Color(UIColor.systemBackground).opacity(0.9))
+.background(systemBackgroundColor.opacity(0.9))
         .cornerRadius(8)
         .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -288,7 +352,11 @@ struct EmbeddedMediaWebView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.gray.opacity(0.1))
         .onTapGesture {
+            #if os(iOS)
             UIApplication.shared.open(url)
+            #elseif os(macOS)
+            NSWorkspace.shared.open(url)
+            #endif
         }
     }
 }

@@ -1,9 +1,14 @@
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import CoreText
 import SwiftUI
 
 /// Centralized navigation font configuration to ensure consistency across the app
 enum NavigationFontConfig {
+    #if os(iOS)
     
     /// Creates the custom large title font with Core Text variations and FontManager integration
     static func createLargeTitleFont(fontManager: FontManager) -> UIFont {
@@ -43,7 +48,7 @@ enum NavigationFontConfig {
             let metrics = UIFontMetrics(forTextStyle: .largeTitle)
             let maxPointSize = UIFont.preferredFont(
                 forTextStyle: .largeTitle,
-                compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory)
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory.uiContentSizeCategory)
             ).pointSize
             return metrics.scaledFont(for: customUIFont, maximumPointSize: maxPointSize)
         } else {
@@ -84,7 +89,7 @@ enum NavigationFontConfig {
             let metrics = UIFontMetrics(forTextStyle: .headline)
             let maxPointSize = UIFont.preferredFont(
                 forTextStyle: .headline,
-                compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory)
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory.uiContentSizeCategory)
             ).pointSize
             return metrics.scaledFont(for: customTitleFont, maximumPointSize: maxPointSize)
         } else {
@@ -259,10 +264,38 @@ enum NavigationFontConfig {
     private static func forceUpdateNavigationBarsRecursively(in viewController: UIViewController?) {
         forceUpdateNavigationBarsRecursively(in: viewController, fontManager: FontManager())
     }
+    
+    #else
+    // macOS stubs - navigation bar customization not available
+    static func createLargeTitleFont(fontManager: FontManager) -> NSFont {
+        return NSFont.systemFont(ofSize: 28, weight: NSFont.Weight.bold)
+    }
+    
+    static func createTitleFont(fontManager: FontManager) -> NSFont {
+        return NSFont.systemFont(ofSize: 17, weight: NSFont.Weight.semibold)
+    }
+    
+    static func createLargeTitleFont() -> NSFont {
+        return createLargeTitleFont(fontManager: FontManager())
+    }
+    
+    static func createTitleFont() -> NSFont {
+        return createTitleFont(fontManager: FontManager())
+    }
+    
+    static func forceApplyToAllNavigationBars(fontManager: FontManager) {
+        // No-op on macOS
+    }
+    
+    static func forceApplyToAllNavigationBars() {
+        // No-op on macOS
+    }
+    #endif
 }
 
 // MARK: - SwiftUI Integration
 
+#if os(iOS)
 /// ViewModifier that ensures navigation titles use the correct Core Text fonts with FontManager integration
 struct NavigationFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
@@ -350,3 +383,21 @@ extension View {
         self.modifier(DeepNavigationFontModifier())
     }
 }
+
+#else
+
+// macOS stubs for SwiftUI modifiers
+extension View {
+    /// No-op on macOS
+    func ensureNavigationFonts() -> some View {
+        self
+    }
+    
+    /// No-op on macOS
+    func ensureDeepNavigationFonts() -> some View {
+        self
+    }
+}
+
+#endif
+

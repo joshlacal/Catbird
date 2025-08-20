@@ -10,6 +10,11 @@ import CryptoKit
 import Foundation
 import Observation
 import os.log
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // Actor to safely manage concurrent task access
 actor LoadTracker {
@@ -55,12 +60,14 @@ final class VideoAssetManager {
     AudioSessionManager.shared.configureForSilentPlayback()
 
     // Register for memory pressure notifications
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(handleMemoryWarning(_:)),
       name: UIApplication.didReceiveMemoryWarningNotification,
       object: nil
     )
+    #endif
   }
 
   private func generateCacheKey(from id: String) -> String {

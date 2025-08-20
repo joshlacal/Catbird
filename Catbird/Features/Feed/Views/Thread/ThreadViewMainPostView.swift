@@ -110,12 +110,13 @@ struct ThreadViewMainPostView: View {
             .padding(.bottom, 3)
               
               if !feedPost.text.isEmpty {
+                #if os(iOS)
                 SelectableTextView(
                   attributedString: feedPost.facetsAsAttributedString,
                   textSize: 28,
-                  textStyle: .title3,
-                  textDesign: .default,
-                  textWeight: .regular,
+                  textStyle: Font.TextStyle.title3,
+                  textDesign: Font.Design.default,
+                  textWeight: Font.Weight.regular,
                   fontWidth: 100
                 )
                 .lineLimit(nil)
@@ -123,6 +124,21 @@ struct ThreadViewMainPostView: View {
                 .padding(.vertical, 6)
                 .padding(.leading, 6)
                 .padding(.trailing, 6)
+                #else
+                TappableTextView(
+                  attributedString: feedPost.facetsAsAttributedString,
+                  textSize: 28,
+                  textStyle: Font.TextStyle.title3,
+                  textDesign: Font.Design.default,
+                  textWeight: Font.Weight.regular,
+                  fontWidth: 100
+                )
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 6)
+                .padding(.leading, 6)
+                .padding(.trailing, 6)
+                #endif
               }
 
 //              if feedPost.text != "" {

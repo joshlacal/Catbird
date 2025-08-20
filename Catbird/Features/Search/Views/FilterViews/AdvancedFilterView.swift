@@ -37,7 +37,9 @@ struct AdvancedFilterView: View {
                         Text("Min Likes")
                         Spacer()
                         TextField("0", value: $advancedParams.minLikes, format: .number)
+                            #if os(iOS)
                             .keyboardType(.numberPad)
+                            #endif
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .frame(width: 80)
                     }
@@ -45,19 +47,31 @@ struct AdvancedFilterView: View {
                     HStack {
                         Text("Min Reposts")
                         Spacer()
+                        #if os(iOS)
                         TextField("0", value: $advancedParams.minReposts, format: .number)
                             .keyboardType(.numberPad)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .frame(width: 80)
+                        #elseif os(macOS)
+                        TextField("0", value: $advancedParams.minReposts, format: .number)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(width: 80)
+                        #endif
                     }
                     
                     HStack {
                         Text("Min Replies")
                         Spacer()
+                        #if os(iOS)
                         TextField("0", value: $advancedParams.minReplies, format: .number)
                             .keyboardType(.numberPad)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .frame(width: 80)
+                        #elseif os(macOS)
+                        TextField("0", value: $advancedParams.minReplies, format: .number)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(width: 80)
+                        #endif
                     }
                 }
                 
@@ -72,10 +86,16 @@ struct AdvancedFilterView: View {
                     HStack {
                         Text("Min Follower Count")
                         Spacer()
+                        #if os(iOS)
                         TextField("0", value: $advancedParams.minFollowerCount, format: .number)
                             .keyboardType(.numberPad)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .frame(width: 100)
+                        #elseif os(macOS)
+                        TextField("0", value: $advancedParams.minFollowerCount, format: .number)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .frame(width: 100)
+                        #endif
                     }
                 }
                 
@@ -129,10 +149,17 @@ struct AdvancedFilterView: View {
                         HStack {
                             Text("Radius (km)")
                             Spacer()
+                            
+                            #if os(iOS)
                             TextField("50", value: $advancedParams.radiusKm, format: .number)
                                 .keyboardType(.decimalPad)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .frame(width: 80)
+                            #elseif os(macOS)
+                            TextField("50", value: $advancedParams.radiusKm, format: .number)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .frame(width: 80)
+                            #endif
                         }
                     }
                 }
@@ -171,7 +198,9 @@ struct AdvancedFilterView: View {
                 .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
             .navigationTitle("Advanced Filters")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

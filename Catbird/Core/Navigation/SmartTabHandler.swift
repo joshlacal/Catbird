@@ -1,5 +1,9 @@
 import Foundation
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
 
 // MARK: - Smart Tab Handler
@@ -44,7 +48,7 @@ final class SmartTabHandler {
   /// Determine the appropriate action for a tab tap based on context
   @MainActor
   func determineTabAction(
-    scrollView: UIScrollView,
+    scrollView: Any?,
     userActivity: UserActivityTracker,
     backgroundLoader: BackgroundFeedLoader,
     fetchType: FetchType,
@@ -61,15 +65,40 @@ final class SmartTabHandler {
     }
     
     // Create context
-    let context = TabTapContext(
-      isAtTop: userActivity.isAtTop(scrollView: scrollView, threshold: atTopThreshold),
+    let context: TabTapContext
+    #if os(iOS)
+    if let scrollView = scrollView as? UIScrollView {
+      context = TabTapContext(
+        isAtTop: userActivity.isAtTop(scrollView: scrollView, threshold: atTopThreshold),
+        timeSinceLastRefresh: lastRefreshTime.map { now.timeIntervalSince($0) } ?? .infinity,
+        timeSinceLastTap: timeSinceLastTap,
+        userActivityState: userActivity.activityState,
+        hasPendingContent: backgroundLoader.hasPendingContent(for: fetchType),
+        scrollPosition: scrollView.contentOffset.y,
+        contentHeight: scrollView.contentSize.height
+      )
+    } else {
+      context = TabTapContext(
+        isAtTop: true,
+        timeSinceLastRefresh: lastRefreshTime.map { now.timeIntervalSince($0) } ?? .infinity,
+        timeSinceLastTap: timeSinceLastTap,
+        userActivityState: userActivity.activityState,
+        hasPendingContent: backgroundLoader.hasPendingContent(for: fetchType),
+        scrollPosition: 0,
+        contentHeight: 0
+      )
+    }
+    #else
+    context = TabTapContext(
+      isAtTop: true, // Default to true on macOS
       timeSinceLastRefresh: lastRefreshTime.map { now.timeIntervalSince($0) } ?? .infinity,
       timeSinceLastTap: timeSinceLastTap,
       userActivityState: userActivity.activityState,
       hasPendingContent: backgroundLoader.hasPendingContent(for: fetchType),
-      scrollPosition: scrollView.contentOffset.y,
-      contentHeight: scrollView.contentSize.height
+      scrollPosition: 0,
+      contentHeight: 0
     )
+    #endif
     
     // Determine action
     let action = calculateTabAction(context: context)
@@ -90,7 +119,7 @@ final class SmartTabHandler {
   /// Handle tab tap with the determined action
   func handleTabTap(
     action: TabAction,
-    scrollView: UIScrollView,
+    scrollView: Any?,
     backgroundLoader: BackgroundFeedLoader,
     fetchType: FetchType,
     onRefresh: @escaping () async -> Void,
@@ -258,7 +287,7 @@ final class SmartTabCoordinator: ObservableObject {
   
   /// Handle tab tap for the home feed (tab index 0)
   func handleHomeFeedTabTap(
-    scrollView: UIScrollView,
+    scrollView: Any?,
     userActivity: UserActivityTracker,
     backgroundLoader: BackgroundFeedLoader,
     fetchType: FetchType,

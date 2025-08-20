@@ -22,23 +22,45 @@ struct ThreadPostEditorView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 16) {
                 avatarView
                 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
                     authorInfoView
                     
-                    if isEditing {
-                        editingTextView
-                    } else {
-                        previewTextView
+                    Group {
+                        if isEditing {
+                            editingTextView
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .leading)),
+                                    removal: .opacity.combined(with: .move(edge: .trailing))
+                                ))
+                        } else {
+                            previewTextView
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .move(edge: .trailing)),
+                                    removal: .opacity.combined(with: .move(edge: .leading))
+                                ))
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.3), value: isEditing)
                     
-                    if isEditing {
-                        editingMediaView
-                    } else {
-                        previewMediaView
+                    Group {
+                        if isEditing {
+                            editingMediaView
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                                    removal: .opacity.combined(with: .scale(scale: 1.05))
+                                ))
+                        } else {
+                            previewMediaView
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 1.05)),
+                                    removal: .opacity.combined(with: .scale(scale: 0.95))
+                                ))
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.3), value: isEditing)
                     
                     characterCountView
                 }
@@ -49,8 +71,8 @@ struct ThreadPostEditorView: View {
                     deleteButton
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .background(Color.clear)
             .onTapGesture {
                 if !isEditing {
@@ -73,33 +95,49 @@ struct ThreadPostEditorView: View {
     }
     
     private var avatarView: some View {
-        Group {
-            if let profile = appState.currentUserProfile,
-               let avatarURL = profile.avatar {
-                AsyncImage(url: URL(string: avatarURL.description)) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
+        VStack(spacing: 8) {
+            ZStack {
+                if let profile = appState.currentUserProfile,
+                   let avatarURL = profile.avatar {
+                    AsyncImage(url: URL(string: avatarURL.description)) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.3))
+                            .overlay(
+                                Image(systemName: "person.fill")
+                                    .appFont(size: 16)
+                                    .foregroundColor(.white)
+                            )
+                    }
+                    .frame(width: 40, height: 40)
+                    .clipShape(Circle())
+                } else {
                     Circle()
                         .fill(Color.accentColor.opacity(0.3))
+                        .frame(width: 40, height: 40)
                         .overlay(
                             Image(systemName: "person.fill")
-                                .appFont(size: 16)
+                                .appFont(size: 18)
                                 .foregroundColor(.white)
                         )
                 }
-                .frame(width: 32, height: 32)
-                .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.3))
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .appFont(size: 16)
-                            .foregroundColor(.white)
-                    )
+                
+                // Thread position indicator
+                if entryIndex > 0 {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 16, height: 16)
+                        .overlay(
+                            Text("\(entryIndex + 1)")
+                                .appFont(size: 10)
+                                .foregroundColor(.white)
+                                .fontWeight(.semibold)
+                        )
+                        .offset(x: 14, y: -14)
+                }
             }
         }
     }
@@ -133,14 +171,38 @@ struct ThreadPostEditorView: View {
     }
     
     private var editingIndicatorView: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(Color.orange)
-                .frame(width: 6, height: 6)
-            Text("editing")
-                .appFont(AppTextRole.caption2)
-                .foregroundColor(.orange)
+        HStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 8, height: 8)
+                
+                Circle()
+                    .stroke(Color.accentColor.opacity(0.3), lineWidth: 2)
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(1.0)
+                    .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isEditing)
+            }
+            
+            Text("Editing")
+                .appFont(AppTextRole.caption)
+                .foregroundColor(.accentColor)
+                .fontWeight(.medium)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color.accentColor.opacity(0.1))
+                .overlay(
+                    Capsule()
+                        .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .transition(.asymmetric(
+            insertion: .scale.combined(with: .opacity),
+            removal: .scale.combined(with: .opacity)
+        ))
     }
     
     private var editingTextView: some View {
@@ -158,12 +220,37 @@ struct ThreadPostEditorView: View {
                     .appFont(AppTextRole.body)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(4)
             } else {
-                Text("Tap to add content")
-                    .appFont(AppTextRole.body)
-                    .foregroundColor(.secondary)
-                    .italic()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Tap to write post \(entryIndex + 1)")
+                            .appFont(AppTextRole.body)
+                            .foregroundColor(.secondary)
+                            .fontWeight(.medium)
+                        
+                        Text("Continue your thread here")
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(Color.tertiaryLabel)
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "square.and.pencil")
+                        .appFont(size: 16)
+                        .foregroundColor(Color.tertiaryLabel)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.systemGray6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.systemGray5, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        )
+                )
             }
         }
     }
@@ -236,7 +323,7 @@ struct ThreadPostEditorView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     } else {
                         RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.systemGray5))
+                                .fill(Color.systemGray5)
                                 .frame(height: 120)
                                 .overlay(
                                     Image(systemName: "photo")
@@ -262,7 +349,7 @@ struct ThreadPostEditorView: View {
                     )
             } else {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray5))
+                    .fill(Color.systemGray5)
                     .frame(height: 200)
                     .overlay(
                         VStack {
@@ -288,10 +375,32 @@ struct ThreadPostEditorView: View {
     private var characterCountView: some View {
         HStack {
             Spacer()
+            
             let count = isEditing ? viewModel.postText.count : entry.text.count
-            Text("\(count)/300")
-                .appFont(AppTextRole.caption2)
-                .foregroundColor(count > 300 ? .red : .secondary)
+            let remaining = 300 - count
+            
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(remaining < 0 ? .red : remaining < 20 ? .orange : remaining < 50 ? .yellow : .secondary)
+                    .frame(width: 6, height: 6)
+                
+                Text("\(remaining)")
+                    .appFont(AppTextRole.caption)
+                    .foregroundColor(remaining < 0 ? .red : remaining < 20 ? .orange : remaining < 50 ? .yellow : .secondary)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(Color.systemBackground)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.systemGray4, lineWidth: 0.5)
+                    )
+            )
+            .opacity(isEditing ? 1.0 : 0.6)
         }
     }
     
@@ -299,7 +408,7 @@ struct ThreadPostEditorView: View {
         Button(action: onDelete) {
             Image(systemName: "xmark.circle.fill")
                 .appFont(size: 20)
-                .foregroundStyle(.white, Color(.systemGray3))
+                .foregroundStyle(.white, Color.systemGray3)
         }
         .padding(.top, 4)
     }

@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 struct FeedWithNewPostsIndicator: View {
   let stateManager: FeedStateManager
   @Binding var navigationPath: NavigationPath
@@ -94,7 +94,7 @@ struct FeedWithNewPostsIndicator: View {
   
   private func calculateDynamicIslandAwareTopPadding(geometry: GeometryProxy) -> CGFloat {
     let safeAreaTop = geometry.safeAreaInsets.top
-    let deviceModel = UIDevice.current.userInterfaceIdiom
+    let deviceModel = PlatformDeviceInfo.userInterfaceIdiom
     
     // CRITICAL FIX: Account for navigation bar height, not just safe area
     // Navigation bar in iOS is typically 44pt tall, plus we need spacing
@@ -126,28 +126,11 @@ struct FeedWithNewPostsIndicator: View {
   
   private func isDynamicIslandDevice() -> Bool {
     // Check for Dynamic Island devices by screen dimensions and iOS version
-    let screenSize = UIScreen.main.bounds.size
-    let width = min(screenSize.width, screenSize.height)
-    let height = max(screenSize.width, screenSize.height)
-    
-    // iPhone 14 Pro: 393x852, iPhone 14 Pro Max: 430x932
-    // iPhone 15 Pro: 393x852, iPhone 15 Pro Max: 430x932  
-    // iPhone 16 Pro: 402x874, iPhone 16 Pro Max: 440x956
-    let dynamicIslandSizes: [(width: CGFloat, height: CGFloat)] = [
-      (393, 852),  // iPhone 14 Pro, 15 Pro
-      (430, 932),  // iPhone 14 Pro Max, 15 Pro Max
-      (402, 874),  // iPhone 16 Pro
-      (440, 956)   // iPhone 16 Pro Max
-    ]
-    
-    let isDynamicIslandSize = dynamicIslandSizes.contains { size in
-      abs(width - size.width) < 1 && abs(height - size.height) < 1
-    }
-    
-    // Must be iOS 16+ and have the right screen size
-    let isCompatibleOS = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 16
-    
-    return isDynamicIslandSize && isCompatibleOS
+    #if os(iOS)
+    return PlatformScreenInfo.hasDynamicIsland
+    #else
+    return false // macOS doesn't have Dynamic Island
+    #endif
   }
   
   @MainActor
@@ -159,7 +142,7 @@ struct FeedWithNewPostsIndicator: View {
 
 // MARK: - Convenience Initializers
 
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 extension FeedWithNewPostsIndicator {
   /// Creates a feed with new posts indicator using just the essential parameters
   init(

@@ -48,22 +48,24 @@ struct ReportChatMessageView: View {
         }
         
         Section {
-          Text("This report will be sent to the moderation team for review. False reports may result in action against your account.")
+          Text("This report will be sent to the Bluesky moderation team for review.")
             .appCaption()
             .foregroundColor(.secondary)
         }
       }
       .navigationTitle("Report Message")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             onDismiss()
           }
           .disabled(isSubmitting)
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Submit") {
             submitReport()
           }

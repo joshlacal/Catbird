@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// A text field that displays validation errors
 struct ValidatingTextField: View {
@@ -7,7 +10,9 @@ struct ValidatingTextField: View {
     var icon: String
     var validationError: String?
     var isDisabled: Bool
+    #if os(iOS)
     var keyboardType: UIKeyboardType = .default
+    #endif
     var submitLabel: SubmitLabel = .done
     var onSubmit: (() -> Void)?
     
@@ -16,15 +21,22 @@ struct ValidatingTextField: View {
             HStack {
                 Image(systemName: icon)
                     .foregroundStyle(.secondary)
-                
+
+                #if os(iOS)
                 TextField("", text: $text, prompt: Text(prompt))
-                    .autocorrectionDisabled()
+                    .autocorrectionDisabled(true)
+                    #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(keyboardType)
+                    #endif
                     .submitLabel(submitLabel)
-                    .onSubmit {
-                        onSubmit?()
-                    }
+                    .onSubmit { onSubmit?() }
+                #else
+                TextField("", text: $text, prompt: Text(prompt))
+                    .autocorrectionDisabled(true)
+                    .submitLabel(submitLabel)
+                    .onSubmit { onSubmit?() }
+                #endif
                 
                 if !text.isEmpty {
                     Button(action: { text = "" }) {
@@ -37,7 +49,7 @@ struct ValidatingTextField: View {
             .padding()
             .background {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemBackground))
+                    .fill(Color.systemBackground)
                     .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
             }
             .overlay {

@@ -9,29 +9,26 @@
 /* Begin PBXBuildFile section */
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-		21196F6B2DC25F6000662CC3 /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21196F582DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; productRef = 2121B3F42DF5201E003871F1 /* ExyteChat */; };
+		21196F6B2DC25F6000662CC3 /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21196F582DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 2121B3F42DF5201E003871F1 /* ExyteChat */; };
 		212E943A2D61003F00D3E1DD /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94392D61003F00D3E1DD /* Petrel */; };
 		212E94692D6183D600D3E1DD /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94682D6183D600D3E1DD /* Nuke */; };
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
 		215795952D9E16F60030A8C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */; };
-		216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; };
-		216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		216E57022E0EFF02001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; productRef = 216E57012E0EFF02001E7844 /* FaultOrdering */; };
-		216E57032E0EFF02001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 216E57012E0EFF02001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; productRef = 216E57042E0EFF02001E7844 /* FaultOrderingTests */; };
-		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
-		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
+		216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; };
+		216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E57042E0EFF02001E7844 /* FaultOrderingTests */; };
+		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
+		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-		21DDE5FE2DF4EDB5009E9825 /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21DDE5EE2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		21DDE5FE2DF4EDB5009E9825 /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21DDE5EE2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A87CAC2D94390D0062F8E9 /* Petrel */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
 		21ECC9B62DC26B7100C2049B /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21ECC9B52DC26B7100C2049B /* Petrel */; };
 		21F0719A2E0CF6CF003BE8C2 /* Linkmap.txt in Resources */ = {isa = PBXBuildFile; fileRef = 21F071992E0CF6CF003BE8C2 /* Linkmap.txt */; };
-		21F071A62E0D0720003BE8C2 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 21F071A12E0D0680003BE8C2 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -95,8 +92,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				21F071A62E0D0720003BE8C2 /* FaultOrdering in Embed Frameworks */,
-				216E57032E0EFF02001E7844 /* FaultOrdering in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -217,7 +212,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				216E57022E0EFF02001E7844 /* FaultOrdering in Frameworks */,
 				216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -376,7 +370,6 @@
 			);
 			name = CatbirdUITests;
 			packageProductDependencies = (
-				216E57012E0EFF02001E7844 /* FaultOrdering */,
 				216E57042E0EFF02001E7844 /* FaultOrderingTests */,
 			);
 			productName = CatbirdUITests;
@@ -570,6 +563,9 @@
 /* Begin PBXTargetDependency section */
 		21196F6A2DC25F6000662CC3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilters = (
+				ios,
+			);
 			target = 21196F572DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension */;
 			targetProxy = 21196F692DC25F6000662CC3 /* PBXContainerItemProxy */;
 		};
@@ -585,6 +581,9 @@
 		};
 		21DDE5FD2DF4EDB5009E9825 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilters = (
+				ios,
+			);
 			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
 			targetProxy = 21DDE5FC2DF4EDB5009E9825 /* PBXContainerItemProxy */;
 		};
@@ -599,6 +598,9 @@
 				CODE_SIGN_ENTITLEMENTS = CatbirdNotificationWidgetExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CatbirdNotificationWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = CatbirdNotificationWidget;
@@ -609,10 +611,14 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdNotificationWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -627,6 +633,9 @@
 				CODE_SIGN_ENTITLEMENTS = CatbirdNotificationWidgetExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CatbirdNotificationWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = CatbirdNotificationWidget;
@@ -637,10 +646,14 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdNotificationWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -659,6 +672,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -678,14 +693,17 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.0;
 				ORDER_FILE = "";
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				REGISTER_APP_GROUPS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -704,6 +722,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -723,14 +743,17 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.0;
 				ORDER_FILE = "$(PROJECT_DIR)/order-file.txt";
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				REGISTER_APP_GROUPS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -959,13 +982,14 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdFeedWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
@@ -999,13 +1023,14 @@
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.CatbirdFeedWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
@@ -1124,14 +1149,6 @@
 				minimumVersion = 1.2.3;
 			};
 		};
-		21F071942E0CF492003BE8C2 /* XCRemoteSwiftPackageReference "FaultOrdering" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/getsentry/FaultOrdering";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1164,11 +1181,6 @@
 			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
 			productName = FaultOrdering;
 		};
-		216E57012E0EFF02001E7844 /* FaultOrdering */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
-			productName = FaultOrdering;
-		};
 		216E57042E0EFF02001E7844 /* FaultOrderingTests */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
@@ -1197,11 +1209,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 21A87CAB2D94390D0062F8E9 /* XCLocalSwiftPackageReference "../Petrel" */;
 			productName = Petrel;
-		};
-		21F071A12E0D0680003BE8C2 /* FaultOrdering */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 21F071942E0CF492003BE8C2 /* XCRemoteSwiftPackageReference "FaultOrdering" */;
-			productName = FaultOrdering;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -2,6 +2,8 @@ import SwiftUI
 import Petrel
 import NukeUI
 
+#if os(iOS)
+
 /// Profile row view specifically designed for chat contacts
 struct ChatProfileRowView: View {
     let profile: ProfileDisplayable
@@ -182,3 +184,4 @@ struct ChatProfileRowView: View {
             .padding()
     }
 }
+#endif

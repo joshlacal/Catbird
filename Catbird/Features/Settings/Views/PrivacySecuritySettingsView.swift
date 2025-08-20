@@ -210,7 +210,9 @@ struct PrivacySecuritySettingsView: View {
             }
         }
         .navigationTitle("Privacy & Security")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .task {
             await loadData()
             // Initialize biometric state
@@ -436,7 +438,9 @@ struct AppPasswordsView: View {
             }
         }
         .navigationTitle("App Passwords")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .refreshable {
             await loadAppPasswords()
         }
@@ -614,13 +618,10 @@ struct CreateAppPasswordView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("App Password Details") {
-                    TextField("Name (e.g., Third-party App)", text: $passwordName)
-                        .autocorrectionDisabled()
-                    
-                    Toggle("Privileged Access", isOn: $isPrivileged)
-                        .tint(.blue)
-                }
+                Section("Password Name") {
+                        TextField("Enter a name for this password", text: $passwordName)
+                            .autocorrectionDisabled(true)
+                    }
                 
                 Section("About Privileged Access") {
                     Text("Privileged app passwords have additional permissions for advanced features. Only enable this for apps you fully trust.")
@@ -639,7 +640,11 @@ struct CreateAppPasswordView: View {
                             Spacer()
                             
                             Button {
+                                #if os(iOS)
                                 UIPasteboard.general.string = generatedPassword
+                                #elseif os(macOS)
+                                NSPasteboard.general.setString(generatedPassword, forType: .string)
+                                #endif
                             } label: {
                                 Image(systemName: "doc.on.doc")
                             }
@@ -653,8 +658,10 @@ struct CreateAppPasswordView: View {
                 }
             }
             .navigationTitle("Create App Password")
-            .toolbarTitleDisplayMode(.inline)
-            .toolbar {
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+            .toolbar(content: {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
@@ -669,7 +676,7 @@ struct CreateAppPasswordView: View {
                     }
                     .disabled(passwordName.isEmpty || isCreating)
                 }
-            }
+            })
         }
         .alert("App Password Created", isPresented: $showGeneratedPassword) {
             Button("Done") {
@@ -775,7 +782,9 @@ struct BlockedAccountsView: View {
             }
         }
         .navigationTitle("Blocked Accounts")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .refreshable {
             await loadBlockedAccounts()
         }
@@ -954,7 +963,9 @@ struct MutedAccountsView: View {
             }
         }
         .navigationTitle("Muted Accounts")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .refreshable {
             await loadMutedAccounts()
         }

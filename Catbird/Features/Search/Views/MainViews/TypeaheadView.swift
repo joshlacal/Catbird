@@ -108,7 +108,7 @@ struct TypeaheadView: View {
                 .buttonStyle(.plain)
                 .padding(.top, viewModel.typeaheadProfiles.isEmpty ? 0 : 8)
             }
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
         }
     }
     

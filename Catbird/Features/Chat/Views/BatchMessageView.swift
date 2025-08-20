@@ -2,6 +2,8 @@ import SwiftUI
 import OSLog
 import Petrel
 
+#if os(iOS)
+
 struct BatchMessageView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
@@ -109,16 +111,18 @@ struct BatchMessageView: View {
         }
       }
       .navigationTitle("Send to Multiple")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             dismiss()
           }
           .disabled(isSending)
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Send") {
             sendBatchMessages()
           }
@@ -221,3 +225,4 @@ struct ConversationSelectionRow: View {
     .buttonStyle(.plain)
   }
 }
+#endif

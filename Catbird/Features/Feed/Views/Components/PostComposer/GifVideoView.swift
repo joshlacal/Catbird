@@ -81,7 +81,7 @@ struct GifVideoView: View {
     @ViewBuilder
     private var loadingView: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color(.systemGray6))
+            .fill(Color.systemGray6)
             .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay(
                 ProgressView()
@@ -91,7 +91,7 @@ struct GifVideoView: View {
     @ViewBuilder
     private var placeholderView: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color(.systemGray5))
+            .fill(Color.systemGray5)
             .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay(
                 Image(systemName: "photo")

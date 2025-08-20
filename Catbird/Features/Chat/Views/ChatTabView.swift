@@ -2,6 +2,8 @@ import SwiftUI
 import OSLog
 import Petrel
 
+#if os(iOS)
+
 // MARK: - Chat Tab View
 
 struct ChatTabView: View {
@@ -85,10 +87,10 @@ struct ChatTabView: View {
       appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
     }
     .toolbar {
-      ToolbarItem(placement: .navigationBarLeading) {
+      ToolbarItem(placement: .cancellationAction) {
         MessageRequestsButton()
       }
-      ToolbarItem(placement: .navigationBarTrailing) {
+      ToolbarItem(placement: .primaryAction) {
         ChatToolbarMenu()
       }
     }
@@ -178,9 +180,13 @@ struct ChatTabView: View {
       .offset(y: -80)
     }
     .ignoresSafeArea()
+#if os(iOS)
     .safeAreaInset(edge: .bottom) {
       EmptyView()
     }
+#elseif os(macOS)
+    .padding(.bottom, 0)
+#endif
   }
   
   // MARK: - Detail Content
@@ -357,3 +363,5 @@ private struct ConditionalSwipeActions: ViewModifier {
     }
   }
 }
+
+#endif

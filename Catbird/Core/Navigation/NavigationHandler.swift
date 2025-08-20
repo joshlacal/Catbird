@@ -1,6 +1,5 @@
 import Petrel
 import SwiftUI
-import UIKit
 
 /// Utility for handling navigation destination resolution throughout the app
 struct NavigationHandler {
@@ -25,7 +24,9 @@ struct NavigationHandler {
         path: path
       )
       .ignoresSafeArea()
+      #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
+      #endif
       .id(did)
 
     case .post(let uri):
@@ -34,7 +35,9 @@ struct NavigationHandler {
 
         //                .toolbarVisibility(.visible, for: .automatic)
         //                .toolbarBackgroundVisibility(.visible, for: .automatic)
+        #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
+        #endif
         //                .themedNavigationBar(appState.themeManager)
         .navigationTitle("Post")
         //                .ensureDeepNavigationFonts() // Use deep navigation fonts for thread views
@@ -57,7 +60,9 @@ struct NavigationHandler {
 
       .id("timeline")  // Add stable identity
       .navigationTitle("Timeline")
+      #if os(iOS)
       .toolbarTitleDisplayMode(.large)
+      #endif
 
     case .feed(let uri):
       FeedCollectionView.create(
@@ -79,6 +84,7 @@ struct NavigationHandler {
         //                .themedNavigationBar(appState.themeManager)
         .id(uri.uriString())
 
+    #if os(iOS)
     case .conversation(let convoId):
       ConversationView(convoId: convoId)
         //                .themedNavigationBar(appState.themeManager)
@@ -93,37 +99,48 @@ struct NavigationHandler {
       )
       //             .themedNavigationBar(appState.themeManager)
       .id("chatTab")  // Static ID for the tab view itself
+    #endif
 
 
     
     case .createList:
       CreateListView()
         .navigationTitle("Create List")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
+        #endif
         .id("createList")
     
     case .editList(let listURI):
       EditListView(listURI: listURI.uriString())
         .navigationTitle("Edit List")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
+        #endif
         .id(listURI.uriString())
     
     case .listManager:
       ListsManagerView()
         .navigationTitle("My Lists")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.large)
+        #endif
         .id("listManager")
     
     case .listDiscovery:
       ListDiscoveryView()
         .navigationTitle("Discover Lists")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.large)
+        #endif
         .id("listDiscovery")
     
     case .listFeed(let listURI):
       ListFeedView(listURI: listURI.uriString())
         .navigationTitle("List Feed")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
+        #endif
         .id(listURI.uriString())
     
     case .listMembers(let listURI):
@@ -151,11 +168,13 @@ struct NavigationHandler {
       return "List"
     case .starterPack:
       return "Starter Pack"
+    #if os(iOS)
     case .conversation:
       // Title might be dynamic based on convo, but NavigationHandler provides a static one
       return "Conversation"
     case .chatTab:
       return "Messages"
+    #endif
     
     case .createList:
       return "Create List"
@@ -196,10 +215,12 @@ struct NavigationHandler {
       return "list.bullet.rectangle"
     case .starterPack:
       return "person.3"
+    #if os(iOS)
     case .conversation:
       return "bubble.left.and.bubble.right.fill"  // Or just "bubble.left.fill"
     case .chatTab:
       return "bubble.left.and.bubble.right"
+    #endif
     
     case .createList:
       return "plus.rectangle.on.rectangle"

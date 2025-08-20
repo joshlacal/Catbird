@@ -557,7 +557,7 @@ struct AuthorAvatarColumn: View {
   private var parentPostIndicator: some View {
     if isParentPost {
       Rectangle()
-        .fill(Color(UIColor.systemGray4))
+        .fill(Color.systemGray4)
         .frame(width: 2)
         .frame(maxHeight: .infinity)
         .padding(.bottom, Self.avatarSize + Self.baseUnit * 2)

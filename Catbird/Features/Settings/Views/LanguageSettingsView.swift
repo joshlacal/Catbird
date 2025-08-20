@@ -364,9 +364,11 @@ struct LanguageSettingsView: View {
             }
         }
         .navigationTitle("Languages")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .appDisplayScale(appState: appState)
-        .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+        .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
         .onAppear {
             // Initialize language manager with proper preferences manager
             if languageManager == nil {
@@ -510,7 +512,9 @@ struct EnhancedLanguageSelectionView: View {
         }
         .searchable(text: $searchText, prompt: "Search languages...")
         .navigationTitle(title)
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     }
 }
 
@@ -655,15 +659,17 @@ struct EnhancedContentLanguagesView: View {
             }
             .searchable(text: $searchText, prompt: "Search languages...")
             .navigationTitle("Content Languages")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Done") {
                         dismiss()
                     }

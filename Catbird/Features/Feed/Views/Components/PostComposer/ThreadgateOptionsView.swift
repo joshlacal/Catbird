@@ -38,6 +38,9 @@ struct ThreadgateOptionsView: View {
             combinedOptions = []
             updateSettings()
           }) {
+            let isEverybodySelected = selectedOption == .everybody && combinedOptions.isEmpty
+            let backgroundSelected: Color = isEverybodySelected ? Color.accentColor.opacity(0.1) : Color.clear
+            
             HStack {
               Image(systemName: ThreadgateSettings.ReplyOption.everybody.iconName)
                 .frame(width: 24)
@@ -46,16 +49,13 @@ struct ThreadgateOptionsView: View {
                 .foregroundColor(.primary)
               Spacer()
 
-              if selectedOption == .everybody && combinedOptions.isEmpty {
+              if isEverybodySelected {
                 Image(systemName: "checkmark")
                   .foregroundColor(.accentColor)
               }
             }
             .padding()
-            .background(
-              selectedOption == .everybody && combinedOptions.isEmpty
-                ? Color.accentColor.opacity(0.1) : Color.clear
-            )
+            .background(backgroundSelected)
             .contentShape(.rect)
 
           }
@@ -69,6 +69,9 @@ struct ThreadgateOptionsView: View {
             combinedOptions = []
             updateSettings()
           }) {
+            let isNobodySelected = selectedOption == .nobody && combinedOptions.isEmpty
+            let backgroundSelected: Color = isNobodySelected ? Color.accentColor.opacity(0.1) : Color.clear
+            
             HStack {
               Image(systemName: ThreadgateSettings.ReplyOption.nobody.iconName)
                 .frame(width: 24)
@@ -77,17 +80,13 @@ struct ThreadgateOptionsView: View {
                 .foregroundColor(.primary)
               Spacer()
 
-              if selectedOption == .nobody && combinedOptions.isEmpty {
+              if isNobodySelected {
                 Image(systemName: "checkmark")
                   .foregroundColor(.accentColor)
               }
             }
-
             .padding()
-            .background(
-              selectedOption == .nobody && combinedOptions.isEmpty
-                ? Color.accentColor.opacity(0.1) : Color.clear
-            )
+            .background(backgroundSelected)
             .contentShape(.rect)
 
           }
@@ -112,6 +111,9 @@ struct ThreadgateOptionsView: View {
             Button(action: {
               toggleOption(option)
             }) {
+              let isOptionSelected = combinedOptions.contains(option)
+              let backgroundSelected: Color = isOptionSelected ? Color.accentColor.opacity(0.1) : Color.clear
+              
               HStack {
                 Image(systemName: option.iconName)
                   .frame(width: 24)
@@ -120,16 +122,13 @@ struct ThreadgateOptionsView: View {
                   .foregroundColor(.primary)
                 Spacer()
 
-                if combinedOptions.contains(option) {
+                if isOptionSelected {
                   Image(systemName: "checkmark")
                     .foregroundColor(.accentColor)
                 }
               }
-
               .padding()
-              .background(
-                combinedOptions.contains(option) ? Color.accentColor.opacity(0.1) : Color.clear
-              )
+              .background(backgroundSelected)
               .contentShape(.rect)
 
             }
@@ -141,7 +140,7 @@ struct ThreadgateOptionsView: View {
             }
           }
         }
-        .background(Color(.secondarySystemBackground))
+        .background(Color(platformColor: .platformSecondarySystemBackground))
         .cornerRadius(12)
         .padding()
 

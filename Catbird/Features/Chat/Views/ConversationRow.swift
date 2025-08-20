@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import Petrel
 
@@ -176,3 +177,4 @@ struct LastMessagePreview: View {
     }
   }
 }
+#endif

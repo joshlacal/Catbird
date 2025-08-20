@@ -50,16 +50,14 @@ struct LoginView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                /// Deep fall blue sky background
-//                deepBlueSkyBackground
-                
                 /// Hyperrealistic clouds based on "Clouds" by drift
                 /// https://www.shadertoy.com/view/4tdSWr
+                /// Shader now renders the complete sky+clouds scene opaquely
                 CloudView(
-                    opacity: 1.0,          // Full opacity since shader handles blending
-                    cloudScale: 1.0,       // Use shader's default scale (1.1 in shader)
-                    animationSpeed: 0.5,   // Slower for more realistic movement at 120fps
-                    shaderMode: .improved  // Use the drift-based shader
+                    opacity: 1.0,          // Full opacity - shader handles complete scene
+                    cloudScale: 1.1,       // Match original Shadertoy scale
+                    animationSpeed: 1.0,   // Match original speed
+                    shaderMode: .basic     // Use basic shader that matches original closest
                 )
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
@@ -217,7 +215,7 @@ struct LoginView: View {
                         }
                         .padding()
                         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-                        .backgroundStyle(.quaternary)
+                        .background(.quaternary)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .padding(.horizontal)
                     }
@@ -245,7 +243,7 @@ struct LoginView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
-                        .background(Color(.systemBackground).opacity(0.9))
+                        .background(Color.systemBackground.opacity(0.9))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
                         .padding(.bottom, 8)
@@ -254,7 +252,7 @@ struct LoginView: View {
                             // Reset the cancelled state after 6 seconds
                             DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                                 withAnimation {
-                                    authenticationCancelled = false
+                                    self.authenticationCancelled = false
                                 }
                             }
                         }
@@ -274,43 +272,11 @@ struct LoginView: View {
                 }
                 .frame(minHeight: geometry.size.height)
                 .padding(.horizontal)
-                
-                // Looking up at sky distortion effect
-                Rectangle()
-                    .fill(.clear)
-                    .background(
-                        RadialGradient(
-                            colors: [
-                                Color.clear,
-                                Color.black.opacity(0.02)
-                            ],
-                            center: UnitPoint(x: 0.5, y: 0.8),
-                            startRadius: 100,
-                            endRadius: min(geometry.size.width, geometry.size.height) * 0.8
-                        )
-                    )
-                    .allowsHitTesting(false)
-                    .ignoresSafeArea()
-                
-                // Subtle radial shadow for depth
-                Rectangle()
-                    .fill(.clear)
-                    .background(
-                        RadialGradient(
-                            colors: [
-                                Color.clear,
-                                Color.black.opacity(colorScheme == .dark ? 0.08 : 0.04)
-                            ],
-                            center: UnitPoint(x: 0.5, y: 0.2),
-                            startRadius: 50,
-                            endRadius: min(geometry.size.width, geometry.size.height) * 0.6
-                        )
-                    )
-                    .allowsHitTesting(false)
-                    .ignoresSafeArea()
             }
                 .scrollBounceBehavior(.basedOnSize)
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             }
         }
         .onChange(of: appState.authState) { _, newValue in
@@ -334,27 +300,43 @@ struct LoginView: View {
     // MARK: - Computed Properties
     
     private func validatingTextFieldWithBackground(geometry: GeometryProxy) -> some View {
-        ValidatingTextField(
-            text: $handle,
-            prompt: "username.bsky.social",
-            icon: "at",
-            validationError: validationError,
-            isDisabled: isLoggingIn,
-            keyboardType: .emailAddress,
-            submitLabel: .go,
-            onSubmit: {
-                handleLogin()
-            }
-        )
-        .focused($focusedField, equals: .username)
+        return Group {
+#if os(iOS)
+            ValidatingTextField(
+                text: $handle,
+                prompt: "username.bsky.social",
+                icon: "at",
+                validationError: validationError,
+                isDisabled: isLoggingIn,
+                keyboardType: .emailAddress,
+                submitLabel: .go,
+                onSubmit: {
+                    handleLogin()
+                }
+            )
+#elseif os(macOS)
+            ValidatingTextField(
+                text: $handle,
+                prompt: "username.bsky.social",
+                icon: "at",
+                validationError: validationError,
+                isDisabled: isLoggingIn,
+                submitLabel: .go,
+                onSubmit: {
+                    handleLogin()
+                }
+            )
+#endif
+        }
+        .focused($focusedField, equals: Field.username)
         .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .background(textFieldBackgroundView)
         .modifier(TextFieldShadowModifier(colorScheme: colorScheme))
         .overlay(textFieldOverlayView)
-        .transition(.asymmetric(
-            insertion: .scale(scale: 0.95).combined(with: .opacity),
-            removal: .scale(scale: 1.05).combined(with: .opacity)
+        .transition(AnyTransition.asymmetric(
+            insertion: AnyTransition.scale(scale: 0.95).combined(with: AnyTransition.opacity),
+            removal: AnyTransition.scale(scale: 1.05).combined(with: AnyTransition.opacity)
         ))
     }
     
@@ -503,22 +485,38 @@ struct LoginView: View {
                 .appFont(AppTextRole.headline)
                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
             
-            ValidatingTextField(
-                text: $pdsURL,
-                prompt: "PDS URL (e.g., https://bsky.social)",
-                icon: "link",
-                validationError: validationError,
-                isDisabled: isLoggingIn,
-                keyboardType: .URL,
-                submitLabel: .go,
-                onSubmit: {
-                    handleAdvancedSignup()
-                }
-            )
-            .focused($focusedField, equals: .pdsurl)
+            Group {
+#if os(iOS)
+                ValidatingTextField(
+                    text: $pdsURL,
+                    prompt: "PDS URL (e.g., https://bsky.social)",
+                    icon: "link",
+                    validationError: validationError,
+                    isDisabled: isLoggingIn,
+                    keyboardType: .URL,
+                    submitLabel: .go,
+                    onSubmit: {
+                        handleAdvancedSignup()
+                    }
+                )
+#elseif os(macOS)
+                ValidatingTextField(
+                    text: $pdsURL,
+                    prompt: "PDS URL (e.g., https://bsky.social)",
+                    icon: "link",
+                    validationError: validationError,
+                    isDisabled: isLoggingIn,
+                    submitLabel: .go,
+                    onSubmit: {
+                        handleAdvancedSignup()
+                    }
+                )
+#endif
+            }
+            .focused($focusedField, equals: Field.pdsurl)
             .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
             .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-            .transition(.opacity.combined(with: .move(edge: .top)))
+            .transition(AnyTransition.opacity.combined(with: AnyTransition.move(edge: .top)))
         }
     }
     
@@ -549,7 +547,7 @@ struct LoginView: View {
         }
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .padding()
-        .backgroundStyle(.quaternary)
+        .background(.quaternary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
@@ -707,7 +705,7 @@ struct LoginView: View {
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                showInvalidAnimation = false
+                self.showInvalidAnimation = false
             }
             return
         }
@@ -728,7 +726,7 @@ struct LoginView: View {
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                showInvalidAnimation = false
+                self.showInvalidAnimation = false
             }
             return false
         }

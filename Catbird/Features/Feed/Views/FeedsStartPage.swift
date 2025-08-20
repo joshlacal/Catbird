@@ -4,7 +4,9 @@ import Petrel
 import SwiftData
 import SwiftUI
 import TipKit
+#if os(iOS)
 import UIKit
+#endif
 import UniformTypeIdentifiers
 
 // MARK: - FeedsStartPage
@@ -14,7 +16,7 @@ struct FeedsStartPage: View {
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
-  @State private var editMode: EditMode = .inactive
+  @State private var isEditingFeeds = false
   @Binding var isDrawerOpen: Bool
   @State private var viewModel: FeedsStartPageViewModel
   @Binding var selectedFeed: FetchType
@@ -59,6 +61,7 @@ struct FeedsStartPage: View {
 
   // MARK: - Layout Calculations
   private var safeAreaTop: CGFloat {
+#if os(iOS)
     let window = UIApplication.shared.connectedScenes
       .filter { $0.activationState == .foregroundActive }
       .first(where: { $0 is UIWindowScene })
@@ -66,6 +69,9 @@ struct FeedsStartPage: View {
       .first(where: { $0.isKeyWindow })
 
     return window?.safeAreaInsets.top ?? 44
+#elseif os(macOS)
+    return 44  // Standard navigation bar height for macOS
+#endif
   }
   
   private var navigationBarHeight: CGFloat {
@@ -92,8 +98,8 @@ struct FeedsStartPage: View {
   }
 
   // Sizing properties
-  private let screenWidth = UIScreen.main.bounds.width
-  private let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+  private let screenWidth = PlatformScreenInfo.width
+  private let isIPad = PlatformDeviceInfo.isIPad
   private var drawerWidth: CGFloat {
     isIPad ? min(400, screenWidth * 0.4) : screenWidth * 0.75
   }
@@ -132,7 +138,9 @@ struct FeedsStartPage: View {
     }
   }
 
+  #if os(iOS)
   private let impact = UIImpactFeedbackGenerator(style: .rigid)
+  #endif
 
   // MARK: - Initialization
   init(
@@ -343,9 +351,11 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private var bigDefaultFeedButton: some View {
     Button {
-      guard !editMode.isEditing else { return }
+      guard !isEditingFeeds else { return }
 
+      #if os(iOS)
       impact.impactOccurred()
+      #endif
 
       if let feedURI = defaultFeed, SystemFeedTypes.isTimelineFeed(feedURI) {
         selectedFeed = .timeline
@@ -387,10 +397,13 @@ struct FeedsStartPage: View {
             isSelected
             ? [Color.accentColor.opacity(0.15), Color.accentColor.opacity(0.08)]
             : [Color.accentColor.opacity(0.05), Color.clear]
-          let strokeColor =
-            isSelected
-            ? Color.accentColor.opacity(0.6)
-            : Color(UIColor.separator).opacity(0.5)
+          let strokeColor: Color = {
+            if isSelected {
+              return Color.accentColor.opacity(0.6)
+            } else {
+              return Color.separator.opacity(0.5)
+            }
+          }()
           let strokeWidth: CGFloat = isSelected ? 1.5 : 0.5
 
           RoundedRectangle(cornerRadius: 14)
@@ -504,9 +517,11 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func feedLink(for uri: ATProtocolURI, feedURI: String, category: String) -> some View {
     Button {
-      guard !editMode.isEditing else { return }
+      guard !isEditingFeeds else { return }
 
+      #if os(iOS)
       impact.impactOccurred()
+      #endif
 
       selectedFeed = .feed(uri)
       currentFeedName =
@@ -567,7 +582,7 @@ struct FeedsStartPage: View {
 
     .overlay(
       Group {
-        if editMode.isEditing {
+        if isEditingFeeds {
           VStack {
             HStack {
               Spacer()
@@ -617,9 +632,11 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func timelineFeedLink(feedURI: String, category: String) -> some View {
     Button {
-      guard !editMode.isEditing else { return }
+      guard !isEditingFeeds else { return }
 
+      #if os(iOS)
       impact.impactOccurred()
+      #endif
 
       selectedFeed = .timeline
       currentFeedName = "Timeline"
@@ -728,7 +745,7 @@ struct FeedsStartPage: View {
     .applyFeedsPageModifiers(
       viewModel: viewModel,
       appState: appState,
-      editMode: $editMode,
+      isEditingFeeds: $isEditingFeeds,
       isDrawerOpen: $isDrawerOpen,
       showAddFeedSheet: $showAddFeedSheet,
       isShowingAccountSwitcher: $isShowingAccountSwitcher,
@@ -814,40 +831,7 @@ struct FeedsStartPage: View {
   private func bannerHeaderView() -> some View {
     ZStack(alignment: .bottomLeading) {
       // Banner Image
-      Group {
-        if let bannerURL = profile?.banner?.url {
-          LazyImage(url: bannerURL) { state in
-            if let image = state.image {
-              image
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: drawerWidth)
-            } else {
-              // Fallback gradient banner
-              LinearGradient(
-                gradient: Gradient(colors: [
-                  Color.accentColor.opacity(0.3),
-                  Color.accentColor.opacity(0.1)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-              )
-              .frame(width: drawerWidth)
-            }
-          }
-        } else {
-          // Default gradient banner
-          LinearGradient(
-            gradient: Gradient(colors: [
-              Color.accentColor.opacity(0.3),
-              Color.accentColor.opacity(0.1)
-            ]),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-          .frame(width: drawerWidth)
-        }
-      }
+      bannerImageView
       .frame(width: drawerWidth)
       .clipped()
       
@@ -918,7 +902,9 @@ struct FeedsStartPage: View {
       }
     }
     .onLongPressGesture {
+      #if os(iOS)
       impact.impactOccurred()
+      #endif
       isShowingAccountSwitcher = true
     }
     .accessibilityElement(children: .combine)
@@ -954,9 +940,9 @@ struct FeedsStartPage: View {
                   .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
                   .accessibilityAddTraits(.isButton)
 
-                  if editMode.isEditing {
+                  if isEditingFeeds {
                       Button {
-                          editMode = .inactive
+                          isEditingFeeds = false
                       } label: {
                           Image(systemName: "checkmark")
                               .appFont(size: 16)
@@ -966,7 +952,7 @@ struct FeedsStartPage: View {
                       .accessibilityAddTraits(.isButton)
                   } else {
                       Button {
-                          editMode = .active
+                          isEditingFeeds = true
                       } label: {
                           Image(systemName: "slider.horizontal.3")
                               .appFont(size: 16)
@@ -995,7 +981,7 @@ struct FeedsStartPage: View {
 
           VStack(spacing: gridSpacing) {
               // Add Feed button in edit mode
-              if editMode.isEditing {
+              if isEditingFeeds {
                   addFeedButton()
               }
 
@@ -1032,7 +1018,7 @@ struct FeedsStartPage: View {
         Spacer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color(UIColor.systemBackground).opacity(0.9))
+      .background(Color.systemBackground.opacity(0.9))
     }
   }
 
@@ -1045,8 +1031,56 @@ struct FeedsStartPage: View {
         Spacer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color(UIColor.systemBackground).opacity(0.9))
+      .background(Color.systemBackground.opacity(0.9))
     }
+  }
+  
+  // MARK: - Banner Image Components
+  
+  @ViewBuilder
+  private var bannerImageView: some View {
+    Group {
+      if let bannerURL = profile?.banner?.url {
+        LazyImage(url: bannerURL) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: drawerWidth)
+          } else {
+            fallbackGradientBanner
+          }
+        }
+      } else {
+        defaultGradientBanner
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private var fallbackGradientBanner: some View {
+    LinearGradient(
+      gradient: Gradient(colors: [
+        Color.accentColor.opacity(0.3),
+        Color.accentColor.opacity(0.1)
+      ]),
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
+    .frame(width: drawerWidth)
+  }
+  
+  @ViewBuilder
+  private var defaultGradientBanner: some View {
+    LinearGradient(
+      gradient: Gradient(colors: [
+        Color.accentColor.opacity(0.3),
+        Color.accentColor.opacity(0.1)
+      ]),
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
+    .frame(width: drawerWidth)
   }
 }
 
@@ -1107,7 +1141,7 @@ extension View {
     func applyFeedsPageModifiers(
         viewModel: FeedsStartPageViewModel,
         appState: AppState,
-        editMode: Binding<EditMode>,
+        isEditingFeeds: Binding<Bool>,
         isDrawerOpen: Binding<Bool>,
         showAddFeedSheet: Binding<Bool>,
         isShowingAccountSwitcher: Binding<Bool>,
@@ -1120,8 +1154,37 @@ extension View {
     ) -> some View {
         self
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+            .configuredToolbar(
+                isDrawerOpen: isDrawerOpen,
+                showErrorAlert: showErrorAlert,
+                errorAlertMessage: errorAlertMessage,
+                onAppear: onAppear,
+                onDisappear: onDisappear
+            )
+            .configuredSheets(
+                showAddFeedSheet: showAddFeedSheet,
+                isShowingAccountSwitcher: isShowingAccountSwitcher,
+                showProtectedSystemFeedAlert: showProtectedSystemFeedAlert,
+                lastProtectedFeedAction: lastProtectedFeedAction
+            )
+            .configuredDataObservers(
+                viewModel: viewModel,
+                errorAlertMessage: errorAlertMessage,
+                showErrorAlert: showErrorAlert
+            )
+    }
+}
+
+private extension View {
+    func configuredToolbar(
+        isDrawerOpen: Binding<Bool>,
+        showErrorAlert: Binding<Bool>,
+        errorAlertMessage: Binding<String>,
+        onAppear: @escaping () -> Void,
+        onDisappear: @escaping () -> Void
+    ) -> some View {
+        self.toolbar {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         isDrawerOpen.wrappedValue = false
                     } label: {
@@ -1129,11 +1192,53 @@ extension View {
                             .foregroundColor(.primary)
                     }
                 }
+        }
+        #if os(iOS)
+        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+        #else
+        .toolbarBackgroundVisibility(.hidden, for: .automatic)
+        #endif
+        .onAppear(perform: onAppear)
+        .onDisappear(perform: onDisappear)
+        .alert("Error", isPresented: showErrorAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorAlertMessage.wrappedValue)
+        }
+    }
+    
+    func configuredSheets(
+        showAddFeedSheet: Binding<Bool>,
+        isShowingAccountSwitcher: Binding<Bool>, 
+        showProtectedSystemFeedAlert: Binding<Bool>,
+        lastProtectedFeedAction: String
+    ) -> some View {
+        self
+            .sheet(isPresented: showAddFeedSheet) {
+                AddFeedSheet()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(.thinMaterial)
             }
-            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
-            .environment(\.editMode, editMode)
-            .onAppear(perform: onAppear)
-            .onDisappear(perform: onDisappear)
+            .sheet(isPresented: isShowingAccountSwitcher) {
+                AccountSwitcherView()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(.thinMaterial)
+            }
+            .alert("System Feed Protected", isPresented: showProtectedSystemFeedAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("\(lastProtectedFeedAction) cannot be performed on system feeds like Timeline/Following as they are required for the app to function correctly.")
+            }
+    }
+    
+    func configuredDataObservers(
+        viewModel: FeedsStartPageViewModel,
+        errorAlertMessage: Binding<String>,
+        showErrorAlert: Binding<Bool>
+    ) -> some View {
+        self
             .onChange(of: viewModel.cachedPinnedFeeds) { _, _ in
                 Task { await viewModel.updateCaches() }
             }
@@ -1152,30 +1257,6 @@ extension View {
                     errorAlertMessage.wrappedValue = errorMsg
                     showErrorAlert.wrappedValue = true
                 }
-            }
-            .sheet(isPresented: showAddFeedSheet) {
-                AddFeedSheet()
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .presentationBackground(.thinMaterial)
-            }
-            .sheet(isPresented: isShowingAccountSwitcher) {
-                AccountSwitcherView()
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .presentationBackground(.thinMaterial)
-            }
-            .alert("System Feed Protected", isPresented: showProtectedSystemFeedAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(
-                    "\(lastProtectedFeedAction) cannot be performed on system feeds like Timeline/Following as they are required for the app to function correctly."
-                )
-            }
-            .alert("Error", isPresented: showErrorAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(errorAlertMessage.wrappedValue)
             }
     }
 }

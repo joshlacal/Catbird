@@ -46,7 +46,7 @@ struct SimpleGifView: View {
     @ViewBuilder
     private var loadingView: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color(.systemGray6))
+            .fill(Color(platformColor: .platformSystemGray6))
             .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay(
                 ProgressView()
@@ -56,7 +56,7 @@ struct SimpleGifView: View {
     @ViewBuilder
     private var placeholderView: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color(.systemGray5))
+            .fill(Color(platformColor: .platformSystemGray5))
             .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay(
                 Image(systemName: "photo")

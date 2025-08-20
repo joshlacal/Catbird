@@ -6,8 +6,10 @@
 //
 
 import SwiftUI
-import UIKit
 import Petrel
+
+#if os(iOS)
+import UIKit
 
 // MARK: - Enhanced Rich Text Editor with Link Support
 
@@ -201,24 +203,6 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   }
 }
 
-// MARK: - Link Creation Integration
-
-extension EnhancedRichTextEditor {
-  /// Add a link facet to the current text
-  func addLinkFacet(url: URL, range: NSRange, in text: String) -> NSAttributedString {
-    let mutableAttributedText = NSMutableAttributedString(attributedString: attributedText)
-    
-    // Add link attributes
-    mutableAttributedText.addAttributes([
-      .link: url,
-      .foregroundColor: UIColor.systemBlue,
-      .underlineStyle: NSUnderlineStyle.single.rawValue
-    ], range: range)
-    
-    return mutableAttributedText
-  }
-}
-
 // MARK: - UIEditMenuInteractionDelegate
 
 @available(iOS 16.0, *)
@@ -254,3 +238,24 @@ extension EnhancedRichTextEditor.Coordinator: UIEditMenuInteractionDelegate {
     return UIMenu(children: allActions)
   }
 }
+
+#else
+
+// macOS stub for EnhancedRichTextEditor
+struct EnhancedRichTextEditor: View {
+  @Binding var attributedText: NSAttributedString
+  @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
+  
+  let placeholder: String
+  let onImagePasted: (NSImage) -> Void
+  let onGenmojiDetected: ([String]) -> Void
+  let onTextChanged: (NSAttributedString) -> Void
+  let onLinkCreationRequested: (String, NSRange) -> Void
+  
+  var body: some View {
+    Text("Rich text editing not available on macOS")
+      .foregroundColor(.secondary)
+  }
+}
+
+#endif

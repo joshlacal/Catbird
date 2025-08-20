@@ -6,11 +6,16 @@
 //  Combines all enhancements into a unified, production-ready system
 //
 
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import SwiftUI
 import os
 import Combine
 
+#if os(iOS)
 @available(iOS 18.0, *)
 @MainActor
 final class EnhancedScrollPreservationIntegration: ObservableObject {
@@ -27,14 +32,14 @@ final class EnhancedScrollPreservationIntegration: ObservableObject {
         let isProMotionActive: Bool
         let scrollVelocity: CGFloat
         
-        static func current(scrollVelocity: CGFloat = 0) -> SystemPerformanceSnapshot {
+        @MainActor static func current(scrollVelocity: CGFloat = 0) -> SystemPerformanceSnapshot {
             return SystemPerformanceSnapshot(
                 timestamp: CACurrentMediaTime(),
-                frameRate: Double(UIScreen.main.maximumFramesPerSecond),
+                frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
                 thermalState: ProcessInfo.processInfo.thermalState,
-                batteryLevel: UIDevice.current.batteryLevel,
+                batteryLevel: PlatformDeviceInfo.batteryLevel,
                 memoryUsage: getCurrentMemoryUsage(),
-                isProMotionActive: UIScreen.main.maximumFramesPerSecond > 60,
+                isProMotionActive: PlatformScreenInfo.isProMotionDisplay,
                 scrollVelocity: scrollVelocity
             )
         }
@@ -141,7 +146,7 @@ final class EnhancedScrollPreservationIntegration: ObservableObject {
             logger.warning("⚠️ System unavailable, skipping scroll preservation")
             return iOS18ScrollPreservationCoordinator.RestorationResult(
                 success: false,
-                strategy: .standard,
+                strategy: iOS18ScrollPreservationCoordinator.PreservationStrategy.standard,
                 pixelError: 0,
                 duration: 0,
                 frameRate: 0,
@@ -282,7 +287,7 @@ final class EnhancedScrollPreservationIntegration: ObservableObject {
                 // Collect system metrics every minute
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
                 // Record memory usage snapshot for telemetry
-        let memorySnapshot = SystemPerformanceSnapshot.current()
+        _ = SystemPerformanceSnapshot.current()
         await telemetryActor.recordMemoryUsage(context: "periodic_snapshot")
             }
         }
@@ -423,7 +428,7 @@ struct ScrollPreservationStatusView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemBackground))
+                .fill(Color.systemBackground)
                 .shadow(radius: 1)
         )
     }
@@ -470,7 +475,7 @@ struct ScrollPreservationDebugView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemGray6))
+                        .fill(Color.systemGray6)
                 )
             }
         }
@@ -489,12 +494,42 @@ struct ScrollPreservationDebugView: View {
         }
     }
 }
+#else
+// macOS stub implementation
+@available(macOS 13.0, *)
+@MainActor
+final class EnhancedScrollPreservationIntegration: ObservableObject {
+    init() {
+        // Stub initialization
+    }
+    
+    func integrateScrollPreservation(
+        collectionView: Any,
+        dataSource: Any,
+        stateManager: Any
+    ) {
+        // No-op on macOS
+    }
+    
+    func optimizeForCurrentConditions() {
+        // No-op on macOS
+    }
+    
+    func handleBackgroundTransition() {
+        // No-op on macOS
+    }
+    
+    func cleanup() {
+        // No-op on macOS
+    }
+}
+#endif
 
-#if DEBUG
+#if DEBUG && os(iOS)
 @available(iOS 18.0, *)
 struct ScrollPreservationDebugView_Previews: PreviewProvider {
     static var previews: some View {
-        ScrollPreservationDebugView(
+        ScrollPreservationStatusView(
             integration: EnhancedScrollPreservationIntegration()
         )
     }

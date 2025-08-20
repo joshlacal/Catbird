@@ -9,6 +9,14 @@ import Foundation
 import SwiftUI
 import Petrel
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+// Import cross-platform modifiers for keyboardType compatibility
+
 // MARK: - Facet Management
 
 struct RichTextFacetUtils {
@@ -34,6 +42,21 @@ struct RichTextFacetUtils {
     let rangeData = String(text[startIndex..<endIndex]).data(using: .utf8) ?? Data()
     
     return NSRange(location: startData.count, length: rangeData.count)
+  }
+  
+  /// Add a link facet to attributed text
+  static func addLinkFacet(to attributedText: NSAttributedString, url: URL, range: NSRange) -> NSAttributedString {
+    let mutableText = NSMutableAttributedString(attributedString: attributedText)
+    mutableText.addAttribute(.link, value: url, range: range)
+    
+    #if os(iOS)
+    mutableText.addAttribute(.foregroundColor, value: UIColor.systemBlue, range: range)
+    #elseif os(macOS)
+    mutableText.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: range)
+    #endif
+    
+    mutableText.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+    return mutableText
   }
   
   /// Convert byte-based range to character-based range for UI display
@@ -103,7 +126,7 @@ struct RichTextFacetUtils {
     // Apply link styling to each facet
     for linkFacet in linkFacets {
       attributedString.addAttributes([
-        .foregroundColor: UIColor.systemBlue,
+        .foregroundColor: PlatformColor.platformSystemBlue,
         .underlineStyle: NSUnderlineStyle.single.rawValue,
         .link: linkFacet.url
       ], range: linkFacet.range)
@@ -178,7 +201,7 @@ struct LinkCreationDialog: View {
           Text("\"\(selectedText)\"")
             .appFont(AppTextRole.body)
             .padding(12)
-            .background(Color(.systemGray6))
+            .background(Color(platformColor: .platformSystemGray6))
             .cornerRadius(8)
         }
         
@@ -186,13 +209,20 @@ struct LinkCreationDialog: View {
           Text("Link URL")
             .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
-          
+            #if os(iOS)
           TextField("https://example.com", text: $urlText)
             .textFieldStyle(RoundedBorderTextFieldStyle())
             .keyboardType(.URL)
             .autocapitalization(.none)
-            .autocorrectionDisabled()
+            .autocorrectionDisabled(true)
             .focused($isURLFieldFocused)
+            #elseif os(macOS)
+            TextField("https://example.com", text: $urlText)
+              .textFieldStyle(RoundedBorderTextFieldStyle())
+              .autocorrectionDisabled(true)
+              .focused($isURLFieldFocused)
+
+            #endif
         }
         
         if showError {
@@ -205,8 +235,10 @@ struct LinkCreationDialog: View {
       }
       .padding()
       .navigationTitle("Create Link")
+      #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
-      .toolbar {
+      #endif
+      .toolbar(content: {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             onCancel()
@@ -219,7 +251,7 @@ struct LinkCreationDialog: View {
           }
           .disabled(urlText.isEmpty)
         }
-      }
+      })
       .onAppear {
         isURLFieldFocused = true
       }

@@ -190,9 +190,11 @@ struct ListFeedView: View {
     NavigationStack(path: $navigationPath) {
       contentView
         .navigationTitle(viewModel.listDetails?.name ?? "List Feed")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .toolbar {
-          ToolbarItem(placement: .navigationBarTrailing) {
+          ToolbarItem(placement: .primaryAction) {
             Menu {
               Button {
                 viewModel.showingMembersList = true

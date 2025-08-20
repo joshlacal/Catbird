@@ -1,3 +1,4 @@
+#if os(iOS)
 import AppIntents
 import SwiftUI
 import WidgetKit
@@ -315,3 +316,4 @@ struct CatbirdNotificationWidget: Widget {
 } timeline: {
   NotificationEntry(date: Date(), count: 5, configuration: NotificationWidgetIntent())
 }
+#endif

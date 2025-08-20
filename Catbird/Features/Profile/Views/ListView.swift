@@ -75,7 +75,9 @@ struct ListView: View {
                     }
                 }
                 .navigationTitle(list.name)
-                .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             } else {
                 Text("Could not load list")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

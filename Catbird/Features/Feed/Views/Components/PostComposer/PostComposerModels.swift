@@ -62,11 +62,11 @@ struct ThreadEntry: Identifiable {
 
 #if os(iOS)
 import UIKit
-typealias PlatformImage = UIImage
 #elseif os(macOS)
 import AppKit
-typealias PlatformImage = NSImage
+#endif
 
+#if os(macOS)
 extension PlatformImage {
     func jpegData(compressionQuality: CGFloat) -> Data? {
         guard let cgImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil) else {

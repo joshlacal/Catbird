@@ -55,21 +55,41 @@ struct AccountSwitcherView: View {
         }
       }
       .navigationTitle("Accounts")
-      .toolbarTitleDisplayMode(.large)
+      #if os(iOS)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
+      #endif
       .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
+        #if os(iOS)
+        ToolbarItem(placement: .cancellationAction) {
           Button("Done") {
             dismiss()
           }
         }
 
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button {
             isAddingAccount = true
           } label: {
             Image(systemName: "plus")
           }
         }
+        #elseif os(macOS)
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") {
+            dismiss()
+          }
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            isAddingAccount = true
+          } label: {
+            Image(systemName: "plus")
+          }
+        }
+        #endif
       }
       .sheet(isPresented: $isAddingAccount) {
         addAccountSheet
@@ -233,18 +253,34 @@ struct AccountSwitcherView: View {
 
         // Input form
         VStack(spacing: 16) {
-          ValidatingTextField(
-            text: $newAccountHandle,
-            prompt: "username.bsky.social",
-            icon: "at",
-            validationError: validationError,
-            isDisabled: isLoading,
-            keyboardType: .emailAddress,
-            submitLabel: .go,
-            onSubmit: {
-              addNewAccount()
-            }
-          )
+          Group {
+            #if os(iOS)
+            ValidatingTextField(
+              text: $newAccountHandle,
+              prompt: "username.bsky.social",
+              icon: "at",
+              validationError: validationError,
+              isDisabled: isLoading,
+              keyboardType: .emailAddress,
+              submitLabel: .go,
+              onSubmit: {
+                addNewAccount()
+              }
+            )
+            #elseif os(macOS)
+            ValidatingTextField(
+              text: $newAccountHandle,
+              prompt: "username.bsky.social",
+              icon: "at",
+              validationError: validationError,
+              isDisabled: isLoading,
+              submitLabel: .go,
+              onSubmit: {
+                addNewAccount()
+              }
+            )
+            #endif
+          }
           .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
 
           if isLoading {
@@ -286,7 +322,7 @@ struct AccountSwitcherView: View {
           }
           .padding(.horizontal, 12)
           .padding(.vertical, 8)
-          .background(Color(.systemBackground).opacity(0.8))
+          .background(Color.systemBackground.opacity(0.8))
           .clipShape(Capsule())
           .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
           .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -302,9 +338,13 @@ struct AccountSwitcherView: View {
 
         Spacer()
       }
-      .toolbarTitleDisplayMode(.inline)
+      #if os(iOS)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+      #endif
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Cancel") {
             isAddingAccount = false
           }
@@ -391,15 +431,10 @@ struct AccountSwitcherView: View {
     private func removeAccount(_ account: AccountViewModel) async {
       isLoading = true
 
-      do {
-        try await appState.authManager.removeAccount(did: account.did)
+      await appState.authManager.removeAccount(did: account.did)
 
-        // Refresh account list
-        await loadAccounts()
-      } catch {
-        logger.error("Failed to remove account: \(error.localizedDescription)")
-        self.error = "Failed to remove account: \(error.localizedDescription)"
-      }
+      // Refresh account list
+      await loadAccounts()
 
       isLoading = false
     }
@@ -407,15 +442,10 @@ struct AccountSwitcherView: View {
   private func removeAccount(_ account: AuthenticationManager.AccountInfo) async {
     isLoading = true
 
-    do {
-      try await appState.authManager.removeAccount(did: account.did)
+    await appState.authManager.removeAccount(did: account.did)
 
-      // Refresh account list
-      await loadAccounts()
-    } catch {
-      logger.error("Failed to remove account: \(error.localizedDescription)")
-      self.error = "Failed to remove account: \(error.localizedDescription)"
-    }
+    // Refresh account list
+    await loadAccounts()
 
     isLoading = false
   }

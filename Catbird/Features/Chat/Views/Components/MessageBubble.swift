@@ -1,3 +1,4 @@
+#if os(iOS)
 import ExyteChat
 import SwiftUI
 import Petrel
@@ -166,16 +167,28 @@ struct AttachmentView: View {
         )
       }
       .buttonStyle(.plain)
+#if os(iOS)
       .fullScreenCover(isPresented: $showingFullScreen) {
         MediaFullScreenView(attachment: attachment)
       }
+#elseif os(macOS)
+      .sheet(isPresented: $showingFullScreen) {
+        MediaFullScreenView(attachment: attachment)
+      }
+#endif
       
     case .video:
       // Use the chat video player for inline playback
       ChatVideoThumbnailView(attachment: attachment, showingFullScreen: $showingFullScreen)
+#if os(iOS)
         .fullScreenCover(isPresented: $showingFullScreen) {
           MediaFullScreenView(attachment: attachment)
         }
+#elseif os(macOS)
+        .sheet(isPresented: $showingFullScreen) {
+          MediaFullScreenView(attachment: attachment)
+        }
+#endif
       
     // Removed custom case - using link type for post embeds instead
     }
@@ -310,10 +323,10 @@ struct ChatPostEmbedView: View {
     .padding(12)
     .background(
       RoundedRectangle(cornerRadius: 12)
-        .fill(Color(.secondarySystemBackground))
+        .fill(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
         .overlay(
           RoundedRectangle(cornerRadius: 12)
-            .stroke(Color(.separator), lineWidth: 0.5)
+            .stroke(Color(platformColor: PlatformColor.platformSeparator), lineWidth: 0.5)
         )
     )
     .onTapGesture {
@@ -599,3 +612,4 @@ struct ChatVideoPlayerView: View {
     player = nil
   }
 }
+#endif

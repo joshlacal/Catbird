@@ -2,6 +2,13 @@ import Foundation
 import os
 import PhotosUI
 import SwiftUI
+import AVFoundation
+
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // MARK: - Media Management Extension
 
@@ -82,13 +89,17 @@ extension PostComposerViewModel {
         }
 
         do {
-            let (data, uiImage) = try await loadImageData(from: pickerItem)
+            let (data, platformImage) = try await loadImageData(from: pickerItem)
 
-            if let uiImage = uiImage {
-                mediaItems[index].image = Image(uiImage: uiImage)
+            if let platformImage = platformImage {
+                #if os(iOS)
+                mediaItems[index].image = Image(uiImage: platformImage)
+                #elseif os(macOS)
+                mediaItems[index].image = Image(nsImage: platformImage)
+                #endif
                 mediaItems[index].isLoading = false
                 mediaItems[index].aspectRatio = CGSize(
-                    width: uiImage.size.width, height: uiImage.size.height)
+                    width: platformImage.imageSize.width, height: platformImage.imageSize.height)
                 mediaItems[index].rawData = data
             }
         } catch let error as NSError {
@@ -112,7 +123,7 @@ extension PostComposerViewModel {
         }
     }
 
-    private func loadImageData(from item: PhotosPickerItem) async throws -> (Data, UIImage?) {
+    private func loadImageData(from item: PhotosPickerItem) async throws -> (Data, PlatformImage?) {
         logger.debug("DEBUG: Loading image data from PhotosPickerItem")
         
         guard let data = try await item.loadTransferable(type: Data.self) else {
@@ -135,8 +146,8 @@ extension PostComposerViewModel {
                 ])
         }
 
-        let uiImage = UIImage(data: data)
-        return (data, uiImage)
+        let platformImage = PlatformImage(data: data)
+        return (data, platformImage)
     }
     
     // MARK: - Removing Media Items
@@ -220,13 +231,24 @@ extension PostComposerViewModel {
             let time = CMTime(seconds: 0, preferredTimescale: 1)
             let cgImage = try await imageGenerator.image(at: time).image
             
-            let uiImage = UIImage(cgImage: cgImage)
-            let image = Image(uiImage: uiImage)
+            guard let platformImage = PlatformImage.image(from: cgImage) else {
+                throw NSError(
+                    domain: "ImageLoadingError", code: 0,
+                    userInfo: [NSLocalizedDescriptionKey: "Failed to create platform image from CGImage"])
+            }
+            
+            #if os(iOS)
+            let image = Image(uiImage: platformImage)
+            let imageSize = platformImage.size
+            #elseif os(macOS)
+            let image = Image(nsImage: platformImage)
+            let imageSize = platformImage.size
+            #endif
             
             // Update the video item
             self.videoItem?.image = image
             self.videoItem?.isLoading = false
-            self.videoItem?.aspectRatio = CGSize(width: uiImage.size.width, height: uiImage.size.height)
+            self.videoItem?.aspectRatio = CGSize(width: imageSize.width, height: imageSize.height)
             
             logger.debug("DEBUG: Video thumbnail loaded successfully")
             

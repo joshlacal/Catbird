@@ -36,7 +36,11 @@ struct MuteWordsSettingsView: View {
             aboutSection
           }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.sidebar)
+        #endif
         .searchable(text: $searchText, prompt: "Search mute words")
         .onChange(of: searchText) {
           filterMuteWords()
@@ -44,7 +48,9 @@ struct MuteWordsSettingsView: View {
       }
     }
     .navigationTitle("Mute Words")
+    #if os(iOS)
     .toolbarTitleDisplayMode(.large)
+    #endif
     .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .alert("Delete Mute Word", isPresented: $showingDeleteConfirmation) {
       Button("Delete", role: .destructive) {
@@ -112,13 +118,20 @@ struct MuteWordsSettingsView: View {
     Section {
       VStack(spacing: DesignTokens.Spacing.base) {
         HStack(spacing: DesignTokens.Spacing.base) {
+#if os(iOS)
           TextField("Add new mute word", text: $newMuteWord)
             .textFieldStyle(.roundedBorder)
-            .autocorrectionDisabled()
+            .autocorrectionDisabled(true)
             .textInputAutocapitalization(.never)
             .onSubmit {
               addWordIfValid()
             }
+#else
+          TextField("Add new mute word", text: $newMuteWord)
+            .onSubmit {
+              addWordIfValid()
+            }
+#endif
           
           Button(action: addWordIfValid) {
             Image(systemName: "plus.circle.fill")
@@ -227,11 +240,13 @@ struct MuteWordsSettingsView: View {
       .buttonStyle(.plain)
     }
     .spacingSM(.vertical)
+    #if os(iOS)
     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
       Button("Delete", role: .destructive) {
         removeMuteWord(word.id)
       }
     }
+    #endif
     .contextMenu {
       Button("Delete", role: .destructive) {
         wordToDelete = word

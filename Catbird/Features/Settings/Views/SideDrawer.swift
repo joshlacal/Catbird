@@ -6,8 +6,13 @@
 //
 
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
+#if os(iOS)
 class DrawerPanGestureRecognizer: UIPanGestureRecognizer {
   weak var coordinator: DrawerPanGesture.Coordinator?
 
@@ -108,7 +113,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   @State private var bounceOffset: CGFloat = 0
 
   // Device detection
-  private let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+  private let isIPad = PlatformDeviceInfo.isIPad
 
   // Responsive customizable properties
   private var bounceAmount: CGFloat { isIPad ? 0 : 0 }
@@ -118,8 +123,10 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   private var velocityThreshold: CGFloat { isIPad ? 150 : 100 }
 
   // Haptics
+#if os(iOS)
   let softHaptic = UIImpactFeedbackGenerator(style: .soft)
   let rigidHaptic = UIImpactFeedbackGenerator(style: .rigid)
+#endif
 
   init(
     selectedTab: Binding<Int>,
@@ -137,11 +144,11 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     if let customWidth = drawerWidth {
       self.drawerWidth = customWidth
     } else {
-      let isIPad = UIDevice.current.userInterfaceIdiom == .pad
+      let isIPad = PlatformDeviceInfo.isIPad
       if isIPad {
-        self.drawerWidth = min(320, UIScreen.main.bounds.width * 0.4)
+        self.drawerWidth = min(320, PlatformScreenInfo.width * 0.4)
       } else {
-        self.drawerWidth = min(UIScreen.main.bounds.width * 0.7, 375)
+        self.drawerWidth = min(PlatformScreenInfo.width * 0.7, 375)
       }
     }
 
@@ -202,7 +209,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
               withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
                 isDrawerOpen = false
               }
+#if os(iOS)
               rigidHaptic.impactOccurred()
+#endif
             }
             .accessibilityAction(named: "Close Feeds Menu") {
               withAnimation {
@@ -263,7 +272,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
 
             let translationInt = Int(abs(translation))
             if translationInt % 50 < 2 {
+#if os(iOS)
               softHaptic.impactOccurred(intensity: 0.3)
+#endif
             }
           },
           onEnded: { translation, velocity in
@@ -292,7 +303,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
                 }
               }
 
+#if os(iOS)
               rigidHaptic.impactOccurred(intensity: velocityFactor)
+#endif
             }
 
             withAnimation(.spring(response: 0.3, dampingFraction: 0.99)) {
@@ -326,3 +339,4 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     }
   }
 }
+#endif

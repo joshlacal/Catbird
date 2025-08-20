@@ -58,7 +58,7 @@ struct NetworkStatusBar: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 4)
-            .background(Color(.systemGray6))
+            .background(Color.systemGray6)
         }
     }
 }

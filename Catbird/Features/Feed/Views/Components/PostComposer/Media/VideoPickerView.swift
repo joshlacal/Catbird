@@ -56,7 +56,7 @@ struct VideoPickerView: View {
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color(.systemGray6))
+                            .background(Color(platformColor: .platformSystemGray6))
                             .cornerRadius(6)
                             .onTapGesture {
                                 onEditAlt(videoItem.id)
@@ -70,7 +70,7 @@ struct VideoPickerView: View {
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .appFont(AppTextRole.title1)
-                            .foregroundStyle(.white, Color(.systemGray3))
+                            .foregroundStyle(.white, Color(platformColor: .platformSystemGray3))
                             .background(
                                 Circle()
                                     .fill(Color.black.opacity(0.3))

@@ -2,6 +2,8 @@ import OSLog
 import Petrel
 import SwiftUI
 
+#if os(iOS)
+
 /// Moderation tools for chat administrators
 struct ChatModerationView: View {
   @Environment(AppState.self) private var appState
@@ -31,7 +33,9 @@ struct ChatModerationView: View {
         .tag(2)
     }
     .navigationTitle("Moderation Tools")
+    #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 
@@ -50,8 +54,10 @@ struct ActorMetadataView: View {
       Section {
         TextField("User DID or Handle", text: $userDID)
           .textFieldStyle(.roundedBorder)
+          #if os(iOS)
           .autocapitalization(.none)
-          .autocorrectionDisabled()
+          #endif
+          .autocorrectionDisabled(true)
         
         Button {
           fetchMetadata()
@@ -133,13 +139,17 @@ struct MessageContextView: View {
       Section {
         TextField("Conversation ID", text: $conversationId)
           .textFieldStyle(.roundedBorder)
+          #if os(iOS)
           .autocapitalization(.none)
-          .autocorrectionDisabled()
+          #endif
+          .autocorrectionDisabled(true)
         
         TextField("Message ID", text: $messageId)
           .textFieldStyle(.roundedBorder)
+          #if os(iOS)
           .autocapitalization(.none)
-          .autocorrectionDisabled()
+          #endif
+          .autocorrectionDisabled(true)
         
         Stepper("Messages before: \(beforeCount)", value: $beforeCount, in: 0...20)
         Stepper("Messages after: \(afterCount)", value: $afterCount, in: 0...20)
@@ -242,14 +252,18 @@ struct AccessControlView: View {
       Section {
         TextField("User DID or Handle", text: $userDID)
           .textFieldStyle(.roundedBorder)
+          #if os(iOS)
           .autocapitalization(.none)
-          .autocorrectionDisabled()
+          #endif
+          .autocorrectionDisabled(true)
         
         Toggle("Allow Chat Access", isOn: $allowAccess)
         
         TextField("Reference (optional)", text: $reference)
           .textFieldStyle(.roundedBorder)
+          #if os(iOS)
           .autocapitalization(.none)
+          #endif
         
         Button {
           updateAccess()
@@ -390,3 +404,4 @@ struct MessageContextRow: View {
       .environment(AppState.shared)
   }
 }
+#endif

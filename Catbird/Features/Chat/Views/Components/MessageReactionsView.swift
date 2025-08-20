@@ -1,3 +1,4 @@
+#if os(iOS)
 import ExyteChat
 import Petrel
 import SwiftUI
@@ -141,3 +142,4 @@ struct MessageReactionsView: View {
       convoId: convoId, messageId: messageId, emoji: emoji)
   }
 }
+#endif

@@ -4,25 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Catbird is a **PRODUCTION-READY** iOS client for Bluesky built with SwiftUI and modern Swift 6 patterns. This is a release-ready application where all code must be production-quality with no placeholders, fallbacks, or temporary implementations. It uses the Petrel library for AT Protocol communication.
+Catbird is a **PRODUCTION-READY** cross-platform client for Bluesky built with SwiftUI and modern Swift 6 patterns, supporting both iOS and macOS. This is a release-ready application where all code must be production-quality with no placeholders, fallbacks, or temporary implementations. It uses the Petrel library for AT Protocol communication.
 
 ### Project Components
-- **Catbird**: Main iOS app with SwiftUI interface for Bluesky
+- **Catbird**: Cross-platform app with SwiftUI interface for Bluesky (iOS and macOS)
 - **Petrel**: Swift library providing AT Protocol networking and data models (auto-generated from Lexicon JSON files)
 - **CatbirdNotificationWidget**: iOS widget extension for notifications
-- **CatbirdFeedWidget**: Feed widget extension (in development)
+- **CatbirdFeedWidget**: Feed widget extension (iOS only, in development)
+
+### Platform Support
+- **iOS 16.0+**: Full featured mobile client with UIKit optimizations
+- **macOS 13.0+**: Native macOS client with SwiftUI-based feed implementation
+- **Shared Codebase**: ~95% code sharing between platforms using conditional compilation
 
 ## Build and Development Commands
 
 ### Building the App
+
+#### iOS Builds
 - **Quick incremental build**: `./quick-build.sh [scheme]`
-- **Build for simulator by name**: Use MCP tools with `build_sim_name_proj` command
-- **Build for physical device**: Use MCP tools with `build_dev_proj` command
-- **Clean build**: Use MCP tools with `clean_proj` command
+- **Build for simulator by name**: Use MCP tools with `build_sim` command
+- **Build for physical device**: Use MCP tools with `build_device` command
+- **Clean build**: Use MCP tools with `clean` command
+
+#### macOS Builds
+- **Build for macOS**: Use MCP tools with `build_macos` command
+- **Build and run macOS**: Use MCP tools with `build_run_macos` command
+- **Get macOS app path**: Use MCP tools with `get_mac_app_path` command
+- **Launch macOS app**: Use MCP tools with `launch_mac_app` command
 
 ### Testing
-- **Run tests on simulator**: Use MCP tools with `test_sim_name_proj` command
-- **Run tests on device**: Use MCP tools with `test_device_proj` command
+
+#### iOS Testing
+- **Run tests on simulator**: Use MCP tools with `test_sim` command
+- **Run tests on device**: Use MCP tools with `test_device` command
+
+#### macOS Testing
+- **Run tests on macOS**: Use MCP tools with `test_macos` command
+
+#### General Testing
 - **Test framework**: Swift Testing (NOT XCTest) - use `@Test` attribute
 - **Check Swift syntax errors**: `./swift-check.sh` or `./quick-error-check.sh`
 
@@ -34,6 +54,7 @@ Catbird is a **PRODUCTION-READY** iOS client for Bluesky built with SwiftUI and 
 ### Code Quality Checks
 - **Swift syntax check**: `swift -frontend -parse [filename]`
 - **Full typecheck with iOS SDK**: `swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -target arm64-apple-ios18.0 [filename]`
+- **Full typecheck with macOS SDK**: `swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk -target arm64-apple-macos13.0 [filename]`
 - **Linting**: SwiftLint configuration in `.swiftlint.yml`
 
 ## Architecture
@@ -97,6 +118,137 @@ AppState (@Observable)
 - **MARK:** comments to organize code sections
 - **AppNavigationManager** for all navigation
 
+## Cross-Platform Development
+
+### Platform-Specific Patterns
+
+#### Conditional Compilation
+Use `#if os(iOS)`, `#if os(macOS)` for platform-specific code. **NEVER** put conditional compilation directly in modifier chains.
+
+**❌ WRONG - Conditional modifier branching:**
+```swift
+var body: some View {
+    VStack {
+        // content
+    }
+    #if os(iOS)
+    .navigationBarHidden(true)
+    #elseif os(macOS)
+    .frame(minWidth: 480)
+    #endif
+}
+```
+
+**✅ CORRECT - Use ViewModifier protocols:**
+```swift
+var body: some View {
+    VStack {
+        // content
+    }
+    .modifier(PlatformSpecificModifier())
+}
+
+private struct PlatformSpecificModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.navigationBarHidden(true)
+        #elseif os(macOS)
+        content.frame(minWidth: 480)
+        #endif
+    }
+}
+```
+
+#### Platform-Specific Values
+Use computed properties or functions for platform-specific values.
+
+**✅ CORRECT:**
+```swift
+private func bottomPadding(for geometry: GeometryProxy) -> CGFloat {
+    #if os(iOS)
+    max(geometry.safeAreaInsets.bottom, 24)
+    #else
+    24
+    #endif
+}
+```
+
+#### Availability Annotations
+Always include both platforms in `@available` annotations:
+
+**✅ CORRECT:**
+```swift
+@available(iOS 16.0, macOS 13.0, *)
+struct MyView: View {
+    // implementation
+}
+```
+
+### Platform Utilities
+
+The codebase includes cross-platform utility extensions in `Core/Extensions/`:
+
+- **CrossPlatformImage.swift**: Unified image handling across platforms
+- **CrossPlatformUI.swift**: Common UI patterns and type aliases
+- **PlatformColors.swift**: Platform-specific color definitions
+- **PlatformDeviceInfo.swift**: Device and platform detection utilities
+- **PlatformHaptics.swift**: Haptic feedback abstraction
+- **PlatformScreenInfo.swift**: Screen metrics and capabilities
+- **PlatformSystem.swift**: System-level functionality
+
+#### Platform Detection Examples
+```swift
+// Device type detection
+if PlatformDeviceInfo.userInterfaceIdiom == .phone {
+    // iPhone-specific code
+}
+
+// Screen capabilities
+if PlatformScreenInfo.hasDynamicIsland {
+    // Handle Dynamic Island
+}
+
+// Platform-specific haptics
+PlatformHaptics.impact(.medium)
+```
+
+### Feed Implementation Differences
+
+#### iOS Implementation
+- Uses `UICollectionView` via `FeedCollectionViewControllerIntegrated`
+- Optimized for touch interactions and scrolling performance
+- Supports advanced features like UIUpdateLink (iOS 18+)
+
+#### macOS Implementation
+- Uses SwiftUI `List` with `FeedPostRow` components
+- Native macOS scrolling behavior
+- Maintains same state management and functionality
+
+**Example from `FeedCollectionViewBridge.swift`:**
+```swift
+#if os(iOS)
+struct FeedCollectionViewWrapper: View {
+    var body: some View {
+        FeedCollectionViewIntegrated(
+            stateManager: stateManager,
+            navigationPath: $navigationPath
+        )
+    }
+}
+#else
+struct FeedCollectionViewWrapper: View {
+    var body: some View {
+        List {
+            ForEach(stateManager.posts, id: \.postKey) { postViewModel in
+                FeedPostRow(viewModel: postViewModel, navigationPath: $navigationPath)
+            }
+        }
+        .listStyle(.plain)
+    }
+}
+#endif
+```
+
 ## Key Components
 
 ### Authentication Flow
@@ -145,10 +297,24 @@ AppState (@Observable)
 - Simulator automation via MCP tools
 
 ### Testing Commands
-```bash
-# Run tests on simulator
-# Use MCP: test_sim_name_proj with simulatorName: "iPhone 16 Pro"
 
+#### iOS Testing
+```bash
+# Run tests on iOS simulator
+# Use MCP: test_sim with simulatorName: "iPhone 16 Pro"
+
+# Run tests on physical device
+# Use MCP: test_device with deviceId from list_devices
+```
+
+#### macOS Testing
+```bash
+# Run tests on macOS
+# Use MCP: test_macos with scheme: "Catbird"
+```
+
+#### General Testing
+```bash
 # Check syntax errors quickly
 ./swift-check.sh
 
@@ -161,10 +327,22 @@ AppState (@Observable)
 ### Adding a New Feature
 1. Create feature folder in `/Features`
 2. Add Observable ViewModel if needed
-3. Implement SwiftUI views
-4. Wire up navigation in AppNavigationManager
-5. Add unit tests using Swift Testing
-6. Consider A/B test wrapper if experimental
+3. Implement SwiftUI views with cross-platform support
+4. Use proper `@available(iOS 16.0, macOS 13.0, *)` annotations
+5. Handle platform differences with ViewModifier protocols
+6. Wire up navigation in AppNavigationManager
+7. Add unit tests using Swift Testing for both platforms
+8. Test on both iOS simulator and macOS
+9. Consider A/B test wrapper if experimental
+
+### Cross-Platform Feature Development
+When adding features that work across platforms:
+
+1. **Design for both platforms**: Consider iOS mobile patterns and macOS desktop patterns
+2. **Use platform utilities**: Leverage `PlatformDeviceInfo`, `PlatformScreenInfo`, etc.
+3. **Handle input differences**: Touch vs. mouse interactions
+4. **Respect platform conventions**: iOS navigation vs. macOS window management
+5. **Test thoroughly**: Verify behavior on both platforms
 
 ### Working with AT Protocol
 - AT Protocol models are in `Petrel/Sources/Petrel/Generated/`
@@ -368,7 +546,11 @@ The project includes automated quality checks:
 - **ALWAYS** run syntax checks before committing: `./swift-check.sh`
 - **Use incremental builds** for development iteration
 - **Full builds** only for release preparation or major refactoring
-- **Leverage MCP tools** for simulator and device builds
+- **Leverage MCP tools** for iOS simulator/device and macOS builds
+- **Test on both platforms** when making UI changes
+- **Use platform-specific MCP commands**:
+  - iOS: `build_sim`, `test_sim`, `build_device`
+  - macOS: `build_macos`, `test_macos`, `build_run_macos`
 
 ---
 

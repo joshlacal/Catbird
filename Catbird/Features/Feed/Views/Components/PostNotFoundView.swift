@@ -76,7 +76,7 @@ struct PostNotFoundView: View {
             actionButtons
         }
         .padding(16)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color.systemGroupedBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(iconColor.opacity(0.3), lineWidth: 1)
@@ -97,7 +97,7 @@ struct PostNotFoundView: View {
                 .lineLimit(2)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color(UIColor.tertiarySystemFill))
+                .background(Color.systemFill)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }

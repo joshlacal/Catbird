@@ -26,7 +26,7 @@ struct FeedDiscoveryCardsView: View {
     NavigationStack {
       ZStack {
         // Background
-        Color(.systemBackground)
+        Color(platformColor: .platformSystemBackground)
           .ignoresSafeArea()
         
         if isLoading {
@@ -46,15 +46,17 @@ struct FeedDiscoveryCardsView: View {
         }
       }
       .navigationTitle("Discover Feeds")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Close") {
             dismiss()
           }
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Help") {
             showOnboarding = true
           }
@@ -496,7 +498,7 @@ struct FeedDiscoveryCard: View {
           .padding(.vertical, 20)
           .background(
             LinearGradient(
-              colors: [Color(.systemBackground), Color(.secondarySystemBackground).opacity(0.3)],
+              colors: [Color(platformColor: .platformSystemBackground), Color(platformColor: .platformSecondarySystemBackground).opacity(0.3)],
               startPoint: .top,
               endPoint: .bottom
             )
@@ -527,17 +529,17 @@ struct FeedDiscoveryCard: View {
         enhancedActionIndicators
           .frame(height: actionHeight)
           .padding(.horizontal, 24)
-          .background(Color(.systemBackground))
+          .background(Color(platformColor: .platformSystemBackground))
       }
       .background(
         RoundedRectangle(cornerRadius: 24)
-          .fill(Color(.systemBackground))
+          .fill(Color(platformColor: .platformSystemBackground))
           .shadow(color: .black.opacity(0.08), radius: 20, x: 0, y: 8)
           .shadow(color: .black.opacity(0.04), radius: 1, x: 0, y: 1)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 24)
-          .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+          .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.1), lineWidth: 0.5)
       )
       .padding(.horizontal, 16)
       .frame(width: geometry.size.width, height: cardHeight)
@@ -551,15 +553,17 @@ struct FeedDiscoveryCard: View {
             navigationPath: .constant(NavigationPath())
           )
           .navigationTitle(feed.displayName)
-          .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
           .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
+            ToolbarItem(placement: .cancellationAction) {
               Button("Close") {
                 showingFullFeed = false
               }
             }
             
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
               Button(isSubscribed ? "Unsubscribe" : "Subscribe") {
                 Task {
                   await onSubscriptionToggle()
@@ -599,7 +603,7 @@ struct FeedDiscoveryCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
           RoundedRectangle(cornerRadius: 16)
-            .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+            .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.2), lineWidth: 0.5)
         )
         
         VStack(alignment: .leading, spacing: 6) {
@@ -694,7 +698,7 @@ struct FeedDiscoveryCard: View {
           .foregroundColor(.secondary)
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
-          .background(Color(.tertiarySystemBackground))
+          .background(Color(platformColor: .platformTertiarySystemBackground))
           .clipShape(Capsule())
       }
       .padding(.horizontal, 20)
@@ -924,7 +928,7 @@ struct EnhancedCardPreviewPost: View {
         .clipShape(Circle())
         .overlay(
           Circle()
-            .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+            .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.2), lineWidth: 0.5)
         )
       } else {
         Circle()
@@ -936,7 +940,7 @@ struct EnhancedCardPreviewPost: View {
           .frame(width: 36, height: 36)
           .overlay(
             Circle()
-              .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+              .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.2), lineWidth: 0.5)
           )
       }
       
@@ -1002,10 +1006,10 @@ struct EnhancedCardPreviewPost: View {
     .padding(12)
     .background(
       RoundedRectangle(cornerRadius: 12)
-        .fill(Color(.tertiarySystemBackground))
+        .fill(Color(platformColor: .platformTertiarySystemBackground))
         .overlay(
           RoundedRectangle(cornerRadius: 12)
-            .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+            .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.1), lineWidth: 0.5)
         )
     )
   }
@@ -1082,7 +1086,7 @@ struct SkeletonPostCard: View {
     .padding(12)
     .background(
       RoundedRectangle(cornerRadius: 12)
-        .fill(Color(.tertiarySystemBackground))
+        .fill(Color(platformColor: .platformTertiarySystemBackground))
     )
   }
 }

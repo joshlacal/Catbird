@@ -2,6 +2,7 @@ import OSLog
 import SwiftUI
 import Petrel
 
+#if os(iOS)
 /// View for displaying and managing conversation invitations
 struct ConversationInvitationsView: View {
   @Environment(AppState.self) private var appState
@@ -47,7 +48,9 @@ struct ConversationInvitationsView: View {
       }
     }
     .navigationTitle("Invitations")
+    #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
+    #endif
     .refreshable {
       await loadInvitations()
     }
@@ -210,3 +213,5 @@ struct ConversationInvitationRow: View {
       .environment(AppState.shared)
   }
 }
+
+#endif

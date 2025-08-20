@@ -45,10 +45,10 @@ struct RecentSearchesSection: View {
                             .padding(.horizontal, 12)
                             .background(
                                 Capsule()
-                                    .fill(Color(.secondarySystemBackground))
+                                    .fill(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
                             )
                         }
-                        .shadow(color: Color(.systemGray4), radius: 2, x: 0, y: 1)
+                        .shadow(color: Color.systemGray4, radius: 2, x: 0, y: 1)
                         .padding(.vertical, 2)  
                         .buttonStyle(.plain)
                         .foregroundColor(.primary)

@@ -61,16 +61,17 @@ struct ResponsiveContentView<Content: View>: View {
 
 // MARK: - Device Detection Utilities
 
+@MainActor
 struct DeviceInfo {
-  static let isIPad = UIDevice.current.userInterfaceIdiom == .pad
-  static let isIPhone = UIDevice.current.userInterfaceIdiom == .phone
+  static let isIPad = PlatformDeviceInfo.isIPad
+  static let isIPhone = PlatformDeviceInfo.isIPhone
   
   static var screenWidth: CGFloat {
-    UIScreen.main.bounds.width
+    return PlatformScreenInfo.width
   }
   
   static var screenHeight: CGFloat {
-    UIScreen.main.bounds.height
+    return PlatformScreenInfo.height
   }
   
   /// Returns true if the device is likely to benefit from constrained content width

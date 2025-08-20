@@ -2,6 +2,9 @@ import SwiftUI
 import Petrel
 import os
 
+#if os(iOS)
+import UIKit
+
 // MARK: - Enhanced New Posts Indicator
 
 /// A sophisticated new posts indicator that respects user activity and provides contextual information
@@ -454,4 +457,56 @@ final class NewPostsIndicatorManager: ObservableObject {
 //    .background(Color.gray.opacity(0.1))
 //  }
 //}
-//#endif
+#else
+
+// MARK: - macOS Stub for Enhanced New Posts Indicator
+
+/// macOS stub for EnhancedNewPostsIndicator
+struct EnhancedNewPostsIndicator: View {
+  let newPostCount: Int
+  let authors: [AppBskyActorDefs.ProfileViewBasic]
+  let timestamp: Date
+  let onTap: () -> Void
+  let onDismiss: () -> Void
+  
+  var body: some View {
+    Button(action: onTap) {
+      HStack(spacing: 8) {
+        Image(systemName: "arrow.up.circle.fill")
+          .foregroundColor(.accentColor)
+        
+        Text("\(newPostCount) new posts")
+          .font(.caption)
+          .foregroundColor(.primary)
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 6)
+      .background(Color.accentColor.opacity(0.1), in: Capsule())
+    }
+    .buttonStyle(.plain)
+  }
+}
+
+/// macOS stub for EnhancedNewPostsIndicatorManager
+@MainActor
+class EnhancedNewPostsIndicatorManager: ObservableObject {
+  static let shared = EnhancedNewPostsIndicatorManager()
+  
+  private init() {}
+  
+  func showNewPostsIndicator(
+    newPostCount: Int,
+    authors: [AppBskyActorDefs.ProfileViewBasic],
+    feedType: FetchType,
+    userActivity: UserActivityTracker,
+    forceShow: Bool = false
+  ) {
+    // No-op on macOS
+  }
+  
+  func hideIndicator() {
+    // No-op on macOS
+  }
+}
+
+#endif

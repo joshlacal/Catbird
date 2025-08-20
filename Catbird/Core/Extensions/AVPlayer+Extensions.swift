@@ -7,6 +7,9 @@
 
 import AVFoundation
 import AVKit
+#if os(iOS)
+import UIKit
+#endif
 
 extension AVPlayer {
     /// Safely plays video without activating the audio session
@@ -23,16 +26,21 @@ extension AVPlayer {
     
     /// Prepares the player for Picture-in-Picture mode
     func preparePiP() {
+        #if os(iOS)
         // Ensure player is configured for PiP
         self.allowsExternalPlayback = true
         self.usesExternalPlaybackWhileExternalScreenIsActive = false
         
         // Configure for background playback if needed
         self.preventsDisplaySleepDuringVideoPlayback = true
+        #else
+        // PiP not available on macOS, do nothing
+        #endif
     }
     
     /// Safely enters PiP mode with proper audio session handling
     func enterPiPMode() {
+        #if os(iOS)
         // Configure audio session for PiP
         AudioSessionManager.shared.configureForPictureInPicture()
         
@@ -43,19 +51,31 @@ extension AVPlayer {
         if rate == 0 {
             safePlay()
         }
+        #else
+        // PiP not available on macOS, just play normally
+        if rate == 0 {
+            safePlay()
+        }
+        #endif
     }
     
     /// Safely exits PiP mode and restores normal playback
     func exitPiPMode() {
+        #if os(iOS)
         // Reset audio session
         AudioSessionManager.shared.resetPiPAudioSession()
         
         // Reset display sleep prevention for normal playback
         self.preventsDisplaySleepDuringVideoPlayback = false
+        #else
+        // PiP not available on macOS, just reset display sleep
+        self.preventsDisplaySleepDuringVideoPlayback = false
+        #endif
     }
     
     /// Checks if the current item supports PiP
     var supportsPiP: Bool {
+        #if os(iOS)
         guard let currentItem = currentItem else { return false }
         
         // Check if item has video tracks
@@ -67,6 +87,10 @@ extension AVPlayer {
         let deviceSupportsPiP = AVPictureInPictureController.isPictureInPictureSupported()
         
         return hasVideoTracks && deviceSupportsPiP && currentItem.status == .readyToPlay
+        #else
+        // PiP not available on macOS
+        return false
+        #endif
     }
     
     /// Gets the current playback time in a PiP-safe format

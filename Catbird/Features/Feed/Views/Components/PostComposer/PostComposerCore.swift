@@ -2,7 +2,11 @@ import Foundation
 import os
 import Petrel
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // MARK: - Core Functionality Extension
 
@@ -45,6 +49,26 @@ extension PostComposerViewModel {
         threadEntries.append(ThreadEntry())
         currentThreadIndex = threadEntries.count - 1
         isThread = threadEntries.count > 1
+        
+        // Clear composer state for new post
+        clearComposerState()
+    }
+    
+    private func clearComposerState() {
+        isUpdatingText = true
+        defer { isUpdatingText = false }
+        
+        postText = ""
+        mediaItems = []
+        videoItem = nil
+        selectedGif = nil
+        detectedURLs = []
+        urlCards = [:]
+        outlineTags = []
+        richAttributedText = NSAttributedString()
+        
+        // Clear mention suggestions
+        mentionSuggestions = []
     }
     
     func removeThreadPost(at index: Int) {
@@ -168,7 +192,11 @@ extension PostComposerViewModel {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
+                        #if os(iOS)
                         mediaItem.image = Image(uiImage: UIImage(data: data) ?? UIImage())
+                        #elseif os(macOS)
+                        mediaItem.image = Image(nsImage: NSImage(data: data) ?? NSImage())
+                        #endif
                         mediaItem.isLoading = false
                         
                         if isDataAnimatedGIF(data) {
@@ -188,7 +216,11 @@ extension PostComposerViewModel {
     func processDetectedGenmoji(_ genmojiData: Data) async {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
+        #if os(iOS)
         mediaItem.image = Image(uiImage: UIImage(data: genmojiData) ?? UIImage())
+        #elseif os(macOS)
+        mediaItem.image = Image(nsImage: NSImage(data: genmojiData) ?? NSImage())
+        #endif
         mediaItem.isLoading = false
         
         let source = MediaSource.genmojiConversion(genmojiData)
@@ -478,8 +510,26 @@ extension PostComposerViewModel {
         defer { isUpdatingText = false }
         
         let entry = threadEntries[currentThreadIndex]
+        
+        // First clear all state to prevent contamination
+        clearComposerState()
+        
+        // Then load the entry state
         postText = entry.text
-        mediaItems = entry.mediaItems
+        mediaItems = entry.mediaItems.map { item in
+            // Create new instances to avoid reference issues
+            var newItem = MediaItem()
+            newItem.image = item.image
+            newItem.rawData = item.rawData
+            newItem.altText = item.altText
+            newItem.isLoading = item.isLoading
+            newItem.pickerItem = item.pickerItem
+            newItem.aspectRatio = item.aspectRatio
+            newItem.videoData = item.videoData
+            newItem.rawVideoURL = item.rawVideoURL
+            newItem.rawVideoAsset = item.rawVideoAsset
+            return newItem
+        }
         videoItem = entry.videoItem
         selectedGif = entry.selectedGif
         detectedURLs = entry.detectedURLs
@@ -684,7 +734,7 @@ extension PostComposerViewModel {
     private func resizeImageData(_ data: Data, maxSizeBytes: Int) async throws -> Data {
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let image = UIImage(data: data) else {
+                guard let image = PlatformImage(data: data) else {
                     continuation.resume(throwing: ThumbnailUploadError.invalidImageData)
                     return
                 }
@@ -696,9 +746,17 @@ extension PostComposerViewModel {
                 while resizedData.count > maxSizeBytes && compressionQuality > 0.1 {
                     compressionQuality -= 0.1
                     
+                    #if os(iOS)
                     if let compressed = image.jpegData(compressionQuality: compressionQuality) {
                         resizedData = compressed
                     }
+                    #elseif os(macOS)
+                    if let tiffData = image.tiffRepresentation,
+                       let bitmapRep = NSBitmapImageRep(data: tiffData),
+                       let compressed = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compressionQuality]) {
+                        resizedData = compressed
+                    }
+                    #endif
                 }
                 
                 // If still too large, resize the image dimensions
@@ -709,6 +767,7 @@ extension PostComposerViewModel {
                         height: image.size.height * scale
                     )
                     
+                    #if os(iOS)
                     UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
                     image.draw(in: CGRect(origin: .zero, size: newSize))
                     let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
@@ -718,6 +777,18 @@ extension PostComposerViewModel {
                        let finalData = resizedImage.jpegData(compressionQuality: 0.8) {
                         resizedData = finalData
                     }
+                    #elseif os(macOS)
+                    let resizedImage = NSImage(size: newSize, flipped: false) { rect in
+                        image.draw(in: rect)
+                        return true
+                    }
+                    
+                    if let tiffData = resizedImage.tiffRepresentation,
+                       let bitmapRep = NSBitmapImageRep(data: tiffData),
+                       let finalData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+                        resizedData = finalData
+                    }
+                    #endif
                 }
                 
                 continuation.resume(returning: resizedData)

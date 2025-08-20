@@ -27,5 +27,7 @@ extension AppBskyActorDefs.ProfileView: ProfileDisplayable {}
 /// Conformance for ProfileViewBasic
 extension AppBskyActorDefs.ProfileViewBasic: ProfileDisplayable {}
 
+#if os(iOS)
 /// Conformance for ProfileViewBasic (from ChatBsky)
 extension ChatBskyActorDefs.ProfileViewBasic: ProfileDisplayable {}
+#endif

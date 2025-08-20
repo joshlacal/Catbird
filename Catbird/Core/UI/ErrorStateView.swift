@@ -58,7 +58,7 @@ struct ErrorStateView: View {
     }
     .padding(24)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemBackground))
+    .background(Color.systemBackground)
   }
   
   // MARK: - Computed Properties
@@ -112,7 +112,7 @@ struct NetworkStateIndicator: View {
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 8)
-      .background(Color(.systemGray6))
+      .background(Color.systemGray6)
       .cornerRadius(8)
       .padding(.horizontal)
     }
@@ -182,7 +182,7 @@ struct ContentUnavailableStateView: View {
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemBackground))
+    .background(Color.systemBackground)
     .accessibilityElement(children: .contain)
   }
 }
@@ -217,7 +217,7 @@ struct LoadingStateView: View {
     }
     .padding(24)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemBackground))
+    .background(Color.systemBackground)
   }
 }
 

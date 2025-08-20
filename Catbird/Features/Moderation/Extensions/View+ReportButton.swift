@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 import os
 
+#if os(iOS)
 /// Extension to add report functionality to views showing content from the AT Protocol network
 extension View {
     /// Add report functionality to a view showing a post
@@ -112,3 +113,4 @@ extension UIViewController {
         return self
     }
 }
+#endif

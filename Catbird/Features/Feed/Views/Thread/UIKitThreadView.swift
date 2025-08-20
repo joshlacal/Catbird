@@ -1,8 +1,13 @@
 import Petrel
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
 
+#if os(iOS)
 // MARK: - UIKit Color Scheme Helper
 extension UIViewController {
     func getCurrentColorScheme() -> ColorScheme {
@@ -121,7 +126,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     label.translatesAutoresizingMaskIntoConstraints = false
     label.text = "Loading thread..."
     label.textAlignment = .center
-    label.font = UIFont.preferredFont(forTextStyle: .body)
+    label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
 
     let stackView = UIStackView(arrangedSubviews: [activityIndicator, label])
     stackView.translatesAutoresizingMaskIntoConstraints = false
@@ -1451,7 +1456,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       itemHeight: attributes.frame.height,
       visibleHeightInViewport: min(attributes.frame.height, collectionView.bounds.height),
       timestamp: CACurrentMediaTime(),
-      displayScale: UIScreen.main.scale
+      displayScale: PlatformScreenInfo.scale
     )
     
     controllerLogger.debug("🎯 Thread anchor captured - section: \(firstVisibleIndexPath.section), item: \(firstVisibleIndexPath.item), postId: \(postId)")
@@ -2281,7 +2286,7 @@ final class LoadMoreCell: UICollectionViewCell {
     
     label.translatesAutoresizingMaskIntoConstraints = false
     label.text = "Loading more parents..."
-    label.font = UIFont.preferredFont(forTextStyle: .subheadline)
+    label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
     label.textColor = UIColor.systemGray
     label.isAccessibilityElement = false
     
@@ -2535,19 +2540,7 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   }
 }
 
-struct ThreadView: View {
-  @Environment(AppState.self) private var appState: AppState
-  let postURI: ATProtocolURI
-  @Binding var path: NavigationPath
-
-  var body: some View {
-    ThreadViewControllerRepresentable(postURI: postURI, path: $path)
-      .frame(maxWidth: 600)  // Ensure 600pt maximum width for better iPad experience
-      .ignoresSafeArea()
-//      .themedNavigationBar(appState.themeManager)
-//      .applyTheme(appState.themeManager)
-  }
-}
+// ThreadView is now defined in ThreadView.swift for cross-platform compatibility
 
 extension AppBskyFeedDefs.ThreadViewPostParentUnion {
   func getThreadViewPost() throws -> AppBskyFeedDefs.ThreadViewPost? {
@@ -2627,3 +2620,4 @@ extension AppBskyFeedDefs.ThreadViewPost {
     return false
   }
 }
+#endif

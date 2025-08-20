@@ -40,7 +40,7 @@ struct ThreadSeparatorView: View {
   private var threadContinuationLine: some View {
       VStack(alignment: .center, spacing: Self.baseUnit * 2) {
       Rectangle()
-        .fill(Color(UIColor.systemGray4))
+        .fill(Color.systemGray4)
         .frame(width: 2)
         .frame(maxHeight: .infinity)
       
@@ -48,7 +48,7 @@ struct ThreadSeparatorView: View {
       threeDots
       
       Rectangle()
-        .fill(Color(UIColor.systemGray4))
+        .fill(Color.systemGray4)
         .frame(width: 2)
         .frame(maxHeight: .infinity)
 
@@ -60,8 +60,7 @@ struct ThreadSeparatorView: View {
     VStack(spacing: Self.baseUnit) {
       ForEach(0..<3, id: \.self) { _ in
         Circle()
-          .fill(Color(UIColor.systemGray3)
-)
+          .fill(Color.systemGray3)
           .frame(width: 4, height: 4)
       }
     }

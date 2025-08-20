@@ -5,6 +5,7 @@
 //  Created by Josh LaCalamito on 4/30/25.
 //
 
+#if os(iOS)
 import ActivityKit
 import WidgetKit
 import SwiftUI
@@ -78,3 +79,4 @@ extension CatbirdNotificationWidgetAttributes.ContentState {
     CatbirdNotificationWidgetAttributes.ContentState.smiley
     CatbirdNotificationWidgetAttributes.ContentState.starEyes
 }
+#endif

@@ -7,18 +7,33 @@
 
 import Foundation
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
+#if os(iOS)
 // Custom UITextView that properly sizes itself and allows text selection
 class SelectableSelfSizingTextView: UITextView {
   override var intrinsicContentSize: CGSize {
-    // Use a reasonable width constraint for text wrapping
-    let maxWidth = superview?.bounds.width ?? UIScreen.main.bounds.width - 32
-    let constrainedSize = CGSize(width: maxWidth, height: CGFloat.greatestFiniteMagnitude)
+    // Ensure we have a valid width to work with
+    let currentWidth = bounds.width > 0 ? bounds.width : frame.width
     
-    // Calculate the size needed for the current attributed text
-    let size = sizeThatFits(constrainedSize)
-    return CGSize(width: UIView.noIntrinsicMetric, height: ceil(size.height))
+    if currentWidth > 0 {
+      // Use the actual available width for accurate text layout
+      textContainer.size = CGSize(width: currentWidth, height: CGFloat.greatestFiniteMagnitude)
+      layoutManager.ensureLayout(for: textContainer)
+      
+      // Get the used rect which accounts for all text content
+      let usedRect = layoutManager.usedRect(for: textContainer)
+      let height = ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom)
+      
+      return CGSize(width: UIView.noIntrinsicMetric, height: max(height, 1))
+    } else {
+      // Fallback for when width isn't available yet
+      return CGSize(width: UIView.noIntrinsicMetric, height: 1)
+    }
   }
   
   private var lastKnownWidth: CGFloat = 0
@@ -30,7 +45,9 @@ class SelectableSelfSizingTextView: UITextView {
     let currentWidth = bounds.width
     if abs(currentWidth - lastKnownWidth) > 1 {
       lastKnownWidth = currentWidth
-      invalidateIntrinsicContentSize()
+      DispatchQueue.main.async {
+        self.invalidateIntrinsicContentSize()
+      }
     }
   }
 }
@@ -244,4 +261,5 @@ struct SelectableTextView: UIViewRepresentable {
     return UIFont.systemFont(ofSize: size, weight: fontWeight)
   }
 }
+#endif
 

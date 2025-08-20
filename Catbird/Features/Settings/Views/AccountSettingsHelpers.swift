@@ -25,9 +25,13 @@ struct EmailUpdateSheet: View {
                 
                 Section("New Email") {
                     TextField("Enter new email address", text: $newEmail)
+                        #if os(iOS)
                         .keyboardType(.emailAddress)
+                        #endif
+                        #if os(iOS)
                         .autocapitalization(.none)
-                        .autocorrectionDisabled()
+                        #endif
+                        .autocorrectionDisabled(true)
                 }
                 
                 if let error = errorMessage {
@@ -39,15 +43,17 @@ struct EmailUpdateSheet: View {
                 }
             }
             .navigationTitle("Update Email")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         updateEmail()
                     } label: {
@@ -147,8 +153,10 @@ struct HandleUpdateSheet: View {
                         Text("@")
                             .foregroundStyle(.secondary)
                         TextField("Enter new handle", text: $newHandle)
+                            #if os(iOS)
                             .autocapitalization(.none)
-                            .autocorrectionDisabled()
+                            #endif
+                            .autocorrectionDisabled(true)
                             .onChange(of: newHandle) {
                                 checkHandleAvailability()
                             }
@@ -188,15 +196,17 @@ struct HandleUpdateSheet: View {
                 }
             }
             .navigationTitle("Update Handle")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         updateHandle()
                     } label: {

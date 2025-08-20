@@ -8,6 +8,9 @@
 import OSLog
 import Petrel
 import SwiftUI
+
+#if os(iOS)
+
 import NukeUI
 import ExyteChat
 
@@ -98,9 +101,11 @@ struct NewMessageView: View {
         .listStyle(.plain)
       }
       .navigationTitle("New Message")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             dismiss()
           }
@@ -236,3 +241,24 @@ struct NewMessageView: View {
     }
   }
 }
+
+#else
+
+// macOS stub for NewMessageView
+struct NewMessageView: View {
+  var body: some View {
+    VStack {
+      Text("New Message")
+        .font(.title2)
+        .fontWeight(.semibold)
+      Text("Chat functionality is not available on macOS")
+        .foregroundColor(.secondary)
+      Text("Chat features require iOS")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .padding()
+  }
+}
+
+#endif

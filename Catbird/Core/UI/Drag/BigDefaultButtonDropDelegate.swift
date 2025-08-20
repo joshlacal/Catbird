@@ -7,7 +7,9 @@
 
 import Petrel
 import SwiftUI
+#if os(iOS)
 import UIKit
+#endif
 import UniformTypeIdentifiers
 
 @MainActor
@@ -24,7 +26,9 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
   @Binding var firstPinnedFeedName: String
   let resetDragState: () -> Void
 
+  #if os(iOS)
   let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+  #endif
 
   func dropEntered(info: DropInfo) {
     // Only highlight if dragging a valid item
@@ -33,7 +37,9 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
         isTimelineDropTarget = true
         dropTargetItem = "timeline-button"
       }
+      #if os(iOS)
       feedbackGenerator.impactOccurred(intensity: 0.7)
+      #endif
     }
   }
 
@@ -55,7 +61,9 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
     // Immediately reset the visual state
     let feedToSet = draggedFeedURI
     resetDragState()
+    #if os(iOS)
     feedbackGenerator.impactOccurred(intensity: 1.0)
+    #endif
 
     // Update the local state immediately for UI responsiveness
     if let uri = try? ATProtocolURI(uriString: feedToSet) {

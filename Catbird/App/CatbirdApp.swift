@@ -6,7 +6,11 @@ import Security
 import SwiftData
 import SwiftUI
 import TipKit
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import UserNotifications
 import WidgetKit
 import Darwin // For sysctl constants
@@ -16,6 +20,7 @@ let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
 @main
 struct CatbirdApp: App {
+  #if os(iOS)
   // MARK: - App Delegate for UIKit callbacks
   private class AppDelegate: NSObject, UIApplicationDelegate {
     var appState: AppState?
@@ -78,7 +83,7 @@ struct CatbirdApp: App {
       
       // Request widget updates at app launch
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-        guard let self = self, let appState = self.appState else { return }
+          guard let self = self, let _ = self.appState else { return }
         // Force widget to refresh
         WidgetCenter.shared.reloadAllTimelines()
         logger.info("🔄 Requested widget refresh at app launch")
@@ -139,6 +144,8 @@ struct CatbirdApp: App {
       logger.error("Failed to register for remote notifications: \(error.localizedDescription)")
     }
   }
+  #endif
+  
   // MARK: - State
   // Use singleton AppState to prevent multiple instances
   private let appState = AppState.shared
@@ -153,8 +160,10 @@ struct CatbirdApp: App {
   @Environment(\.modelContext) private var modelContext
   @Environment(\.scenePhase) private var scenePhase
 
+  #if os(iOS)
   // App delegate instance
   @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
+  #endif
 
   // MARK: - Initialization
   init() {
@@ -174,7 +183,8 @@ struct CatbirdApp: App {
       // Navigation bar theme is handled completely by ThemeManager during AppState.initialize()
       // to avoid conflicts between initial setup and dynamic theme changes
 
-      // Configure audio session at app launch
+      // Configure audio session at app launch (iOS only)
+      #if os(iOS)
       do {
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
@@ -182,6 +192,7 @@ struct CatbirdApp: App {
       } catch {
         logger.error("❌ Failed to configure audio session: \(error)")
       }
+      #endif
     }
 
     // Initialize model container with error recovery (simplified for FaultOrdering)
@@ -300,6 +311,7 @@ struct CatbirdApp: App {
         }
       }
       .onAppear {
+        #if os(iOS)
         // Set app state reference in app delegate
         appDelegate.appState = appState
 
@@ -311,9 +323,15 @@ struct CatbirdApp: App {
           // Configure window for state restoration
           window.restorationIdentifier = "MainWindow"
         }
+        #elseif os(macOS)
+        // macOS doesn't need app delegate setup or window scene handling
+        // URL handler registration will be handled differently on macOS
+        #endif
         
+        #if os(iOS)
         // Setup background notification observer
         setupBackgroundNotification()
+        #endif
         
         // Initialize FeedStateStore with model context for persistence
         Task { @MainActor in
@@ -328,12 +346,21 @@ struct CatbirdApp: App {
           await FeedStateStore.shared.handleScenePhaseChange(newPhase)
         }
       }
+      #if os(iOS)
       // Handle biometric authentication when app becomes active
       .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
         Task {
           await performInitialBiometricCheck()
         }
       }
+      #elseif os(macOS)
+      // Handle biometric authentication when app becomes active (macOS)
+      .onReceive(NotificationCenter.default.publisher(for: NSApplication.willBecomeActiveNotification)) { _ in
+        Task {
+          await performInitialBiometricCheck()
+        }
+      }
+      #endif
       // Initialize app state when the app launches
       .task {
 
@@ -543,7 +570,7 @@ struct CatbirdApp: App {
           .foregroundColor(.secondary)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color(.systemBackground))
+      .background(Color.systemBackground)
     }
   }
   
@@ -570,6 +597,7 @@ struct CatbirdApp: App {
     }
   }
   
+  #if os(iOS)
   // Reset authentication when app goes to background
   private func setupBackgroundNotification() {
     NotificationCenter.default.addObserver(
@@ -583,6 +611,21 @@ struct CatbirdApp: App {
       self.hasBiometricCheck = false
     }
   }
+  #elseif os(macOS)
+  // Reset authentication when app resigns active (macOS equivalent)
+  private func setupBackgroundNotification() {
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didResignActiveNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      // Reset authentication state when app resigns active
+      self.isAuthenticatedWithBiometric = false
+      // Reset biometric check to require re-authentication when active again
+      self.hasBiometricCheck = false
+    }
+  }
+  #endif
 }
 
 // MARK: - Biometric Authentication Overlay
@@ -595,7 +638,7 @@ struct BiometricAuthenticationOverlay: View {
     ZStack {
       // Full screen background
       Color.black
-        .ignoresSafeArea()
+        .platformIgnoresSafeArea()
       
       VStack(spacing: 30) {
         // App icon

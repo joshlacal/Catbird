@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import WidgetKit
 
@@ -64,3 +65,4 @@ struct SimpleTestWidget: Widget {
     .supportedFamilies([.systemSmall])
   }
 }
+#endif

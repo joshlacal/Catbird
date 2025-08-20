@@ -116,6 +116,10 @@ struct ModernVideoPlayerView: View {
 
     let finalView = playerContainer
       .aspectRatio(model.aspectRatio, contentMode: .fit)
+      #if os(macOS)
+      .frame(minHeight: 300, maxHeight: 600)
+      .frame(maxWidth: 800)
+      #endif
       .task {
         await setupPlayer()
       }
@@ -134,11 +138,19 @@ struct ModernVideoPlayerView: View {
       .onDisappear {
         cleanupPlayer()
       }
+#if os(iOS)
       .fullScreenCover(isPresented: $showFullscreen) {
         if let player = player {
           fullscreenPlayerView(player: player)
         }
       }
+#elseif os(macOS)
+      .sheet(isPresented: $showFullscreen) {
+        if let player = player {
+          fullscreenPlayerView(player: player)
+        }
+      }
+#endif
       .onChange(of: scenePhase) { oldPhase, newPhase in
         handleScenePhaseChange(from: oldPhase, to: newPhase)
       }
@@ -230,12 +242,16 @@ struct ModernVideoPlayerView: View {
   @ViewBuilder
   private func fullscreenPlayerView(player: AVPlayer) -> some View {
     let fullscreenView = FullscreenVideoPlayerView(originalPlayer: player, model: model)
+    #if os(iOS)
     if #available(iOS 18.0, *) {
       fullscreenView
         .navigationTransition(.zoom(sourceID: model.id, in: videoTransitionNamespace))
     } else {
       fullscreenView
     }
+    #else
+    fullscreenView
+    #endif
   }
 
   // MARK: - Gesture Handling
@@ -361,6 +377,7 @@ struct ModernVideoPlayerView: View {
   }
 
   private func setupPictureInPicture(with playerLayer: AVPlayerLayer, retryCount: Int = 0) {
+    #if os(iOS)
     guard AVPictureInPictureController.isPictureInPictureSupported() else {
       logger.debug("❌ PiP not supported")
       return
@@ -369,6 +386,10 @@ struct ModernVideoPlayerView: View {
     // PiP functionality disabled
     logger.debug("📺 PiP disabled")
     return
+    #else
+    logger.debug("📺 PiP not available on macOS")
+    return
+    #endif
     
       logger.debug("🎬 PiP setup validation - player: \(String(describing: playerLayer.player)), frame: \(playerLayer.frame.debugDescription)")
     
@@ -462,6 +483,7 @@ struct VideoThumbnailView: View {
 }
 
 /// Unified Picture-in-Picture button
+#if os(iOS)
 struct PiPButton: View {
   let controller: AVPictureInPictureController
 
@@ -481,12 +503,14 @@ struct PiPButton: View {
           print("🎬 Player rate: \(player.rate), status: \(player.currentItem?.status.rawValue ?? -1)")
           
           // Check if app is in foreground active state (required for PiP)
+          #if os(iOS)
           guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                 windowScene.activationState == .foregroundActive else {
             print("❌ App not in foreground active state - cannot start PiP")
-            print("🎬 Current scene state: \\(UIApplication.shared.connectedScenes.first?.activationState.rawValue ?? -1)")
+            print("🎬 Current scene state: \(UIApplication.shared.connectedScenes.first?.activationState.rawValue ?? -1)")
             return
           }
+          #endif
           
           // If video is not playing, start it first
           if player.rate == 0 {
@@ -518,6 +542,14 @@ struct PiPButton: View {
     }
   }
 }
+#else
+// PiP button not available on macOS
+struct PiPButton: View {
+  var body: some View {
+    EmptyView()
+  }
+}
+#endif
 
 /// Unified Mute button
 struct MuteButton: View {

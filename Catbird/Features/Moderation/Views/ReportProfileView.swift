@@ -109,7 +109,9 @@ struct ReportProfileView: View {
                 }
             }
             .navigationTitle("Report User")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -122,7 +124,9 @@ struct ReportProfileView: View {
                     availableLabelers: availableLabelers,
                     selectedLabeler: $selectedLabeler
                 )
+                #if os(iOS)
                 .presentationDetents([.medium, .large])
+                #endif
             }
             .alert("Report Submitted", isPresented: $showingSuccessAlert) {
                 Button("OK") {
@@ -130,7 +134,7 @@ struct ReportProfileView: View {
                     onComplete(true)
                 }
             } message: {
-                Text("Thank you for your report. The moderation team will review it.")
+                Text("Thank you for your report. It has been sent to Bluesky.")
             }
             .task {
                 await loadLabelers()

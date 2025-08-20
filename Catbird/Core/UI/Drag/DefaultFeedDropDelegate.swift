@@ -7,6 +7,9 @@
 
 import SwiftUI
 import Petrel
+#if os(iOS)
+import UIKit
+#endif
 
 struct DefaultFeedDropDelegate: DropDelegate {
   let viewModel: FeedsStartPageViewModel
@@ -21,7 +24,9 @@ struct DefaultFeedDropDelegate: DropDelegate {
   @Binding var defaultFeedName: String
   let resetDragState: () -> Void
 
+#if os(iOS)
   let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+#endif
 
   func dropEntered(info: DropInfo) {
     if draggedItem != nil {
@@ -29,7 +34,9 @@ struct DefaultFeedDropDelegate: DropDelegate {
         isDefaultFeedDropTarget = true
         dropTargetItem = "default-feed-button"
       }
+#if os(iOS)
       feedbackGenerator.impactOccurred(intensity: 0.7)
+#endif
     }
   }
 
@@ -50,7 +57,9 @@ struct DefaultFeedDropDelegate: DropDelegate {
 
     let feedToSet = draggedFeedURI
     resetDragState()
+#if os(iOS)
     feedbackGenerator.impactOccurred(intensity: 1.0)
+#endif
 
     // Set the dragged feed as the default (first pinned feed)
     Task {

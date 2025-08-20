@@ -538,6 +538,7 @@ final class VideoCoordinator {
 
   /// Set up notifications for app state changes
   private func setupBackgroundHandling() {
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       forName: UIApplication.willResignActiveNotification,
       object: nil,
@@ -560,8 +561,33 @@ final class VideoCoordinator {
         self?.updatePlaybackStates()
       }
     }
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willResignActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.handleBackgroundTransition()
+        self?.savePlaybackPositions()  // Save positions when going to background
+      }
+    }
+
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        // Don't configure audio session at all when app becomes active
+        // This preserves music playback
+        self?.updatePlaybackStates()
+      }
+    }
+    #endif
 
     // Optionally handle app termination
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       forName: UIApplication.willTerminateNotification,
       object: nil,
@@ -571,6 +597,17 @@ final class VideoCoordinator {
         self?.savePlaybackPositions()
       }
     }
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.savePlaybackPositions()
+      }
+    }
+    #endif
   }
 
   /// Handle transition to background mode
@@ -650,6 +687,7 @@ final class VideoCoordinator {
   
   /// Transfer player to persistent storage during PiP mode
   func transferPlayerToPersistentStorage(_ player: AVPlayer, for modelId: String) {
+    #if os(iOS)
     logger.debug("📺 Transferring player \(modelId) to persistent storage for PiP")
     
     // Update the activeVideos entry to keep the player reference
@@ -669,10 +707,15 @@ final class VideoCoordinator {
         logger.debug("📺 Created new persistent layer for \(modelId)")
       }
     }
+    #else
+    // PiP not available on macOS, do nothing
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
   
   /// Restore player from persistent storage when view returns
   func restorePlayerFromPersistentStorage(for modelId: String) -> AVPlayer? {
+    #if os(iOS)
     logger.debug("📺 Attempting to restore player \(modelId) from persistent storage")
     
     if let (_, player, _) = activeVideos[modelId] {
@@ -682,43 +725,69 @@ final class VideoCoordinator {
     
     logger.debug("⚠️ No persistent player found for \(modelId)")
     return nil
+    #else
+    // PiP not available on macOS, return nil
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    return nil
+    #endif
   }
   
   // MARK: - PiP Delegate Methods
   
   /// Called when PiP will start
   func willStartPiP(for modelId: String) {
+    #if os(iOS)
     logger.debug("📺 Will start PiP for video: \(modelId)")
     AudioSessionManager.shared.configureForPictureInPicture()
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
   
   /// Called when PiP did start
   func didStartPiP(for modelId: String) {
+    #if os(iOS)
     logger.debug("📺 Did start PiP for video: \(modelId)")
     updatePiPState(for: modelId, isActive: true)
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
   
   /// Called when PiP will stop
   func willStopPiP(for modelId: String) {
+    #if os(iOS)
     logger.debug("📺 Will stop PiP for video: \(modelId)")
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
   
   /// Called when PiP did stop
   func didStopPiP(for modelId: String) {
+    #if os(iOS)
     logger.debug("📺 Did stop PiP for video: \(modelId)")
     updatePiPState(for: modelId, isActive: false)
     AudioSessionManager.shared.resetPiPAudioSession()
     forceCleanupPiP(for: modelId)
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
   
   /// Called when PiP failed to start
   func didFailToStartPiP(for modelId: String, error: Error) {
+    #if os(iOS)
     logger.error("❌ PiP failed to start for video \(modelId): \(error.localizedDescription)")
     updatePiPState(for: modelId, isActive: false)
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
   
   /// Called when PiP needs to restore user interface
   func restoreUserInterface(for modelId: String, completion: @escaping (Bool) -> Void) {
+    #if os(iOS)
     logger.debug("📺 Restoring UI for video: \(modelId)")
     
     // Post notification to restore UI - this will be handled by the app's navigation system
@@ -730,10 +799,15 @@ final class VideoCoordinator {
     
     // For now, always return success
     completion(true)
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    completion(false)
+    #endif
   }
 
   /// Register a PiP controller for a video
   func registerPiPController(_ controller: AVPictureInPictureController, for modelId: String, with delegate: VideoPiPDelegate? = nil) {
+    #if os(iOS)
     guard let (model, player, _) = activeVideos[modelId] else { return }
 
     // Create a persistent player layer that survives view deallocation
@@ -758,10 +832,14 @@ final class VideoCoordinator {
     // PiP support configured
 
     logger.debug("📺 Registered PiP controller for \(modelId)")
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
 
   /// Create PiP setup for a video from player layer info (simplified interface)
   func setupPiPController(for modelId: String, validatedPlayerLayer: AVPlayerLayer) {
+    #if os(iOS)
     guard let (model, player, _) = activeVideos[modelId] else { 
       logger.debug("❌ No active video found for \(modelId)")
       return 
@@ -818,11 +896,18 @@ final class VideoCoordinator {
       let hasVideoTracks = persistentLayer.player?.currentItem?.tracks.contains { $0.assetTrack?.mediaType == .video } ?? false
         self.logger.debug("📺 PiP validation - status: \(playerStatus), hasVideo: \(hasVideoTracks), frame: \(persistentLayer.frame.debugDescription)")
     }
+    #else
+    logger.debug("📺 PiP not available on macOS for \(modelId)")
+    #endif
   }
 
   /// Get PiP controller for a video
   func getPiPController(for modelId: String) -> AVPictureInPictureController? {
+    #if os(iOS)
     return pipControllers[modelId]
+    #else
+    return nil
+    #endif
   }
 
   /// Handle PiP state changes
@@ -848,6 +933,7 @@ final class VideoCoordinator {
 
 // MARK: - PiP Delegate
 
+#if os(iOS)
 class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
   private let pipLogger = Logger(subsystem: "blue.catbird", category: "VideoPiPDelegate")
   let modelId: String
@@ -920,3 +1006,18 @@ class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
     }
   }
 }
+#else
+// PiP not available on macOS
+class VideoPiPDelegate: NSObject {
+  private let pipLogger = Logger(subsystem: "blue.catbird", category: "VideoPiPDelegate")
+  let modelId: String
+  weak var coordinator: VideoCoordinator?
+
+  init(modelId: String, coordinator: VideoCoordinator) {
+    self.modelId = modelId
+    self.coordinator = coordinator
+    super.init()
+    pipLogger.debug("VideoPiPDelegate created but PiP not available on macOS")
+  }
+}
+#endif

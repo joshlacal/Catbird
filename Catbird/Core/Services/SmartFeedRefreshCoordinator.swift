@@ -174,10 +174,13 @@ final class SmartFeedRefreshCoordinator {
       self?.logger.debug("Background refresh timer fired for \(feedIdentifier)")
       
       // Only refresh if data is stale and app is active
-      guard let self = self,
-            UIApplication.shared.applicationState == .active else {
-        return
-      }
+      guard let self = self else { return }
+      
+      #if os(iOS)
+      guard UIApplication.shared.applicationState == .active else { return }
+      #elseif os(macOS)
+      guard NSApplication.shared.isActive else { return }
+      #endif
       
       // Check if we should refresh based on cached data staleness
       let shouldRefresh = self.persistentManager.shouldRefreshFeed(
@@ -322,6 +325,7 @@ final class SmartFeedRefreshCoordinator {
   // MARK: - App State Observation
   
   private func setupAppStateObservation() {
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       forName: UIApplication.didBecomeActiveNotification,
       object: nil,
@@ -337,6 +341,23 @@ final class SmartFeedRefreshCoordinator {
     ) { [weak self] _ in
       self?.handleAppEnteredBackground()
     }
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.handleAppBecameActive()
+    }
+    
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didResignActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.handleAppEnteredBackground()
+    }
+    #endif
   }
   
   private func setupNetworkMonitoring() {

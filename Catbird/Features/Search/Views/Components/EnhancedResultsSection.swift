@@ -47,7 +47,7 @@ struct EnhancedResultsSection<Content: View>: View {
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
-            .background(Color(.systemBackground))
+            .background(Color.systemBackground)
             
             if showDivider {
                 Divider()
@@ -57,7 +57,7 @@ struct EnhancedResultsSection<Content: View>: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
         .padding(.horizontal)

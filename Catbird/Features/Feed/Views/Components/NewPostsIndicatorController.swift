@@ -14,8 +14,14 @@
 //
 
 import SwiftUI
+import OSLog
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
+#if os(iOS)
 final class NewPostsIndicatorController: NSObject {
   private weak var collectionView: UICollectionView?
   private var hostingController: UIHostingController<NewPostsIndicator>?
@@ -160,3 +166,66 @@ final class NewPostsIndicatorController: NSObject {
       })
   }
 }
+#else
+// macOS stub implementation - NewPostsIndicatorController not available on macOS
+final class NewPostsIndicatorController: NSObject {
+  private let indicatorLogger = Logger(subsystem: "blue.catbird", category: "NewPostsIndicatorController")
+  
+  private var currentCount: Int = 0
+  private var avatarURLs: [String] = []
+  
+  // Configuration (maintained for API compatibility)
+  var minVerticalOffsetToShow: CGFloat = 160
+  var scrollDismissThreshold: CGFloat = 80
+  var minSecondsBetweenShows: TimeInterval = 4
+  
+  // Inject activation callback (maintained for API compatibility)
+  var onActivate: (() -> Void)?
+  
+  init(onActivate: (() -> Void)? = nil) {
+    self.onActivate = onActivate
+    super.init()
+    indicatorLogger.info("NewPostsIndicatorController initialized for macOS (stub implementation)")
+  }
+  
+  /// Attaches the controller to a collection view (macOS stub)
+  /// - Parameters:
+  ///   - collectionView: The collection view (Any type for macOS compatibility)
+  ///   - parent: The parent view controller (Any type for macOS compatibility)
+  func attach(to collectionView: Any, in parent: Any) {
+    indicatorLogger.debug("NewPostsIndicatorController attach called on macOS (stub implementation)")
+    // No-op on macOS - SwiftUI handles scroll indicators differently
+  }
+  
+  /// Notifies about new posts above current viewport (macOS stub)
+  /// - Parameters:
+  ///   - count: Number of new posts
+  ///   - avatars: Array of avatar URLs for the new posts
+  func notifyNewPosts(count: Int, avatars: [String] = []) {
+    indicatorLogger.debug("NewPostsIndicatorController notifyNewPosts: \(count) posts on macOS (stub implementation)")
+    
+    // Store the values for API compatibility but don't show UI on macOS
+    currentCount = count
+    avatarURLs = avatars
+    
+    // On macOS, we could potentially trigger the activation callback directly
+    // since there's no visual indicator to tap
+    if count > 0 {
+      indicatorLogger.info("New posts available on macOS: \(count)")
+    }
+  }
+  
+  /// Dismisses the new posts indicator (macOS stub)
+  func dismiss() {
+    indicatorLogger.debug("NewPostsIndicatorController dismiss called on macOS (stub implementation)")
+    currentCount = 0
+    avatarURLs = []
+  }
+  
+  /// Force hides the indicator (legacy method for API compatibility)
+  func forceHide() {
+    indicatorLogger.debug("NewPostsIndicatorController forceHide called on macOS (stub implementation)")
+    dismiss()
+  }
+}
+#endif

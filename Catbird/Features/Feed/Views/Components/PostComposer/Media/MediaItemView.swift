@@ -48,14 +48,14 @@ struct MediaItemView: View {
                 }
             }
             .frame(width: size, height: size)
-            .background(Color(.systemGray5))
+            .background(Color(platformColor: PlatformColor.platformSystemGray5))
             .clipShape(RoundedRectangle(cornerRadius: 12))
             
             // Remove button
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
                     .appFont(size: 20)
-                    .foregroundStyle(.white, Color(.systemGray3))
+                    .foregroundStyle(.white, Color(platformColor: PlatformColor.platformSystemGray3))
                     .background(Circle().fill(Color.black.opacity(0.3)))
             }
             .padding(4)

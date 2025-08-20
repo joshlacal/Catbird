@@ -8,6 +8,9 @@
 import Observation
 import Petrel
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Observable class to hold interaction state for a post
 @Observable class PostInteractionState {
@@ -72,7 +75,9 @@ struct ActionButtonsView: View {
   @Binding var path: NavigationPath
 
   // Shared haptic feedback generator
+#if os(iOS)
   @State private var feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
+#endif
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
@@ -153,7 +158,9 @@ struct ActionButtonsView: View {
         isBig: isBig
       ) {
         // Haptic feedback using shared generator
+#if os(iOS)
         feedbackGenerator.impactOccurred()
+#endif
 
         // Set animation flag to true
         interactionState.animateLike = true
@@ -219,9 +226,11 @@ struct ActionButtonsView: View {
     }
     .sheet(isPresented: $showRepostOptions) {
       RepostOptionsView(post: post, viewModel: viewModel)
+        #if os(iOS)
         .presentationDetents([.fraction(1 / 4)])
         .presentationBackground(.regularMaterial)
         .presentationCornerRadius(12)
+        #endif
     }
     .sheet(isPresented: $showingPostComposer) {
       PostComposerView(

@@ -12,6 +12,7 @@ class CloudRenderer: NSObject {
     private var pipelineState: MTLRenderPipelineState!
     private var advancedPipelineState: MTLRenderPipelineState!
     private var improvedPipelineState: MTLRenderPipelineState!
+    private var ultraPipelineState: MTLRenderPipelineState!
     private var uniformBuffer: MTLBuffer!
     
     var time: Float = 0.0
@@ -26,6 +27,7 @@ class CloudRenderer: NSObject {
         case basic
         case improved
         case advanced
+        case ultra
     }
     
     // Color scheme support - white clouds against blue sky
@@ -86,12 +88,8 @@ class CloudRenderer: NSObject {
         pipelineDescriptor.fragmentFunction = fragmentFunction
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         
-        // Enable blending for transparency
-        pipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
-        pipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .one
-        pipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        pipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
-        pipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        // Disable blending since shader is fully opaque
+        pipelineDescriptor.colorAttachments[0].isBlendingEnabled = false
         
         do {
             pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
@@ -106,12 +104,8 @@ class CloudRenderer: NSObject {
         advancedPipelineDescriptor.fragmentFunction = advancedFragmentFunction
         advancedPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         
-        // Enable blending for transparency
-        advancedPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
-        advancedPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .one
-        advancedPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        advancedPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
-        advancedPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        // Disable blending since shader is fully opaque
+        advancedPipelineDescriptor.colorAttachments[0].isBlendingEnabled = false
         
         do {
             advancedPipelineState = try device.makeRenderPipelineState(descriptor: advancedPipelineDescriptor)
@@ -135,17 +129,36 @@ class CloudRenderer: NSObject {
         improvedPipelineDescriptor.fragmentFunction = improvedFragmentFunction
         improvedPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         
-        // Enable blending for transparency
-        improvedPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
-        improvedPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .one
-        improvedPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-        improvedPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
-        improvedPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        // Disable blending since shader is fully opaque
+        improvedPipelineDescriptor.colorAttachments[0].isBlendingEnabled = false
         
         do {
             improvedPipelineState = try device.makeRenderPipelineState(descriptor: improvedPipelineDescriptor)
         } catch {
             rendererLogger.debug("CloudRenderer: Could not create improved pipeline state: \(error)")
+            return
+        }
+        
+        // Load ultra shader functions
+        guard let ultraVertexFunction = library.makeFunction(name: "cloud_vertex_ultra"),
+              let ultraFragmentFunction = library.makeFunction(name: "cloud_fragment_ultra") else {
+            rendererLogger.debug("CloudRenderer: Could not load ultra shader functions")
+            return
+        }
+        
+        // Create ultra render pipeline
+        let ultraPipelineDescriptor = MTLRenderPipelineDescriptor()
+        ultraPipelineDescriptor.vertexFunction = ultraVertexFunction
+        ultraPipelineDescriptor.fragmentFunction = ultraFragmentFunction
+        ultraPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        
+        // Disable blending since shader is fully opaque
+        ultraPipelineDescriptor.colorAttachments[0].isBlendingEnabled = false
+        
+        do {
+            ultraPipelineState = try device.makeRenderPipelineState(descriptor: ultraPipelineDescriptor)
+        } catch {
+            rendererLogger.debug("CloudRenderer: Could not create ultra pipeline state: \(error)")
             return
         }
         
@@ -173,6 +186,8 @@ class CloudRenderer: NSObject {
             improvedPipelineState
         case .advanced:
             advancedPipelineState
+        case .ultra:
+            ultraPipelineState
         }
         
         guard let selectedPipelineState = selectedPipelineState else {
@@ -202,6 +217,11 @@ class CloudRenderer: NSObject {
         
         renderEncoder.setRenderPipelineState(selectedPipelineState)
         renderEncoder.setFragmentBuffer(uniformBuffer, offset: 0, index: 0)
+        
+        // Set vertex buffer for ultra shader (which uses uniforms in vertex shader)
+        if shaderMode == .ultra {
+            renderEncoder.setVertexBuffer(uniformBuffer, offset: 0, index: 0)
+        }
         
         // Draw full-screen quad using vertex ID-based rendering
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)

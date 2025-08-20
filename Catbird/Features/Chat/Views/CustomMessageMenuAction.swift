@@ -1,4 +1,5 @@
 import SwiftUI
+#if os(iOS)
 import ExyteChat
 
 // MARK: - Custom Message Menu Action
@@ -35,3 +36,36 @@ enum CustomMessageMenuAction: String, CaseIterable, MessageMenuAction {
     }
   }
 }
+
+#else
+
+// macOS stub for CustomMessageMenuAction
+enum CustomMessageMenuAction: String, CaseIterable {
+  case copy
+  case deleteForMe
+  case report
+  
+  func title() -> String {
+    switch self {
+    case .copy:
+      return "Copy"
+    case .deleteForMe:
+      return "Delete for me"
+    case .report:
+      return "Report"
+    }
+  }
+  
+  func icon() -> Image {
+    switch self {
+    case .copy:
+      return Image(systemName: "doc.on.doc")
+    case .deleteForMe:
+      return Image(systemName: "trash")
+    case .report:
+      return Image(systemName: "exclamationmark.triangle")
+    }
+  }
+}
+
+#endif

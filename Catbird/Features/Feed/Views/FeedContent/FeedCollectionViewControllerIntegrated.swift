@@ -6,11 +6,16 @@
 //  Uses OptimizedScrollPreservationSystem with UIUpdateLink for iOS 18+
 //
 
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import SwiftUI
 import Petrel
 import os
 
+#if os(iOS)
 @available(iOS 16.0, *)
 final class FeedCollectionViewControllerIntegrated: UIViewController {
     // MARK: - Types
@@ -173,7 +178,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             // Then restore persisted scroll position if available (only for chronological feeds)
             if stateManager.currentFeedType.isChronological,
                let persistedState = loadPersistedScrollState() {
-                await performUpdate(type: .viewAppearance(persistedState: persistedState))
+                await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.viewAppearance(persistedState: persistedState))
             }
         }
     }
@@ -327,7 +332,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
                 let currentCount = self.stateManager.posts.count
                 
                 if previousCount != currentCount {
-                    await self.performUpdate(type: .normalUpdate)
+                    await self.performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.normalUpdate)
                 }
             }
         }
@@ -343,6 +348,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         // Legacy UIKit observers for compatibility - primary lifecycle now handled via SwiftUI scene phase
         // These provide additional granularity when needed but should not conflict with scene phase handling
         
+        #if os(iOS)
         // App resigning active (provides more specific timing than scene phase inactive)
         resignActiveObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willResignActiveNotification,
@@ -377,6 +383,42 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         ) { [weak self] _ in
             self?.handleAppWillEnterForeground()
         }
+        #elseif os(macOS)
+        // App resigning active (provides more specific timing than scene phase inactive)
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleAppWillResignActive()
+        }
+        
+        // App becoming active (coordinates with scene phase active)
+        becomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleAppDidBecomeActive()
+        }
+        
+        // Keep background/foreground observers but rely on scene phase for primary logic
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleAppDidEnterBackground()
+        }
+        
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleAppWillEnterForeground()
+        }
+        #endif
     }
     
     private func setupAutomaticPersistence() {
@@ -466,7 +508,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         }
         
         // Perform restoration update
-        await performUpdate(type: .viewAppearance(persistedState: persistedState))
+        await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.viewAppearance(persistedState: persistedState))
         controllerLogger.debug("🎭 UIKit: Scene phase restoration completed")
     }
     
@@ -475,14 +517,14 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     @MainActor
     func loadInitialData() async {
         await stateManager.loadInitialData()
-        await performUpdate(type: .normalUpdate)
+        await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.normalUpdate)
     }
     
     @objc private func handleRefresh() {
         Task { @MainActor in
             // Use pre-captured anchor if available
             let anchor = pullToRefreshAnchor ?? captureCurrentAnchor()
-            await performUpdate(type: .refresh(anchor: anchor))
+            await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.refresh(anchor: anchor))
             pullToRefreshAnchor = nil
         }
     }
@@ -493,7 +535,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         
         loadMoreTask?.cancel()
         loadMoreTask = Task {
-            await performUpdate(type: .loadMore)
+            await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.loadMore)
         }
         
         await loadMoreTask?.value
@@ -502,7 +544,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     @MainActor
     private func handleMemoryWarning() async {
         controllerLogger.warning("⚠️ Memory warning received")
-        await performUpdate(type: .memoryWarning)
+        await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.memoryWarning)
     }
     
     // MARK: - Unified Update System
@@ -551,7 +593,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             // Only preserve scroll position for chronological feeds
             if stateManager.currentFeedType.isChronological {
                 // For refresh, use the pre-captured anchor during pull gesture
-                if let refreshAnchor = refreshAnchor,
+                if let refreshAnchorAny = refreshAnchor,
+                   let refreshAnchor = refreshAnchorAny as? UnifiedScrollPreservationPipeline.ScrollAnchor,
                    refreshAnchor.indexPath.item < oldPosts.count {
                     // Convert UnifiedScrollPreservationPipeline.ScrollAnchor to PreciseScrollAnchor
                     if let attributes = collectionView.layoutAttributesForItem(at: refreshAnchor.indexPath) {
@@ -571,7 +614,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
                             itemHeight: attributes.frame.height,
                             visibleHeightInViewport: attributes.frame.height,
                             timestamp: CACurrentMediaTime(),
-                            displayScale: UIScreen.main.scale
+                            displayScale: PlatformScreenInfo.scale
                         )
                     }
                 } else {
@@ -1179,3 +1222,72 @@ extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePref
 }
 
 // PersistedScrollState already conforms to Codable in UnifiedScrollPreservationPipeline.swift
+#else
+/// macOS stub implementation - FeedCollectionViewController not available on macOS
+@available(macOS 13.0, *)
+final class FeedCollectionViewControllerIntegrated: NSViewController {
+    private let feedCollectionLogger = Logger(subsystem: "blue.catbird", category: "FeedCollectionIntegrated")
+    
+    private enum Section: Int, CaseIterable {
+        case main = 0
+    }
+    
+    private struct PostItem: Hashable {
+        let id: String
+        
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
+        
+        static func == (lhs: PostItem, rhs: PostItem) -> Bool {
+            lhs.id == rhs.id
+        }
+    }
+    
+    var stateManager: FeedStateManager
+    private let navigationPath: Binding<NavigationPath>
+    private let onScrollOffsetChanged: ((CGFloat) -> Void)?
+    
+    init(
+        stateManager: FeedStateManager,
+        navigationPath: Binding<NavigationPath>,
+        onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
+    ) {
+        self.stateManager = stateManager
+        self.navigationPath = navigationPath
+        self.onScrollOffsetChanged = onScrollOffsetChanged
+        super.init(nibName: nil, bundle: nil)
+        feedCollectionLogger.warning("FeedCollectionViewControllerIntegrated not supported on macOS")
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        feedCollectionLogger.warning("FeedCollectionViewControllerIntegrated not supported on macOS")
+    }
+    
+    func performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
+        feedCollectionLogger.warning("performUpdate not supported on macOS")
+    }
+    
+    func loadInitialData() async {
+        feedCollectionLogger.warning("loadInitialData not supported on macOS")
+    }
+    
+    func handleScenePhaseRestoration() async {
+        feedCollectionLogger.warning("handleScenePhaseRestoration not supported on macOS")
+    }
+    
+    func savePersistedScrollState(force: Bool = false) {
+        feedCollectionLogger.warning("savePersistedScrollState not supported on macOS")
+    }
+    
+    func loadPersistedScrollState() -> PersistedScrollState? {
+        feedCollectionLogger.warning("loadPersistedScrollState not supported on macOS")
+        return nil
+    }
+}
+#endif

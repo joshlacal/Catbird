@@ -1,4 +1,5 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
 
 struct SearchBar: UIViewRepresentable {
@@ -59,3 +60,31 @@ struct SearchBar: UIViewRepresentable {
   SearchBar(text: .constant(""), placeholder: "Search feeds...")
     .padding()
 }
+
+#else
+
+// macOS stub - use native TextField with search styling
+struct SearchBar: View {
+  @Binding var text: String
+  var placeholder: String
+  var autoFocus: Bool = false
+  
+  var body: some View {
+    HStack {
+      Image(systemName: "magnifyingglass")
+        .foregroundColor(.secondary)
+      TextField(placeholder, text: $text)
+        .textFieldStyle(.plain)
+    }
+    .padding(8)
+    .background(Color(.controlBackgroundColor))
+    .cornerRadius(8)
+  }
+}
+
+#Preview {
+  SearchBar(text: .constant(""), placeholder: "Search feeds...")
+    .padding()
+}
+
+#endif

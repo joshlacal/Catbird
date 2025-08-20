@@ -206,7 +206,7 @@ struct ResultsView: View {
                                         }
                                         .padding(.vertical, 8)
                                         .padding(.horizontal, 16)
-                                        .background(Color(.tertiarySystemBackground))
+                                        .background(Color.secondary.opacity(0.1))
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
                                     }
                                     .buttonStyle(.plain)
@@ -298,7 +298,7 @@ struct ResultsView: View {
                     .padding()
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
     }
     
     // Posts-only results view
@@ -327,7 +327,7 @@ struct ResultsView: View {
                     .padding()
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
     }
     
     // Feeds-only results view
@@ -361,7 +361,7 @@ struct ResultsView: View {
                                 .foregroundColor(.secondary)
                         }
                         .padding()
-                        .background(Color(.tertiarySystemBackground))
+                        .background(Color(PlatformColor.platformTertiarySystemBackground))
                     }
                     .buttonStyle(.plain)
                 }
@@ -378,7 +378,7 @@ struct ResultsView: View {
             }
         }
         .padding(.horizontal)
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
     }
     
     // Starter packs-only results view
@@ -402,7 +402,7 @@ struct ResultsView: View {
                     .padding()
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
     }
     
     private func emptyResultsView(for type: ContentType) -> some View {

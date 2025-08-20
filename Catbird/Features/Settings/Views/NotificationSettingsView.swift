@@ -81,13 +81,20 @@ struct NotificationSettingsView: View {
             }
         }
         .navigationTitle("Notifications")
+        #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
+        #endif
         .alert("Enable Notifications", isPresented: $showSystemSettingsPrompt) {
             Button("Cancel", role: .cancel) { }
             Button("Open Settings") {
+                #if os(iOS)
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
+                #elseif os(macOS)
+                // Open System Preferences on macOS
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!)
+                #endif
             }
         } message: {
             Text("To receive notifications, you need to enable them in the system settings.")

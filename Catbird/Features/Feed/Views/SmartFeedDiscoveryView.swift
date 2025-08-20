@@ -54,8 +54,8 @@ struct SmartFeedDiscoveryView: View {
                 // Background gradient
                 LinearGradient(
                     colors: [
-                        Color(.systemBackground),
-                        Color(.secondarySystemBackground).opacity(0.3)
+                        Color(platformColor: .platformSystemBackground),
+                        Color(platformColor: .platformSecondarySystemBackground).opacity(0.3)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -94,9 +94,11 @@ struct SmartFeedDiscoveryView: View {
                 }
             }
             .navigationTitle("Discover Feeds")
-            .toolbarTitleDisplayMode(.large)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Settings") {
                         showingInterestPicker = true
                     }
@@ -179,7 +181,7 @@ struct SmartFeedDiscoveryView: View {
                                         .foregroundColor(.secondary)
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 8)
-                                        .background(Color(.tertiarySystemBackground))
+                                        .background(Color(platformColor: .platformTertiarySystemBackground))
                                         .clipShape(Capsule())
                                 }
                             }
@@ -208,7 +210,7 @@ struct SmartFeedDiscoveryView: View {
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
+                .fill(Color(platformColor: .platformSystemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
         )
     }
@@ -257,7 +259,7 @@ struct SmartFeedDiscoveryView: View {
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Color(platformColor: .platformSecondarySystemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
         )
     }
@@ -473,7 +475,7 @@ struct SmartFeedDiscoveryView: View {
                     .padding(20)
                     .background(
                         RoundedRectangle(cornerRadius: 16)
-                            .fill(Color(.systemBackground))
+                            .fill(Color(platformColor: .platformSystemBackground))
                             .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                     )
                 }
@@ -519,7 +521,7 @@ struct SmartFeedDiscoveryView: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
+                .fill(Color(platformColor: .platformSystemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
         )
     }
@@ -563,7 +565,7 @@ struct SmartFeedDiscoveryView: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
+                .fill(Color(platformColor: .platformSystemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
         )
     }
@@ -606,7 +608,7 @@ struct SmartFeedDiscoveryView: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
+                .fill(Color(platformColor: .platformSystemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
         )
     }
@@ -754,14 +756,14 @@ struct EnhancedRecommendationCard: View {
     
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 20)
-            .fill(Color(.systemBackground))
+            .fill(Color(platformColor: .platformSystemBackground))
             .shadow(color: .black.opacity(0.06), radius: 12, x: 0, y: 4)
             .shadow(color: .black.opacity(0.04), radius: 1, x: 0, y: 1)
     }
     
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 20)
-            .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+            .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.1), lineWidth: 0.5)
     }
     
     private var feedPreviewSheet: some View {
@@ -772,15 +774,17 @@ struct EnhancedRecommendationCard: View {
                 navigationPath: .constant(NavigationPath())
             )
             .navigationTitle(recommendation.feed.displayName)
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
                         showingFullFeed = false
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Subscribe") {
                         Task {
                             await onSubscribe()
@@ -931,7 +935,7 @@ struct EnhancedRecommendationCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+                .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.2), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
     }
@@ -1037,7 +1041,7 @@ struct EnhancedInterestFeedSection: View {
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color(.tertiarySystemBackground))
+                    .background(Color(platformColor: .platformTertiarySystemBackground))
                     .clipShape(Capsule())
             }
             
@@ -1056,10 +1060,10 @@ struct EnhancedInterestFeedSection: View {
                 .frame(maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(.secondarySystemBackground))
+                        .fill(Color(platformColor: .platformSecondarySystemBackground))
                         .overlay(
                             RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color(.separator).opacity(0.1), lineWidth: 0.5)
+                                .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.1), lineWidth: 0.5)
                         )
                 )
             } else {
@@ -1090,7 +1094,7 @@ struct EnhancedInterestFeedSection: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
+                .fill(Color(platformColor: .platformSystemBackground))
                 .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
         )
     }
@@ -1147,15 +1151,17 @@ struct InterestPickerSheet: View {
                 .padding()
             }
             .navigationTitle("Your Interests")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Save") {
                         Task {
                             isSaving = true
@@ -1181,7 +1187,7 @@ struct InterestTag: View {
                 .appFont(AppTextRole.subheadline)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(isSelected ? Color.accentColor : Color(.secondarySystemBackground))
+                .background(isSelected ? Color.accentColor : Color(platformColor: .platformSecondarySystemBackground))
                 .foregroundColor(isSelected ? .white : .primary)
                 .clipShape(Capsule())
         }

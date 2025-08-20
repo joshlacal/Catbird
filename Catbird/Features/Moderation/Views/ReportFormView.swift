@@ -111,7 +111,9 @@ struct ReportFormView: View {
                 }
             }
             .navigationTitle("Report Content")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -124,14 +126,16 @@ struct ReportFormView: View {
                     availableLabelers: availableLabelers,
                     selectedLabeler: $selectedLabeler
                 )
+                #if os(iOS)
                 .presentationDetents([.medium, .large])
+                #endif
             }
             .alert("Report Submitted", isPresented: $showingSuccessAlert) {
                 Button("OK") {
                     dismiss()
                 }
             } message: {
-                Text("Thank you for your report. The moderation team will review it.")
+                Text("Thank you for your report. It has been sent to Bluesky.")
             }
             .task {
                 await loadLabelers()

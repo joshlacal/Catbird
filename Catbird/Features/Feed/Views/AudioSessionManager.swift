@@ -7,7 +7,11 @@
 
 import AVFoundation
 import Foundation
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os.log
 
 class AudioSessionManager {
@@ -18,15 +22,21 @@ class AudioSessionManager {
   private let logger = Logger(subsystem: "blue.catbird", category: "AudioSessionManager")
 
   private init() {
-    // Configure audio session at startup to prevent auto-activation
+    #if os(iOS)
+    // Configure audio session at startup to prevent auto-activation (iOS only)
     setupInitialAudioSession()
 
     // Register for interruption notifications
     setupNotificationObservers()
+    #else
+    // macOS doesn't use AVAudioSession
+    logger.debug("AudioSessionManager initialized for macOS - no audio session configuration needed")
+    #endif
   }
 
   // MARK: - Setup
 
+  #if os(iOS)
   private func setupInitialAudioSession() {
     // Don't configure audio session at startup - leave the system default
     // This prevents us from taking over audio before we even need it
@@ -51,6 +61,7 @@ class AudioSessionManager {
     )
 
     // Watch app state changes
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(handleAppDidBecomeActive),
@@ -64,12 +75,29 @@ class AudioSessionManager {
       name: UIApplication.willResignActiveNotification,
       object: nil
     )
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAppDidBecomeActive),
+      name: NSApplication.didBecomeActiveNotification,
+      object: nil
+    )
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAppWillResignActive),
+      name: NSApplication.willResignActiveNotification,
+      object: nil
+    )
+    #endif
   }
+  #endif
 
   // MARK: - Public API
 
   /// Called when user unmutes a video - prepares audio session for playback
   func handleVideoUnmute() {
+    #if os(iOS)
     do {
       let audioSession = AVAudioSession.sharedInstance()
 
@@ -87,10 +115,15 @@ class AudioSessionManager {
     } catch {
       logger.debug("Failed to configure audio session for unmute: \(error)")
     }
+    #else
+    // macOS doesn't require audio session configuration
+    logger.debug("Video unmute handled - no audio session config needed on macOS")
+    #endif
   }
 
   /// Configure audio session specifically for Picture-in-Picture playback
   func configureForPictureInPicture() {
+    #if os(iOS)
     do {
       let audioSession = AVAudioSession.sharedInstance()
 
@@ -105,10 +138,15 @@ class AudioSessionManager {
     } catch {
       logger.debug("Failed to configure audio session for PiP: \(error)")
     }
+    #else
+    // macOS doesn't support PiP for video in the same way
+    logger.debug("Picture-in-Picture configuration not needed on macOS")
+    #endif
   }
 
   /// Called when user mutes a video - returns audio session to ambient state
   func handleVideoMute() {
+    #if os(iOS)
     do {
       let audioSession = AVAudioSession.sharedInstance()
 
@@ -123,6 +161,12 @@ class AudioSessionManager {
     } catch {
       logger.debug("Failed to deactivate audio session: \(error)")
     }
+    #else
+    // macOS doesn't require audio session management
+    isActive = false
+    isPiPAudioSessionActive = false
+    logger.debug("Video mute handled - no audio session changes needed on macOS")
+    #endif
   }
 
   /// Reset PiP audio session state (call when PiP is no longer needed)
@@ -140,6 +184,7 @@ class AudioSessionManager {
 
   // MARK: - Notification Handlers
 
+  #if os(iOS)
   @objc private func handleAudioSessionInterruption(notification: Notification) {
     guard let userInfo = notification.userInfo,
       let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -188,6 +233,7 @@ class AudioSessionManager {
     // This prevents interrupting music when switching apps
     logger.debug("App resigned active - leaving audio session unchanged to preserve music")
   }
+  #endif
 
   deinit {
     NotificationCenter.default.removeObserver(self)

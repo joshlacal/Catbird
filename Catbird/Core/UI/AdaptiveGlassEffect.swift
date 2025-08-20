@@ -9,6 +9,7 @@ import SwiftUI
 
 // MARK: - Adaptive Glass Effect Style
 
+@available(macOS 26.0, *)
 public enum AdaptiveGlassStyle {
     case regular
     case secondary
@@ -51,6 +52,7 @@ public enum AdaptiveGlassStyle {
 
 // MARK: - Adaptive Glass Effect Extensions
 
+@available(macOS 26.0, *)
 public extension View {
     
     @ViewBuilder

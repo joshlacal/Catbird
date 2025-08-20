@@ -4,6 +4,12 @@ import OSLog
 import PhotosUI
 import NukeUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 @Observable
 final class EditListViewModel {
   // MARK: - Properties
@@ -126,7 +132,7 @@ final class EditListViewModel {
     errorMessage = nil
     
     do {
-      try await appState.listManager.updateList(
+      _ = try await appState.listManager.updateList(
         listURI: listURI,
         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
         description: description.isEmpty ? nil : description,
@@ -175,9 +181,11 @@ struct EditListView: View {
         }
       }
       .navigationTitle("Edit List")
+      #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             if viewModel.hasUnsavedChanges {
               showingDiscardAlert = true
@@ -187,7 +195,7 @@ struct EditListView: View {
           }
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Save") {
             Task {
               await viewModel.saveChanges()
@@ -283,11 +291,20 @@ struct EditListView: View {
     HStack(spacing: 16) {
       // Current Avatar Display
       Group {
-        if let avatarData = viewModel.avatarData,
-           let uiImage = UIImage(data: avatarData) {
-          Image(uiImage: uiImage)
-            .resizable()
-            .scaledToFill()
+        if let avatarData = viewModel.avatarData {
+          #if os(iOS)
+          if let uiImage = UIImage(data: avatarData) {
+            Image(uiImage: uiImage)
+              .resizable()
+              .scaledToFill()
+          }
+          #elseif os(macOS)
+          if let nsImage = NSImage(data: avatarData) {
+            Image(nsImage: nsImage)
+              .resizable()
+              .scaledToFill()
+          }
+          #endif
         } else if let avatarURLString = viewModel.listDetails?.avatar?.uriString(),
                    let avatarURL = URL(string: avatarURLString) {
           LazyImage(url: avatarURL) { state in
@@ -487,7 +504,7 @@ struct ListTypeSelectionRow: View {
 
 actor ImageProcessor {
   static func resizeImageData(_ data: Data, maxSize: CGFloat) async -> Data? {
-    guard let image = UIImage(data: data) else { return nil }
+    guard let image = PlatformImage(data: data) else { return nil }
     
     let size = image.size
     let aspectRatio = size.width / size.height
@@ -504,11 +521,23 @@ actor ImageProcessor {
     guard size.width > maxSize || size.height > maxSize else { return data }
     
     // Resize image
+    #if os(iOS)
     let renderer = UIGraphicsImageRenderer(size: newSize)
     let resizedImage = renderer.image { _ in
       image.draw(in: CGRect(origin: .zero, size: newSize))
     }
-    
     return resizedImage.jpegData(compressionQuality: 0.8)
+    #elseif os(macOS)
+    let resizedImage = NSImage(size: newSize, flipped: false) { rect in
+      image.draw(in: rect)
+      return true
+    }
+    
+    guard let tiffData = resizedImage.tiffRepresentation,
+          let bitmapRep = NSBitmapImageRep(data: tiffData) else {
+      return nil
+    }
+    return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+    #endif
   }
 }

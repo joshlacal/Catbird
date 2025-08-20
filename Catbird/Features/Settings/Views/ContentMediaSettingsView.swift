@@ -222,7 +222,9 @@ struct ContentMediaSettingsView: View {
             }
         }
         .navigationTitle("Content & Media")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .task {
             await loadServerPreferences()
         }

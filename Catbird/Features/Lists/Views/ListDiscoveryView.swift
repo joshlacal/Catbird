@@ -201,7 +201,11 @@ struct ListDiscoveryView: View {
     NavigationStack(path: $navigationPath) {
       contentView
         .navigationTitle("Discover Lists")
-        .toolbarTitleDisplayMode(.large)
+#if os(iOS)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
+#endif
         .onAppear {
           viewModel = ListDiscoveryViewModel(appState: appState)
           Task {

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 
@@ -15,3 +16,4 @@ extension UIHostingController {
     UIView.setAnimationsEnabled(true)
   }
 }
+#endif

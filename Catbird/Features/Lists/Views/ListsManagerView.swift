@@ -144,9 +144,13 @@ struct ListsManagerView: View {
     NavigationStack(path: $navigationPath) {
       contentView
         .navigationTitle("My Lists")
-        .toolbarTitleDisplayMode(.large)
+        #if os(iOS)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
+        #endif
         .toolbar {
-          ToolbarItem(placement: .navigationBarTrailing) {
+          ToolbarItem(placement: .primaryAction) {
             Button {
               viewModel.showingCreateList = true
             } label: {
@@ -271,7 +275,11 @@ struct ListsManagerView: View {
         }
       }
     }
+#if os(iOS)
     .listStyle(.insetGrouped)
+#elseif os(macOS)
+    .listStyle(.inset)
+#endif
   }
 }
 

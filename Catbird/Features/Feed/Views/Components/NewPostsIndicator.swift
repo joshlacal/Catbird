@@ -6,7 +6,11 @@
 //
 
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct NewPostsIndicator: View {
   // Public API
@@ -17,7 +21,6 @@ struct NewPostsIndicator: View {
   var autoDismissAfter: TimeInterval = 10 // Increased from 5 to 10 seconds
   var reappearCooldown: TimeInterval = 3 // Reduced from 8 to 3 seconds
   var maxAvatarCount: Int = 3
-  var hapticsEnabled: Bool = true
   var allowSilentDismiss: Bool = true
   var accessibilityLabelPrefix: String = "New posts available"
 
@@ -99,12 +102,6 @@ struct NewPostsIndicator: View {
       Image(systemName: "arrow.up")
         .font(.subheadline.weight(.semibold))
         .foregroundColor(.white)
-        .scaleEffect(pulse ? 1.15 : 1.0)
-        .opacity(pulse ? 1 : 0.85)
-        .animation(
-          reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
-          value: pulse
-        )
         .accessibilityHidden(true)
     }
     .padding(.horizontal, 14)
@@ -153,7 +150,7 @@ struct NewPostsIndicator: View {
       
       schedulePulse()
       scheduleAutoDismiss()
-      performHaptic(style: .soft)
+      PlatformHaptics.impact(.soft)
     }
   }
 
@@ -161,12 +158,12 @@ struct NewPostsIndicator: View {
     isVisible = true
     schedulePulse()
     scheduleAutoDismiss()
-    performHaptic(style: .rigid)
+    PlatformHaptics.impact(.rigid)
   }
 
   private func activate() {
     onActivate()
-    performHaptic(style: .medium)
+    PlatformHaptics.impact(.medium)
     dismiss(animated: true)
   }
 
@@ -205,14 +202,7 @@ struct NewPostsIndicator: View {
 
   // MARK: - Haptics
 
-  private func performHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle) {
-    guard hapticsEnabled else { return }
-    #if os(iOS)
-      let generator = UIImpactFeedbackGenerator(style: style)
-      generator.prepare()
-      generator.impactOccurred()
-    #endif
-  }
+  // Haptics now handled by PlatformHaptics utility
 }
 
 struct NewPostsAvatarStack: View {

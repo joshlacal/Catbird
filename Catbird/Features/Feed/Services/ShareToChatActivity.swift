@@ -5,6 +5,7 @@
 //  Created for sharing posts to Bluesky chat conversations
 //
 
+#if os(iOS)
 import UIKit
 import SwiftUI
 import Petrel
@@ -193,16 +194,18 @@ struct ModernChatSelectionView: View {
                 }
             }
             .navigationTitle("Share to Chat")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         onDismiss()
                     }
                     .disabled(isSending)
                 }
                 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     if selectedRecipient != nil {
                         sendButton
                     }
@@ -234,7 +237,7 @@ struct ModernChatSelectionView: View {
             
             TextField("Search people or conversations", text: $searchText)
                 .textFieldStyle(.plain)
-                .autocorrectionDisabled()
+                .autocorrectionDisabled(true)
             
             if !searchText.isEmpty {
                 Button {
@@ -735,9 +738,11 @@ struct PostPreviewSheet: View {
                 .padding()
             }
             .navigationTitle("Post Preview")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button("Done") {
                         dismiss()
                     }
@@ -793,9 +798,11 @@ struct LegacyChatSelectionView: View {
                 }
             }
             .navigationTitle("Share to Chat")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         onDismiss()
                     }
@@ -826,4 +833,43 @@ struct LegacyChatSelectionView: View {
         }
     }
 }
+
+#else
+import Petrel
+import SwiftUI
+
+// macOS stubs for sharing functionality
+class ShareToChatActivity {
+    init(post: AppBskyFeedDefs.PostView, appState: AppState) {
+        // macOS stub - sharing features not available
+    }
+}
+
+class ShareablePost {
+    init(post: AppBskyFeedDefs.PostView) {
+        // macOS stub
+    }
+}
+
+struct ChatSelectionView: View {
+    let post: AppBskyFeedDefs.PostView
+    let appState: AppState
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        VStack {
+            Text("Share to Chat")
+                .font(.title2)
+                .fontWeight(.semibold)
+            Text("Chat sharing is not available on macOS")
+                .foregroundColor(.secondary)
+            Text("Chat features require iOS")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+    }
+}
+
+#endif
 

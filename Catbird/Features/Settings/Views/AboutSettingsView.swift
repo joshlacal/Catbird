@@ -133,7 +133,9 @@ struct AboutSettingsView: View {
             }
         }
         .navigationTitle("About")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
         .confirmationDialog("Support Development", isPresented: $isShowingSupportOptions, titleVisibility: .visible) {
             Button("Support Catbird (Pay What You Wish)") {
                 openSupportLink(SupportTier.support.stripeURL)
@@ -163,7 +165,11 @@ struct AboutSettingsView: View {
     }
     
     private func openSupportLink(_ url: URL) {
+        #if os(iOS)
         UIApplication.shared.open(url)
+        #elseif os(macOS)
+        NSWorkspace.shared.open(url)
+        #endif
     }
 }
 

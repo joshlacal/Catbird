@@ -31,16 +31,18 @@ struct SystemLogView: View {
         }
       }
       .navigationTitle("System Logs")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Done") {
             dismiss()
           }
         }
         
         if logService != nil {
-          ToolbarItem(placement: .navigationBarTrailing) {
+          ToolbarItem(placement: .primaryAction) {
             Menu {
               Button {
                 Task {
@@ -86,7 +88,7 @@ struct SystemLogView: View {
         LogExportView(exportText: exportText)
       }
       .appDisplayScale(appState: appState)
-      .contrastAwareBackground(appState: appState, defaultColor: Color(.systemBackground))
+      .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
       .task {
         await initializeLogService()
       }
@@ -164,7 +166,7 @@ private struct StatusBarView: View {
     }
     .padding(.horizontal)
     .padding(.vertical, 8)
-    .background(Color(.systemGray6))
+    .background(Color.systemGray6)
   }
 }
 
@@ -367,7 +369,9 @@ private struct LogFilterView: View {
               Text(range.displayName).tag(range)
             }
           }
+          #if os(iOS)
           .pickerStyle(WheelPickerStyle())
+          #endif
         }
         
         Section("Search") {
@@ -388,15 +392,17 @@ private struct LogFilterView: View {
         }
       }
       .navigationTitle("Log Filters")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             dismiss()
           }
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Apply") {
             Task {
               await logService.updateFilter(filterSettings)
@@ -461,9 +467,11 @@ private struct LogDetailView: View {
         .padding()
       }
       .navigationTitle("Log Entry")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Done") {
             dismiss()
           }
@@ -508,15 +516,17 @@ private struct LogExportView: View {
           .padding()
       }
       .navigationTitle("Export Logs")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Done") {
             dismiss()
           }
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           ShareLink(item: exportText) {
             Image(systemName: "square.and.arrow.up")
           }

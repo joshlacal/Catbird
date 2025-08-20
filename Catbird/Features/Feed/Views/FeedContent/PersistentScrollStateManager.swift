@@ -9,7 +9,11 @@
 
 import Foundation
 import os
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// Manages persistent scroll state across app lifecycle events
 @MainActor
@@ -192,6 +196,7 @@ final class PersistentScrollStateManager {
     }
     
     private func setupAppLifecycleObservers() {
+        #if os(iOS)
         // Save states when app backgrounds
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
@@ -213,6 +218,29 @@ final class PersistentScrollStateManager {
                 self?.cleanupStaleStates()
             }
         }
+        #elseif os(macOS)
+        // Save states when app resigns active
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.persistScrollStatesToDisk()
+            }
+        }
+        
+        // Clean up stale states when app becomes active
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.cleanupStaleStates()
+            }
+        }
+        #endif
     }
     
     private func cleanupStaleStates() {

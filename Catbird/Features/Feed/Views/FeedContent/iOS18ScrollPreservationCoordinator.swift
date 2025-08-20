@@ -6,6 +6,7 @@
 //  Intelligently selects optimal restoration strategies based on device capabilities
 //
 
+#if os(iOS)
 import UIKit
 import SwiftUI
 import os
@@ -225,8 +226,8 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
     private func createScrollContext(feedType: String) -> ScrollContext {
         return ScrollContext(
             feedType: feedType,
-            isProMotionDisplay: UIScreen.main.maximumFramesPerSecond > 60,
-            batteryLevel: UIDevice.current.batteryLevel,
+            isProMotionDisplay: PlatformScreenInfo.isProMotionDisplay,
+            batteryLevel: PlatformDeviceInfo.batteryLevel,
             thermalState: ProcessInfo.processInfo.thermalState,
             memoryPressure: systemMonitor.isUnderMemoryPressure,
             currentScrollVelocity: systemMonitor.lastScrollVelocity,
@@ -236,7 +237,7 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
     }
     
     private func executeRestoration(
-        strategy: PreservationStrategy,
+        strategy: iOS18ScrollPreservationCoordinator.PreservationStrategy,
         collectionView: UICollectionView,
         dataSource: UICollectionViewDiffableDataSource<Int, String>,
         newData: [String],
@@ -357,7 +358,7 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
                 strategy: .ios18Enhanced,
                 pixelError: calculatePixelError(collectionView: collectionView, anchor: anchor),
                 duration: duration,
-                frameRate: Double(UIScreen.main.maximumFramesPerSecond),
+                frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
                 updateLinkFrames: updateLinkFrames,
                 memoryUsage: memoryUsage,
                 batteryImpact: calculateBatteryImpact(duration: duration, frameRate: 120),
@@ -373,7 +374,7 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
             strategy: .ios18Enhanced,
             pixelError: calculatePixelError(from: pipelineResult.finalOffset, target: anchor.pixelAlignedOffset),
             duration: duration,
-            frameRate: Double(UIScreen.main.maximumFramesPerSecond),
+            frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
             updateLinkFrames: pipelineResult.restorationAttempts,
             memoryUsage: memoryUsage,
             batteryImpact: calculateBatteryImpact(duration: duration, frameRate: 120),
@@ -696,12 +697,15 @@ private class SystemPerformanceMonitor {
     }
     
     func exportSystemMetrics() async -> [String: Any] {
+        let batteryLevel = await MainActor.run { PlatformDeviceInfo.batteryLevel }
+        let maxFramesPerSecond = await MainActor.run { PlatformScreenInfo.maximumFramesPerSecond }
+        
         return [
             "thermal_state": ProcessInfo.processInfo.thermalState.rawValue,
-            "battery_level": UIDevice.current.batteryLevel,
+            "battery_level": batteryLevel,
             "memory_pressure": isUnderMemoryPressure,
             "last_scroll_velocity": lastScrollVelocity,
-            "is_pro_motion": UIScreen.main.maximumFramesPerSecond > 60
+            "is_pro_motion": maxFramesPerSecond > 60
         ]
     }
 }
@@ -717,3 +721,30 @@ extension Dictionary {
         return result
     }
 }
+
+#else
+
+// MARK: - macOS Stub
+import Combine
+@available(macOS 15.0, *)
+@MainActor
+final class iOS18ScrollPreservationCoordinator: ObservableObject {
+    
+    init(options: [String: Any] = [:]) {
+        // No-op on macOS
+    }
+    
+    func configureCoordinator() {
+        // No-op on macOS
+    }
+    
+    func preservePosition() {
+        // No-op on macOS
+    }
+    
+    func restorePosition() {
+        // No-op on macOS
+    }
+}
+
+#endif

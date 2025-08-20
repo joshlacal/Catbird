@@ -11,6 +11,11 @@ import AVFoundation
 import OSLog
 import Combine
 import MediaPlayer
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // MARK: - iOS 18 Enhanced Video Player
 
@@ -44,6 +49,7 @@ struct iOS18EnhancedVideoPlayer: View {
     }
     
     var body: some View {
+        #if os(iOS)
         GeometryReader { geometry in
             ZStack {
                 // Video player view
@@ -102,6 +108,18 @@ struct iOS18EnhancedVideoPlayer: View {
                 VideoShareSheet(videoURL: videoURL)
             }
         }
+        #elseif os(macOS)
+        // macOS implementation using VideoPlayer
+        VideoPlayer(player: playerController.player)
+            .onAppear {
+                if autoPlay {
+                    playerController.play()
+                }
+            }
+            .onDisappear {
+                playerController.pause()
+            }
+        #endif
     }
 }
 
@@ -127,13 +145,17 @@ class EnhancedVideoPlayerController: ObservableObject {
     private let logger = Logger(subsystem: "blue.catbird", category: "VideoPlayerController")
     
     // iOS 18: ProMotion support
+    #if os(iOS)
     private var displayLink: CADisplayLink?
+    #endif
     private let targetFrameRate: Float = 120.0 // ProMotion displays
     
     init(url: URL) {
         self.player = AVPlayer()
         setupPlayer(with: url)
+        #if os(iOS)
         setupProMotionSupport()
+        #endif
     }
     
     private func setupPlayer(with url: URL) {
@@ -161,6 +183,7 @@ class EnhancedVideoPlayerController: ObservableObject {
         }
     }
     
+    #if os(iOS)
     private func setupProMotionSupport() {
         // iOS 18: Create display link for ProMotion refresh rates
         displayLink = CADisplayLink(target: self, selector: #selector(displayLinkUpdate))
@@ -178,6 +201,7 @@ class EnhancedVideoPlayerController: ObservableObject {
             currentTime = player.currentTime().seconds
         }
     }
+    #endif
     
     private func checkForHDRContent(asset: AVURLAsset) {
         Task {
@@ -339,9 +363,14 @@ class EnhancedVideoPlayerController: ObservableObject {
             break
         case .inactive:
             // Pause if going to background
+            #if os(iOS)
             if !AVAudioSession.sharedInstance().isOtherAudioPlaying {
                 pause()
             }
+            #else
+            // macOS doesn't use AVAudioSession - pause on inactive for all cases
+            pause()
+            #endif
         case .active:
             // Resume if was playing
             break
@@ -401,8 +430,10 @@ class EnhancedVideoPlayerController: ObservableObject {
     }
     
     func cleanup() {
+        #if os(iOS)
         displayLink?.invalidate()
         displayLink = nil
+        #endif
         
         if let timeObserver = timeObserver {
             player.removeTimeObserver(timeObserver)
@@ -466,6 +497,7 @@ enum PlaybackState {
 
 // MARK: - Video Player View Representable
 
+#if os(iOS)
 @available(iOS 18.0, *)
 struct VideoPlayerViewRepresentable: UIViewControllerRepresentable {
     let player: AVPlayer
@@ -520,6 +552,7 @@ struct VideoPlayerViewRepresentable: UIViewControllerRepresentable {
         }
     }
 }
+#endif
 
 // MARK: - Custom Controls Overlay
 
@@ -780,6 +813,7 @@ struct VideoProgressBar: View {
     }
 }
 
+#if os(iOS)
 struct VideoShareSheet: UIViewControllerRepresentable {
     let videoURL: URL
     
@@ -789,6 +823,30 @@ struct VideoShareSheet: UIViewControllerRepresentable {
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+#elseif os(macOS)
+struct VideoShareSheet: NSViewControllerRepresentable {
+    let videoURL: URL
+    
+    func makeNSViewController(context: Context) -> NSSharingServicePickerViewController {
+        let picker = NSSharingServicePicker(items: [videoURL])
+        let viewController = NSViewController()
+        
+        // Show sharing service picker
+        picker.show(relativeTo: .zero, of: viewController.view, preferredEdge: .minY)
+        
+        return NSSharingServicePickerViewController()
+    }
+    
+    func updateNSViewController(_ nsViewController: NSSharingServicePickerViewController, context: Context) {}
+}
+
+// Simple wrapper for NSSharingServicePicker on macOS
+class NSSharingServicePickerViewController: NSViewController {
+    override func loadView() {
+        self.view = NSView()
+    }
+}
+#endif
 
 // MARK: - Preview
 

@@ -47,7 +47,9 @@ struct EmojiPickerViewModifier: ViewModifier {
                     )
                 }
                 .presentationDragIndicator(.visible)
+                #if os(iOS)
                 .presentationDetents([.medium, .large])
+                #endif
             }
     }
 }
@@ -141,7 +143,7 @@ struct CustomEmojiPickerView: View {
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
-            .background(Color(.systemGray6))
+            .background(Color.systemGray6)
             .cornerRadius(10)
             .padding(.horizontal)
             
@@ -191,6 +193,8 @@ struct CustomEmojiPickerView: View {
                 }
             }
         }
+        #if os(iOS)
         .navigationBarHidden(true)
+        #endif
     }
 }

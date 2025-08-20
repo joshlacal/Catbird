@@ -6,8 +6,15 @@
 //  Integrates with ProMotion displays and battery-aware performance scaling
 //
 
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
+
+// Need to import PlatformSystem for cross-platform notifications
+// The notifications should come from the PlatformApplication struct there
 
 @available(iOS 18.0, *)
 @MainActor
@@ -97,7 +104,9 @@ final class AdaptiveFrameRateManager {
     private var currentPerformanceLevel: Float = 1.0
     
     /// Battery monitoring
+    #if os(iOS)
     private let batteryMonitor = BatteryPerformanceMonitor()
+    #endif
     
     /// Thermal state monitoring
     private var thermalState: ProcessInfo.ThermalState = .nominal
@@ -186,7 +195,7 @@ final class AdaptiveFrameRateManager {
         
         // Monitor memory pressure (simplified - in production use os_proc_available_memory)
         NotificationCenter.default.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification,
+            forName: PlatformApplication.memoryWarningNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -201,11 +210,17 @@ final class AdaptiveFrameRateManager {
     }
     
     private func getBatteryOptimization(batteryLevel: Float) -> BatteryOptimization {
-        let batteryState = UIDevice.current.batteryState
+        #if os(iOS)
+        let batteryState = PlatformDeviceInfo.batteryState
         
         if batteryState == .charging || batteryState == .full {
             return .charging
         }
+        #elseif os(macOS)
+        // macOS doesn't have battery state monitoring like iOS
+        // Assume we're always charging/plugged in for frame rate purposes
+        return .charging
+        #endif
         
         if batteryLevel > 0.5 {
             return .high
@@ -283,12 +298,15 @@ final class AdaptiveFrameRateManager {
 
 // MARK: - Battery Performance Monitor
 
+#if os(iOS)
 @available(iOS 18.0, *)
 private class BatteryPerformanceMonitor {
     private let logger = Logger(subsystem: "blue.catbird", category: "BatteryMonitor")
     
     init() {
-        UIDevice.current.isBatteryMonitoringEnabled = true
+        Task { @MainActor in
+            PlatformDeviceInfo.isBatteryMonitoringEnabled = true
+        }
         setupBatteryMonitoring()
     }
     
@@ -298,7 +316,7 @@ private class BatteryPerformanceMonitor {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            let level = UIDevice.current.batteryLevel
+            let level = PlatformDeviceInfo.batteryLevel
             self?.logger.debug("🔋 Battery level changed: \(level * 100)%")
         }
         
@@ -307,11 +325,12 @@ private class BatteryPerformanceMonitor {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            let state = UIDevice.current.batteryState
+            let state = PlatformDeviceInfo.batteryState
             self?.logger.debug("🔌 Battery state changed: \(String(describing: state))")
         }
     }
 }
+#endif
 
 // MARK: - Extensions
 

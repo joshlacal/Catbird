@@ -6,8 +6,11 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
-
+#elseif canImport(AppKit)
+import AppKit
+#endif
 // MARK: - Typography Constants
 
 /// Defines the app's typography system
@@ -197,11 +200,18 @@ extension View {
     }
     
     /// Applies custom OpenType features to text (when available in the font)
+    #if canImport(UIKit)
     func openTypeFeatures(_ features: [UIFontDescriptor.FeatureKey: Int]) -> some View {
         // This modifier would need UIViewRepresentable for full implementation
         // A simplified version that applies basic text styling
         self
     }
+    #elseif canImport(AppKit)
+    func openTypeFeatures(_ features: [NSFontDescriptor.FeatureKey: Int]) -> some View {
+        // macOS version - simplified implementation
+        self
+    }
+    #endif
     
     /// Applies kerning to specific letter pairs (a simplified version)
     func customKerning(pairs: [String: CGFloat]) -> some View {
@@ -509,6 +519,7 @@ extension View {
 }
 
 extension Font {
+    #if canImport(UIKit)
     /// Creates a dynamic font that hijacks iOS Dynamic Type to use app-specific base sizes
     /// This allows us to combine user's app font size preference with Dynamic Type scaling
     static func customDynamicFont(
@@ -516,7 +527,7 @@ extension Font {
         weight: Font.Weight = .regular,
         design: Font.Design = .default,
         relativeTo textStyle: Font.TextStyle,
-        maxContentSizeCategory: UIContentSizeCategory? = nil
+        maxContentSizeCategory: CrossPlatformContentSizeCategory? = nil
     ) -> Font {
         // Map SwiftUI text style to UIFont text style
         let uiTextStyle: UIFont.TextStyle
@@ -570,7 +581,8 @@ extension Font {
         
         // Apply maximum content size category constraint if provided
         if let maxCategory = maxContentSizeCategory {
-            let scaledFont = metrics.scaledFont(for: customBaseFont, maximumPointSize: UIFont.preferredFont(forTextStyle: uiTextStyle, compatibleWith: UITraitCollection(preferredContentSizeCategory: maxCategory)).pointSize)
+            let maxUICategory = maxCategory.uiContentSizeCategory
+            let scaledFont = metrics.scaledFont(for: customBaseFont, maximumPointSize: UIFont.preferredFont(forTextStyle: uiTextStyle, compatibleWith: UITraitCollection(preferredContentSizeCategory: maxUICategory)).pointSize)
             return Font(scaledFont)
         } else {
             let scaledFont = metrics.scaledFont(for: customBaseFont)
@@ -665,6 +677,35 @@ extension Font {
             return Font(customUIFont)
         }
     }
+    
+    #elseif canImport(AppKit)
+    
+    /// macOS version - simplified dynamic font
+    static func customDynamicFont(
+        baseSize: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        relativeTo textStyle: Font.TextStyle,
+        maxContentSizeCategory: CrossPlatformContentSizeCategory? = nil
+    ) -> Font {
+        // On macOS, apply a simple scale factor based on the maxContentSizeCategory if provided
+        let scaledSize = maxContentSizeCategory?.scaleFactor ?? 1.0
+        return .system(size: baseSize * scaledSize, weight: weight, design: design)
+    }
+    
+    /// macOS version - simplified custom system font
+    static func customSystemFont(
+        size: CGFloat,
+        weight: Font.Weight,
+        width: CGFloat = 120,
+        opticalSize: Bool = true,
+        design: Font.Design = .default,
+        relativeTo textStyle: Font.TextStyle? = nil
+    ) -> Font {
+        return .system(size: size, weight: weight, design: design)
+    }
+    
+    #endif
 }
 
 // MARK: - Accessibility-Aware Text Modifiers
@@ -750,7 +791,11 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
                     .bodyStyle(lineHeight: Typography.LineHeight.relaxed)
             }
             .padding()
-            .background(Color(.systemBackground))
+            #if os(iOS)
+            .background(Color.systemBackground)
+            #elseif os(macOS)
+            .background(Color(.windowBackgroundColor))
+            #endif
             .cornerRadius(10)
             .shadow(radius: 1)
             .padding(.horizontal)
@@ -804,7 +849,11 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
                 }
             }
             .padding()
-            .background(Color(.systemBackground))
+            #if os(iOS)
+            .background(Color.systemBackground)
+            #elseif os(macOS)
+            .background(Color(.windowBackgroundColor))
+            #endif
             .cornerRadius(10)
             .shadow(radius: 1)
             .padding(.horizontal)
@@ -834,13 +883,21 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
                     .textCase(.uppercase)
             }
             .padding()
-            .background(Color(.systemBackground))
+            #if os(iOS)
+            .background(Color.systemBackground)
+            #elseif os(macOS)
+            .background(Color(.windowBackgroundColor))
+            #endif
             .cornerRadius(10)
             .shadow(radius: 1)
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .background(Color(.systemGroupedBackground))
+        #if os(iOS)
+        .background(Color.systemGroupedBackground)
+        #elseif os(macOS)
+        .background(Color(.controlBackgroundColor))
+        #endif
     }
     .environment(\.fontManager, FontManager()) // Provide default FontManager for preview
 }

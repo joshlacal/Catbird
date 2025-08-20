@@ -9,6 +9,9 @@ import SwiftUI
 import Petrel
 import Translation
 import NaturalLanguage
+#if os(iOS)
+import UIKit
+#endif
 
 struct Post: View, Equatable {
     static func == (lhs: Post, rhs: Post) -> Bool {
@@ -158,19 +161,19 @@ struct Post: View, Equatable {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: showTranslation && translatedText != nil && translationError == nil)
-        .actionSheet(isPresented: $showLanguageSelection) {
-            ActionSheet(
-                title: Text("Select Language"),
-                message: Text("Choose the language to translate from"),
-                buttons: sourceLanguages.map { language in
-                    let languageName = Locale.current.localizedString(forLanguageCode: language.languageCode?.identifier ?? "") ?? language.languageCode?.identifier ?? "Unknown"
-                    return .default(Text(languageName)) {
-                        Task {
-                            await setupTranslation(sourceLanguage: language)
-                        }
+        .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
+            ForEach(sourceLanguages, id: \.languageCode) { language in
+                let languageName = Locale.current.localizedString(forLanguageCode: language.languageCode?.identifier ?? "") ?? language.languageCode?.identifier ?? "Unknown"
+                Button(languageName) {
+                    Task {
+                        await setupTranslation(sourceLanguage: language)
                     }
-                } + [.cancel()]
-            )
+                }
+            }
+            
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose the language to translate from")
         }
     }
     
@@ -223,8 +226,10 @@ struct Post: View, Equatable {
     }
 
     private func toggleTranslation() {
+#if os(iOS)
         let hapticFeedback = UIImpactFeedbackGenerator(style: .light)
         hapticFeedback.impactOccurred()
+#endif
         
         if showTranslation {
             // Hide translation and reset state

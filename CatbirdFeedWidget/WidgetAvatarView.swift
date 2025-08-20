@@ -5,6 +5,7 @@
 //  Created by Claude Code on 6/11/25.
 //
 
+#if os(iOS)
 import SwiftUI
 import WidgetKit
 
@@ -100,3 +101,4 @@ struct WidgetAvatarView: View {
         configuration: ConfigurationAppIntent()
     )
 }
+#endif

@@ -48,9 +48,11 @@ struct FeedView: View {
         stateManager: stateManager,
         navigationPath: $path
       )
+      #if os(iOS)
       .modifier(
         iOS18StateRestorationSupport(feedType: fetch)
       )
+      #endif
       #if DEBUG
       // Add debug gesture to test the indicator
       .onTapGesture(count: 3) {

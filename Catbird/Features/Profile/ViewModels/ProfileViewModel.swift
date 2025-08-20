@@ -3,7 +3,11 @@ import OSLog
 import Observation
 import Petrel
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 @Observable final class ProfileViewModel: StateInvalidationSubscriber, Hashable, Equatable {
   // MARK: - Properties
@@ -624,7 +628,7 @@ import UIKit
     }
     
     // Compress image to meet AT Protocol limits (target 900KB, max 1MB)
-    if let image = UIImage(data: processedData),
+    if let image = PlatformImage(data: processedData),
        let compressed = compressImage(image, maxSizeInBytes: 900_000) {
       processedData = compressed
     }
@@ -656,12 +660,19 @@ import UIKit
   
   /// Converts HEIC data to JPEG
   private func convertHEICToJPEG(_ data: Data) -> Data? {
+    #if os(iOS)
     guard let image = UIImage(data: data) else { return nil }
+    #elseif os(macOS)
+    guard let image = NSImage(data: data) else { return nil }
+    #else
+    return nil // Unsupported platform
+    #endif
     return image.jpegData(compressionQuality: 0.8)
   }
   
   /// Compresses image to target size
-  private func compressImage(_ image: UIImage, maxSizeInBytes: Int) -> Data? {
+  private func compressImage(_ image: PlatformImage, maxSizeInBytes: Int) -> Data? {
+    #if os(iOS)
     var compression: CGFloat = 0.8
     var imageData = image.jpegData(compressionQuality: compression)
     
@@ -671,6 +682,11 @@ import UIKit
     }
     
     return imageData
+    #else
+    // macOS compression is more complex, returning as-is for now
+    let imageRep = NSBitmapImageRep(data: image.tiffRepresentation!)
+    return imageRep?.representation(using: .jpeg, properties: [:])
+    #endif
   }
 
   // MARK: Update Profile

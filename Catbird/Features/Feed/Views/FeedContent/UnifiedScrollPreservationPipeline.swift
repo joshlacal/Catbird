@@ -8,11 +8,17 @@
 //  consistently across different update paths (refresh, load more, memory warning, etc.)
 //
 
+import Foundation
+
+struct PersistedScrollState: Codable {
+    let postID: String
+    let offsetFromTop: CGFloat
+    let contentOffset: CGFloat
+}
+
+#if os(iOS)
 import UIKit
 import os
-
-// Import required supporting types
-import Foundation
 
 @available(iOS 16.0, *)
 final class UnifiedScrollPreservationPipeline {
@@ -21,7 +27,7 @@ final class UnifiedScrollPreservationPipeline {
     
     /// The type of update being performed
     enum UpdateType {
-        case refresh(anchor: ScrollAnchor?)
+        case refresh(anchor: Any?)  // Will be cast to ScrollAnchor at runtime
         case loadMore
         case newPostsAtTop
         case memoryWarning
@@ -31,18 +37,18 @@ final class UnifiedScrollPreservationPipeline {
         
         var preservationStrategy: PreservationStrategy {
             switch self {
-            case .refresh(let anchor):
-                return anchor != nil ? .viewportRelative : .maintainOffset
-            case .loadMore:
-                return .exactPosition
-            case .newPostsAtTop:
+            case .refresh:
                 return .viewportRelative
-            case .memoryWarning:
+            case .loadMore:
                 return .maintainOffset
-            case .feedSwitch:
-                return .maintainOffset
-            case .normalUpdate:
+            case .newPostsAtTop:
                 return .exactPosition
+            case .memoryWarning:
+                return .viewportRelative
+            case .feedSwitch:
+                return .exactPosition
+            case .normalUpdate:
+                return .viewportRelative
             case .viewAppearance:
                 return .restoreFromPersisted
             }
@@ -50,10 +56,10 @@ final class UnifiedScrollPreservationPipeline {
         
         var requiresAnimation: Bool {
             switch self {
-            case .feedSwitch, .viewAppearance:
+            case .refresh, .loadMore, .newPostsAtTop:
+                return true
+            case .memoryWarning, .feedSwitch, .normalUpdate, .viewAppearance:
                 return false
-            default:
-                return false // No animations during position preservation
             }
         }
     }
@@ -136,8 +142,8 @@ final class UnifiedScrollPreservationPipeline {
     
     // iOS 18 enhancements (optional dependencies)
     private weak var abTestingFramework: AnyObject?
-    private var isProMotionDisplay: Bool {
-        return UIScreen.main.maximumFramesPerSecond > 60
+    @MainActor private var isProMotionDisplay: Bool {
+        return PlatformScreenInfo.isProMotionDisplay
     }
     
     // MARK: - Enhanced Initialization
@@ -209,7 +215,7 @@ final class UnifiedScrollPreservationPipeline {
             // Use pre-captured anchor from pull gesture if available
             if let anchor = existingAnchor {
                 logger.debug("📍 Using pre-captured refresh anchor")
-                return anchor
+                return anchor as? ScrollAnchor
             }
         case .viewAppearance:
             // No anchor needed for persisted state restoration
@@ -319,7 +325,7 @@ final class UnifiedScrollPreservationPipeline {
                     newData: newData
                 )
             }
-            return UpdateResult(
+            return await UpdateResult(
                 success: false,
                 finalOffset: collectionView.contentOffset,
                 restorationAttempts: 0,
@@ -335,7 +341,7 @@ final class UnifiedScrollPreservationPipeline {
     ) async -> UpdateResult {
         
         guard let anchor = anchor else {
-            return UpdateResult(
+            return await UpdateResult(
                 success: false,
                 finalOffset: collectionView.contentOffset,
                 restorationAttempts: 0,
@@ -362,8 +368,8 @@ final class UnifiedScrollPreservationPipeline {
         let newIndexPath = IndexPath(item: newIndex, section: 0)
         
         // Get the new position of the anchor item
-        guard let newAttributes = collectionView.layoutAttributesForItem(at: newIndexPath) else {
-            return UpdateResult(
+        guard let newAttributes = await collectionView.layoutAttributesForItem(at: newIndexPath) else {
+            return await UpdateResult(
                 success: false,
                 finalOffset: collectionView.contentOffset,
                 restorationAttempts: 1,
@@ -372,12 +378,12 @@ final class UnifiedScrollPreservationPipeline {
         }
         
         // Calculate target offset to maintain safe-area-relative position
-        let newAnchorY = newAttributes.frame.origin.y
-        let safeAreaTop = collectionView.adjustedContentInset.top
+        let newAnchorY = await newAttributes.frame.origin.y
+        let safeAreaTop = await collectionView.adjustedContentInset.top
         let targetOffsetY = newAnchorY - safeAreaTop - anchor.viewportRelativeY
         
         // Apply with pixel-perfect precision
-        let displayScale = UIScreen.main.scale
+        let displayScale = await PlatformScreenInfo.scale
         let pixelPerfectOffset = round(targetOffsetY * displayScale) / displayScale
         
         // Apply bounds checking
@@ -522,13 +528,6 @@ final class UnifiedScrollPreservationPipeline {
     }
 }
 
-// MARK: - Persisted State
-
-struct PersistedScrollState: Codable {
-    let postID: String
-    let offsetFromTop: CGFloat
-    let contentOffset: CGFloat
-}
 
 // MARK: - UIUpdateLink Integration (iOS 18+)
 
@@ -554,7 +553,7 @@ extension UnifiedScrollPreservationPipeline {
         return await withCheckedContinuation { continuation in
             var frameCount = 0
             let maxFrames = 10 // Prevent infinite loops
-            let displayScale = UIScreen.main.scale
+            let displayScale = PlatformScreenInfo.scale
             
             let updateLink = UIUpdateLink(view: collectionView) { [weak self] link, updateInfo in
                 frameCount += 1
@@ -690,11 +689,11 @@ struct ScrollRestorationContext {
     let isProMotionDisplay: Bool
     let memoryPressure: Bool
     
-    init() {
+    @MainActor init() {
         self.scrollVelocity = 0
-        self.batteryLevel = UIDevice.current.batteryLevel
+        self.batteryLevel = PlatformDeviceInfo.batteryLevel
         self.thermalState = ProcessInfo.processInfo.thermalState
-        self.isProMotionDisplay = UIScreen.main.maximumFramesPerSecond > 60
+        self.isProMotionDisplay = PlatformScreenInfo.isProMotionDisplay
         self.memoryPressure = false // Simplified
     }
 }
@@ -710,3 +709,35 @@ struct ScrollRestorationResult {
         return success && pixelError < 1.0 && duration < 0.05
     }
 }
+
+#else
+
+// MARK: - macOS Stub
+
+@available(macOS 13.0, *)
+final class UnifiedScrollPreservationPipeline {
+    
+    enum UpdateType {
+        case refresh(anchor: Any?)
+        case loadMore
+        case newPostsAtTop
+        case memoryWarning
+        case feedSwitch
+        case normalUpdate
+        case viewAppearance(persistedState: PersistedScrollState?)
+    }
+    
+    init() {
+        // No-op on macOS
+    }
+    
+    func preservePosition() {
+        // No-op on macOS
+    }
+    
+    func restorePosition() {
+        // No-op on macOS
+    }
+}
+
+#endif

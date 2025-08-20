@@ -29,10 +29,12 @@ struct NotificationsView: View {
       notificationContentWithHeader
       .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Notifications")
-      .toolbarTitleDisplayMode(.large)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
       .toolbar {
           
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button(action: {
             Task {
               await viewModel.refreshNotifications()
@@ -76,6 +78,7 @@ struct NotificationsView: View {
       appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
     }
     // Check scene phase changes
+    #if os(iOS)
     .onChange(of: UIApplication.shared.applicationState) { _, newState in
       if newState == .active {
           // App became active, update widget
@@ -83,6 +86,7 @@ struct NotificationsView: View {
           appState.notificationManager.unreadCount)
       }
     }
+    #endif
   }
 
   private var filterPicker: some View {
@@ -385,7 +389,7 @@ struct NotificationCard: View {
     VStack(alignment: .leading, spacing: 4) {
       Rectangle()
         .frame(height: 1)
-        .foregroundColor(Color(.systemGray5))
+        .foregroundColor(Color.systemGray5)
         .padding(.horizontal)
         .padding(.top, 8)
 
@@ -829,13 +833,13 @@ struct NotificationMediaThumbnail: View {
             Image(systemName: thumbnail.mediaType.placeholderIcon)
               .foregroundStyle(.secondary)
               .frame(maxWidth: .infinity, maxHeight: .infinity)
-              .background(Color(.systemGray6))
+              .background(Color.systemGray6)
           } else {
             // Loading state
             ProgressView()
               .scaleEffect(0.8)
               .frame(maxWidth: .infinity, maxHeight: .infinity)
-              .background(Color(.systemGray6))
+              .background(Color.systemGray6)
           }
         }
         .pipeline(ImageLoadingManager.shared.pipeline)
@@ -863,7 +867,7 @@ struct NotificationMediaThumbnail: View {
           .appFont(.customSystemFont(size: 12, weight: .medium, width: 60, relativeTo: .caption))
           .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
           .frame(width: thumbnailSize, height: thumbnailSize)
-          .background(Color(.systemGray5))
+          .background(Color.systemGray5)
           .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
       }
     }
@@ -914,7 +918,7 @@ struct AvatarStack: View {
           .appFont(.customSystemFont(size: 16, weight: .medium, width: 60, relativeTo: .caption))
           .textScale(.secondary)
           .frame(width: 44, height: 44)
-          .background(Color(.systemGray6).opacity(0.7))
+          .background(Color.systemGray6.opacity(0.7))
           .clipShape(Circle())
 //          .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
       }

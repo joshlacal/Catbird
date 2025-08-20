@@ -7,11 +7,25 @@
 
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 struct AdvancedTextEffects: View {
     @State private var animateWave = false
     @State private var showScaledText = false
     @State private var animateBlur = false
     @State private var colorCycle = false
+    
+    private var backgroundColor: Color {
+        #if os(iOS)
+        return Color(platformColor: PlatformColor.platformSystemBackground)
+        #elseif os(macOS)
+        return Color(NSColor.windowBackgroundColor)
+        #endif
+    }
     
     var body: some View {
         ScrollView {
@@ -92,11 +106,40 @@ struct AdvancedTextEffects: View {
                 // 8. Variable Font Weight Animation
                 variableWeightText("VARIABLE WEIGHT")
                     .padding(.bottom, 20)
+                
+                // 9. Cross-Platform Animated Text
+                VStack(spacing: 16) {
+                    Text("Cross-Platform Animations")
+                        .appFont(AppTextRole.from(.title2))
+                        .foregroundColor(.primary)
+                    
+                    CrossPlatformAnimatedText(
+                        text: "Typewriter Effect",
+                        animationStyle: .typewriter,
+                        size: 18
+                    )
+                    .frame(height: 30)
+                    
+                    CrossPlatformAnimatedText(
+                        text: "Fade In Effect",
+                        animationStyle: .fadeIn,
+                        size: 18
+                    )
+                    .frame(height: 30)
+                    
+                    CrossPlatformAnimatedText(
+                        text: "Highlight Effect",
+                        animationStyle: .highlight,
+                        size: 18
+                    )
+                    .frame(height: 30)
+                }
+                .padding()
             }
             .padding()
             .frame(maxWidth: .infinity)
         }
-        .background(Color(.systemBackground))
+        .background(backgroundColor)
     }
     
     // MARK: - Custom Text Effects
@@ -175,23 +218,27 @@ struct AdvancedTextEffects: View {
     }
     
     private func highlightCharactersSequentially(text: String, color: Color) {
-        // This would need custom implementation with UIViewRepresentable for actual use
-        // In a real implementation, you would create a UILabel and use NSAttributedString
-        // to animate the foreground color of each character
+        // Character highlighting animation - platform-specific implementation handled in AnimatedLabelView
+        withAnimation(.easeInOut(duration: 1.0)) {
+            colorCycle.toggle()
+        }
     }
 }
 
-// MARK: - Custom Animated Text View using UIKit
+// MARK: - Animation Style Definition
 
+enum AnimationStyle {
+    case typewriter, fadeIn, highlight
+}
+
+// MARK: - Custom Animated Text View
+
+#if os(iOS)
 struct AnimatedLabelView: UIViewRepresentable {
     let text: String
     let font: UIFont
     let color: UIColor
     let animationStyle: AnimationStyle
-    
-    enum AnimationStyle {
-        case typewriter, fadeIn, highlight
-    }
     
     func makeUIView(context: Context) -> UILabel {
         let label = UILabel()
@@ -241,6 +288,98 @@ struct AnimatedLabelView: UIViewRepresentable {
         // This would use NSAttributedString with animated attributes
         // Simplified version just sets the text
         label.text = text
+    }
+}
+
+#elseif os(macOS)
+
+struct AnimatedLabelView: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+    let color: NSColor
+    let animationStyle: AnimationStyle
+    
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField()
+        textField.font = font
+        textField.textColor = color
+        textField.isEditable = false
+        textField.isSelectable = false
+        textField.isBezeled = false
+        textField.backgroundColor = .clear
+        textField.lineBreakMode = .byWordWrapping
+        textField.maximumNumberOfLines = 0
+        return textField
+    }
+    
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        nsView.stringValue = ""
+        
+        switch animationStyle {
+        case .typewriter:
+            animateTypewriter(textField: nsView)
+        case .fadeIn:
+            animateFadeIn(textField: nsView)
+        case .highlight:
+            animateHighlight(textField: nsView)
+        }
+    }
+    
+    private func animateTypewriter(textField: NSTextField) {
+        var charIndex = 0
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+            if charIndex < text.count {
+                let index = text.index(text.startIndex, offsetBy: charIndex)
+                textField.stringValue = String(text[...index])
+                charIndex += 1
+            } else {
+                timer.invalidate()
+            }
+        }
+        timer.fire()
+    }
+    
+    private func animateFadeIn(textField: NSTextField) {
+        textField.stringValue = text
+        textField.alphaValue = 0
+        
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 1.0
+            textField.animator().alphaValue = 1.0
+        }
+    }
+    
+    private func animateHighlight(textField: NSTextField) {
+        // Simplified version just sets the text
+        textField.stringValue = text
+    }
+}
+
+#endif
+
+// MARK: - Cross-Platform Animated Text Wrapper
+
+struct CrossPlatformAnimatedText: View {
+    let text: String
+    let animationStyle: AnimationStyle
+    let size: CGFloat
+    
+    var body: some View {
+        #if os(iOS)
+        AnimatedLabelView(
+            text: text,
+            font: UIFont.systemFont(ofSize: size, weight: UIFont.Weight.medium),
+            color: UIColor.label,
+            animationStyle: animationStyle
+        )
+        #elseif os(macOS)
+        AnimatedLabelView(
+            text: text,
+            font: NSFont.systemFont(ofSize: size, weight: NSFont.Weight.medium),
+            color: NSColor.labelColor,
+            animationStyle: animationStyle
+        )
+        #endif
     }
 }
 

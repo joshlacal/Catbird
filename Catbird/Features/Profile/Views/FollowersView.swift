@@ -65,7 +65,9 @@ struct FollowersView: View {
         }
         .listStyle(.plain)
         .navigationTitle("Followers")
-        .toolbarTitleDisplayMode(.large)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
         .task {            
             // Then load followers
             if viewModel.followers.isEmpty && !viewModel.isLoadingMore {

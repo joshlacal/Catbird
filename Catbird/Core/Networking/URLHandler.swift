@@ -1,10 +1,14 @@
 import Foundation
 import SwiftUI
 import OSLog
+#if os(iOS)
 import UIKit
+import SafariServices
+#elseif os(macOS)
+import AppKit
+#endif
 import Petrel
 import Observation
-import SafariServices
 
 /// Handles URL navigation and deep links throughout the app
 @Observable
@@ -22,7 +26,9 @@ final class URLHandler {
     // Navigation path for app-wide navigation
     
     // Top-level view controller for presenting alerts or handling navigation
+    #if os(iOS)
     private weak var topViewController: UIViewController?
+    #endif
     
     // Closure for handling navigation actions
     var navigateAction: ((NavigationDestination, Int?) -> Void)?
@@ -58,10 +64,12 @@ final class URLHandler {
     }
     
     /// Register a top-level view controller for presenting UI
+    #if os(iOS)
     func registerTopViewController(_ controller: UIViewController) {
         self.topViewController = controller
         logger.debug("URLHandler registered top view controller: \(type(of: controller))")
     }
+    #endif
     
     // MARK: - URL Handling
     
@@ -303,6 +311,7 @@ final class URLHandler {
     /// Returns true if successfully presented, false otherwise
     @MainActor
     private func openInAppBrowser(_ url: URL) -> Bool {
+        #if os(iOS)
         guard let topVC = self.topViewController else {
             logger.warning("⚠️ Cannot open in-app browser - no top view controller registered")
             return false
@@ -330,6 +339,12 @@ final class URLHandler {
         
         topVC.present(safariVC, animated: true)
         return true
+        #else
+        // On macOS, use the system browser
+        logger.info("🌐 Opening URL in system browser: \(url.absoluteString, privacy: .sensitive)")
+        NSWorkspace.shared.open(url)
+        return true
+        #endif
     }
     
     // MARK: - Helper Methods
@@ -386,6 +401,7 @@ final class URLHandler {
     /// Display an error alert on the top view controller
     private func showErrorAlert(_ title: String, error: Error) {
         logger.debug("Showing error alert: \(title) - \(error.localizedDescription)")
+        #if os(iOS)
         guard let topVC = self.topViewController else { return }
         
         let alert = UIAlertController(
@@ -396,5 +412,9 @@ final class URLHandler {
         
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         topVC.present(alert, animated: true)
+        #else
+        // On macOS, we could show an NSAlert or just log the error
+        logger.error("Error alert: \(title) - \(error.localizedDescription)")
+        #endif
     }
 }

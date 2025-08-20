@@ -10,6 +10,12 @@ import Nuke
 import NukeUI
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 /// A manager class for efficient image loading and prefetching
 actor ImageLoadingManager {
     // MARK: - Properties
@@ -95,7 +101,7 @@ actor ImageLoadingManager {
     /// Prefetch images from an embed
     func prefetchImages(for embed: Any) async {
         // Extract image URLs from various embed types
-        var urls: [URL] = []
+        let urls: [URL] = []
         
         // This is a simplified implementation - in a real app you'd parse the embed structure
         // For now, we'll just return without doing anything to avoid compilation errors
@@ -192,9 +198,15 @@ extension ImageProcessors {
             if Thread.isMainThread {
                 // If on main thread, create a copy to avoid blocking
                 var copy = image
+                #if os(iOS)
                 if let cgImage = image.cgImage {
                     copy = PlatformImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
                 }
+                #elseif os(macOS)
+                if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                    copy = PlatformImage(cgImage: cgImage, size: image.size)
+                }
+                #endif
                 return applyProcessing(to: copy)
             } else {
                 return applyProcessing(to: image)
@@ -208,8 +220,13 @@ extension ImageProcessors {
             // instead of SwiftUI's ImageRenderer to avoid potential compatibility issues
             
             // Determine the appropriate content mode-based size
+            #if os(iOS)
             let imageSize = CGSize(width: max(1, image.size.width * image.scale), 
                                   height: max(1, image.size.height * image.scale))
+            #elseif os(macOS)
+            let imageSize = CGSize(width: max(1, image.size.width), 
+                                  height: max(1, image.size.height))
+            #endif
             let aspectRatio = imageSize.width / imageSize.height
             
             // Calculate target dimensions maintaining aspect ratio
@@ -232,17 +249,31 @@ extension ImageProcessors {
             width = max(1, width)
             height = max(1, height)
             
-            // Check if we can safely use UIGraphicsImageRenderer
+            // Check if we can safely create a resized image
             if width.isFinite && height.isFinite && width > 0 && height > 0 {
-                let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height))
+                let targetSize = CGSize(width: width, height: height)
+                
+                #if os(iOS)
+                let renderer = UIGraphicsImageRenderer(size: targetSize)
                 return renderer.image { _ in
                     // Clear background to avoid artifacts
                     UIColor.clear.setFill()
-                    UIRectFill(CGRect(origin: .zero, size: CGSize(width: width, height: height)))
+                    UIRectFill(CGRect(origin: .zero, size: targetSize))
                     
                     // Draw image maintaining aspect ratio
-                    image.draw(in: CGRect(origin: .zero, size: CGSize(width: width, height: height)))
+                    image.draw(in: CGRect(origin: .zero, size: targetSize))
                 }
+                #elseif os(macOS)
+                return NSImage(size: targetSize, flipped: false) { rect in
+                    // Clear background to avoid artifacts
+                    NSColor.clear.setFill()
+                    rect.fill()
+                    
+                    // Draw image maintaining aspect ratio
+                    image.draw(in: rect)
+                    return true
+                }
+                #endif
             } else {
                 // If dimensions are invalid, fall back to Nuke's built-in processor with safe dimensions
                 let safeSize = CGSize(width: max(1, min(4000, targetSize.width)), 

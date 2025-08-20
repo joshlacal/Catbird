@@ -110,14 +110,24 @@ struct WelcomeOnboardingView: View {
               }
             }
             .padding(.horizontal, 32)
-            .padding(.bottom, max(geometry.safeAreaInsets.bottom, 24))
+            .padding(.bottom, bottomPadding(for: geometry))
           }
           .background(.ultraThinMaterial)
         }
       }
-      .navigationBarHidden(true)
+      .modifier(PlatformNavigationModifier())
     }
-    .interactiveDismissDisabled()
+    .modifier(PlatformPresentationModifier())
+  }
+  
+  // MARK: - Platform Helpers
+  
+  private func bottomPadding(for geometry: GeometryProxy) -> CGFloat {
+    #if os(iOS)
+    max(geometry.safeAreaInsets.bottom, 24)
+    #else
+    24
+    #endif
   }
   
   // MARK: - Actions
@@ -159,6 +169,34 @@ struct WelcomeOnboardingView: View {
       guard let currentUserDID = appState.currentUserDID else { return }
       appState.navigationManager.navigate(to: .profile(currentUserDID), in: 3) // Profile tab
     }
+  }
+}
+
+// MARK: - Platform-Specific ViewModifiers
+
+private struct PlatformNavigationModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
+      .toolbar(.hidden, for: .navigationBar)
+    #elseif os(macOS)
+    content
+    #endif
+  }
+}
+
+private struct PlatformPresentationModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
+      .interactiveDismissDisabled()
+    #elseif os(macOS)
+    content
+      .frame(minWidth: 480, minHeight: 600)
+      .frame(maxWidth: 600, maxHeight: 800)
+    #else
+    content
+    #endif
   }
 }
 

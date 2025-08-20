@@ -13,7 +13,7 @@ struct FeedsInitializationOverlay: View {
         Spacer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color(UIColor.systemBackground).opacity(0.9))
+      .background(Color.systemBackground.opacity(0.9))
     }
   }
 }

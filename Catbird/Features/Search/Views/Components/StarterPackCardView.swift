@@ -23,7 +23,7 @@ struct StarterPackCardView: View {
                     // Pack/Creator icon
                     ZStack {
                         Circle()
-                            .fill(Color(.systemGray5))
+                            .fill(Color.systemGray5)
                             .frame(width: 44, height: 44)
                         
                         AsyncProfileImage(url: URL(string: starterPack.creator.avatar?.uriString() ?? ""), size: 44)
@@ -88,7 +88,7 @@ struct StarterPackCardView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity)
-            .background(Color(.secondarySystemBackground))
+            .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)

@@ -8,7 +8,11 @@
 
 import Foundation
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import os
 
 /// Coordinates state restoration between SwiftUI @Observable and UIKit components in iOS 18+

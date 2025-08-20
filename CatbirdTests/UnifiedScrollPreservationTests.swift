@@ -331,7 +331,7 @@ struct UnifiedScrollPreservationTests {
         let collectionView = makeTestCollectionView()
         let dataSource = makeTestDataSource(collectionView: collectionView)
         
-        let displayScale = UIScreen.main.scale
+        let displayScale = PlatformScreenInfo.scale
         
         // Setup with specific offset that needs pixel alignment
         let data = (0..<20).map { "post-\($0)" }

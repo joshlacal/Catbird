@@ -73,9 +73,13 @@ struct PostComposerView: View {
     
     private var baseMainView: some View {
         mainContentView
+            #if os(iOS)
             .interactiveDismissDisabled(true)
+            #endif
             .navigationTitle(getNavigationTitle())
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -90,14 +94,14 @@ struct PostComposerView: View {
                 
                 // Minimize button (only show if minimize callback is provided)
                 if onMinimize != nil {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                    ToolbarItem(placement: .primaryAction) {
                         Button("Minimize") {
                             handleMinimize()
                         }
                     }
                 }
 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button(action: createPost) {
                         Text(getPostButtonText())
                             .appFont(AppTextRole.headline)
@@ -105,11 +109,15 @@ struct PostComposerView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                     }
+                    #if os(iOS)
                     .adaptiveGlassEffect(
                         style: .accentTinted,
                         in: Capsule(),
                         interactive: true
                     )
+                    #else
+                    .background(Color.accentColor, in: Capsule())
+                    #endif
                     .disabled(viewModel.isPostButtonDisabled || isSubmitting)
                     .opacity(isSubmitting ? 0.5 : 1)
                     .overlay(
@@ -129,20 +137,7 @@ struct PostComposerView: View {
     
     private var configuredWithModifiers: some View {
         baseMainView
-            .confirmationDialog(
-                "Discard post?",
-                isPresented: $showingDismissAlert,
-                titleVisibility: .visible
-            ) {
-                Button("Discard", role: .destructive) {
-                    dismiss()
-                }
-                Button("Keep Editing", role: .cancel) {
-                    // Just close the dialog and continue editing
-                }
-            } message: {
-                Text("You'll lose your post if you discard now.")
-            }
+            .modifier(DiscardConfirmationModifier(showingDismissAlert: $showingDismissAlert, dismiss: dismiss))
             // Media pickers
             .photosPicker(
                 isPresented: $photoPickerVisible,
@@ -265,7 +260,7 @@ struct PostComposerView: View {
             // Main content area with scrollable content
             ZStack {
                 Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
-                    .ignoresSafeArea()
+                    .platformIgnoresSafeArea()
                 
                 VStack(spacing: 0) {
                     parentPostReplySection
@@ -320,7 +315,7 @@ struct PostComposerView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
     }
     
     @ViewBuilder
@@ -390,11 +385,11 @@ struct PostComposerView: View {
                     }
                 }
                 .padding(8)
-                .background(Color(.systemBackground))
+                .background(Color.systemBackground)
                 .cornerRadius(8)
             }
             .padding()
-            .background(Color(.systemGray6))
+            .background(Color.systemGray6)
             .cornerRadius(12)
         }
     }
@@ -419,15 +414,10 @@ struct PostComposerView: View {
     
     private var threadVerticalView: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: 24) {
                 ForEach(Array(viewModel.threadEntries.enumerated()), id: \.offset) { index, entry in
                     VStack(spacing: 0) {
-                        // Thread connection line (top)
-                        if index > 0 {
-                            threadConnectionLine
-                        }
-                        
-                        // Thread post editor/preview
+                        // Thread post editor/preview with card background
                         ThreadPostEditorView(
                             entry: entry,
                             entryIndex: index,
@@ -436,65 +426,148 @@ struct PostComposerView: View {
                             viewModel: viewModel,
                             onTap: {
                                 // Save current post content before switching
-                                viewModel.updateCurrentThreadEntry()
-                                viewModel.currentThreadEntryIndex = index
-                                viewModel.loadEntryState()
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    viewModel.updateCurrentThreadEntry()
+                                    viewModel.currentThreadEntryIndex = index
+                                    viewModel.loadEntryState()
+                                }
                             },
                             onDelete: {
                                 if viewModel.threadEntries.count > 1 {
-                                    viewModel.removeThreadEntry(at: index)
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                        viewModel.removeThreadEntry(at: index)
+                                    }
                                 }
                             }
                         )
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(index == viewModel.currentThreadEntryIndex ? 
+                                      Color.accentColor.opacity(0.05) : 
+                                      Color.systemBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .stroke(index == viewModel.currentThreadEntryIndex ? 
+                                               Color.accentColor.opacity(0.3) : 
+                                               Color.systemGray5, lineWidth: 1)
+                                )
+                        )
+                        .shadow(color: Color.black.opacity(0.03), radius: 4, x: 0, y: 2)
                         .padding(.horizontal, 16)
+                        .animation(.easeInOut(duration: 0.2), value: viewModel.currentThreadEntryIndex)
                         
-                        // Thread connection line (bottom)
+                        // Thread connection line (only between posts, not after the last one)
                         if index < viewModel.threadEntries.count - 1 {
                             threadConnectionLine
+                                .padding(.vertical, 12)
                         }
                     }
                 }
                 
                 // Add new post button at bottom
                 addNewPostButton
+                    .padding(.top, 8)
             }
-            .padding(.vertical, 16)
+            .padding(.vertical, 20)
         }
     }
     
     private var threadConnectionLine: some View {
         HStack {
-            Rectangle()
-                .fill(Color.accentColor.opacity(0.3))
-                .frame(width: 2, height: 16)
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.6))
+                    .frame(width: 4, height: 4)
+                
+                Rectangle()
+                    .fill(LinearGradient(
+                        gradient: Gradient(colors: [
+                            Color.accentColor.opacity(0.4),
+                            Color.accentColor.opacity(0.2)
+                        ]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ))
+                    .frame(width: 3, height: 20)
+                
+                Circle()
+                    .fill(Color.accentColor.opacity(0.6))
+                    .frame(width: 4, height: 4)
+            }
+            
             Spacer()
         }
-        .padding(.leading, 38) // Align with avatar center
+        .padding(.leading, 56) // Align with avatar center (40px/2 + 36px margin)
     }
     
     private var addNewPostButton: some View {
         Button(action: {
-            viewModel.addNewThreadEntry()
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                viewModel.addNewThreadEntry()
+            }
         }) {
-            HStack(spacing: 12) {
-                // User avatar placeholder
-                Circle()
-                    .fill(Color.accentColor.opacity(0.3))
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Image(systemName: "plus")
-                            .appFont(size: 16)
-                            .foregroundColor(.accentColor)
-                    )
+            HStack(spacing: 16) {
+                // User avatar with plus overlay
+                ZStack {
+                    if let profile = appState.currentUserProfile,
+                       let avatarURL = profile.avatar {
+                        AsyncImage(url: URL(string: avatarURL.description)) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            Circle()
+                                .fill(Color.systemGray5)
+                        }
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
+                        .opacity(0.6)
+                    } else {
+                        Circle()
+                            .fill(Color.systemGray5)
+                            .frame(width: 32, height: 32)
+                    }
+                    
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 20, height: 20)
+                        .overlay(
+                            Image(systemName: "plus")
+                                .appFont(size: 12)
+                                .foregroundColor(.white)
+                                .fontWeight(.semibold)
+                        )
+                        .offset(x: 8, y: 8)
+                }
                 
-                Text("Add another post")
-                    .appFont(AppTextRole.body)
-                    .foregroundColor(.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add another post")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundColor(.primary)
+                        .fontWeight(.medium)
+                    
+                    Text("Continue this thread")
+                        .appFont(AppTextRole.caption)
+                        .foregroundColor(.secondary)
+                }
                 
                 Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .appFont(size: 14)
+                    .foregroundColor(.secondary)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.systemGray6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.systemGray5, lineWidth: 1)
+                    )
+            )
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -559,12 +632,12 @@ struct PostComposerView: View {
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
-                    .background(Color(.systemBackground))
+                    .background(Color.systemBackground)
                     .cornerRadius(8)
                 }
             }
         }
-        .background(Color(.systemBackground))
+        .background(Color.systemBackground)
         .cornerRadius(8)
         .shadow(radius: 2)
         .opacity(viewModel.mentionSuggestions.isEmpty ? 0 : 1)
@@ -620,7 +693,7 @@ struct PostComposerView: View {
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .appFont(AppTextRole.title1)
-                        .foregroundStyle(.white, Color(.systemGray3))
+                        .foregroundStyle(.white, Color.systemGray3)
                         .background(
                             Circle()
                                 .fill(Color.black.opacity(0.3))
@@ -876,9 +949,9 @@ struct PostComposerView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(.secondarySystemBackground))
+            .background(Color.secondarySystemBackground)
         }
-        .background(Color(.secondarySystemBackground))
+        .background(Color.secondarySystemBackground)
         .id("postComposerToolbar") // Stable identity to prevent SwiftUI from recreating
     }
     
@@ -955,20 +1028,10 @@ struct PostComposerView: View {
         
         linkFacets.append(linkFacet)
         
-        // Update the attributed text to show the link styling
-        let tempEditor = EnhancedRichTextEditor(
-            attributedText: .constant(viewModel.richAttributedText),
-            linkFacets: .constant([]),
-            placeholder: "",
-            onImagePasted: { _ in },
-            onGenmojiDetected: { _ in },
-            onTextChanged: { _ in },
-            onLinkCreationRequested: { _, _ in }
-        )
-        let newAttributedText = tempEditor.addLinkFacet(
+        let newAttributedText = RichTextFacetUtils.addLinkFacet(
+            to: viewModel.richAttributedText,
             url: url,
-            range: range,
-            in: viewModel.postText
+            range: range
         )
         
         viewModel.richAttributedText = newAttributedText
@@ -985,5 +1048,29 @@ struct PostComposerView: View {
         // This would need to be added to PostComposerViewModel
         // viewModel.linkFacets = atProtocolFacets
     }
+}
+
+// MARK: - Custom View Modifier for Discard Confirmation
+
+struct DiscardConfirmationModifier: ViewModifier {
+    @Binding var showingDismissAlert: Bool
+    let dismiss: DismissAction
     
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Discard post?",
+                isPresented: $showingDismissAlert,
+                titleVisibility: .visible
+            ) {
+                Button("Discard", role: .destructive) {
+                    dismiss()
+                }
+                Button("Keep Editing", role: .cancel) {
+                    // Just close the dialog and continue editing
+                }
+            } message: {
+                Text("You'll lose your post if you discard now.")
+            }
+    }
 }

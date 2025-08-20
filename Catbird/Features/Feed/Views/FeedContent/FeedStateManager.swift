@@ -156,7 +156,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Setup app lifecycle observers (legacy support - main lifecycle now handled via SwiftUI scene phase)
     private func setupAppLifecycleObservers() {
-        // Keep UIKit observers for compatibility but rely primarily on scene phase coordination
+        // Keep app lifecycle observers for compatibility but rely primarily on scene phase coordination
+        #if os(iOS)
         backgroundNotificationObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -176,6 +177,27 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 self?.handleAppWillEnterForeground()
             }
         }
+        #elseif os(macOS)
+        backgroundNotificationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleAppDidEnterBackground()
+            }
+        }
+        
+        foregroundNotificationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleAppWillEnterForeground()
+            }
+        }
+        #endif
     }
     
     /// Handle app entering background - cancel ongoing tasks to prevent crashes

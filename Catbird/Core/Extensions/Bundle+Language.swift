@@ -1,5 +1,9 @@
 import Foundation
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 // MARK: - Bundle Extension for Language Support
 
@@ -62,6 +66,7 @@ class AppLanguageManager {
             userInfo: ["language": languageCode]
         )
         
+        #if os(iOS)
         // For immediate effect, you might need to recreate the UI
         // This is typically done by resetting the root view controller
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -85,5 +90,9 @@ class AppLanguageManager {
                 }
             }
         }
+        #elseif os(macOS)
+        // On macOS, language changes typically require app restart
+        // Post notification for any views that want to update immediately
+        #endif
     }
 }

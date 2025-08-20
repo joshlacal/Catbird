@@ -1,3 +1,5 @@
+#if os(iOS)
+
 import OSLog
 import SwiftUI
 import Petrel
@@ -84,15 +86,17 @@ struct ConversationManagementView: View {
         }
       }
       .navigationTitle("Conversation Settings")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             dismiss()
           }
         }
         
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           if isProcessing {
             ProgressView()
               .scaleEffect(0.8)
@@ -399,3 +403,5 @@ struct ConversationInvitationView: View {
   ConversationManagementView(conversation: mockConversation)
     .environment(AppState.shared)
 }
+
+#endif

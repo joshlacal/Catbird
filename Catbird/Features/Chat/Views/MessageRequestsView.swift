@@ -2,6 +2,7 @@ import OSLog
 import SwiftUI
 import Petrel
 
+#if os(iOS)
 /// View for managing message requests (conversations with status "request")
 struct MessageRequestsView: View {
   @Environment(AppState.self) private var appState
@@ -58,9 +59,11 @@ struct MessageRequestsView: View {
         }
       }
       .navigationTitle("Message Requests")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           RequestsToolbarMenu(
             hasRequests: !appState.chatManager.messageRequests.isEmpty,
             onAcceptAll: acceptAllRequests,
@@ -433,7 +436,7 @@ struct MessageRequestPreviewView: View {
                 ChatProfileAvatarView(profile: member, size: 60)
                   .overlay(
                     Circle()
-                      .stroke(Color(.systemBackground), lineWidth: 2)
+                      .stroke(Color.systemBackground, lineWidth: 2)
                   )
               }
               
@@ -449,7 +452,7 @@ struct MessageRequestPreviewView: View {
                 }
                 .overlay(
                   Circle()
-                    .stroke(Color(.systemBackground), lineWidth: 2)
+                    .stroke(Color.systemBackground, lineWidth: 2)
                 )
               }
             }
@@ -552,9 +555,11 @@ struct MessageRequestPreviewView: View {
         .padding()
       }
       .navigationTitle("Request Preview")
-      .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
       .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           Button("Done") {
             dismiss()
           }
@@ -592,3 +597,5 @@ struct MessageRequestPreviewView: View {
   MessageRequestsView()
     .environment(AppState.shared)
 }
+
+#endif

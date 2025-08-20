@@ -1,6 +1,108 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import OSLog
+
+// MARK: - Cross-Platform Content Size Category
+
+/// Cross-platform abstraction for content size categories
+/// Provides consistent font scaling across iOS and macOS
+enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
+    case extraSmall = "extraSmall"
+    case small = "small"
+    case medium = "medium"
+    case large = "large"
+    case extraLarge = "extraLarge"
+    case extraExtraLarge = "extraExtraLarge"
+    case extraExtraExtraLarge = "extraExtraExtraLarge"
+    case accessibilityMedium = "accessibilityMedium"
+    case accessibilityLarge = "accessibilityLarge"
+    case accessibilityExtraLarge = "accessibilityExtraLarge"
+    case accessibilityExtraExtraLarge = "accessibilityExtraExtraLarge"
+    case accessibilityExtraExtraExtraLarge = "accessibilityExtraExtraExtraLarge"
+    
+    /// Get current system content size category
+    static var current: CrossPlatformContentSizeCategory {
+        #if os(iOS)
+        return CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
+        #elseif os(macOS)
+        // On macOS, we'll use a default medium size since there's no system Dynamic Type
+        // This could be enhanced to read from user defaults or system preferences
+        return .medium
+        #endif
+    }
+    
+    #if os(iOS)
+    /// Convert to UIContentSizeCategory (iOS only)
+    var uiContentSizeCategory: UIContentSizeCategory {
+        switch self {
+        case .extraSmall: return .extraSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .extraLarge: return .extraLarge
+        case .extraExtraLarge: return .extraExtraLarge
+        case .extraExtraExtraLarge: return .extraExtraExtraLarge
+        case .accessibilityMedium: return .accessibilityMedium
+        case .accessibilityLarge: return .accessibilityLarge
+        case .accessibilityExtraLarge: return .accessibilityExtraLarge
+        case .accessibilityExtraExtraLarge: return .accessibilityExtraExtraLarge
+        case .accessibilityExtraExtraExtraLarge: return .accessibilityExtraExtraExtraLarge
+        }
+    }
+    
+    /// Initialize from UIContentSizeCategory (iOS only)
+    init(from uiCategory: UIContentSizeCategory) {
+        switch uiCategory {
+        case .extraSmall: self = .extraSmall
+        case .small: self = .small
+        case .medium: self = .medium
+        case .large: self = .large
+        case .extraLarge: self = .extraLarge
+        case .extraExtraLarge: self = .extraExtraLarge
+        case .extraExtraExtraLarge: self = .extraExtraExtraLarge
+        case .accessibilityMedium: self = .accessibilityMedium
+        case .accessibilityLarge: self = .accessibilityLarge
+        case .accessibilityExtraLarge: self = .accessibilityExtraLarge
+        case .accessibilityExtraExtraLarge: self = .accessibilityExtraExtraLarge
+        case .accessibilityExtraExtraExtraLarge: self = .accessibilityExtraExtraExtraLarge
+        default: self = .medium
+        }
+    }
+    #endif
+    
+    /// Scale factor for this content size category
+    var scaleFactor: CGFloat {
+        switch self {
+        case .extraSmall: return 0.82
+        case .small: return 0.88
+        case .medium: return 1.0
+        case .large: return 1.12
+        case .extraLarge: return 1.23
+        case .extraExtraLarge: return 1.35
+        case .extraExtraExtraLarge: return 1.47
+        case .accessibilityMedium: return 1.64
+        case .accessibilityLarge: return 1.95
+        case .accessibilityExtraLarge: return 2.35
+        case .accessibilityExtraExtraLarge: return 2.76
+        case .accessibilityExtraExtraExtraLarge: return 3.12
+        }
+    }
+    
+    /// Whether this is an accessibility size
+    var isAccessibilitySize: Bool {
+        switch self {
+        case .accessibilityMedium, .accessibilityLarge, .accessibilityExtraLarge, 
+             .accessibilityExtraExtraLarge, .accessibilityExtraExtraExtraLarge:
+            return true
+        default:
+            return false
+        }
+    }
+}
 
 /// Manages font application throughout the app
 @Observable final class FontManager {
@@ -27,7 +129,7 @@ import OSLog
     var maxDynamicTypeSize: String = "accessibility1"
     
     /// Current system content size category
-    private(set) var currentContentSizeCategory: UIContentSizeCategory = UIApplication.shared.preferredContentSizeCategory
+    private(set) var currentContentSizeCategory: CrossPlatformContentSizeCategory = .current
     
     // MARK: - Initialization
     
@@ -43,24 +145,37 @@ import OSLog
     
     /// Setup observer for Dynamic Type changes
     private func setupDynamicTypeObserver() {
+        #if os(iOS)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(contentSizeCategoryDidChange),
             name: UIContentSizeCategory.didChangeNotification,
             object: nil
         )
+        #elseif os(macOS)
+        // macOS doesn't have system Dynamic Type, but we can still set up
+        // observers for potential future enhancements or manual triggers
+        logger.debug("Dynamic Type observer setup completed for macOS (no system notifications available)")
+        #endif
     }
     
     @objc private func contentSizeCategoryDidChange(_ notification: Notification) {
+        #if os(iOS)
+        let newCategory = CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
         if Thread.isMainThread {
-            currentContentSizeCategory = UIApplication.shared.preferredContentSizeCategory
+            currentContentSizeCategory = newCategory
         } else {
             Task { @MainActor in
-                self.currentContentSizeCategory = UIApplication.shared.preferredContentSizeCategory
+                self.currentContentSizeCategory = newCategory
             }
         }
         
-        logger.info("Dynamic Type size changed to: \(String(describing: UIApplication.shared.preferredContentSizeCategory))")
+        logger.info("Dynamic Type size changed to: \(newCategory.rawValue)")
+        #elseif os(macOS)
+        // On macOS, we could potentially update from system preferences
+        // For now, keep the current category as-is
+        logger.info("Content size category change notification received on macOS (no automatic update)")
+        #endif
         
         // Post notification for UI updates if Dynamic Type is enabled
         if dynamicTypeEnabled {
@@ -141,7 +256,7 @@ import OSLog
     }
     
     /// Maximum allowed content size category
-    var maxContentSizeCategory: UIContentSizeCategory {
+    var maxContentSizeCategory: CrossPlatformContentSizeCategory {
         switch maxDynamicTypeSize {
         case "xxLarge":
             return .extraExtraLarge
@@ -251,32 +366,42 @@ import OSLog
             return
         }
         
-        let currentCategory = UIApplication.shared.preferredContentSizeCategory
+        let currentCategory = CrossPlatformContentSizeCategory.current
         let maxCategory = maxContentSizeCategory
         
-        logger.info("Applying Dynamic Type constraints - current: \(String(describing: currentCategory)), max allowed: \(String(describing: maxCategory))")
+        logger.info("Applying Dynamic Type constraints - current: \(currentCategory.rawValue), max allowed: \(maxCategory.rawValue)")
         
         // Check if current size exceeds our maximum allowed size
         if shouldLimitContentSizeCategory(current: currentCategory, maximum: maxCategory) {
-            logger.info("Current Dynamic Type size (\(String(describing: currentCategory))) exceeds maximum (\(String(describing: maxCategory))), applying constraint")
+            logger.info("Current Dynamic Type size (\(currentCategory.rawValue)) exceeds maximum (\(maxCategory.rawValue)), applying constraint")
             
-            // Apply the constraint by setting up a custom trait collection override
-            // This affects all UIFont.preferredFont calls throughout the app
+            // Apply the constraint by setting up a custom trait collection override (iOS only)
+            #if os(iOS)
             applyContentSizeCategoryOverride(maxCategory)
+            #elseif os(macOS)
+            // On macOS, we don't have trait collections, so we'll store the constraint
+            // and use it in our font scaling calculations
+            currentContentSizeCategory = maxCategory
+            logger.info("Applied content size constraint on macOS by updating current category")
+            #endif
         } else {
             logger.debug("Current Dynamic Type size is within allowed limits")
-            // Remove any existing override if current size is acceptable
+            #if os(iOS)
             removeContentSizeCategoryOverride()
+            #elseif os(macOS)
+            // On macOS, update to the actual system preference (or keep current)
+            currentContentSizeCategory = currentCategory
+            #endif
         }
     }
     
     /// Check if the current content size category should be limited
     private func shouldLimitContentSizeCategory(
-        current: UIContentSizeCategory,
-        maximum: UIContentSizeCategory
+        current: CrossPlatformContentSizeCategory,
+        maximum: CrossPlatformContentSizeCategory
     ) -> Bool {
         // Define size category hierarchy for comparison
-        let sizeHierarchy: [UIContentSizeCategory] = [
+        let sizeHierarchy: [CrossPlatformContentSizeCategory] = [
             .extraSmall,
             .small,
             .medium,
@@ -301,10 +426,11 @@ import OSLog
         return currentIndex > maxIndex
     }
     
-    /// Apply content size category override to limit Dynamic Type
-    private func applyContentSizeCategoryOverride(_ maxCategory: UIContentSizeCategory) {
+    /// Apply content size category override to limit Dynamic Type (iOS only)
+    #if os(iOS)
+    private func applyContentSizeCategoryOverride(_ maxCategory: CrossPlatformContentSizeCategory) {
         // Create a custom trait collection with the maximum allowed content size category
-        let customTraitCollection = UITraitCollection(preferredContentSizeCategory: maxCategory)
+        let customTraitCollection = UITraitCollection(preferredContentSizeCategory: maxCategory.uiContentSizeCategory)
         
         // Apply this trait collection to all windows in the app
         // This ensures that UIFont.preferredFont calls will use the limited size
@@ -328,11 +454,13 @@ import OSLog
         NotificationCenter.default.post(
             name: NSNotification.Name("DynamicTypeConstraintApplied"),
             object: nil,
-            userInfo: ["maxCategory": maxCategory]
+            userInfo: ["maxCategory": maxCategory.rawValue]
         )
     }
+    #endif
     
-    /// Remove content size category override to restore normal Dynamic Type behavior
+    /// Remove content size category override to restore normal Dynamic Type behavior (iOS only)
+    #if os(iOS)
     private func removeContentSizeCategoryOverride() {
         DispatchQueue.main.async {
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
@@ -349,9 +477,11 @@ import OSLog
             object: nil
         )
     }
+    #endif
     
-    // MARK: - Trait Collection Management
+    // MARK: - Trait Collection Management (iOS only)
     
+    #if os(iOS)
     /// Storage for original trait collections before override
     private var originalTraitCollections: [ObjectIdentifier: UITraitCollection] = [:]
     
@@ -399,6 +529,7 @@ import OSLog
             originalTraitCollections.removeValue(forKey: windowId)
         }
     }
+    #endif
     
     /// Get scaled font size
     func scaledSize(_ baseSize: CGFloat) -> CGFloat {

@@ -66,7 +66,9 @@ struct FollowingView: View {
         }
         .listStyle(.plain)
         .navigationTitle("Following")
-        .toolbarTitleDisplayMode(.large)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
         .task {
             if viewModel.follows.isEmpty && !viewModel.isLoadingMore {
                 await viewModel.loadFollowing()

@@ -11,10 +11,11 @@ import Petrel
 import SwiftUI
 import OSLog
 import VisionKit
-import UIKit
-
 #if os(iOS)
-  import LazyPager
+import UIKit
+import LazyPager
+#elseif os(macOS)
+import AppKit
 #endif
 
 // MARK: - Logging Setup
@@ -90,6 +91,7 @@ struct ViewImageGridView: View {
     }
     // Use fixed sizing to prevent layout jumps
     .fixedSize(horizontal: false, vertical: true)
+#if os(iOS)
     .fullScreenCover(item: $selectedImage) { initialImage in
       NavigationStack {
         EnhancedImageViewer(
@@ -140,7 +142,9 @@ struct ViewImageGridView: View {
       }
       .ignoresSafeArea()
       // Use the specific transition ID for navigation transitions
+#if os(iOS)
       .navigationTransition(.zoom(sourceID: activeTransitionID ?? initialImage.id, in: imageTransition))
+#endif
       .onAppear {
 //        logger.debug("🔄 Setting initial transition ID to \(initialImage.id) on fullScreenCover appear")
         activeTransitionID = initialImage.id
@@ -149,6 +153,49 @@ struct ViewImageGridView: View {
 //        logger.debug("🔚 fullScreenCover disappeared. Final transition ID: \(String(describing: activeTransitionID)), lastViewedIndex: \(lastViewedIndex)")
       }
     }
+#elseif os(macOS)
+    .sheet(item: $selectedImage) { initialImage in
+      NavigationStack {
+        EnhancedImageViewer(
+          images: viewImages,
+          initialImageId: initialImage.id,
+          // Create a proper binding to ensure we track index changes
+          currentIndex: Binding(
+            get: {
+              return currentIndex
+            },
+            set: { newIndex in
+              currentIndex = newIndex
+              lastViewedIndex = newIndex
+              // Store the ID of the current image for transitions
+              activeTransitionID = viewImages[newIndex].id
+            }
+          ),
+          isPresented: .init(
+            get: {
+              let isPresented = selectedImage != nil
+              return isPresented
+            },
+            set: { newValue in
+              if !newValue {
+                // Remember the current transition ID before dismissal
+                activeTransitionID = viewImages[lastViewedIndex].id
+                
+                // Delay the dismissal slightly to ensure the transition ID is properly set
+                DispatchQueue.main.async {
+                  selectedImage = nil
+                }
+              }
+            }
+          ),
+          namespace: imageTransition
+        )
+      }
+      .onAppear {
+        activeTransitionID = initialImage.id
+      }
+    }
+#endif
     .onChange(of: selectedImage) { _, _ in
 //      logger.debug("✅ selectedImage onChange: was \(String(describing: oldValue?.id)), now \(String(describing: newValue?.id))")
     }
@@ -347,6 +394,7 @@ struct ViewImageGridView: View {
 }
 
 // MARK: - ImageViewerItemView with VisionKit Support
+#if os(iOS)
 struct ImageViewerItemView: UIViewRepresentable {
   let image: AppBskyEmbedImages.ViewImage
   @Binding var liveTextEnabled: Bool
@@ -484,12 +532,11 @@ struct ImageViewerItemView: UIViewRepresentable {
       Task {
         do {
           let configuration = ImageAnalyzer.Configuration([.text, .machineReadableCode, .visualLookUp])
-          if let analysis = try? await imageAnalyzer.analyze(currentImage, configuration: configuration) {
-            await MainActor.run {
-              imageAnalysisInteraction.analysis = analysis
-              imageAnalysisInteraction.preferredInteractionTypes = .automatic
-              isAnalyzing = false
-            }
+          let analysis = try await imageAnalyzer.analyze(currentImage, configuration: configuration)
+          await MainActor.run {
+            imageAnalysisInteraction.analysis = analysis
+            imageAnalysisInteraction.preferredInteractionTypes = .automatic
+            isAnalyzing = false
           }
         } catch {
           await MainActor.run {
@@ -579,7 +626,8 @@ struct ImageViewerItemView: UIViewRepresentable {
           )
           
           // Find the top-most presented view controller
-          if let keyWindow = UIApplication.shared.windows.first(where: { $0.isKeyWindow }),
+          if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+             let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }),
              let rootViewController = keyWindow.rootViewController {
             
             var topController = rootViewController
@@ -617,6 +665,39 @@ struct ImageViewerItemView: UIViewRepresentable {
     }
   }
 }
+#elseif os(macOS)
+// macOS version - simplified without VisionKit support
+struct ImageViewerItemView: View {
+  let image: AppBskyEmbedImages.ViewImage
+  @Binding var liveTextEnabled: Bool
+  var liveTextSupported: Bool
+  @Environment(\.displayScale) var displayScale
+  
+  private let logger = Logger(subsystem: "blue.catbird", category: "ImageViewerItemView")
+  
+  var body: some View {
+    AsyncImage(url: URL(string: image.fullsize.uriString())) { phase in
+      switch phase {
+      case .empty:
+        ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      case .success(let image):
+        image
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .clipped()
+      case .failure(_):
+        Image(systemName: "photo")
+          .foregroundColor(.gray)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      @unknown default:
+        EmptyView()
+      }
+    }
+    .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
+  }
+}
+#endif
 
 // MARK: - EnhancedImageViewer
 struct EnhancedImageViewer: View {
@@ -637,7 +718,11 @@ struct EnhancedImageViewer: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "EnhancedImageViewer")
   
   // Reference to current view controllers
+  #if os(iOS)
   @State private var pagerViewControllers: [Int: UIViewController] = [:]
+  #elseif os(macOS)
+  @State private var pagerViewControllers: [Int: NSViewController] = [:]
+  #endif
 
   init(images: [AppBskyEmbedImages.ViewImage], initialImageId: String, currentIndex: Binding<Int>, isPresented: Binding<Bool>, namespace: Namespace.ID) {
     self.images = images
@@ -647,11 +732,15 @@ struct EnhancedImageViewer: View {
     self.namespace = namespace
     
     // Check if Live Text is supported on this device
+    #if os(iOS)
     _liveTextSupported = State(initialValue: ImageAnalyzer.isSupported)
+    #else
+    _liveTextSupported = State(initialValue: false)
+    #endif
     
     // Initialize with the correct index based on the initial image ID
-    if let initialIndex = images.firstIndex(where: { $0.id == initialImageId }) {
-//      logger.debug("⚙️ EnhancedImageViewer initialized with initialIndex: \(initialIndex) for image ID: \(initialImageId)")
+    if images.firstIndex(where: { $0.id == initialImageId }) != nil {
+//      logger.debug("⚙️ EnhancedImageViewer initialized with initial image ID: \(initialImageId)")
     } else {
 //      logger.debug("⚠️ EnhancedImageViewer could not find initial image ID: \(initialImageId)")
     }
@@ -664,6 +753,7 @@ struct EnhancedImageViewer: View {
           .opacity(opacity)
           .ignoresSafeArea()
 
+#if os(iOS)
         LazyPager(data: images, page: $currentIndex) { image in
           ImageViewerItemView(
             image: image,
@@ -705,6 +795,36 @@ struct EnhancedImageViewer: View {
             config.shouldCancelSwiftUIAnimationsOnDismiss = false
         }
         .id("pager-\(images.count)") // Add ID to ensure proper refresh
+#else
+        // macOS: Simple TabView-based image viewer
+        TabView(selection: $currentIndex) {
+          ForEach(Array(images.enumerated()), id: \.element.id) { index, image in
+            ImageViewerItemView(
+              image: image,
+              liveTextEnabled: $liveTextEnabled,
+              liveTextSupported: liveTextSupported
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(image.alt)
+            .accessibilityAddTraits(.isImage)
+            .accessibilityValue("Image \(index + 1) of \(images.count)")
+            .tag(index)
+          }
+        }
+#if os(iOS)
+        .tabViewStyle(.page(indexDisplayMode: .never))
+#endif
+        .onTapGesture {
+          withAnimation {
+            showControls.toggle()
+            showAltText = showControls
+            if !showAltText {
+              isAltTextExpanded = false
+            }
+          }
+        }
+        .id("tabview-\(images.count)")
+#endif
 
         // Invisible navigation buttons for VoiceOver
         VStack {
@@ -754,7 +874,9 @@ struct EnhancedImageViewer: View {
           .padding(.horizontal)
           .padding(.top, 44)
         }
+        #if os(iOS)
         .allowsHitTesting(UIAccessibility.isVoiceOverRunning)
+        #endif
         .opacity(0) // Invisible but available to VoiceOver
 
         // Header (title, controls, and close button)
@@ -831,7 +953,9 @@ struct EnhancedImageViewer: View {
       }
       .background(Color.black)
       // Use a dynamic sourceID based on the current index
+#if os(iOS)
       .navigationTransition(.zoom(sourceID: images[currentIndex].id, in: namespace))
+#endif
       .task {
         await prefetchFullSizeImages()
       }
@@ -842,6 +966,7 @@ struct EnhancedImageViewer: View {
         removeNotificationHandlers()
       }
       .onChange(of: currentIndex) { _, newValue in
+        #if os(iOS)
         // Announce the image change to VoiceOver
         if UIAccessibility.isVoiceOverRunning {
           let imageCount = images.count
@@ -865,6 +990,7 @@ struct EnhancedImageViewer: View {
             argument: "Image \(newValue + 1) of \(imageCount)"
           )
         }
+        #endif
       }
     }
   }
@@ -912,9 +1038,11 @@ struct EnhancedImageViewer: View {
     await manager.prefetchImages(urls: urls)
   }
   
+#if os(iOS)
   private func shareCurrentImage() {
     // Create and present share sheet using UIKit
-    guard let window = UIApplication.shared.windows.first(where: { $0.isKeyWindow }),
+    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = windowScene.windows.first(where: { $0.isKeyWindow }),
           let topVC = window.rootViewController?.topmostPresentedViewController() else { return }
     
     // Load the image to be shared
@@ -930,7 +1058,14 @@ struct EnhancedImageViewer: View {
       }
     )
   }
+#else
+  private func shareCurrentImage() {
+    // macOS sharing not implemented yet
+    logger.info("Image sharing on macOS not yet implemented")
+  }
+#endif
   
+#if os(iOS)
   private func shareImage(_ image: UIImage, from viewController: UIViewController) {
     guard let imageData = image.jpegData(compressionQuality: 0.9) else { return }
 
@@ -948,7 +1083,7 @@ struct EnhancedImageViewer: View {
       )
 
       // Configure for iPad
-      if UIDevice.current.userInterfaceIdiom == .pad {
+      if PlatformDeviceInfo.isIPad {
         activityVC.popoverPresentationController?.sourceView = viewController.view
         activityVC.popoverPresentationController?.sourceRect = CGRect(
           x: viewController.view.bounds.midX,
@@ -972,6 +1107,31 @@ struct EnhancedImageViewer: View {
       logger.error("Failed to save image for sharing: \(error.localizedDescription)")
     }
   }
+#elseif os(macOS)
+  private func shareImage(_ image: NSImage, from viewController: NSViewController) {
+    guard let tiffData = image.tiffRepresentation,
+          let bitmapRep = NSBitmapImageRep(data: tiffData),
+          let imageData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) else { return }
+
+    let tempDirectoryURL = FileManager.default.temporaryDirectory
+    let imageName = UUID().uuidString
+    let imageURL = tempDirectoryURL.appendingPathComponent("\(imageName).jpg")
+
+    do {
+      try imageData.write(to: imageURL)
+
+      // macOS sharing would use NSSharingService or similar
+      logger.info("Image sharing on macOS not yet implemented")
+
+      // Clean up temp file after sharing
+      DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+        try? FileManager.default.removeItem(at: imageURL)
+      }
+    } catch {
+      logger.error("Failed to save image for sharing: \(error.localizedDescription)")
+    }
+  }
+#endif
 
   // MARK: - Notification Handlers
 

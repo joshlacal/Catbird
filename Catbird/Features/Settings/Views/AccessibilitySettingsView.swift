@@ -19,7 +19,7 @@ struct AccessibilitySettingsView: View {
                 ))
                 .tint(.blue)
             }
-            .listRowBackground(Color(.systemGroupedBackground))
+            .listRowBackground(Color.systemGroupedBackground)
             
             // Motion Settings Section
             Section {
@@ -160,7 +160,7 @@ struct AccessibilitySettingsView: View {
                     .padding(12)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.systemGray6))
+                            .fill(Color.systemGray6)
                     )
                 }
                 .padding(.vertical, 8)
@@ -276,7 +276,9 @@ struct AccessibilitySettingsView: View {
             }
         }
         .navigationTitle("Accessibility")
-        .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     }
 }
 
@@ -333,7 +335,7 @@ private struct DisplayPreviewView: View {
                     }
                 }
                 .padding()
-                .contrastAwareBackground(appState: appState, defaultColor: Color(.systemGray6))
+                .contrastAwareBackground(appState: appState, defaultColor: Color.systemGray6)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.adaptiveBorder(appState: appState, themeManager: appState.themeManager, currentScheme: .light), lineWidth: appState.appSettings.increaseContrast ? 2 : 1)
@@ -407,7 +409,7 @@ private struct TypographyPreviewView: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
+                    .fill(Color.systemGray6)
             )
         }
     }
@@ -431,7 +433,7 @@ private struct LinkPreviewView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemGray6))
+                .fill(Color.systemGray6)
         )
     }
     

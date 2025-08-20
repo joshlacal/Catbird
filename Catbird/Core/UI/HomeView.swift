@@ -48,9 +48,11 @@ struct HomeView: View {
     NavigationStack(path: navigationPath) {
       feedContentView(navigationPath: navigationPath)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-        .ignoresSafeArea()
+        .platformIgnoresSafeArea()
         .navigationTitle(currentFeedName)
+        #if os(iOS)
         .toolbarTitleDisplayMode(.large)
+        #endif
         .ensureNavigationFonts()
         .toolbar {
           leadingToolbarContent
@@ -86,7 +88,7 @@ struct HomeView: View {
   
   
   private var leadingToolbarContent: some ToolbarContent {
-    ToolbarItem(placement: .navigationBarLeading) {
+    ToolbarItem(placement: .cancellationAction) {
       Button(action: {
         isDrawerOpen = true
       }) {
@@ -100,11 +102,11 @@ struct HomeView: View {
   }
   
   private var trailingToolbarContent: some ToolbarContent {
-    ToolbarItem(placement: .navigationBarTrailing) {
+    ToolbarItem(placement: .primaryAction) {
       Button(action: {
         showingSettings = true
       }) {
-        UIKitAvatarView(
+        AvatarView(
           did: appState.currentUserDID,
           client: appState.atProtoClient,
           size: 28

@@ -8,12 +8,16 @@
 //
 
 import SwiftUI
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 import Petrel
 import os
 
 /// SwiftUI wrapper for the feed collection view with automatic controller selection
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 struct FeedCollectionView: View {
     // MARK: - Properties
     
@@ -53,7 +57,7 @@ struct FeedCollectionView: View {
 
 // MARK: - Convenience Initializers
 
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 extension FeedCollectionView {
     /// Creates a feed collection view with just the essential parameters
     init(
@@ -70,7 +74,7 @@ extension FeedCollectionView {
 
 // MARK: - View Modifiers
 
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 extension FeedCollectionView {
     /// Adds a scroll offset change handler
     func onScrollOffsetChanged(_ handler: @escaping (CGFloat) -> Void) -> FeedCollectionView {
@@ -110,13 +114,15 @@ extension FeedCollectionView {
             navigationPath: $navigationPath
         )
         .navigationTitle("Feed")
-        .toolbarTitleDisplayMode(.large)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
     }
 }
 
 // MARK: - Integration Helper
 
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 extension FeedCollectionView {
     /// Creates a complete feed view with state management and persistence
     static func create(
@@ -134,7 +140,7 @@ extension FeedCollectionView {
 }
 
 /// Simple wrapper view that creates fresh state without persistent caching
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 struct SimpleFeedCollectionWrapper: View {
     let feedType: FetchType
     let appState: AppState
@@ -186,7 +192,7 @@ struct SimpleFeedCollectionWrapper: View {
 }
 
 /// Wrapper view that manages feed state and controller persistence
-@available(iOS 16.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 struct FeedCollectionWrapper: View {
     let feedType: FetchType
     let appState: AppState

@@ -6,9 +6,15 @@
 //
 
 import SwiftUI
+#if os(iOS)
 import UIKit
 import UniformTypeIdentifiers
+#elseif os(macOS)
+import AppKit
+import UniformTypeIdentifiers
+#endif
 
+#if os(iOS)
 // Data structure for genmoji information
 struct GenmojiData {
     let imageData: Data
@@ -39,7 +45,7 @@ struct RichTextEditor: UIViewRepresentable {
     func makeUIView(context: Context) -> RichTextView {
         let textView = RichTextView()
         textView.delegate = context.coordinator
-        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsEditingTextAttributes = true
@@ -366,3 +372,38 @@ struct RichTextDisplayView: UIViewRepresentable {
         uiView.attributedText = attributedText
     }
 }
+
+#elseif os(macOS)
+
+// macOS stub implementations for RichTextEditor
+struct GenmojiData {
+    let imageData: Data
+    let contentDescription: String?
+    let range: NSRange
+    let uniqueIdentifier: String?
+}
+
+struct RichTextEditor: View {
+    @Binding var attributedText: NSAttributedString
+    var placeholder: String = "What's on your mind?"
+    var onImagePasted: ((NSImage) -> Void)?
+    var onGenmojiDetected: (([GenmojiData]) -> Void)?
+    var onTextChanged: ((NSAttributedString) -> Void)?
+    
+    var body: some View {
+        // TODO: Implement macOS-specific rich text editor using NSViewRepresentable
+        TextEditor(text: .constant(attributedText.string))
+            .frame(minHeight: 100)
+    }
+}
+
+struct RichTextDisplayView: View {
+    let attributedText: NSAttributedString
+    
+    var body: some View {
+        Text(attributedText.string)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+#endif

@@ -50,6 +50,7 @@ extension AppBskyActorDefs.ProfileViewDetailed {
 
 }
 
+#if os(iOS)
 extension ChatBskyActorDefs.ProfileViewBasic {
     func finalAvatarURL() -> URL? {
         guard let avatarURLString = self.avatar?.uriString(),
@@ -65,6 +66,7 @@ extension ChatBskyActorDefs.ProfileViewBasic {
     }
 
 }
+#endif
 
 // MARK: - Array Extensions for Unique Elements
 

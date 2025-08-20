@@ -58,7 +58,7 @@ struct ComposeURLCardView: View {
         Button(action: onRemove) {
           Image(systemName: "xmark.circle.fill")
             .appFont(AppTextRole.title3)
-            .foregroundStyle(.white, Color(.systemGray3))
+            .foregroundStyle(.white, Color(platformColor: PlatformColor.platformSystemGray3))
             .background(
               Circle()
                 .fill(Color.black.opacity(0.3))

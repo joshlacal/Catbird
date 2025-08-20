@@ -12,7 +12,11 @@ import Petrel
 import os
 
 /// A feed post row that works with FeedPostViewModel for persistent state management
-struct FeedPostRow: View, Equatable {
+struct FeedPostRow: View, Equatable, Identifiable {
+    var id: String {
+        viewModel.post.id
+    }
+    
     static func == (lhs: FeedPostRow, rhs: FeedPostRow) -> Bool {
         lhs.viewModel.post.id == rhs.viewModel.post.id
     }
@@ -39,10 +43,10 @@ struct FeedPostRow: View, Equatable {
             
             // Full-width divider
             Rectangle()
-                .fill(Color(UIColor.separator))
+                .fill(Color.separator)
                 .frame(height: 0.5)
         }
-        .ignoresSafeArea(.container, edges: .horizontal)
+        .platformIgnoresSafeArea(.container, edges: .horizontal)
         .fixedSize(horizontal: false, vertical: true)
         .transition(.identity)
     }

@@ -15,8 +15,10 @@ enum NavigationDestination: Hashable {
     case listFeed(ATProtocolURI)
     case listMembers(ATProtocolURI)
     case starterPack(ATProtocolURI)
+    #if os(iOS)
     case conversation(String) // convoId
     case chatTab
+    #endif
     
     func hash(into hasher: inout Hasher) {
         switch self {
@@ -55,11 +57,13 @@ enum NavigationDestination: Hashable {
         case .starterPack(let uri):
             hasher.combine("starterPack")
             hasher.combine(uri.uriString())
+        #if os(iOS)
         case .conversation(let convoId):
             hasher.combine("conversation")
             hasher.combine(convoId)
         case .chatTab:
             hasher.combine("chatTab")
+        #endif
         }
     }
     
@@ -89,10 +93,12 @@ enum NavigationDestination: Hashable {
             return lhsUri.uriString() == rhsUri.uriString()
         case (.starterPack(let lhsUri), .starterPack(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()
+        #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):
             return lhsId == rhsId
         case (.chatTab, .chatTab):
             return true
+        #endif
         case (.timeline, .timeline):
             return true
         default:

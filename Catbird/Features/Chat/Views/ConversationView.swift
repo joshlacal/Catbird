@@ -1,10 +1,13 @@
 import SwiftUI
+#if os(iOS)
 import ExyteChat
+#endif
 import OSLog
 import Petrel
 
 // MARK: - Conversation View (Using ExyteChat)
 
+#if os(iOS)
 struct ConversationView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
@@ -105,9 +108,11 @@ struct ConversationView: View {
     .frame(maxWidth: 600)  
     .scrollDismissesKeyboard(.interactively)
     .navigationTitle(conversationTitle)
+    #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
+    #endif
     .toolbar {
-      ToolbarItem(placement: .navigationBarTrailing) {
+      ToolbarItem(placement: .primaryAction) {
         ConversationToolbarMenu(conversation: chatManager.conversations.first { $0.id == convoId })
       }
     }
@@ -441,3 +446,23 @@ struct ConversationView: View {
     return chatManager.originalMessagesMap[convoId]?[messageId]
   }
 }
+
+#else
+
+// macOS stub for ConversationView
+struct ConversationView: View {
+  let convoId: String
+  
+  var body: some View {
+    VStack {
+      Text("Chat functionality is not available on macOS")
+        .foregroundColor(.secondary)
+      Text("Chat features require iOS")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .padding()
+  }
+}
+
+#endif

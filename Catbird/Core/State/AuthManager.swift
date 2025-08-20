@@ -377,13 +377,7 @@ final class AuthenticationManager {
     try await client.handleOAuthCallback(url: url)
     logger.info("OAuth callback processed successfully")
 
-    // Explicitly refresh token to ensure we have the latest
-    // Using try? as failure here might not be critical for the whole callback process
-    let refreshResult = try? await client.refreshToken()
-    logger.info(
-      "Token refresh result: \(refreshResult == true ? "success" : "failed or not needed")")
-
-    // Verify session is valid after the refresh attempt
+    // Verify session is valid after OAuth callback (skip unnecessary refresh of fresh token)
     let hasValidSession = await client.hasValidSession()
     if !hasValidSession {
       logger.error("Session invalid after OAuth callback processing")
@@ -425,6 +419,9 @@ final class AuthenticationManager {
         // We still consider the user logged out even if this fails
       }
     }
+
+    // Clear client to prevent circuit breaker state persistence
+    self.client = nil
 
     // Clear user info
     handle = nil

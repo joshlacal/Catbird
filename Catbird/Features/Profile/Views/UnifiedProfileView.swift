@@ -3,10 +3,12 @@ import OSLog
 import Observation
 import Petrel
 import SwiftUI
+#if os(iOS)
 import LazyPager
+#endif
 import Nuke
 import TipKit
-/// A unified profile view that handles both current user and other user profiles
+/// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var currentColorScheme
@@ -83,21 +85,8 @@ struct UnifiedProfileView: View {
   }
 
   var body: some View {
-    // Use UIKit implementation for better performance
-    if #available(iOS 18.0, *) {
-      UIKitProfileView(
-        viewModel: viewModel,
-        appState: appState,
-        selectedTab: $selectedTab,
-        lastTappedTab: $lastTappedTab,
-        path: $navigationPath
-      )
-      .ignoresSafeArea()
-
-    } else {
-      // Fallback to SwiftUI implementation
-      swiftUIImplementation
-    }
+    // Always use SwiftUI implementation
+    swiftUIImplementation
   }
   
   @ViewBuilder
@@ -734,8 +723,12 @@ struct UnifiedProfileView: View {
     }
     .id(viewModel.userDID) // Use stable userDID instead of profile?.did
     .navigationTitle("")
+    #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     .toolbarBackground(.hidden, for: .navigationBar)
+    #else
+    .toolbarBackground(.hidden, for: .automatic)
+    #endif
     .ensureDeepNavigationFonts()
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {
@@ -785,7 +778,7 @@ struct UnifiedProfileView: View {
         }
         
         if viewModel.isCurrentUser {
-          ToolbarItem(placement: .topBarTrailing) {
+          ToolbarItem(placement: .primaryAction) {
             currentUserMenu
           }
         } else {
@@ -919,12 +912,20 @@ struct ProfileHeader: View {
 //        .sheet(isPresented: $showingFollowingSheet) {
 //            followingSheet
 //        }
+#if os(iOS)
         .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
             if let profile = viewModel.profile, let avatarURI = profile.avatar?.uriString() {
                 ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
                     .navigationTransition(.zoom(sourceID: avatarURI, in: imageTransition))
             }
         }
+#elseif os(macOS)
+        .sheet(isPresented: $isShowingProfileImageViewer) {
+            if let profile = viewModel.profile {
+                ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
+            }
+        }
+#endif
         .onAppear {
             // Initialize local follow state based on profile
             localIsFollowing = profile.viewer?.following != nil
@@ -1265,6 +1266,7 @@ struct ProfileImageViewerView: View {
         if let avatarURI = avatar {
             let imageUrl = avatarURI.uriString()
             
+#if os(iOS)
             LazyPager(data: [imageUrl]) { image in
                 GeometryReader { geometry in
                     LazyImage(url: URL(string: image)) { state in
@@ -1308,6 +1310,40 @@ struct ProfileImageViewerView: View {
                 config.shouldCancelSwiftUIAnimationsOnDismiss = false
             }
             .id("pager-\(imageUrl)")
+#else
+            // macOS: Simple image viewer without LazyPager
+            GeometryReader { geometry in
+                LazyImage(url: URL(string: imageUrl)) { state in
+                    if let fullImage = state.image {
+                        fullImage
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                            .id(imageUrl)
+                            .matchedTransitionSource(id: imageUrl, in: namespace)
+                    } else if state.error != nil {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundColor(.white)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                    } else {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
+                }
+                .pipeline(ImageLoadingManager.shared.pipeline)
+                .priority(.high)
+                .processors([
+                    ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
+                ])
+            }
+            .onTapGesture {
+                isPresented = false
+            }
+            .id("viewer-\(imageUrl)")
+#endif
         } else {
             // Fallback for when no image is available
             VStack {

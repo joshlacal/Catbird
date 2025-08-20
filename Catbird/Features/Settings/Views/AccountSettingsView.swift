@@ -224,7 +224,9 @@ struct AccountSettingsView: View {
                 }
             }
             .navigationTitle("Account Settings")
-            .toolbarTitleDisplayMode(.inline)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
             .task {
                 logger.info("AccountSettingsView appeared, loading data...")
                 await loadAccountDetails()

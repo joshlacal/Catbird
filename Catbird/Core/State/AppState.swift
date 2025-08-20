@@ -103,11 +103,13 @@ final class AppState {
   /// List manager for handling list operations
   @ObservationIgnored var listManager: ListManager
   
+  #if os(iOS)
   /// Observable chat unread count for UI updates
   var chatUnreadCount: Int = 0
 
   /// Chat manager for handling Bluesky chat operations
   @ObservationIgnored let chatManager: ChatManager
+  #endif
   
   
   /// Network monitor for tracking connectivity status
@@ -154,8 +156,10 @@ final class AppState {
     // Initialize list manager with nil client (will be updated when auth is complete)
     self.listManager = ListManager(client: nil, appState: nil)
 
+    #if os(iOS)
     // Initialize chat manager with nil client (will be updated with self reference after initialization)
     self.chatManager = ChatManager(client: nil, appState: nil)
+    #endif
 
     // Load user settings
       if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(forKey: "isAdultContentEnabled")
@@ -185,10 +189,16 @@ final class AppState {
               self.graphManager = GraphManager(atProtoClient: client)
               self.listManager.updateClient(client)
               self.listManager.updateAppState(self)
+              #if os(iOS)
               if !isFaultOrderingMode {
                 await self.chatManager.updateClient(client) // Update ChatManager client
                 self.urlHandler.configure(with: self)
               }
+              #else
+              if !isFaultOrderingMode {
+                self.urlHandler.configure(with: self)
+              }
+              #endif
               
               if !isFaultOrderingMode {
                 Task { @MainActor in
@@ -238,7 +248,9 @@ final class AppState {
             self.graphManager = GraphManager(atProtoClient: nil)
             self.listManager.updateClient(nil)
             self.listManager.updateAppState(nil)
-             await self.chatManager.updateClient(nil)
+            #if os(iOS)
+            await self.chatManager.updateClient(nil)
+            #endif
             
             // Clear widget data on logout
             FeedWidgetDataProvider.shared.clearWidgetData()
@@ -252,7 +264,9 @@ final class AppState {
 
     // Set up circular references after initialization
     postManager.updateAppState(self)
+    #if os(iOS)
     chatManager.updateAppState(self)
+    #endif
     
     // Apply initial theme settings immediately from UserDefaults
     // This ensures proper theme is applied even before SwiftData is fully initialized
@@ -369,8 +383,10 @@ final class AppState {
       graphManager = GraphManager(atProtoClient: client)
       listManager.updateClient(client)
       listManager.updateAppState(self)
-           await chatManager.updateClient(client) // Update ChatManager client if uncommented
-           updateChatUnreadCount() // Update chat unread count
+      #if os(iOS)
+      await chatManager.updateClient(client) // Update ChatManager client if uncommented
+      updateChatUnreadCount() // Update chat unread count
+      #endif
     } else {
       graphManager = GraphManager(atProtoClient: nil)  // Ensure graphManager is also updated if client is nil post-init
       listManager.updateClient(nil)
@@ -381,7 +397,9 @@ final class AppState {
     if !isFaultOrderingMode {
       startBackgroundPolling()
       setupNotifications()
+      #if os(iOS)
       setupChatObservers()
+      #endif
     }
     
     // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
@@ -448,8 +466,10 @@ final class AppState {
     postManager.updateClient(authManager.client)
     preferencesManager.updateClient(authManager.client)
     notificationManager.updateClient(authManager.client)
-        await chatManager.updateClient(authManager.client) // Update ChatManager client
-        updateChatUnreadCount() // Update chat unread count
+    #if os(iOS)
+    await chatManager.updateClient(authManager.client) // Update ChatManager client
+    updateChatUnreadCount() // Update chat unread count
+    #endif
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
       listManager.updateClient(client)
@@ -819,6 +839,7 @@ final class AppState {
     )
 
     // Also check when app comes to foreground
+    #if os(iOS)
     NotificationCenter.default.addObserver(
       forName: UIApplication.willEnterForegroundNotification,
       object: nil,
@@ -828,8 +849,20 @@ final class AppState {
         await self?.notificationManager.checkUnreadNotifications()
       }
     }
+    #elseif os(macOS)
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { [weak self] in
+        await self?.notificationManager.checkUnreadNotifications()
+      }
+    }
+    #endif
   }
 
+  #if os(iOS)
   /// Update chat unread count from chat manager
   @MainActor
   func updateChatUnreadCount() {
@@ -839,7 +872,9 @@ final class AppState {
       logger.debug("Chat unread count updated: \(newCount)")
     }
   }
+  #endif
   
+  #if os(iOS)
   /// Setup chat observers and background polling for unread messages
   private func setupChatObservers() {
     // Set up callback for when chat unread count changes
@@ -878,6 +913,7 @@ final class AppState {
       }
     }
   }
+  #endif
 
   @objc private func handleNotificationsMarkedAsSeen() {
     notificationManager.updateUnreadCountAfterSeen()
@@ -975,6 +1011,7 @@ final class AppState {
     )
     .environment(self) // Explicitly provide the AppState to the environment
     
+    #if os(iOS)
     // Create a UIHostingController for the SwiftUI view
     let hostingController = UIHostingController(rootView: composerView)
     
@@ -982,11 +1019,21 @@ final class AppState {
     hostingController.modalPresentationStyle = .formSheet
     hostingController.isModalInPresentation = true
     
-    // Present the composer using the shared window scene
+    // Present the composer using the appropriate window system
     if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
        let rootViewController = windowScene.windows.first?.rootViewController {
        rootViewController.present(hostingController, animated: true)
     }
+    #elseif os(macOS)
+    // On macOS, present as a new window
+    let hostingController = NSHostingController(rootView: composerView)
+    let window = NSWindow(contentViewController: hostingController)
+    window.title = "New Post"
+    window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+    window.setContentSize(NSSize(width: 600, height: 400))
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    #endif
   }
 
   // MARK: - Performance Optimization Methods
