@@ -77,13 +77,18 @@ final class AudioVisualizerService {
     defer { timeoutTask.cancel() }
     
     return try await withTaskCancellationHandler {
-      try await performVideoGeneration(
-        audioURL: audioURL,
-        profileImage: profileImage,
-        username: username,
-        accentColor: accentColor,
-        duration: clampedDuration
-      )
+      do {
+        return try await performVideoGeneration(
+          audioURL: audioURL,
+          profileImage: profileImage,
+          username: username,
+          accentColor: accentColor,
+          duration: clampedDuration
+        )
+      } catch {
+        logger.error("Video generation failed: \(error)")
+        throw error
+      }
     } onCancel: {
       timeoutTask.cancel()
     }
@@ -296,7 +301,9 @@ final class AudioVisualizerService {
         
         // Convert to pixel buffer
         guard let pixelBuffer = createPixelBuffer(from: frameImage, adaptor: pixelBufferAdaptor) else {
-          throw VisualizerError.frameCreationFailed
+          logger.debug("Failed to create pixel buffer for frame \(frameNumber), skipping")
+          progress += frameProgressIncrement
+          continue
         }
         
         // Wait for input to be ready with proper timeout handling
@@ -306,23 +313,28 @@ final class AudioVisualizerService {
           waitCount += 1
         }
         
-        if waitCount >= 200 {
-          logger.debug("Video input timed out at frame \(frameNumber), skipping frame")
-          continue // Skip this frame instead of crashing
+        // Check if we can append this frame
+        if waitCount >= 200 || !pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData {
+          logger.debug("Video input not ready for frame \(frameNumber), skipping")
+          progress += frameProgressIncrement
+          continue
         }
         
-        // Only append if actually ready
-        guard pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData else {
-          logger.debug("Video input still not ready at frame \(frameNumber), skipping")
-          continue // Skip this frame
+        // Attempt to append pixel buffer
+        do {
+          let appendSuccess = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime)
+          if !appendSuccess {
+            logger.debug("Failed to append frame \(frameNumber), but continuing")
+            progress += frameProgressIncrement
+            continue
+          }
+        } catch {
+          logger.debug("Exception appending frame \(frameNumber): \(error), skipping")
+          progress += frameProgressIncrement
+          continue
         }
         
-        // Append pixel buffer
-        guard pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
-          logger.debug("Failed to append frame \(frameNumber)")
-          throw VisualizerError.frameAppendFailed
-        }
-        
+        // Frame successfully appended
         progress += frameProgressIncrement
         
         let frameTime = Date().timeIntervalSince(frameStartTime)
