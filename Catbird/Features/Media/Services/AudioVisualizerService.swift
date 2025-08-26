@@ -55,7 +55,7 @@ final class AudioVisualizerService {
   ) async throws -> URL {
     
     // Safety check: limit duration to prevent excessive processing
-    let maxDuration: TimeInterval = 120 // 2 minutes maximum
+    let maxDuration: TimeInterval = 60 // 1 minute maximum for stability
     let clampedDuration = min(duration, maxDuration)
     
     if duration > maxDuration {
@@ -207,8 +207,10 @@ final class AudioVisualizerService {
       AVVideoHeightKey: Int(optimizedVideoSize.height),
       AVVideoCompressionPropertiesKey: [
         AVVideoAverageBitRateKey: bitRate,
-        AVVideoProfileLevelKey: AVVideoProfileLevelH264MainAutoLevel,
-        AVVideoMaxKeyFrameIntervalKey: 30
+        AVVideoProfileLevelKey: AVVideoProfileLevelH264BaselineAutoLevel, // Use baseline for faster encoding
+        AVVideoMaxKeyFrameIntervalKey: optimizedFPS, // More frequent keyframes for faster processing
+        AVVideoExpectedSourceFrameRateKey: optimizedFPS,
+        AVVideoH264EntropyModeKey: AVVideoH264EntropyModeCAVLC // Faster entropy encoding
       ]
     ]
     
@@ -261,7 +263,7 @@ final class AudioVisualizerService {
     let totalFrames = Int(duration * Double(optimizedFPS))
     let frameProgressIncrement = 0.4 / Double(totalFrames) // 40% of total progress
     
-    logger.debug("Starting frame generation: \(totalFrames) frames at \(optimizedFPS) FPS")
+    logger.debug("Starting frame generation: \(totalFrames) frames at \(self.optimizedFPS) FPS")
     
     // Pre-calculate values to avoid repeated calculations
     let waveformPoints = waveformData.waveformPoints
@@ -297,16 +299,22 @@ final class AudioVisualizerService {
           throw VisualizerError.frameCreationFailed
         }
         
-        // Wait for input to be ready with shorter timeout
+        // Wait for input to be ready with proper timeout handling
         var waitCount = 0
-        while !pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData && waitCount < 50 {
-          try await Task.sleep(nanoseconds: 5_000_000) // 5ms
+        while !pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData && waitCount < 200 {
+          try await Task.sleep(nanoseconds: 10_000_000) // 10ms
           waitCount += 1
         }
         
-        if waitCount >= 50 {
-          logger.debug("Timeout waiting for video input at frame \(frameNumber)")
-          throw VisualizerError.frameAppendFailed
+        if waitCount >= 200 {
+          logger.debug("Video input timed out at frame \(frameNumber), skipping frame")
+          continue // Skip this frame instead of crashing
+        }
+        
+        // Only append if actually ready
+        guard pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData else {
+          logger.debug("Video input still not ready at frame \(frameNumber), skipping")
+          continue // Skip this frame
         }
         
         // Append pixel buffer
@@ -449,7 +457,7 @@ final class AudioVisualizerService {
   
   private func drawUltraSimpleText(context: CGContext, text: String, atTop: Bool) {
     let attributes: [NSAttributedString.Key: Any] = [
-      .font: UIFont.systemFont(ofSize: 18, weight: .medium),
+      .font: UIFont.systemFont(ofSize: 18, weight: UIFont.Weight.medium),
       .foregroundColor: UIColor.white
     ]
     
@@ -615,7 +623,7 @@ final class AudioVisualizerService {
   
   private func drawSimpleText(context: CGContext, text: String, position: TextPosition, size: CGFloat) {
     let attributes: [NSAttributedString.Key: Any] = [
-      .font: UIFont.systemFont(ofSize: size, weight: .medium),
+      .font: UIFont.systemFont(ofSize: size, weight: UIFont.Weight.medium),
       .foregroundColor: UIColor.white
     ]
     
