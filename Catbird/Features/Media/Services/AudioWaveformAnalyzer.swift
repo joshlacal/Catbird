@@ -134,7 +134,7 @@ final class AudioWaveformAnalyzer {
     }
     
     let length = CMBlockBufferGetDataLength(blockBuffer)
-    let data = Data(count: length)
+    var data = Data(count: length)
     
     try data.withUnsafeMutableBytes { bytes in
       let result = CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: bytes.baseAddress!)

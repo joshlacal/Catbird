@@ -1,5 +1,5 @@
 //
-//  AudioRecordingView.swift
+//  PostComposerAudioRecordingView.swift
 //  Catbird
 //
 //  Created by Claude on 8/26/25.
@@ -15,7 +15,7 @@ import UIKit
 import AppKit
 #endif
 
-struct AudioRecordingView: View {
+struct PostComposerAudioRecordingView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @Environment(\.colorScheme) private var colorScheme
@@ -394,13 +394,12 @@ enum RecordingPhase {
 // MARK: - Preview
 
 #if DEBUG
-struct AudioRecordingView_Previews: PreviewProvider {
+struct PostComposerAudioRecordingView_Previews: PreviewProvider {
   static var previews: some View {
-    AudioRecordingView(
+    PostComposerAudioRecordingView(
       onAudioRecorded: { _ in },
       onCancel: { }
     )
-    .environment(AppState())
   }
 }
 #endif

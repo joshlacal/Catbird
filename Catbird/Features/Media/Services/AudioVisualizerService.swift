@@ -277,7 +277,11 @@ final class AudioVisualizerService {
     accentColor: Color
   ) {
     // Background
+    #if os(iOS)
     context.setFillColor(UIColor(accentColor).cgColor)
+    #else
+    context.setFillColor(NSColor(accentColor).cgColor)
+    #endif
     context.fill(CGRect(origin: .zero, size: videoSize))
     
     // Waveform
@@ -319,7 +323,11 @@ final class AudioVisualizerService {
     let maxAmplitude = waveformRect.height * 0.4
     
     // Draw waveform with scrolling effect
+    #if os(iOS)
     context.setStrokeColor(UIColor.white.withAlphaComponent(0.8).cgColor)
+    #else
+    context.setStrokeColor(NSColor.white.withAlphaComponent(0.8).cgColor)
+    #endif
     context.setLineWidth(3)
     
     let pointsToShow = 100 // Number of waveform points visible at once
@@ -359,18 +367,34 @@ final class AudioVisualizerService {
     )
     
     // Draw circular background
+    #if os(iOS)
     context.setFillColor(UIColor.systemGray3.cgColor)
+    #else
+    context.setFillColor(NSColor.systemGray.cgColor)
+    #endif
     context.fillEllipse(in: profileRect)
     
     // Add border
+    #if os(iOS)
     context.setStrokeColor(UIColor.white.cgColor)
+    #else
+    context.setStrokeColor(NSColor.white.cgColor)
+    #endif
     context.setLineWidth(4)
     context.strokeEllipse(in: profileRect)
   }
   
   private func drawText(context: CGContext, text: String, position: TextPosition, size: CGFloat) {
-    let font = UIFont.systemFont(ofSize: size, weight: .medium)
+    #if os(iOS)
+    let font = UIFont.systemFont(ofSize: size, weight: UIFont.Weight.medium)
+    #else
+    let font = NSFont.systemFont(ofSize: size, weight: NSFont.Weight.medium)
+    #endif
+    #if os(iOS)
     let textColor = UIColor.white.withAlphaComponent(0.9)
+    #else
+    let textColor = NSColor.white.withAlphaComponent(0.9)
+    #endif
     
     let attributes: [NSAttributedString.Key: Any] = [
       .font: font,
@@ -411,7 +435,11 @@ final class AudioVisualizerService {
     
     // Draw text shadow
     context.saveGState()
+    #if os(iOS)
     context.setShadow(offset: CGSize(width: 2, height: 2), blur: 4, color: UIColor.black.withAlphaComponent(0.5).cgColor)
+    #else
+    context.setShadow(offset: CGSize(width: 2, height: 2), blur: 4, color: NSColor.black.withAlphaComponent(0.5).cgColor)
+    #endif
     attributedString.draw(in: textRect)
     context.restoreGState()
   }

@@ -458,7 +458,6 @@ struct AudioVisualizerPreview_Previews: PreviewProvider {
       onVideoGenerated: { _ in },
       onCancel: { }
     )
-    .environment(AppState())
   }
 }
 #endif

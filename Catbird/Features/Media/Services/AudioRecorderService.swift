@@ -23,7 +23,7 @@ final class AudioRecorderService: NSObject {
   
   private var audioRecorder: AVAudioRecorder?
   private var recordingTimer: Timer?
-  private let logger = Logger(subsystem: "blue.catbird", category: "AudioRecorderService")
+  private let audioLogger = Logger(subsystem: "blue.catbird", category: "AudioRecorderService")
   
   // Observable properties
   var isRecording: Bool = false
@@ -48,7 +48,7 @@ final class AudioRecorderService: NSObject {
   
   private func setupAudioSession() {
     #if os(iOS)
-    Task {
+    Task { @MainActor in
       await checkMicrophonePermission()
     }
     #else
@@ -66,18 +66,18 @@ final class AudioRecorderService: NSObject {
     switch session.recordPermission {
     case .granted:
       hasPermission = true
-      logger.debug("Microphone permission already granted")
+      audioLogger.debug("Microphone permission already granted")
       
     case .denied:
       hasPermission = false
-      logger.debug("Microphone permission denied")
+      audioLogger.debug("Microphone permission denied")
       
     case .undetermined:
       hasPermission = await withCheckedContinuation { continuation in
         session.requestRecordPermission { granted in
-          Task { @MainActor in
+          DispatchQueue.main.async {
             self.hasPermission = granted
-            self.logger.debug("Microphone permission requested: \(granted)")
+            self.audioLogger.debug("Microphone permission requested: \(granted)")
             continuation.resume(returning: granted)
           }
         }
@@ -99,7 +99,7 @@ final class AudioRecorderService: NSObject {
     }
     
     guard !isRecording else {
-      logger.debug("Recording already in progress")
+      audioLogger.debug("Recording already in progress")
       return
     }
     
@@ -141,7 +141,7 @@ final class AudioRecorderService: NSObject {
     // Start timers
     startTimers()
     
-    logger.debug("Started recording to: \(recordingURL)")
+    audioLogger.debug("Started recording to: \(recordingURL)")
   }
   
   func stopRecording() {
@@ -158,11 +158,11 @@ final class AudioRecorderService: NSObject {
     do {
       try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     } catch {
-      logger.debug("Failed to deactivate audio session: \(error)")
+      audioLogger.debug("Failed to deactivate audio session: \(error)")
     }
     #endif
     
-    logger.debug("Stopped recording")
+    audioLogger.debug("Stopped recording")
   }
   
   func cancelRecording() {
@@ -174,7 +174,7 @@ final class AudioRecorderService: NSObject {
       currentRecordingURL = nil
     }
     
-    logger.debug("Cancelled recording")
+    audioLogger.debug("Cancelled recording")
   }
   
   // MARK: - Timer Management
@@ -182,7 +182,7 @@ final class AudioRecorderService: NSObject {
   private func startTimers() {
     // Duration timer (updates every 0.1 seconds)
     recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-      Task { @MainActor in
+      DispatchQueue.main.async {
         guard let self = self else { return }
         
         self.recordingDuration += 0.1
@@ -196,7 +196,7 @@ final class AudioRecorderService: NSObject {
     
     // Level monitoring timer (updates every 0.05 seconds for smooth animation)
     levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-      Task { @MainActor in
+      DispatchQueue.main.async {
         self?.updateAudioLevel()
       }
     }
@@ -249,10 +249,12 @@ final class AudioRecorderService: NSObject {
   // MARK: - Cleanup
   
   deinit {
-    stopRecording()
-    if let url = currentRecordingURL {
-      try? FileManager.default.removeItem(at: url)
-    }
+    // Note: deinit is called from any thread, so we can't call MainActor methods directly
+    // The recording will be cleaned up by the system when the recorder is deallocated
+    audioRecorder?.stop()
+    audioRecorder = nil
+    recordingTimer?.invalidate()
+    levelTimer?.invalidate()
   }
 }
 
@@ -260,21 +262,23 @@ final class AudioRecorderService: NSObject {
 
 extension AudioRecorderService: AVAudioRecorderDelegate {
   nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-    Task { @MainActor in
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
       if !flag {
-        logger.debug("Recording finished unsuccessfully")
-        cancelRecording()
+        self.audioLogger.debug("Recording finished unsuccessfully")
+        self.cancelRecording()
       } else {
-        logger.debug("Recording finished successfully")
+        self.audioLogger.debug("Recording finished successfully")
       }
     }
   }
   
   nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
-    Task { @MainActor in
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
       if let error = error {
-        logger.debug("Recording encode error: \(error)")
-        cancelRecording()
+        self.audioLogger.debug("Recording encode error: \(error)")
+        self.cancelRecording()
       }
     }
   }

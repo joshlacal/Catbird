@@ -259,7 +259,7 @@ struct PostComposerView: View {
                     isTextFieldFocused = true
                 }
             }) {
-                AudioRecordingView(
+                PostComposerAudioRecordingView(
                     onAudioRecorded: { audioURL in
                         handleAudioRecorded(audioURL)
                     },
