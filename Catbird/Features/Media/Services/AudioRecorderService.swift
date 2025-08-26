@@ -245,17 +245,6 @@ final class AudioRecorderService: NSObject {
     let seconds = Int(remaining) % 60
     return String(format: "%d:%02d", minutes, seconds)
   }
-  
-  // MARK: - Cleanup
-  
-  deinit {
-    // Note: deinit is called from any thread, so we can't call MainActor methods directly
-    // The recording will be cleaned up by the system when the recorder is deallocated
-    audioRecorder?.stop()
-    audioRecorder = nil
-    recordingTimer?.invalidate()
-    levelTimer?.invalidate()
-  }
 }
 
 // MARK: - AVAudioRecorderDelegate

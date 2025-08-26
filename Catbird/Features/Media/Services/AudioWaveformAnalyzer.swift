@@ -70,8 +70,8 @@ final class AudioWaveformAnalyzer {
       throw WaveformError.analysisError
     }
     
-    // Generate waveform points
-    let waveformPoints = generateWaveformPoints(from: audioSamples, duration: durationSeconds)
+    // Generate simplified waveform points for faster processing
+    let waveformPoints = generateSimplifiedWaveformPoints(from: audioSamples, duration: durationSeconds)
     
     return WaveformData(
       samples: audioSamples,
@@ -81,11 +81,11 @@ final class AudioWaveformAnalyzer {
     )
   }
   
-  /// Generates visual waveform points from raw audio samples
-  private func generateWaveformPoints(from samples: [Float], duration: TimeInterval) -> [WaveformPoint] {
+  /// Generates simplified waveform points from raw audio samples - faster processing
+  private func generateSimplifiedWaveformPoints(from samples: [Float], duration: TimeInterval) -> [WaveformPoint] {
     guard !samples.isEmpty else { return [] }
     
-    let targetPoints = 200 // Number of waveform points for visualization
+    let targetPoints = 20 // Ultra-reduced number of waveform points for maximum speed
     let samplesPerPoint = samples.count / targetPoints
     
     var waveformPoints: [WaveformPoint] = []
