@@ -36,6 +36,12 @@ struct PostComposerView: View {
     @State private var selectedRangeForLink = NSRange()
     @State private var linkFacets: [RichTextFacetUtils.LinkFacet] = []
     
+    // Audio recording state
+    @State private var showingAudioRecorder = false
+    @State private var showingAudioVisualizerPreview = false
+    @State private var currentAudioURL: URL?
+    @State private var currentAudioDuration: TimeInterval = 0
+    
     // Minimize functionality
     @State private var dragOffset: CGFloat = 0
     private let minimizeThreshold: CGFloat = 100
@@ -245,6 +251,44 @@ struct PostComposerView: View {
                         showingLinkCreation = false
                     }
                 )
+            }
+            // Audio recording sheet
+            .sheet(isPresented: $showingAudioRecorder, onDismiss: {
+                // Restore focus when audio recorder dismisses
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                AudioRecordingView(
+                    onAudioRecorded: { audioURL in
+                        handleAudioRecorded(audioURL)
+                    },
+                    onCancel: {
+                        showingAudioRecorder = false
+                    }
+                )
+            }
+            // Audio visualizer preview sheet
+            .sheet(isPresented: $showingAudioVisualizerPreview, onDismiss: {
+                // Restore focus when visualizer preview dismisses
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                if let audioURL = currentAudioURL {
+                    AudioVisualizerPreview(
+                        audioURL: audioURL,
+                        audioDuration: currentAudioDuration,
+                        onVideoGenerated: { videoURL in
+                            handleVideoGenerated(videoURL)
+                        },
+                        onCancel: {
+                            showingAudioVisualizerPreview = false
+                            currentAudioURL = nil
+                            currentAudioDuration = 0
+                        }
+                    )
+                }
             }
     }
     
@@ -854,6 +898,15 @@ struct PostComposerView: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 
+                // Audio/Microphone button
+                Button(action: {
+                    showingAudioRecorder = true
+                }) {
+                    Image(systemName: "mic")
+                        .appFont(size: 22)
+                        .foregroundStyle(Color.accentColor)
+                }
+                
                 // GIF button
                 if appState.appSettings.allowTenor {
                     Button(action: {
@@ -1047,6 +1100,29 @@ struct PostComposerView: View {
         // Update the view model with the facets
         // This would need to be added to PostComposerViewModel
         // viewModel.linkFacets = atProtocolFacets
+    }
+    
+    // MARK: - Audio Recording Methods
+    
+    private func handleAudioRecorded(_ audioURL: URL) {
+        // Get audio duration
+        let asset = AVURLAsset(url: audioURL)
+        let duration = CMTimeGetSeconds(asset.duration)
+        
+        currentAudioURL = audioURL
+        currentAudioDuration = duration
+        showingAudioRecorder = false
+        showingAudioVisualizerPreview = true
+    }
+    
+    private func handleVideoGenerated(_ videoURL: URL) {
+        // Convert the generated video to a MediaItem and add it to the composer
+        Task {
+            await viewModel.processGeneratedVideoFromAudio(videoURL)
+            showingAudioVisualizerPreview = false
+            currentAudioURL = nil
+            currentAudioDuration = 0
+        }
     }
 }
 

@@ -9,7 +9,7 @@
 /* Begin PBXBuildFile section */
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-		21196F6B2DC25F6000662CC3 /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21196F582DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		21196F6B2DC25F6000662CC3 /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21196F582DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 2121B3F42DF5201E003871F1 /* ExyteChat */; };
 		212E943A2D61003F00D3E1DD /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94392D61003F00D3E1DD /* Petrel */; };
 		212E94692D6183D600D3E1DD /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94682D6183D600D3E1DD /* Nuke */; };
@@ -24,7 +24,7 @@
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-		21DDE5FE2DF4EDB5009E9825 /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21DDE5EE2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		21DDE5FE2DF4EDB5009E9825 /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21DDE5EE2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A87CAC2D94390D0062F8E9 /* Petrel */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
 		21ECC9B62DC26B7100C2049B /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21ECC9B52DC26B7100C2049B /* Petrel */; };
@@ -563,9 +563,7 @@
 /* Begin PBXTargetDependency section */
 		21196F6A2DC25F6000662CC3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			platformFilters = (
-				ios,
-			);
+			platformFilter = ios;
 			target = 21196F572DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension */;
 			targetProxy = 21196F692DC25F6000662CC3 /* PBXContainerItemProxy */;
 		};
@@ -581,9 +579,7 @@
 		};
 		21DDE5FD2DF4EDB5009E9825 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			platformFilters = (
-				ios,
-			);
+			platformFilter = ios;
 			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
 			targetProxy = 21DDE5FC2DF4EDB5009E9825 /* PBXContainerItemProxy */;
 		};

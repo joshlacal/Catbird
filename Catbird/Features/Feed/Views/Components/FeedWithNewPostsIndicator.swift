@@ -36,6 +36,7 @@ struct FeedWithNewPostsIndicator: View {
       if stateManager.hasNewPosts && stateManager.newPostsCount > 0 {
         GeometryReader { geometry in
           VStack {
+              Spacer(minLength: 25)
             HStack {
               Spacer()
               

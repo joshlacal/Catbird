@@ -1,0 +1,464 @@
+//
+//  AudioVisualizerPreview.swift
+//  Catbird
+//
+//  Created by Claude on 8/26/25.
+//
+
+import SwiftUI
+import AVFoundation
+import Observation
+
+struct AudioVisualizerPreview: View {
+  @Environment(AppState.self) private var appState
+  @Environment(\.dismiss) private var dismiss
+  @Environment(\.colorScheme) private var colorScheme
+  
+  @State private var visualizerService = AudioVisualizerService()
+  @State private var isGeneratingVideo = false
+  @State private var generationError: String?
+  @State private var showingErrorAlert = false
+  
+  let audioURL: URL
+  let audioDuration: TimeInterval
+  let onVideoGenerated: (URL) -> Void
+  let onCancel: () -> Void
+  
+  // Preview state
+  @State private var isPlaying = false
+  @State private var currentTime: TimeInterval = 0
+  @State private var playbackTimer: Timer?
+  
+  var body: some View {
+    NavigationStack {
+      ZStack {
+        Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
+          .ignoresSafeArea()
+        
+        if isGeneratingVideo {
+          generatingVideoView
+        } else {
+          previewContentView
+        }
+      }
+      .navigationTitle("Audio Visualizer")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") {
+            handleCancel()
+          }
+          .disabled(isGeneratingVideo)
+        }
+        
+        ToolbarItem(placement: .primaryAction) {
+          Button("Generate Video") {
+            generateVideo()
+          }
+          .disabled(isGeneratingVideo)
+          .foregroundColor(.accentColor)
+          .fontWeight(.semibold)
+        }
+      }
+      .alert("Generation Error", isPresented: $showingErrorAlert) {
+        Button("OK") { }
+      } message: {
+        Text(generationError ?? "An unknown error occurred")
+      }
+    }
+  }
+  
+  // MARK: - Preview Content
+  
+  private var previewContentView: some View {
+    VStack(spacing: 0) {
+      // Header with user info
+      headerSection
+      
+      // Main preview area
+      previewVisualizationSection
+      
+      Spacer()
+      
+      // Controls
+      controlsSection
+        .padding(.bottom, 40)
+    }
+    .padding(.horizontal, 20)
+  }
+  
+  private var headerSection: some View {
+    VStack(spacing: 16) {
+      HStack(spacing: 12) {
+        // User avatar
+        if let profile = appState.currentUserProfile,
+           let avatarURL = profile.avatar {
+          AsyncImage(url: URL(string: avatarURL.description)) { image in
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+          } placeholder: {
+            Circle()
+              .fill(Color.systemGray5)
+          }
+          .frame(width: 60, height: 60)
+          .clipShape(Circle())
+          .overlay(
+            Circle()
+              .stroke(Color.white, lineWidth: 3)
+          )
+        } else {
+          Circle()
+            .fill(Color.systemGray5)
+            .frame(width: 60, height: 60)
+        }
+        
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Preview")
+            .font(.headline)
+            .foregroundColor(.primary)
+          
+          if let profile = appState.currentUserProfile {
+            Text("@\(profile.handle.description)")
+              .font(.subheadline)
+              .foregroundColor(.secondary)
+          }
+          
+          Text("Duration: \(formatDuration(audioDuration))")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+        
+        Spacer()
+        
+        // Accent color preview
+        Circle()
+          .fill(Color.accentColor)
+          .frame(width: 20, height: 20)
+          .overlay(
+            Text("Theme")
+              .font(.caption2)
+              .foregroundColor(.white)
+              .opacity(0.8)
+          )
+      }
+      .padding(.top, 20)
+      
+      Divider()
+        .padding(.vertical, 8)
+    }
+  }
+  
+  private var previewVisualizationSection: some View {
+    VStack(spacing: 24) {
+      // Mock video preview frame
+      ZStack {
+        // Background with accent color
+        RoundedRectangle(cornerRadius: 16)
+          .fill(Color.accentColor)
+          .aspectRatio(16/9, contentMode: .fit)
+          .overlay(
+            RoundedRectangle(cornerRadius: 16)
+              .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+          )
+        
+        VStack(spacing: 16) {
+          // Mock waveform
+          mockWaveformPreview
+          
+          // Profile picture placeholder
+          if let profile = appState.currentUserProfile,
+             let avatarURL = profile.avatar {
+            AsyncImage(url: URL(string: avatarURL.description)) { image in
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+            } placeholder: {
+              Circle()
+                .fill(Color.white.opacity(0.3))
+            }
+            .frame(width: 80, height: 80)
+            .clipShape(Circle())
+            .overlay(
+              Circle()
+                .stroke(Color.white, lineWidth: 2)
+            )
+          } else {
+            Circle()
+              .fill(Color.white.opacity(0.3))
+              .frame(width: 80, height: 80)
+          }
+          
+          // Mock timer and username
+          HStack {
+            Text(formatDuration(audioDuration - currentTime))
+              .font(.title3)
+              .fontWeight(.semibold)
+              .foregroundColor(.white.opacity(0.9))
+            
+            Spacer()
+            
+            if let profile = appState.currentUserProfile {
+              Text("@\(profile.handle.description)")
+                .font(.title3)
+                .fontWeight(.medium)
+                .foregroundColor(.white.opacity(0.9))
+            }
+          }
+          .padding(.horizontal, 20)
+        }
+      }
+      .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+      
+      // Playback progress
+      playbackProgressView
+    }
+    .padding(.vertical, 20)
+  }
+  
+  private var mockWaveformPreview: some View {
+    HStack(alignment: .center, spacing: 2) {
+      ForEach(0..<40, id: \.self) { index in
+        let height: CGFloat = {
+          let progress = currentTime / audioDuration
+          let barProgress = Double(index) / 40.0
+          
+          // Simulate waveform data
+          let baseHeight = sin(Double(index) * 0.3) * 15 + 20
+          let activity = barProgress < progress ? 1.0 : 0.3
+          
+          return CGFloat(baseHeight * activity)
+        }()
+        
+        RoundedRectangle(cornerRadius: 1)
+          .fill(Color.white.opacity(0.8))
+          .frame(width: 3, height: max(4, height))
+      }
+    }
+    .animation(.easeInOut(duration: 0.3), value: currentTime)
+  }
+  
+  private var playbackProgressView: some View {
+    VStack(spacing: 12) {
+      // Progress bar
+      ProgressView(value: currentTime, total: audioDuration)
+        .progressViewStyle(LinearProgressViewStyle(tint: Color.accentColor))
+      
+      // Time indicators
+      HStack {
+        Text(formatDuration(currentTime))
+          .font(.caption)
+          .foregroundColor(.secondary)
+        
+        Spacer()
+        
+        Text(formatDuration(audioDuration))
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+    }
+  }
+  
+  private var controlsSection: some View {
+    VStack(spacing: 20) {
+      // Play/Pause button
+      Button(action: togglePlayback) {
+        HStack(spacing: 12) {
+          Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            .font(.title2)
+          
+          Text(isPlaying ? "Pause Preview" : "Play Preview")
+            .font(.headline)
+            .fontWeight(.medium)
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .background(Color.accentColor, in: Capsule())
+      }
+      
+      // Settings info
+      VStack(spacing: 8) {
+        Text("Video Settings")
+          .font(.subheadline)
+          .fontWeight(.medium)
+          .foregroundColor(.primary)
+        
+        VStack(alignment: .leading, spacing: 4) {
+          Label("1280×720 HD Quality", systemImage: "video")
+          Label("30 FPS Smooth Animation", systemImage: "timer")
+          Label("Your Theme Color", systemImage: "paintbrush")
+          Label("Profile Picture Overlay", systemImage: "person.crop.circle")
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .labelStyle(.trailingIcon)
+      }
+    }
+  }
+  
+  // MARK: - Generating Video View
+  
+  private var generatingVideoView: some View {
+    VStack(spacing: 32) {
+      Spacer()
+      
+      // Progress indicator
+      VStack(spacing: 20) {
+        ProgressView(value: visualizerService.progress, total: 1.0)
+          .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+          .scaleEffect(1.5)
+        
+        Text("Generating Video...")
+          .font(.title2)
+          .fontWeight(.medium)
+          .foregroundColor(.primary)
+        
+        Text(progressText)
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+          .multilineTextAlignment(.center)
+      }
+      
+      Spacer()
+      
+      // Cancel button
+      Button("Cancel Generation") {
+        handleCancel()
+      }
+      .foregroundColor(.red)
+    }
+    .padding(.horizontal, 40)
+  }
+  
+  // MARK: - Computed Properties
+  
+  private var progressText: String {
+    let progress = visualizerService.progress
+    
+    switch progress {
+    case 0..<0.2:
+      return "Analyzing audio waveform..."
+    case 0.2..<0.4:
+      return "Setting up video encoder..."
+    case 0.4..<0.8:
+      return "Rendering video frames..."
+    case 0.8..<0.9:
+      return "Adding audio track..."
+    case 0.9..<1.0:
+      return "Finalizing video..."
+    default:
+      return "Almost done..."
+    }
+  }
+  
+  // MARK: - Actions
+  
+  private func togglePlayback() {
+    if isPlaying {
+      stopPreview()
+    } else {
+      startPreview()
+    }
+  }
+  
+  private func startPreview() {
+    isPlaying = true
+    
+    playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+      if currentTime >= audioDuration {
+        stopPreview()
+      } else {
+        currentTime += 0.1
+      }
+    }
+  }
+  
+  private func stopPreview() {
+    isPlaying = false
+    playbackTimer?.invalidate()
+    playbackTimer = nil
+  }
+  
+  private func resetPreview() {
+    stopPreview()
+    currentTime = 0
+  }
+  
+  private func generateVideo() {
+    guard !isGeneratingVideo else { return }
+    
+    isGeneratingVideo = true
+    
+    Task {
+      do {
+        let username = appState.currentUserProfile?.handle.description ?? "user"
+        let profileImage: Image? = nil // TODO: Get actual profile image
+        
+        let videoURL = try await visualizerService.generateVisualizerVideo(
+          audioURL: audioURL,
+          profileImage: profileImage,
+          username: username,
+          accentColor: Color.accentColor,
+          duration: audioDuration
+        )
+        
+        await MainActor.run {
+          isGeneratingVideo = false
+          onVideoGenerated(videoURL)
+          dismiss()
+        }
+        
+      } catch {
+        await MainActor.run {
+          isGeneratingVideo = false
+          generationError = error.localizedDescription
+          showingErrorAlert = true
+        }
+      }
+    }
+  }
+  
+  private func handleCancel() {
+    resetPreview()
+    onCancel()
+    dismiss()
+  }
+  
+  private func formatDuration(_ duration: TimeInterval) -> String {
+    let minutes = Int(duration) / 60
+    let seconds = Int(duration) % 60
+    return String(format: "%d:%02d", minutes, seconds)
+  }
+}
+
+// MARK: - Custom Label Style
+
+struct TrailingIconLabelStyle: LabelStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    HStack {
+      configuration.title
+      configuration.icon
+    }
+  }
+}
+
+extension LabelStyle where Self == TrailingIconLabelStyle {
+  static var trailingIcon: TrailingIconLabelStyle { TrailingIconLabelStyle() }
+}
+
+// MARK: - Preview
+
+#if DEBUG
+struct AudioVisualizerPreview_Previews: PreviewProvider {
+  static var previews: some View {
+    AudioVisualizerPreview(
+      audioURL: URL(fileURLWithPath: "/tmp/test.m4a"),
+      audioDuration: 30.0,
+      onVideoGenerated: { _ in },
+      onCancel: { }
+    )
+    .environment(AppState())
+  }
+}
+#endif

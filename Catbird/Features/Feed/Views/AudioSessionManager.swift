@@ -181,6 +181,57 @@ class AudioSessionManager {
     // All our videos should be muted anyway, so no need to change the session
     logger.debug("Skipping silent playback config to preserve music - videos are muted anyway")
   }
+  
+  /// Configure audio session for recording
+  func configureForRecording() {
+    #if os(iOS)
+    do {
+      let audioSession = AVAudioSession.sharedInstance()
+      
+      // Store music playback state before interrupting
+      wasAudioPlayingBeforeInterruption = audioSession.isOtherAudioPlaying
+      
+      // Configure for recording with playback capability
+      try audioSession.setCategory(
+        .playAndRecord, 
+        mode: .default, 
+        options: [.defaultToSpeaker, .allowBluetooth]
+      )
+      try audioSession.setActive(true)
+      isActive = true
+      logger.debug("Audio session configured for recording")
+    } catch {
+      logger.debug("Failed to configure audio session for recording: \(error)")
+    }
+    #else
+    // macOS doesn't require explicit audio session configuration for recording
+    isActive = true
+    logger.debug("Recording configuration not needed on macOS")
+    #endif
+  }
+  
+  /// Reset audio session after recording
+  func resetAfterRecording() {
+    #if os(iOS)
+    do {
+      let audioSession = AVAudioSession.sharedInstance()
+      
+      // Deactivate the session with notification to other audio apps
+      try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+      
+      // Return to ambient mode which doesn't interfere with other audio
+      try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+      isActive = false
+      logger.debug("Audio session reset after recording - set to ambient mode")
+    } catch {
+      logger.debug("Failed to reset audio session after recording: \(error)")
+    }
+    #else
+    // macOS doesn't require explicit session reset
+    isActive = false
+    logger.debug("Recording session reset on macOS")
+    #endif
+  }
 
   // MARK: - Notification Handlers
 

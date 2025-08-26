@@ -233,6 +233,7 @@ final class PostComposerViewModel {
     var videoData: Data?
     var rawVideoURL: URL?
     var rawVideoAsset: AVAsset?
+    var isAudioVisualizerVideo: Bool = false
     
     init(pickerItem: PhotosPickerItem) {
       self.pickerItem = pickerItem
@@ -240,6 +241,13 @@ final class PostComposerViewModel {
     
     init() {
       self.pickerItem = nil
+    }
+    
+    init(url: URL, isAudioVisualizerVideo: Bool = false) {
+      self.pickerItem = nil
+      self.rawVideoURL = url
+      self.isAudioVisualizerVideo = isAudioVisualizerVideo
+      self.rawVideoAsset = AVAsset(url: url)
     }
   }
   

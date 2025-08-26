@@ -306,4 +306,54 @@ extension PostComposerViewModel {
         
         return buffer
     }
+    
+    // MARK: - Audio Visualizer Video Processing
+    
+    @MainActor
+    func processGeneratedVideoFromAudio(_ videoURL: URL) async {
+        logger.debug("Processing generated audio visualizer video")
+        
+        // Clear existing media
+        mediaItems.removeAll()
+        selectedGif = nil
+        
+        // Create a MediaItem from the generated video URL
+        let videoItem = MediaItem(url: videoURL, isAudioVisualizerVideo: true)
+        self.videoItem = videoItem
+        
+        // Load video thumbnail and metadata
+        await loadVideoThumbnailFromURL(for: videoItem, url: videoURL)
+        
+        // Sync to thread if in thread mode
+        if isThreadMode && threadEntries.indices.contains(currentThreadIndex) {
+            threadEntries[currentThreadIndex].videoItem = self.videoItem
+        }
+        
+        logger.debug("Successfully processed audio visualizer video")
+    }
+    
+    @MainActor
+    private func loadVideoThumbnailFromURL(for item: MediaItem, url: URL) async {
+        let asset = AVURLAsset(url: url)
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        
+        do {
+            let cgImage = try await imageGenerator.image(at: .zero).image
+            
+            #if os(iOS)
+            let thumbnail = UIImage(cgImage: cgImage)
+            videoItem?.image = Image(uiImage: thumbnail)
+            #elseif os(macOS)
+            let thumbnail = NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
+            videoItem?.image = Image(nsImage: thumbnail)
+            #endif
+            
+            videoItem?.isLoading = false
+            logger.debug("Generated video thumbnail successfully")
+        } catch {
+            logger.debug("Failed to generate video thumbnail: \(error)")
+            videoItem?.isLoading = false
+        }
+    }
 }
