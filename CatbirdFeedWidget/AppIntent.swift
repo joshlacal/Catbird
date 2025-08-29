@@ -11,18 +11,19 @@ import AppIntents
 
 // MARK: - Feed Type Options
 
-enum FeedTypeOption: String, CaseIterable, AppEnum {
+@available(iOS 16.0, *)
+public enum FeedTypeOption: String, CaseIterable, AppEnum {
     case timeline = "timeline"
     case pinnedFeed = "pinned"
-    case savedFeed = "saved" 
+    case savedFeed = "saved"
     case custom = "custom"
     case profile = "profile"
-    
-    static var typeDisplayRepresentation: TypeDisplayRepresentation {
+
+    public static var typeDisplayRepresentation: TypeDisplayRepresentation {
         TypeDisplayRepresentation(name: "Feed Type")
     }
-    
-    static var caseDisplayRepresentations: [FeedTypeOption: DisplayRepresentation] {
+
+    public static var caseDisplayRepresentations: [FeedTypeOption: DisplayRepresentation] {
         [
             .timeline: DisplayRepresentation(title: "Home Timeline", subtitle: "Your personalized timeline"),
             .pinnedFeed: DisplayRepresentation(title: "Pinned Feed", subtitle: "Choose from your pinned feeds"),
@@ -35,16 +36,17 @@ enum FeedTypeOption: String, CaseIterable, AppEnum {
 
 // MARK: - Layout Style Options
 
-enum LayoutStyleOption: String, CaseIterable, AppEnum {
+@available(iOS 16.0, *)
+public enum LayoutStyleOption: String, CaseIterable, AppEnum {
     case compact = "compact"
     case comfortable = "comfortable"
     case spacious = "spacious"
-    
-    static var typeDisplayRepresentation: TypeDisplayRepresentation {
+
+    public static var typeDisplayRepresentation: TypeDisplayRepresentation {
         TypeDisplayRepresentation(name: "Layout Style")
     }
-    
-    static var caseDisplayRepresentations: [LayoutStyleOption: DisplayRepresentation] {
+
+    public static var caseDisplayRepresentations: [LayoutStyleOption: DisplayRepresentation] {
         [
             .compact: DisplayRepresentation(title: "Compact", subtitle: "More posts, less spacing"),
             .comfortable: DisplayRepresentation(title: "Comfortable", subtitle: "Balanced layout"),
@@ -55,45 +57,46 @@ enum LayoutStyleOption: String, CaseIterable, AppEnum {
 
 // MARK: - Widget Configuration Intent
 
-struct ConfigurationAppIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource { "Widget Configuration" }
-    static var description: IntentDescription { "Configure your Catbird feed widget to show the content you want to see." }
+@available(iOS 16.0, *)
+public struct ConfigurationAppIntent: WidgetConfigurationIntent {
+    public static var title: LocalizedStringResource { "Widget Configuration" }
+    public static var description: IntentDescription { "Configure your Catbird feed widget to show the content you want to see." }
 
-    @Parameter(title: "Feed Type", description: "Choose what type of content to display")
-    var feedType: FeedTypeOption?
-    
+    @Parameter(title: "Feed Type", description: "Choose what type of content to display", default: .timeline)
+    public var feedType: FeedTypeOption
+
     @Parameter(title: "Feed Selection", description: "Choose which pinned/saved feed to display")
-    var selectedFeedURI: String?
-    
-    @Parameter(title: "Custom Feed URL", description: "Enter a custom feed URL (only used for Custom Feed type)")
-    var customFeedURL: String?
-    
-    @Parameter(title: "Profile Handle", description: "Enter a profile handle (only used for Profile type, e.g., @user.bsky.social)")
-    var profileHandle: String?
-    
-    @Parameter(title: "Post Count", description: "Number of posts to display (1-10)")
-    var postCount: Int?
-    
-    @Parameter(title: "Layout Style", description: "Choose how posts are displayed")
-    var layoutStyle: LayoutStyleOption?
-    
-    @Parameter(title: "Show Avatars", description: "Display user profile pictures")
-    var showAvatars: Bool?
-    
-    @Parameter(title: "Show Images", description: "Display post media previews")
-    var showImages: Bool?
-    
-    @Parameter(title: "Show Engagement Stats", description: "Display like, repost, and reply counts")
-    var showEngagementStats: Bool?
-    
-    @Parameter(title: "Show Timestamps", description: "Display when posts were created")
-    var showTimestamps: Bool?
-    
-    init() {
+    public var selectedFeed: SavedFeedEntity?
+
+    @Parameter(title: "Custom Feed URL", description: "Enter a custom feed URL (only used for Custom Feed type)", default: "")
+    public var customFeedURL: String
+
+    @Parameter(title: "Profile Handle", description: "Enter a profile handle (only used for Profile type, e.g., @user.bsky.social)", default: "")
+    public var profileHandle: String
+
+    @Parameter(title: "Post Count", description: "Number of posts to display (1-10)", default: 3)
+    public var postCount: Int
+
+    @Parameter(title: "Layout Style", description: "Choose how posts are displayed", default: .comfortable)
+    public var layoutStyle: LayoutStyleOption
+
+    @Parameter(title: "Show Avatars", description: "Display user profile pictures", default: true)
+    public var showAvatars: Bool
+
+    @Parameter(title: "Show Images", description: "Display post media previews", default: true)
+    public var showImages: Bool
+
+    @Parameter(title: "Show Engagement Stats", description: "Display like, repost, and reply counts", default: true)
+    public var showEngagementStats: Bool
+
+    @Parameter(title: "Show Timestamps", description: "Display when posts were created", default: true)
+    public var showTimestamps: Bool
+
+    public init() {
         feedType = .timeline
-        selectedFeedURI = nil
-        customFeedURL = nil
-        profileHandle = nil
+        selectedFeed = nil
+        customFeedURL = ""
+        profileHandle = ""
         postCount = 3
         layoutStyle = .comfortable
         showAvatars = true
@@ -101,100 +104,193 @@ struct ConfigurationAppIntent: WidgetConfigurationIntent {
         showEngagementStats = true
         showTimestamps = true
     }
-    
-    init(
-        feedType: FeedTypeOption? = .timeline,
-        selectedFeedURI: String? = nil,
-        customFeedURL: String? = nil,
-        profileHandle: String? = nil,
-        postCount: Int? = 3,
-        layoutStyle: LayoutStyleOption? = .comfortable,
-        showAvatars: Bool? = true,
-        showImages: Bool? = true,
-        showEngagementStats: Bool? = true,
-        showTimestamps: Bool? = true
+
+    public init(
+        feedType: FeedTypeOption = .timeline,
+        selectedFeed: SavedFeedEntity? = nil,
+        customFeedURL: String = "",
+        profileHandle: String = "",
+        postCount: Int = 3,
+        layoutStyle: LayoutStyleOption = .comfortable,
+        showAvatars: Bool = true,
+        showImages: Bool = true,
+        showEngagementStats: Bool = true,
+        showTimestamps: Bool = true
     ) {
         self.feedType = feedType
-        self.selectedFeedURI = selectedFeedURI
+        self.selectedFeed = selectedFeed
         self.customFeedURL = customFeedURL
         self.profileHandle = profileHandle
-        self.postCount = postCount.map { min(max($0, 1), 10) } // Clamp between 1-10
+        self.postCount = min(max(postCount, 1), 10) // Clamp between 1-10
         self.layoutStyle = layoutStyle
         self.showAvatars = showAvatars
         self.showImages = showImages
         self.showEngagementStats = showEngagementStats
         self.showTimestamps = showTimestamps
     }
-    
+
     // MARK: - Convenience Properties with Defaults
-    
+
     /// Feed type with default value
-    var effectiveFeedType: FeedTypeOption {
-        return feedType ?? .timeline
+    public var effectiveFeedType: FeedTypeOption {
+        return feedType
     }
     
+    /// Selected feed URI for backward compatibility
+    public var selectedFeedURI: String? {
+        return selectedFeed?.uri
+    }
+
     /// Post count with default value
-    var effectivePostCount: Int {
-        return postCount ?? 3
+    public var effectivePostCount: Int {
+        return postCount
     }
-    
+
     /// Layout style with default value
-    var effectiveLayoutStyle: LayoutStyleOption {
-        return layoutStyle ?? .comfortable
+    public var effectiveLayoutStyle: LayoutStyleOption {
+        return layoutStyle
     }
-    
+
     /// Show avatars with default value
-    var effectiveShowAvatars: Bool {
-        return showAvatars ?? true
+    public var effectiveShowAvatars: Bool {
+        return showAvatars
     }
-    
+
     /// Show images with default value
-    var effectiveShowImages: Bool {
-        return showImages ?? true
+    public var effectiveShowImages: Bool {
+        return showImages
     }
-    
+
     /// Show engagement stats with default value
-    var effectiveShowEngagementStats: Bool {
-        return showEngagementStats ?? true
+    public var effectiveShowEngagementStats: Bool {
+        return showEngagementStats
+    }
+
+    /// Show timestamps with default value
+    public var effectiveShowTimestamps: Bool {
+        return showTimestamps
+    }
+}
+
+// MARK: - Dynamic Feed Entities
+
+@available(iOS 16.0, *)
+public struct SavedFeedEntity: AppEntity {
+    public static var typeDisplayRepresentation: TypeDisplayRepresentation {
+        TypeDisplayRepresentation(name: "Saved Feed")
     }
     
-    /// Show timestamps with default value
-    var effectiveShowTimestamps: Bool {
-        return showTimestamps ?? true
+    public var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(displayName)")
+    }
+    
+    public static var defaultQuery = SavedFeedQuery()
+    
+    public let id: String
+    public let displayName: String
+    public let uri: String
+    
+    public init(id: String, displayName: String, uri: String) {
+        self.id = id
+        self.displayName = displayName
+        self.uri = uri
+    }
+}
+
+@available(iOS 16.0, *)
+public struct SavedFeedQuery: EntityQuery {
+    public init() {}
+    
+    public func entities(for identifiers: [String]) async throws -> [SavedFeedEntity] {
+        let feeds = loadSavedFeeds()
+        return feeds.filter { identifiers.contains($0.id) }
+    }
+    
+    public func suggestedEntities() async throws -> [SavedFeedEntity] {
+        return loadSavedFeeds()
+    }
+    
+    private func loadSavedFeeds() -> [SavedFeedEntity] {
+        guard let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") else {
+            return []
+        }
+        
+        let decoder = JSONDecoder()
+        
+        // Load saved feeds
+        let savedFeeds: [String] = {
+            guard let data = sharedDefaults.data(forKey: "savedFeeds") else { return [] }
+            return (try? decoder.decode([String].self, from: data)) ?? []
+        }()
+        
+        // Load feed generators for display names
+        let feedGenerators: [String: String] = {
+            guard let data = sharedDefaults.data(forKey: "feedGenerators") else { return [:] }
+            return (try? decoder.decode([String: String].self, from: data)) ?? [:]
+        }()
+        
+        // Load pinned feeds
+        let pinnedFeeds: [String] = {
+            guard let data = sharedDefaults.data(forKey: "pinnedFeeds") else { return [] }
+            return (try? decoder.decode([String].self, from: data)) ?? []
+        }()
+        
+        var entities: [SavedFeedEntity] = []
+        
+        // Add pinned feeds
+        for feed in pinnedFeeds {
+            let displayName = feedGenerators[feed] ?? "Pinned Feed"
+            entities.append(SavedFeedEntity(id: feed, displayName: "📌 \(displayName)", uri: feed))
+        }
+        
+        // Add saved feeds
+        for feed in savedFeeds {
+            let displayName = feedGenerators[feed] ?? "Saved Feed"
+            entities.append(SavedFeedEntity(id: feed, displayName: "⭐ \(displayName)", uri: feed))
+        }
+        
+        return entities
     }
 }
 
 // MARK: - App Intent for Opening Specific Feed
 
-struct OpenFeedAppIntent: AppIntent {
-    static var title: LocalizedStringResource { "Open Feed" }
-    static var description: IntentDescription { "Open a specific feed in Catbird." }
-    
+@available(iOS 16.0, *)
+public struct OpenFeedAppIntent: AppIntent {
+    public static var title: LocalizedStringResource { "Open Feed" }
+    public static var description: IntentDescription { "Open a specific feed in Catbird." }
+
     @Parameter(title: "Feed Type")
-    var feedType: String
-    
+    public var feedType: String
+
     @Parameter(title: "Feed URL")
-    var feedURL: String?
-    
+    public var feedURL: String
+
     @Parameter(title: "Profile Handle")
-    var profileHandle: String?
-    
-    func perform() async throws -> some IntentResult {
+    public var profileHandle: String
+
+    public init() {
+        feedType = "timeline"
+        feedURL = ""
+        profileHandle = ""
+    }
+
+    public func perform() async throws -> some IntentResult {
         // Construct deep link URL
         var urlComponents = URLComponents()
         urlComponents.scheme = "blue.catbird"
-        
+
         switch feedType {
         case "profile":
-            if let handle = profileHandle {
+            if !profileHandle.isEmpty {
                 urlComponents.host = "profile"
-                urlComponents.path = "/\(handle)"
+                urlComponents.path = "/\(profileHandle)"
             } else {
                 urlComponents.host = "feed"
                 urlComponents.path = "/timeline"
             }
         case "custom":
-            if let feedURL = feedURL {
+            if !feedURL.isEmpty {
                 urlComponents.host = "feed"
                 urlComponents.queryItems = [URLQueryItem(name: "url", value: feedURL)]
             } else {
@@ -205,36 +301,44 @@ struct OpenFeedAppIntent: AppIntent {
             urlComponents.host = "feed"
             urlComponents.path = "/\(feedType)"
         }
-        
+
         if let url = urlComponents.url {
-            return .result(opensIntent: OpenURLIntent(url))
+            return .result(value: url)
         }
-        
-        return .result()
+
+        // Return empty URL as fallback
+        return .result(value: URL(string: "blue.catbird://feed/timeline")!)
     }
 }
 
 // MARK: - App Intent for Opening Specific Post
 
-struct OpenPostAppIntent: AppIntent {
-    static var title: LocalizedStringResource { "Open Post" }
-    static var description: IntentDescription { "Open a specific post in Catbird." }
-    
+@available(iOS 16.0, *)
+public struct OpenPostAppIntent: AppIntent {
+    public static var title: LocalizedStringResource { "Open Post" }
+    public static var description: IntentDescription { "Open a specific post in Catbird." }
+
     @Parameter(title: "Post URI")
-    var postURI: String
-    
-    func perform() async throws -> some IntentResult {
+    public var postURI: String
+
+    public init() {
+        postURI = ""
+    }
+
+    public func perform() async throws -> some IntentResult {
         // Construct deep link URL for post
         var urlComponents = URLComponents()
         urlComponents.scheme = "blue.catbird"
         urlComponents.host = "post"
         urlComponents.queryItems = [URLQueryItem(name: "uri", value: postURI)]
-        
+
         if let url = urlComponents.url {
-            return .result(opensIntent: OpenURLIntent(url))
+            return .result(value: url)
         }
-        
-        return .result()
+
+        // Return empty URL as fallback
+        return .result(value: URL(string: "blue.catbird://feed/timeline")!)
     }
 }
 #endif
+
