@@ -23,7 +23,7 @@ struct Post: View, Equatable {
     @Binding var path: NavigationPath
     @State private var showTranslation = false
     @State private var translatedText: String?
-    @State private var translationConfig: TranslationSession.Configuration?
+    @State private var translationConfig: Any? // Use Any instead of specific type for cross-platform compatibility
     @State private var translationError: String?
     @State private var isTranslating = false
     @Environment(\.colorScheme) private var colorScheme
@@ -219,10 +219,6 @@ struct Post: View, Equatable {
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isTranslating)
-        .translationTask(translationConfig) { session in
-            
-            await performTranslation(session: session)
-        }
     }
 
     private func toggleTranslation() {
@@ -276,23 +272,32 @@ struct Post: View, Equatable {
     }
 
     private func setupTranslation(sourceLanguage: Locale.Language) async {
-        let availability = LanguageAvailability()
-        let status = await availability.status(from: sourceLanguage, to: targetLanguage)
-        
-        await MainActor.run {
-            switch status {
-            case .installed, .supported:
-                // Proceed with translation
-                translationConfig = .init(source: sourceLanguage, target: targetLanguage)
-            case .unsupported:
-                // Handle unsupported language pairing
-                translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
-            @unknown default:
-                translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+        if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
+            let availability = LanguageAvailability()
+            let status = await availability.status(from: sourceLanguage, to: targetLanguage)
+            
+            await MainActor.run {
+                switch status {
+                case .installed, .supported:
+                    // Proceed with translation
+                    if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
+                        translationConfig = TranslationSession.Configuration(source: sourceLanguage, target: targetLanguage)
+                    }
+                case .unsupported:
+                    // Handle unsupported language pairing
+                    translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                @unknown default:
+                    translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                }
+            }
+        } else {
+            await MainActor.run {
+                translationError = NSLocalizedString("Translation requires iOS 17.4 or later.", comment: "")
             }
         }
     }
     
+    @available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *)
     private func performTranslation(session: TranslationSession) async {
         do {
             await MainActor.run {
@@ -334,6 +339,20 @@ extension Post {
 }
 
 // MARK: - Modifiers
+
+@available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *)
+struct TranslationTaskModifier: ViewModifier {
+    let config: Any?
+    let action: (TranslationSession) async -> Void
+    
+    func body(content: Content) -> some View {
+        if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
+            content.translationTask(config as? TranslationSession.Configuration, action: action)
+        } else {
+            content
+        }
+    }
+}
 
 struct SelectableModifier: ViewModifier {
     let isSelectable: Bool

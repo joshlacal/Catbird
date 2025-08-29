@@ -10,7 +10,7 @@
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21196F6B2DC25F6000662CC3 /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21196F582DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 2121B3F42DF5201E003871F1 /* ExyteChat */; };
+		2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; productRef = 2121B3F42DF5201E003871F1 /* ExyteChat */; };
 		212E943A2D61003F00D3E1DD /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94392D61003F00D3E1DD /* Petrel */; };
 		212E94692D6183D600D3E1DD /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94682D6183D600D3E1DD /* Nuke */; };
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
@@ -19,8 +19,8 @@
 		216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; };
 		216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E57042E0EFF02001E7844 /* FaultOrderingTests */; };
-		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
-		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
+		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
+		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
@@ -698,8 +698,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				SUPPORTS_MACCATALYST = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -750,8 +750,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				SUPPORTS_MACCATALYST = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;

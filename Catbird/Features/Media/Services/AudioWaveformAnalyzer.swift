@@ -27,7 +27,7 @@ final class AudioWaveformAnalyzer {
   
   // MARK: - Waveform Analysis
   
-  /// Analyzes an audio file and returns waveform data
+  /// Analyzes an audio file and returns waveform data with streaming processing
   func analyzeAudioFile(at url: URL) async throws -> WaveformData {
     let asset = AVAsset(url: url)
     
@@ -57,24 +57,70 @@ final class AudioWaveformAnalyzer {
       throw WaveformError.readerError
     }
     
-    var audioSamples: [Float] = []
+    // Process audio in streaming chunks to reduce memory usage
+    let targetPoints = 100
+    let samplesPerPoint = Int(44100 * durationSeconds / Double(targetPoints)) // Approximate samples per point
+    var waveformPoints: [WaveformPoint] = []
+    var currentSegment: [Float] = []
+    var totalSamplesProcessed = 0
+    var currentPointIndex = 0
     
     while assetReader.status == .reading {
-      if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
-        let samples = try extractAudioSamples(from: sampleBuffer)
-        audioSamples.append(contentsOf: samples)
+      autoreleasepool {
+        if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+          do {
+            let samples = try extractAudioSamples(from: sampleBuffer)
+            
+            for sample in samples {
+              currentSegment.append(sample)
+              totalSamplesProcessed += 1
+              
+              // When we have enough samples for a waveform point, process it
+              if currentSegment.count >= samplesPerPoint || totalSamplesProcessed >= Int(44100 * durationSeconds) {
+                let rms = calculateRMS(currentSegment)
+                let peak = currentSegment.map { abs($0) }.max() ?? 0.0
+                let timestamp = Double(currentPointIndex) / Double(targetPoints) * durationSeconds
+                
+                waveformPoints.append(WaveformPoint(
+                  timestamp: timestamp,
+                  amplitude: rms,
+                  peak: peak
+                ))
+                
+                currentSegment.removeAll(keepingCapacity: true) // Clear but keep capacity
+                currentPointIndex += 1
+                
+                if currentPointIndex >= targetPoints {
+                  break
+                }
+              }
+            }
+          } catch {
+            // Skip problematic sample buffers and continue with next buffer
+          }
+        }
       }
+    }
+    
+    // Process any remaining samples
+    if !currentSegment.isEmpty && currentPointIndex < targetPoints {
+      let rms = calculateRMS(currentSegment)
+      let peak = currentSegment.map { abs($0) }.max() ?? 0.0
+      let timestamp = Double(currentPointIndex) / Double(targetPoints) * durationSeconds
+      
+      waveformPoints.append(WaveformPoint(
+        timestamp: timestamp,
+        amplitude: rms,
+        peak: peak
+      ))
     }
     
     guard assetReader.status == .completed else {
       throw WaveformError.analysisError
     }
     
-    // Generate simplified waveform points for faster processing
-    let waveformPoints = generateSimplifiedWaveformPoints(from: audioSamples, duration: durationSeconds)
-    
     return WaveformData(
-      samples: audioSamples,
+      samples: [], // No longer store all samples to save memory
       waveformPoints: waveformPoints,
       duration: durationSeconds,
       sampleRate: 44100
@@ -85,7 +131,7 @@ final class AudioWaveformAnalyzer {
   private func generateSimplifiedWaveformPoints(from samples: [Float], duration: TimeInterval) -> [WaveformPoint] {
     guard !samples.isEmpty else { return [] }
     
-    let targetPoints = 20 // Ultra-reduced number of waveform points for maximum speed
+    let targetPoints = 100 // More waveform points for beautiful visualization
     let samplesPerPoint = samples.count / targetPoints
     
     var waveformPoints: [WaveformPoint] = []
@@ -230,7 +276,8 @@ enum WaveformError: LocalizedError {
   case readerError
   case analysisError
   case bufferError
-  
+    case custom(String)
+
   var errorDescription: String? {
     switch self {
     case .noAudioTrack:
@@ -241,6 +288,9 @@ enum WaveformError: LocalizedError {
       return "Failed to analyze audio waveform"
     case .bufferError:
       return "Failed to process audio buffer"
+    case .custom(let message):
+      return message
+
     }
   }
 }

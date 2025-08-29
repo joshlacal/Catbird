@@ -59,7 +59,7 @@ extension FeedCollectionViewControllerIntegrated {
         
         // Cancel ongoing operations
         loadMoreTask?.cancel()
-        observationTask?.cancel()
+        stateObserver?.stopObserving()
         
         // Update the state manager
         stateManager = newStateManager
@@ -277,7 +277,8 @@ struct FeedCollectionViewWrapper: View {
             }
         }
         .task {
-            if stateManager.posts.isEmpty && !stateManager.isLoading {
+            // Always try to load initial data if posts are empty
+            if stateManager.posts.isEmpty {
                 await stateManager.loadInitialData()
             }
         }

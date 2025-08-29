@@ -343,14 +343,19 @@ extension PostComposerViewModel {
             
             #if os(iOS)
             let thumbnail = UIImage(cgImage: cgImage)
+            let imageSize = thumbnail.size
             videoItem?.image = Image(uiImage: thumbnail)
             #elseif os(macOS)
             let thumbnail = NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
+            let imageSize = thumbnail.size
             videoItem?.image = Image(nsImage: thumbnail)
             #endif
             
+            // Set aspect ratio for proper video embed creation
+            videoItem?.aspectRatio = CGSize(width: imageSize.width, height: imageSize.height)
             videoItem?.isLoading = false
-            logger.debug("Generated video thumbnail successfully")
+            
+            logger.debug("Generated video thumbnail successfully with aspect ratio: \(imageSize.width)x\(imageSize.height)")
         } catch {
             logger.debug("Failed to generate video thumbnail: \(error)")
             videoItem?.isLoading = false

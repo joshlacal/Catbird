@@ -298,6 +298,30 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("Initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
     }
     
+    /// Load initial data with system flag - bypasses user-initiated check for post-authentication loading
+    func loadInitialDataWithSystemFlag() async {
+        guard case .idle = loadingState else { return }
+        
+        logger.debug("Loading initial data with system flag - post-authentication")
+        
+        loadingState = .loading
+        errorMessage = nil
+        hasReachedEnd = false  // Reset when loading fresh data
+        
+        // For system-initiated loads (like post-auth), always force refresh even if posts exist
+        await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+        await updatePostsFromModel()
+        
+        // Check if feed has more data after initial load
+        if !feedModel.hasMore {
+            hasReachedEnd = true
+            logger.debug("Initial load indicates no more data available")
+        }
+        
+        loadingState = .idle
+        logger.debug("System-initiated initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
+    }
+    
     /// Refreshes the feed data (user-initiated)
     @MainActor
     func refresh() async {

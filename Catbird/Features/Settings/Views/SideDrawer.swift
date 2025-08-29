@@ -325,6 +325,10 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             UIAccessibility.post(notification: .screenChanged, argument: nil)
           }
         }
+        
+        // Save drawer state to UserDefaults for state restoration
+        let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
+        defaults.set(newValue, forKey: "drawer_was_open")
       }
       .hoverEffect(.lift)
       .accessibilityElement(children: .contain)

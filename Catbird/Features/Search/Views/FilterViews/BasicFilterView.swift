@@ -76,6 +76,33 @@ enum ContentType: String, CaseIterable {
     }
 }
 
+/// Enum for search result sorting options  
+enum SearchSort: String, CaseIterable {
+    case top = "top"
+    case latest = "latest"
+    
+    var displayName: String {
+        switch self {
+        case .top: return "Top"
+        case .latest: return "Latest"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .top: return "star.fill"
+        case .latest: return "clock.fill"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .top: return "Most relevant and popular results"
+        case .latest: return "Most recent results first"
+        }
+    }
+}
+
 /// Model for language selection options
 struct LanguageOption: Identifiable, Hashable {
     let id = UUID()

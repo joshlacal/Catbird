@@ -531,6 +531,7 @@ final class UnifiedScrollPreservationPipeline {
 
 // MARK: - UIUpdateLink Integration (iOS 18+)
 
+#if os(iOS) && !targetEnvironment(macCatalyst)
 @available(iOS 18.0, *)
 extension UnifiedScrollPreservationPipeline {
     
@@ -679,6 +680,7 @@ extension UnifiedScrollPreservationPipeline {
         )
     }
 }
+#endif // os(iOS) && !targetEnvironment(macCatalyst)
 
 // MARK: - Enhanced Supporting Types
 

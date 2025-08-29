@@ -264,5 +264,22 @@ extension PlatformScreenInfo {
     public static var supportsMultiColumn: Bool {
         return sizeCategory == .large || (sizeCategory == .regular && isLandscape)
     }
+    
+    /// Calculate responsive drawer width for side drawers
+    /// Uses progressive scaling to provide better experience on larger displays
+    public static var responsiveDrawerWidth: CGFloat {
+        switch width {
+        case ..<768: // iPhone Portrait
+            return width * 0.82  // Slightly wider on phones
+        case ..<1024: // iPhone Landscape / Small iPad
+            return min(420, width * 0.45)
+        case ..<1200: // Standard iPad
+            return min(480, width * 0.4)
+        case ..<1600: // Large iPad / Small Mac
+            return min(550, width * 0.38)
+        default: // Very large displays (Mac Studio Display, etc.)
+            return min(600, width * 0.32)
+        }
+    }
 }
 

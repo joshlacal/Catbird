@@ -24,6 +24,27 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         case main = 0
     }
     
+    // MARK: - Cross-Platform Compatibility Types
+    
+    #if targetEnvironment(macCatalyst)
+    // Fallback types for Mac Catalyst
+    private struct MacCatalystScrollAnchor {
+        let indexPath: IndexPath
+        let postId: String
+        let contentOffset: CGPoint
+        let viewportRelativeY: CGFloat
+        let itemFrameY: CGFloat
+        let itemHeight: CGFloat
+        let visibleHeightInViewport: CGFloat
+        let timestamp: TimeInterval
+        let displayScale: CGFloat
+    }
+    
+    private enum MacCatalystScrollDirection {
+        case up, down, none
+    }
+    #endif
+    
     private struct PostItem: Hashable {
         let id: String
         
@@ -51,19 +72,21 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     /// Unified scroll preservation system
     private let unifiedScrollPipeline = UnifiedScrollPreservationPipeline()
     
-    /// Optimized scroll system for iOS 18+
+    /// Optimized scroll system for iOS 18+ (not available on Mac Catalyst)
+    #if !targetEnvironment(macCatalyst)
     @available(iOS 18.0, *)
     private lazy var optimizedScrollSystem = OptimizedScrollPreservationSystem()
     
     /// Gap loading manager for iOS 18+
     @available(iOS 18.0, *)
     private lazy var gapLoadingManager = FeedGapLoadingManager()
+    #endif
     
     /// Load more coordination
     var loadMoreTask: Task<Void, Never>?
     
-    /// State observation task
-    var observationTask: Task<Void, Never>?
+    /// State observation with proper @Observable integration
+    var stateObserver: UIKitStateObserver<FeedStateManager>?
     
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -172,8 +195,13 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         super.viewWillAppear(animated)
         
         Task { @MainActor in
-            // First, ensure we have data loaded
-            await loadInitialData()
+            // Always ensure we have data loaded if posts are empty
+            if stateManager.posts.isEmpty {
+                controllerLogger.debug("📥 Controller: Loading initial data for empty feed")
+                await loadInitialData()
+            } else {
+                controllerLogger.debug("📄 Controller: Feed already has \(self.stateManager.posts.count) posts")
+            }
             
             // Then restore persisted scroll position if available (only for chronological feeds)
             if stateManager.currentFeedType.isChronological,
@@ -321,21 +349,24 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     }
     
     func setupObservers() {
-        observationTask = Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            
-            while !Task.isCancelled {
-                let previousCount = self.stateManager.posts.count
-                
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                
-                let currentCount = self.stateManager.posts.count
-                
-                if previousCount != currentCount {
-                    await self.performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.normalUpdate)
+        stateObserver = UIKitStateObserver.observeFeedStateManager(
+            stateManager,
+            onPostsChanged: { [weak self] posts in
+                guard let self = self else { return }
+                Task {
+                    await self.performUpdate(type: .normalUpdate)
                 }
+            },
+            onLoadingStateChanged: { [weak self] loadingState in
+                guard let self = self else { return }
+                self.updateRefreshControl(for: loadingState)
+            },
+            onScrollAnchorChanged: { [weak self] anchor in
+                // Handle scroll anchor changes if needed for state preservation
+                guard let self = self else { return }
+                self.handleScrollAnchorChange(anchor)
             }
-        }
+        )
     }
     
     func setupScrollToTopCallback() {
@@ -449,10 +480,12 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         // Cancel any ongoing tasks to prevent crashes
         loadMoreTask?.cancel()
         
-        // Clean up iOS 18+ resources
+        // Clean up iOS 18+ resources (not available on Mac Catalyst)
+        #if !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             optimizedScrollSystem.cleanup()
         }
+        #endif
     }
     
     private func handleAppWillEnterForeground() {
@@ -562,12 +595,17 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         // Save position before update for recovery
         let preUpdateState = captureCurrentScrollState()
         
-        // Determine which system to use based on iOS version
+        // Determine which system to use based on iOS version and platform
+        #if !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             await performOptimizedUpdate(type: type)
         } else {
             await performStandardUpdate(type: type)
         }
+        #else
+        // Mac Catalyst: Use standard update system only
+        await performStandardUpdate(type: type)
+        #endif
         
         // If update failed and we have a pre-update state, try to restore it
         if let state = preUpdateState, collectionView.contentOffset.y <= 0 {
@@ -576,6 +614,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         }
     }
     
+    #if !targetEnvironment(macCatalyst)
     @available(iOS 18.0, *)
     @MainActor
     private func performOptimizedUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
@@ -710,10 +749,13 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             isRefreshing = false
         }
     }
+    #endif // !targetEnvironment(macCatalyst)
+    
+    // MARK: - Standard Update System (iOS <18.0 and Mac Catalyst)
     
     @MainActor
     private func performStandardUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
-        // Use the unified pipeline for older iOS versions
+        // Use the unified pipeline for older iOS versions and Mac Catalyst
         let currentData = stateManager.posts.map { $0.id }
         
         // Perform the data operation
@@ -731,42 +773,26 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         case .loadMore:
             await stateManager.loadMore()
             
-        case .memoryWarning:
-            collectionView.reloadData()
+        case .newPostsAtTop, .memoryWarning, .feedSwitch, .normalUpdate:
+            // Handle other update types as needed
+            await stateManager.refresh()
             
-        default:
+        case .viewAppearance:
+            // For view appearance, just apply the current state
             break
         }
         
-        let newData = stateManager.posts.map { $0.id }
+        // Apply the update directly to the collection view (standard approach)
+        var snapshot = NSDiffableDataSourceSnapshot<Section, PostItem>()
+        snapshot.appendSections([.main])
         
-        // Create a string-based adapter for the unified pipeline
-        let stringDataSource = UICollectionViewDiffableDataSource<Int, String>(
-            collectionView: collectionView
-        ) { collectionView, indexPath, item in
-            // Find the corresponding PostItem
-            let postItem = PostItem(id: item)
-            return self.dataSource.collectionView(collectionView, cellForItemAt: indexPath)
-        }
+        let items = stateManager.posts.map { PostItem(id: $0.id) }
+        snapshot.appendItems(items, toSection: .main)
         
-        let result = await unifiedScrollPipeline.performUpdate(
-            type: type,
-            collectionView: collectionView,
-            dataSource: stringDataSource,
-            newData: newData,
-            currentData: currentData,
-            getPostId: { [weak self] indexPath in
-                guard let self = self,
-                      indexPath.item < self.stateManager.posts.count else { return nil }
-                return self.stateManager.posts[indexPath.item].id
-            }
-        )
+        // Apply without animation for better performance and position preservation
+        await dataSource.apply(snapshot, animatingDifferences: false)
         
-        if result.success {
-            controllerLogger.debug("✅ Standard update completed: offset=\(result.finalOffset.debugDescription)")
-        } else if let error = result.error {
-            controllerLogger.error("❌ Update failed: \(error)")
-        }
+        controllerLogger.debug("✅ Standard update completed with \(items.count) posts")
         
         if isRefreshing {
             refreshControl.endRefreshing()
@@ -774,6 +800,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         }
     }
     
+    #if !targetEnvironment(macCatalyst)
     @available(iOS 18.0, *)
     @MainActor
     private func applyOptimizedSnapshotWithPreservation(anchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor?) async {
@@ -897,6 +924,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         // If user was scrolled down, keep original anchor
         return anchor
     }
+    #endif // !targetEnvironment(macCatalyst)
     
     // MARK: - Scroll Position Helpers
     
@@ -1097,8 +1125,9 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             controllerLogger.debug("❌ Unregistered from iOS 18+ restoration coordinator: \(identifier)")
         }
         
-        // Cancel tasks
-        observationTask?.cancel()
+        // Cancel tasks and stop observation
+        stateObserver?.stopObserving()
+        stateObserver = nil
         loadMoreTask?.cancel()
         
         // Stop timers
@@ -1119,10 +1148,12 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             NotificationCenter.default.removeObserver(observer)
         }
         
-        // Clean up iOS 18+ resources
+        // Clean up iOS 18+ resources (not available on Mac Catalyst)
+        #if !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             optimizedScrollSystem.cleanup()
         }
+        #endif
     }
     
     deinit {
@@ -1170,7 +1201,8 @@ extension FeedCollectionViewControllerIntegrated: UICollectionViewDelegate {
         // Save scroll position for restoration
         savePersistedScrollState()
         
-        // Preload content to prevent gaps (only for chronological feeds)
+        // Preload content to prevent gaps (only for chronological feeds, iOS 18+ native only)
+        #if !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *), stateManager.currentFeedType.isChronological {
             Task { @MainActor in
                 let visibleRange = collectionView.indexPathsForVisibleItems
@@ -1202,6 +1234,7 @@ extension FeedCollectionViewControllerIntegrated: UICollectionViewDelegate {
                 )
             }
         }
+        #endif // !targetEnvironment(macCatalyst)
     }
 }
 
@@ -1291,3 +1324,68 @@ final class FeedCollectionViewControllerIntegrated: NSViewController {
     }
 }
 #endif
+
+// MARK: - State Change Handlers Extension
+
+extension FeedCollectionViewControllerIntegrated {
+    
+    func updateRefreshControl(for loadingState: FeedStateManager.LoadingState) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            switch loadingState {
+            case .refreshing:
+                if !self.refreshControl.isRefreshing {
+                    self.refreshControl.beginRefreshing()
+                }
+            case .idle, .loading, .loadingMore, .error:
+                if self.refreshControl.isRefreshing {
+                    self.refreshControl.endRefreshing()
+                }
+            }
+        }
+    }
+    
+    func handleScrollAnchorChange(_ anchor: FeedStateManager.ScrollAnchor?) {
+        // This method can be used to respond to programmatic scroll anchor changes
+        // from the state manager (e.g., during state restoration)
+        guard let anchor = anchor, !anchor.isStale else { return }
+        
+        // Only apply if we're not currently user-scrolling
+        guard !collectionView.isTracking && !collectionView.isDragging else { return }
+        
+        controllerLogger.debug("🎯 Handling scroll anchor change: \(anchor.postID)")
+        
+        // Apply the scroll anchor if appropriate
+        Task {
+            await self.restoreScrollPositionFromAnchor(anchor)
+        }
+    }
+    
+    private func restoreScrollPositionFromAnchor(_ anchor: FeedStateManager.ScrollAnchor) async {
+        guard let index = stateManager.posts.firstIndex(where: { $0.id == anchor.postID }) else {
+            controllerLogger.warning("⚠️ Could not find post for scroll anchor: \(anchor.postID)")
+            return
+        }
+        
+        let indexPath = IndexPath(item: index, section: 0)
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Scroll to the post with the preserved offset
+            self.collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+            
+            // Adjust for the specific offset if needed
+            if anchor.offsetFromTop > 0 {
+                let currentOffset = self.collectionView.contentOffset
+                let adjustedOffset = CGPoint(
+                    x: currentOffset.x,
+                    y: currentOffset.y + anchor.offsetFromTop
+                )
+                self.collectionView.setContentOffset(adjustedOffset, animated: false)
+            }
+        }
+    }
+}
+

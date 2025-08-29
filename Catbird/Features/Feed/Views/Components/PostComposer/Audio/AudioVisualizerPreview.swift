@@ -29,6 +29,11 @@ struct AudioVisualizerPreview: View {
   @State private var currentTime: TimeInterval = 0
   @State private var playbackTimer: Timer?
   
+  // Waveform data
+  @State private var waveformAnalyzer = AudioWaveformAnalyzer()
+  @State private var waveformData: [WaveformPoint] = []
+  @State private var isLoadingWaveform = false
+  
   var body: some View {
     NavigationStack {
       ZStack {
@@ -64,6 +69,9 @@ struct AudioVisualizerPreview: View {
         Button("OK") { }
       } message: {
         Text(generationError ?? "An unknown error occurred")
+      }
+      .task {
+        await loadWaveformData()
       }
     }
   }
@@ -163,8 +171,8 @@ struct AudioVisualizerPreview: View {
           )
         
         VStack(spacing: 16) {
-          // Mock waveform
-          mockWaveformPreview
+          // Real waveform visualization
+          realWaveformPreview
           
           // Profile picture placeholder
           if let profile = appState.currentUserProfile,
@@ -216,23 +224,37 @@ struct AudioVisualizerPreview: View {
     .padding(.vertical, 20)
   }
   
-  private var mockWaveformPreview: some View {
+  private var realWaveformPreview: some View {
     HStack(alignment: .center, spacing: 2) {
-      ForEach(0..<40, id: \.self) { index in
-        let height: CGFloat = {
-          let progress = currentTime / audioDuration
-          let barProgress = Double(index) / 40.0
-          
-          // Simulate waveform data
+      if isLoadingWaveform {
+        // Show loading placeholder
+        ForEach(0..<40, id: \.self) { _ in
+          RoundedRectangle(cornerRadius: 1)
+            .fill(Color.white.opacity(0.3))
+            .frame(width: 3, height: 12)
+        }
+      } else if waveformData.isEmpty {
+        // Fallback visualization if waveform data failed to load
+        ForEach(0..<40, id: \.self) { index in
           let baseHeight = sin(Double(index) * 0.3) * 15 + 20
-          let activity = barProgress < progress ? 1.0 : 0.3
+          RoundedRectangle(cornerRadius: 1)
+            .fill(Color.white.opacity(0.4))
+            .frame(width: 3, height: max(4, CGFloat(baseHeight)))
+        }
+      } else {
+        // Use real waveform data
+        ForEach(Array(waveformData.enumerated()), id: \.offset) { index, waveformPoint in
+          let progress = currentTime / audioDuration
+          let barProgress = waveformPoint.timestamp / audioDuration
           
-          return CGFloat(baseHeight * activity)
-        }()
-        
-        RoundedRectangle(cornerRadius: 1)
-          .fill(Color.white.opacity(0.8))
-          .frame(width: 3, height: max(4, height))
+          // Scale amplitude to appropriate height
+          let baseHeight = CGFloat(waveformPoint.amplitude * 40 + 8) // Scale 0-1 to 8-48 pixels
+          let activity = barProgress <= progress ? 1.0 : 0.3
+          
+          RoundedRectangle(cornerRadius: 1)
+            .fill(Color.white.opacity(0.8 * activity))
+            .frame(width: 3, height: max(4, baseHeight))
+        }
       }
     }
     .animation(.easeInOut(duration: 0.3), value: currentTime)
@@ -241,8 +263,11 @@ struct AudioVisualizerPreview: View {
   private var playbackProgressView: some View {
     VStack(spacing: 12) {
       // Progress bar
-      ProgressView(value: currentTime, total: audioDuration)
-        .progressViewStyle(LinearProgressViewStyle(tint: Color.accentColor))
+      ProgressView(
+        value: max(0, min(currentTime, audioDuration)), 
+        total: max(0.1, audioDuration)
+      )
+      .progressViewStyle(LinearProgressViewStyle(tint: Color.accentColor))
       
       // Time indicators
       HStack {
@@ -285,7 +310,7 @@ struct AudioVisualizerPreview: View {
           .foregroundColor(.primary)
         
         VStack(alignment: .leading, spacing: 4) {
-          Label("1280×720 HD Quality", systemImage: "video")
+          Label("1920×1080 Full HD Quality", systemImage: "video")
           Label("30 FPS Smooth Animation", systemImage: "timer")
           Label("Your Theme Color", systemImage: "paintbrush")
           Label("Profile Picture Overlay", systemImage: "person.crop.circle")
@@ -352,6 +377,28 @@ struct AudioVisualizerPreview: View {
     }
   }
   
+  // MARK: - Waveform Loading
+  
+  private func loadWaveformData() async {
+    guard !isLoadingWaveform else { return }
+    
+    isLoadingWaveform = true
+    
+    do {
+      let audioData = try await waveformAnalyzer.analyzeAudioFile(at: audioURL)
+      await MainActor.run {
+        waveformData = audioData.waveformPoints
+        isLoadingWaveform = false
+      }
+    } catch {
+      print("Failed to analyze audio waveform: \(error)")
+      await MainActor.run {
+        isLoadingWaveform = false
+        // Keep waveformData empty, which will show a fallback visualization
+      }
+    }
+  }
+  
   // MARK: - Actions
   
   private func togglePlayback() {
@@ -393,14 +440,16 @@ struct AudioVisualizerPreview: View {
     Task {
       do {
         let username = appState.currentUserProfile?.handle.description ?? "user"
-        let profileImage: Image? = nil // TODO: Get actual profile image
+        let avatarURL = appState.currentUserProfile?.avatar?.description
+        let profileImage: Image? = nil // Profile will be fetched via avatarURL
         
         let videoURL = try await visualizerService.generateVisualizerVideo(
           audioURL: audioURL,
           profileImage: profileImage,
           username: username,
           accentColor: Color.accentColor,
-          duration: audioDuration
+          duration: audioDuration,
+          avatarURL: avatarURL
         )
         
         await MainActor.run {

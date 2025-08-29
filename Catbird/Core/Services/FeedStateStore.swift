@@ -195,6 +195,17 @@ final class FeedStateStore {
     }
   }
   
+  // Public method to trigger feed loading after authentication
+  func triggerPostAuthenticationFeedLoad() async {
+    logger.debug("Triggering post-authentication feed loading for all active feeds")
+    
+    for (identifier, stateManager) in stateManagers {
+      // Force initial load for all feeds after authentication, even if empty
+      logger.debug("Post-auth loading feed: \(identifier)")
+      await stateManager.loadInitialDataWithSystemFlag()
+    }
+  }
+  
   // iOS 18+: Smart refresh for all active feeds after long background
   private func performSmartRefreshForAllFeeds() async {
     logger.debug("Performing smart refresh for all feeds after long background")
@@ -260,7 +271,9 @@ final class FeedStateStore {
     
     // Only refresh if actually coming from background (not from inactive due to control center, etc.)
     guard oldPhase == .background else {
-      logger.debug("Not coming from background - skipping refresh logic")
+      logger.debug("Not coming from background - skipping refresh logic and preserving state")
+      // For non-background transitions, ensure all state managers maintain their state
+      await preserveExistingStateForAllManagers()
       return
     }
     
@@ -328,6 +341,18 @@ final class FeedStateStore {
       // Each state manager should restore its UI state without network operations
       await stateManager.restoreUIStateWithoutRefresh()
       logger.debug("Restored UI state for \(identifier) without refresh")
+    }
+  }
+  
+  // iOS 18+: Preserve existing state for all managers without any modifications
+  private func preserveExistingStateForAllManagers() async {
+    logger.debug("Preserving existing state for all feed managers")
+    
+    for (identifier, stateManager) in stateManagers {
+      // Ensure each state manager maintains its current state exactly as is
+      // This is important for preventing state loss during app switching, control center, etc.
+      await stateManager.preserveCurrentState()
+      logger.debug("Preserved existing state for \(identifier)")
     }
   }
 }

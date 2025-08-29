@@ -302,41 +302,64 @@ struct EnhancedFeedPost: View, Equatable {
   /// Renders the main post content
   @ViewBuilder
   private func mainPostContent(_ post: AppBskyFeedDefs.FeedViewPost) -> some View {
-    if case .appBskyFeedDefsReasonRepost = post.reason,
-       case let .appBskyFeedDefsPostView(parentReply) = post.reply?.parent {
-      // This is a repost with a parent reply
-      PostView(
-        post: post.post,
-        grandparentAuthor: parentReply.author,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .environment(\.feedPostID, post.id)
-      .id("\(post.id)-main-\(post.post.uri.uriString())")
-      .contentShape(Rectangle())
-      .allowsHitTesting(true)
-      .onTapGesture {
-        path.append(NavigationDestination.post(post.post.uri))
+    // Determine grandparent author for reposts of replies
+    let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = {
+      // Debug: Check if this is a repost
+      let isRepost = { () -> Bool in
+        if case .appBskyFeedDefsReasonRepost = post.reason { return true }
+        return false
+      }()
+      
+      // Debug: Check if there's reply context
+      let hasReplyContext = post.reply != nil
+      
+      // Debug logging
+      print("DEBUG EnhancedFeedPost - Post ID: \(post.id)")
+      print("DEBUG EnhancedFeedPost - Is repost: \(isRepost)")
+      print("DEBUG EnhancedFeedPost - Has reply context: \(hasReplyContext)")
+      if let reply = post.reply {
+        print("DEBUG EnhancedFeedPost - Reply parent type: \(reply.parent)")
       }
-    } else {
-      // Regular post or reply
-      PostView(
-        post: post.post,
-        grandparentAuthor: nil,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .environment(\.feedPostID, post.id)
-      .id("\(post.id)-main-\(post.post.uri.uriString())")
-      .contentShape(Rectangle())
-      .allowsHitTesting(true)
-      .onTapGesture {
-        path.append(NavigationDestination.post(post.post.uri))
+      
+      // If this is a repost, check the original post for reply context
+      if case .appBskyFeedDefsReasonRepost = post.reason {
+        // For reposts, the reply context is on the original post (post.post), not the repost wrapper
+        if case .knownType(let originalPostRecord) = post.post.record,
+           let originalPost = originalPostRecord as? AppBskyFeedPost,
+           let originalReply = originalPost.reply
+            {
+            let parentRef = originalReply.parent
+          // We need to find the parent post to get the author
+          // The parentRef only has URI and CID, we need the actual parent post data
+          // This should come from the feed data if available
+          print("DEBUG EnhancedFeedPost - Found original post reply context, parent URI: \(parentRef.uri)")
+          
+          // Check if we have parent post data in the feed reply context
+          if let replyContext = post.reply,
+             case let .appBskyFeedDefsPostView(parentPost) = replyContext.parent {
+            print("DEBUG EnhancedFeedPost - Found grandparent author from feed context: \(parentPost.author.handle)")
+            return parentPost.author
+          }
+        }
       }
+      print("DEBUG EnhancedFeedPost - No grandparent author found")
+      return nil
+    }()
+    
+    PostView(
+      post: post.post,
+      grandparentAuthor: grandparentAuthor,
+      isParentPost: false,
+      isSelectable: false,
+      path: $path,
+      appState: appState
+    )
+    .environment(\.feedPostID, post.id)
+    .id("\(post.id)-main-\(post.post.uri.uriString())")
+    .contentShape(Rectangle())
+    .allowsHitTesting(true)
+    .onTapGesture {
+      path.append(NavigationDestination.post(post.post.uri))
     }
   }
 }

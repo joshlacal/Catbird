@@ -8,6 +8,7 @@ import LazyPager
 #endif
 import Nuke
 import TipKit
+
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
@@ -24,7 +25,6 @@ struct UnifiedProfileView: View {
   @State private var isBlocking = false
   @State private var isMuting = false
   @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
-  @State private var scrollOffset: CGFloat = 0
     
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
 
@@ -96,53 +96,50 @@ struct UnifiedProfileView: View {
   
   @ViewBuilder
     private func profileContentView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .top) {
-                bannerHeaderView(profile: profile)
-                    .stretchy(with: scrollOffset)
-                    .zIndex(0)
-                
+        GeometryReader { outerGeometry in
+            let screenWidth = outerGeometry.size.width
+            let hPadding = horizontalPadding(for: screenWidth)
+            let maxWidth = maxContentWidth(for: screenWidth)
+            
+            
+            return ZStack {
                 ScrollView {
                     VStack(spacing: 0) {
-                        Color.clear.frame(height: 200)
-                            .background(
-                                GeometryReader { geometry in
-                                    Color.clear.preference(
-                                        key: ScrollOffsetPreferenceKey.self,
-                                        value: geometry.frame(in: .named("scrollView")).minY
-                                    )
-                                }
-                            )
-                        
-                        VStack(spacing: 16) {
+                        // Banner section
+                        bannerHeaderView(profile: profile)
+                            .flexibleHeaderContent()
+                            .background(Color.accentColor.opacity(0.05))
+
+                        // Content section
+                        VStack(spacing: 0) {
                             ProfileHeader(
                                 profile: profile,
                                 viewModel: viewModel,
                                 appState: appState,
                                 isEditingProfile: $isEditingProfile,
                                 path: $navigationPath,
-                                screenWidth: geometry.size.width,
-                                hideAvatar: false // Show avatar in pure SwiftUI context
+                                screenWidth: outerGeometry.size.width,
+                                hideAvatar: false
                             )
+                            .padding(.horizontal, 16)
                             
-                            followedBySection(profile: profile, geometry: geometry)
-                            tabSelectorSection(geometry: geometry)
+                            followedBySection(profile: profile, geometry: outerGeometry)
+                                .padding(.horizontal, 16)
+                            
+                            tabSelectorSection(geometry: outerGeometry)
+                                .padding(.horizontal, 16)
+                            
                             currentTabContentSection
                         }
-                        .frame(maxWidth: min(600, geometry.size.width))
+                        .padding(.horizontal, hPadding)
                     }
+                    .frame(maxWidth: maxWidth, alignment: .center)
                 }
-                .refreshable {
-                    await refreshAllContent()
-                }
-                .coordinateSpace(name: "scrollView")
-                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                    scrollOffset = value
-                }
-                .zIndex(1)
+                .flexibleHeaderScrollView()
+                .refreshable { await refreshAllContent() }
+                .ignoresSafeArea(edges: .top)
+                .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
             }
-            .ignoresSafeArea(edges: .top)
-            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         }
     }
   // MARK: - Helper Views
@@ -155,7 +152,7 @@ struct UnifiedProfileView: View {
         profileDID: profile.did.didString(),
         path: $navigationPath
       )
-      .padding(.horizontal, responsivePadding(for: geometry.size.width))
+      // Padding handled by parent container
     }
   }
   
@@ -166,7 +163,7 @@ struct UnifiedProfileView: View {
       selectedTab: $viewModel.selectedProfileTab,
       onTabChange: handleTabChange
     )
-    .padding(.horizontal, responsivePadding(for: geometry.size.width))
+    // Padding handled by parent container
   }
   
   private func handleTabChange(_ tab: ProfileTab) {
@@ -186,9 +183,16 @@ struct UnifiedProfileView: View {
     }
   }
 
-  // MARK: - Responsive Layout Helper
-  private func responsivePadding(for width: CGFloat) -> CGFloat {
-    max(16, (width - 600) / 2)
+  // MARK: - Responsive Layout Helpers
+  private func horizontalPadding(for width: CGFloat) -> CGFloat {
+    // Consistent padding for all screen sizes
+    return 0
+  }
+  
+  private func maxContentWidth(for screenWidth: CGFloat) -> CGFloat {
+    // On larger screens (iPad/Mac), constrain to 600pt max width
+    // On smaller screens (iPhone), use full available width
+    return min(screenWidth, 600)
   }
 
   // MARK: - New helper function for refreshing content
@@ -612,31 +616,43 @@ struct UnifiedProfileView: View {
   // MARK: - Banner Header View
   @ViewBuilder
   private func bannerHeaderView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-    GeometryReader { geometry in
-      Group {
-        if let bannerURL = profile.banner?.uriString() {
-          LazyImage(url: URL(string: bannerURL)) { state in
-            if let image = state.image {
-              image
-                .resizable()
-                .scaledToFill()
-            } else {
-              Rectangle()
-                .fill(Color.accentColor.opacity(0.3))
-            }
+    ZStack(alignment: .center) {
+      if let bannerURL = profile.banner?.uriString() {
+        LazyImage(url: URL(string: bannerURL)) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .scaledToFill() // Fill width, crop vertically if needed
+              .overlay(Color.black.opacity(0.15).blendMode(.overlay))
+          } else if state.error != nil {
+            Rectangle().fill(Color.accentColor.opacity(0.25))
+          } else {
+            Rectangle().fill(Color.accentColor.opacity(0.15))
+              .overlay(ProgressView().tint(.white))
           }
-        } else {
-          Rectangle()
-            .fill(Color.accentColor.opacity(0.3))
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+      } else {
+        Rectangle()
+          .fill(Color.accentColor.opacity(0.25))
       }
-      .frame(
-        width: geometry.size.width,
-        height: geometry.size.height + geometry.safeAreaInsets.top
-      )
-      .offset(y: -geometry.safeAreaInsets.top)
     }
-    .frame(height: 200)
+    .contentShape(Rectangle())
+    .accessibilityLabel("Profile banner")
+  }
+  
+  // Responsive banner height based on screen size
+  private var responsiveBannerHeight: CGFloat {
+    #if os(iOS)
+    switch UIScreen.main.bounds.width {
+    case ..<375: return 120  // Small iPhones (SE)
+    case ..<430: return 140  // Standard iPhones (iPhone 16, 15, etc.)
+    default: return 160      // Large phones (iPhone 16 Pro Max, etc.)
+    }
+    #else
+    return 180 // macOS - slightly larger for desktop experience
+    #endif
   }
 
   // MARK: - View Components
@@ -687,26 +703,59 @@ struct UnifiedProfileView: View {
     
   @ViewBuilder
     private func emptyContentView(_ title: String, _ message: String) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 20) {
             Spacer()
             
-            Image(systemName: "square.stack.3d.up.slash")
-                .appFont(size: 48)
-                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
+            // Tab-specific icons
+            Image(systemName: emptyStateIcon(for: title))
+                .appFont(size: 56)
+                .foregroundStyle(.secondary.opacity(0.6))
+                .symbolEffect(.pulse)
             
-            Text(title)
-                .appFont(AppTextRole.title3)
-                .fontWeight(.semibold)
-                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
-            
-            Text(message)
-                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+            VStack(spacing: 8) {
+                Text(title)
+                    .appFont(AppTextRole.title2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                
+                Text(enhancedEmptyMessage(for: title, message: message))
+                    .appFont(AppTextRole.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
             
             Spacer()
         }
-        .frame(maxWidth: .infinity, minHeight: 300)
+        .frame(maxWidth: .infinity, minHeight: 280)
+        .background(Color.clear)
+    }
+    
+    // Enhanced empty state messaging
+    private func emptyStateIcon(for title: String) -> String {
+        switch title.lowercased() {
+        case "no posts": return "text.bubble"
+        case "no replies": return "arrowshape.turn.up.left"
+        case "no media posts": return "photo.on.rectangle"
+        case "no likes": return "heart"
+        case "no lists": return "list.bullet.rectangle"
+        case "no feeds": return "rectangle.grid.1x2"
+        default: return "square.stack.3d.up.slash"
+        }
+    }
+    
+    private func enhancedEmptyMessage(for title: String, message: String) -> String {
+        if viewModel.isCurrentUser {
+            switch title.lowercased() {
+            case "no posts": return "Share your thoughts! Your posts will appear here."
+            case "no replies": return "Join conversations by replying to posts."
+            case "no media posts": return "Share photos and videos to see them here."
+            case "no likes": return "Like posts to save them for later."
+            default: return message
+            }
+        } else {
+            return message
+        }
     }
     
   // MARK: - View Configuration
@@ -847,7 +896,7 @@ struct UnifiedProfileView: View {
       Button {
         toggleMute()
       } label: {
-        Label(isMuting ? "Unmute User" : "Mute User", 
+        Label(isMuting ? "Unmute User" : "Mute User",
               systemImage: isMuting ? "speaker.wave.2" : "speaker.slash")
       }
       
@@ -867,45 +916,40 @@ struct UnifiedProfileView: View {
 struct ProfileHeader: View {
     let profile: AppBskyActorDefs.ProfileViewDetailed
     let viewModel: ProfileViewModel
-    let appState: AppState  // Added AppState to use GraphManager
+    let appState: AppState
     @Binding var isEditingProfile: Bool
     @Binding var path: NavigationPath
     let screenWidth: CGFloat
-    let hideAvatar: Bool // New parameter to hide avatar when used in UIKit
+    let hideAvatar: Bool
     
     @Environment(\.colorScheme) private var colorScheme
-    @State private var showingFollowersSheet = false
-    @State private var showingFollowingSheet = false
     @State private var isFollowButtonLoading = false
-    // Track local follow state to handle UI update before server sync
     @State private var localIsFollowing: Bool = false
     @State private var isShowingProfileImageViewer = false
     @Namespace private var imageTransition
     
     private let avatarSize: CGFloat = 80
-    private let bannerHeight: CGFloat = 150
     
-    // Responsive padding function
-    private var responsivePadding: CGFloat {
-        max(16, (screenWidth - 600) / 2)
-    }
+    // Standardized spacing constants
+    private let horizontalPadding: CGFloat = 16
+    private let verticalSpacing: CGFloat = 12
     
     private let logger = Logger(subsystem: "blue.catbird", category: "ProfileHeader")
     
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.none) {
-            // Banner and Avatar (only show if not hiding avatar)
-            if !hideAvatar {
-                bannerView
-            }
-            
-            // No additional spacing needed when avatar is hidden
-            // The UIKit header handles avatar positioning and overlap properly
-            
-            // Profile info content
+        // Use ZStack to allow avatar to overlap the banner area above
+        ZStack(alignment: .topLeading) {
+            // Main content with minimal top padding for overlapping avatar
             profileInfoContent
+                .padding(.top, hideAvatar ? verticalSpacing : 8)
+
+            // Avatar positioned to overlap the banner above
+            if !hideAvatar {
+                avatarView
+                    .offset(y: -avatarSize / 2)
+                    .padding(.leading, horizontalPadding)
+            }
         }
-        .frame(maxWidth: .infinity)
 //        .sheet(isPresented: $showingFollowersSheet) {
 //            followersSheet
 //        }
@@ -936,47 +980,30 @@ struct ProfileHeader: View {
         }
     }
     
-    private var bannerView: some View {
-        Group {
-            if !hideAvatar {
-                // Show avatar only when not handled by UIKit header
-                ZStack(alignment: .bottomLeading) {
-                    // Banner background
-                    Color.clear
-                        .frame(height: bannerHeight)
-                    
-                    // Avatar positioned at bottom left, overlapping banner
-                    LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-                        if let image = state.image {
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        } else {
-                            Circle().fill(Color.secondary.opacity(0.3))
-                        }
-                    }
-                    .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
-                    .allowsHitTesting(true)
-                    .onTapGesture {
-                        isShowingProfileImageViewer = true
-                    }
-                    .frame(width: avatarSize, height: avatarSize)
-                    .clipShape(Circle())
-                    .background(
-                        Circle()
-                            .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
-                            .scaleEffect((avatarSize + 8) / avatarSize)
-                    )
-                    .offset(x: responsivePadding, y: avatarSize / 2)
-                    .zIndex(1000)
-                }
+    private var avatarView: some View {
+        LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+            if let image = state.image {
+                image.resizable().aspectRatio(contentMode: .fill)
             } else {
-                // Empty when avatar is in UIKit header
-                EmptyView()
+                Circle().fill(Color.secondary.opacity(0.3))
             }
         }
+        .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+        .onTapGesture {
+            isShowingProfileImageViewer = true
+        }
+        .frame(width: avatarSize, height: avatarSize)
+        .clipShape(Circle())
+        .background(
+            Circle()
+                .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
+                .scaleEffect((avatarSize + 8) / avatarSize)
+        )
+        .zIndex(10)
     }
     
     private var profileInfoContent: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        VStack(alignment: .leading, spacing: 6) {
             // Top section with edit/follow button aligned to trailing edge
             HStack(alignment: .top) {
                 Spacer()
@@ -990,60 +1017,50 @@ struct ProfileHeader: View {
                         .allowsHitTesting(true)
                 }
             }
-            .padding(.horizontal, responsivePadding)
-            .padding(.top, hideAvatar ? DesignTokens.Spacing.xs : DesignTokens.Spacing.none) // Minimal spacing when avatar is in header
+            .padding(.top, 4)
             
             // Display name and handle
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    
-                    Text(profile.displayName ?? profile.handle.description)
-                        .enhancedAppHeadline()
-                        .fontWeight(.bold)
-                        .lineLimit(nil)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-            HStack(spacing: DesignTokens.Spacing.none) {
-
-                Text("@\(profile.handle)")
-                    .enhancedAppSubheadline()
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(profile.displayName ?? profile.handle.description)
+                    .enhancedAppHeadline()
+                    .fontWeight(.bold)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                 
-                if profile.viewer?.followedBy != nil {
-                    FollowsBadgeView()
-                        .spacingXS(.leading)
+                HStack(spacing: 8) {
+                    Text("@\(profile.handle)")
+                        .enhancedAppSubheadline()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    
+                    if profile.viewer?.followedBy != nil {
+                        FollowsBadgeView()
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            }
-            .padding(.horizontal, responsivePadding)
             
             // Bio
             if let description = profile.description, !description.isEmpty {
                 Text(description)
                     .enhancedAppBody()
                     .lineLimit(nil)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, responsivePadding)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             
             // Stats
-            HStack(spacing: DesignTokens.Spacing.xl) {
+            HStack(spacing: 24) {
                 // Following
                 Button(action: {
                     
                     path.append(ProfileNavigationDestination.following(profile.did.didString()))
                     
                 }) {
-                    HStack(spacing: DesignTokens.Spacing.xs) {
+                    HStack(spacing: 6) {
                         Text("\(profile.followsCount ?? 0)")
-                            .fixedSize(horizontal: true, vertical: false)
                             .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                         
                         Text("Following")
-                            .fixedSize(horizontal: true, vertical: false)
                             .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -1054,14 +1071,12 @@ struct ProfileHeader: View {
                 Button(action: {
                     path.append(ProfileNavigationDestination.followers(profile.did.didString()))
                 }) {
-                    HStack(spacing: DesignTokens.Spacing.xs) {
+                    HStack(spacing: 6) {
                         Text("\(profile.followersCount ?? 0)")
-                            .fixedSize(horizontal: true, vertical: false)
                             .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                         
                         Text("Followers")
-                            .fixedSize(horizontal: true, vertical: false)
                             .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -1070,10 +1085,8 @@ struct ProfileHeader: View {
                 
                 Spacer()
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, responsivePadding)
         }
-        .padding(.bottom, hideAvatar ? 0 : DesignTokens.Spacing.xs) // No bottom padding when avatar is in header for tighter spacing
+        .padding(.bottom, verticalSpacing)
     }
     
     private var editProfileButton: some View {
@@ -1259,29 +1272,72 @@ struct ProfileImageViewerView: View {
     
     var body: some View {
         ZStack {
-          Color.black
-            .opacity(opacity)
-            .ignoresSafeArea()
-
-        if let avatarURI = avatar {
-            let imageUrl = avatarURI.uriString()
+            Color.black
+                .opacity(opacity)
+                .ignoresSafeArea()
             
+            if let avatarURI = avatar {
+                let imageUrl = avatarURI.uriString()
+                
 #if os(iOS)
-            LazyPager(data: [imageUrl]) { image in
+                LazyPager(data: [imageUrl]) { image in
+                    GeometryReader { geometry in
+                        LazyImage(url: URL(string: image)) { state in
+                            if let fullImage = state.image {
+                                fullImage
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                                    .id(image) // Use the image string for proper identification
+                                    .matchedTransitionSource(id: image, in: namespace)
+                                
+                            } else if state.error != nil {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .appFont(AppTextRole.largeTitle)
+                                    .foregroundColor(.white)
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                            } else {
+                                ProgressView()
+                                    .tint(.white)
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                            }
+                        }
+                        .pipeline(ImageLoadingManager.shared.pipeline)
+                        .priority(.high)
+                        .processors([
+                            ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
+                        ])
+                    }
+                }
+                .zoomable(min: 1.0, max: 3.0, doubleTapGesture: .scale(2.0))
+                .onDismiss(backgroundOpacity: $opacity) {
+                    isPresented = false
+                }
+                .settings { config in
+                    config.dismissVelocity = 1.5
+                    config.dismissTriggerOffset = 0.2
+                    config.dismissAnimationLength = 0.3
+                    config.fullFadeOnDragAt = 0.3
+                    config.pinchGestureEnableOffset = 15
+                    config.shouldCancelSwiftUIAnimationsOnDismiss = false
+                }
+                .id("pager-\(imageUrl)")
+#else
+                // macOS: Simple image viewer without LazyPager
                 GeometryReader { geometry in
-                    LazyImage(url: URL(string: image)) { state in
+                    LazyImage(url: URL(string: imageUrl)) { state in
                         if let fullImage = state.image {
                             fullImage
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                                .id(image) // Use the image string for proper identification
-                                .matchedTransitionSource(id: image, in: namespace)
-
+                                .id(imageUrl)
+                                .matchedTransitionSource(id: imageUrl, in: namespace)
                         } else if state.error != nil {
                             Image(systemName: "exclamationmark.triangle")
-                                .appFont(AppTextRole.largeTitle)
+                                .font(.largeTitle)
                                 .foregroundColor(.white)
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                         } else {
@@ -1296,243 +1352,89 @@ struct ProfileImageViewerView: View {
                         ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
                     ])
                 }
-            }
-            .zoomable(min: 1.0, max: 3.0, doubleTapGesture: .scale(2.0))
-            .onDismiss(backgroundOpacity: $opacity) {
-                isPresented = false
-            }
-            .settings { config in
-                config.dismissVelocity = 1.5
-                config.dismissTriggerOffset = 0.2
-                config.dismissAnimationLength = 0.3
-                config.fullFadeOnDragAt = 0.3
-                config.pinchGestureEnableOffset = 15
-                config.shouldCancelSwiftUIAnimationsOnDismiss = false
-            }
-            .id("pager-\(imageUrl)")
-#else
-            // macOS: Simple image viewer without LazyPager
-            GeometryReader { geometry in
-                LazyImage(url: URL(string: imageUrl)) { state in
-                    if let fullImage = state.image {
-                        fullImage
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                            .id(imageUrl)
-                            .matchedTransitionSource(id: imageUrl, in: namespace)
-                    } else if state.error != nil {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundColor(.white)
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                    } else {
-                        ProgressView()
-                            .tint(.white)
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                    }
-                }
-                .pipeline(ImageLoadingManager.shared.pipeline)
-                .priority(.high)
-                .processors([
-                    ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
-                ])
-            }
-            .onTapGesture {
-                isPresented = false
-            }
-            .id("viewer-\(imageUrl)")
-#endif
-        } else {
-            // Fallback for when no image is available
-            VStack {
-                Text("No image available")
-                    .foregroundColor(.white)
-                Button("Close") {
+                .onTapGesture {
                     isPresented = false
                 }
-                .padding()
-                .background(Color.gray.opacity(0.5))
-                .cornerRadius(8)
+                .id("viewer-\(imageUrl)")
+#endif
+            } else {
+                // Fallback for when no image is available
+                VStack {
+                    Text("No image available")
+                        .foregroundColor(.white)
+                    Button("Close") {
+                        isPresented = false
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.5))
+                    .cornerRadius(8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black.opacity(0.8))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.8))
         }
     }
-    }
 }
-
-// MARK: - Feed Row View
-struct FeedRowView: View {
-    let feed: AppBskyFeedDefs.GeneratorView
-    
-    var body: some View {
-        HStack(spacing: 14) {
-            // Feed image
-            if let avatarURL = feed.avatar {
-                LazyImage(url: URL(string: avatarURL.uriString())) { state in
-                    if let image = state.image {
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } else {
-                        Rectangle().fill(Color.secondary.opacity(0.3))
+    // MARK: - Feed Row View
+    struct FeedRowView: View {
+        let feed: AppBskyFeedDefs.GeneratorView
+        
+        var body: some View {
+            HStack(spacing: 14) {
+                // Feed image
+                if let avatarURL = feed.avatar {
+                    LazyImage(url: URL(string: avatarURL.uriString())) { state in
+                        if let image = state.image {
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            Rectangle().fill(Color.secondary.opacity(0.3))
+                        }
+                    }
+                    .frame(width: 50, height: 50)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(width: 50, height: 50)
+                }
+                
+                // Feed info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(feed.displayName)
+                        .appFont(AppTextRole.headline)
+                        .lineLimit(1)
+                    
+                    Text("by @\(feed.creator.handle)")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    
+                    if let description = feed.description, !description.isEmpty {
+                        Text(description)
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .padding(.top, 2)
+                    }
+                    
+                    // Show likes count if available
+                    if feed.likeCount ?? 0 > 0 {
+                        Text("\(feed.likeCount ?? 0) likes")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: 50, height: 50)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 50, height: 50)
-            }
-            
-            // Feed info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(feed.displayName)
-                    .appFont(AppTextRole.headline)
-                    .lineLimit(1)
                 
-                Text("by @\(feed.creator.handle)")
-                    .appFont(AppTextRole.subheadline)
+                Spacer()
+                
+                // Chevron indicator
+                Image(systemName: "chevron.right")
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                
-                if let description = feed.description, !description.isEmpty {
-                    Text(description)
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .padding(.top, 2)
-                }
-                
-                // Show likes count if available
-                if feed.likeCount ?? 0 > 0 {
-                    Text("\(feed.likeCount ?? 0) likes")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    .appFont(AppTextRole.caption)
             }
-            
-            Spacer()
-            
-            // Chevron indicator
-            Image(systemName: "chevron.right")
-                .foregroundStyle(.secondary)
-                .appFont(AppTextRole.caption)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
     }
-}
-
-// MARK: - SwiftUI Stretchy Header for UICollectionView
-//struct UICollectionViewStretchyHeader: View {
-//    let profile: AppBskyActorDefs.ProfileViewDetailed
-//    let scrollOffset: CGFloat
-//    
-//    var body: some View {
-//        ZStack {
-//            // Banner image with stretchy effect
-//            Group {
-//                if let bannerURL = profile.banner?.uriString() {
-//                    LazyImage(url: URL(string: bannerURL)) { state in
-//                        if let image = state.image {
-//                            image
-//                                .resizable()
-//                                .scaledToFill()
-//                        } else {
-//                            Rectangle()
-//                                .fill(Color.accentColor.opacity(0.3))
-//                        }
-//                    }
-//                } else {
-//                    Rectangle()
-//                        .fill(Color.accentColor.opacity(0.3))
-//                }
-//            }
-//            .stretchy(with: scrollOffset)
-//            
-//            // Profile image overlay (50% overlapping)
-//            VStack {
-//                Spacer()
-//                HStack {
-//                    LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-//                        if let image = state.image {
-//                            image
-//                                .resizable()
-//                                .scaledToFill()
-//                        } else {
-//                            Circle()
-//                                .fill(Color.secondary.opacity(0.3))
-//                        }
-//                    }
-//                    .frame(width: 80, height: 80)
-//                    .clipShape(Circle())
-//                    .background(
-//                        Circle()
-//                            .stroke(Color(.systemBackground), lineWidth: 4)
-//                    )
-//                    .shadow(radius: 8)
-//                    .padding(.leading, 16)
-//                    .offset(y: 40) // 50% overlap
-//                    
-//                    Spacer()
-//                }
-//            }
-//        }
-//        .frame(height: 200)
-//        .clipped()
-//        .ignoresSafeArea(edges: .top)
-//    }
-//}
-
-// MARK: - Stretchy Header Extensions
-// MARK: - Preference Key for Scroll Offset
-struct ScrollOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-extension View {
-    // this is defined elsewhere but we're keeping it for reference
-//    func stretchy() -> some View {
-//        visualEffect { effect, geometry in
-//            let currentHeight = geometry.size.height
-//            let scrollOffset = geometry.frame(in: .scrollView).minY
-//            let positiveOffset = max(0, scrollOffset)
-//            
-//            let newHeight = currentHeight + positiveOffset
-//            let scaleFactor = newHeight / currentHeight
-//            
-//            // Limit scale factor to prevent excessive stretching
-//            let clampedScaleFactor = min(scaleFactor, 1.5)
-//            
-//            return effect.scaleEffect(
-//                x: clampedScaleFactor, y: clampedScaleFactor,
-//                anchor: .bottom
-//            )
-//        }
-//    }
     
-    func stretchy(with externalOffset: CGFloat) -> some View {
-        visualEffect { effect, geometry in
-            let currentHeight = geometry.size.height
-            let positiveOffset = max(0, externalOffset)
-            
-            let newHeight = currentHeight + positiveOffset
-            let scaleFactor = newHeight / currentHeight
-            
-            // Limit scale factor to prevent excessive stretching
-            let clampedScaleFactor = min(scaleFactor, 1.5)
-            
-            return effect.scaleEffect(
-                x: clampedScaleFactor, y: clampedScaleFactor,
-                anchor: .bottom
-            )
-        }
-    }
-}
-
 

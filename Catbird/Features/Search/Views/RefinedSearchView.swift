@@ -119,12 +119,19 @@ struct RefinedSearchView: View {
     private var contentTypeSegment: some View {
         Group {
             if viewModel.searchState == .results, viewModel.hasMultipleResultTypes {
-                ContentTypeSegmentControl(selectedContentType: $viewModel.selectedContentType)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Material.bar)
-                    .animation(.smooth, value: viewModel.hasMultipleResultTypes)
-                    .zIndex(1) // Ensure control stays on top
+                VStack(spacing: 8) {
+                    // Sort selector
+                    SearchSortSelector(selectedSort: $viewModel.searchSort)
+                        .padding(.horizontal, 16)
+                    
+                    // Content type selector
+                    ContentTypeSegmentControl(selectedContentType: $viewModel.selectedContentType)
+                        .padding(.horizontal, 16)
+                }
+                .padding(.vertical, 12)
+                .background(Material.bar)
+                .animation(.smooth, value: viewModel.hasMultipleResultTypes)
+                .zIndex(1) // Ensure control stays on top
             }
         }
     }
@@ -178,7 +185,7 @@ struct RefinedSearchView: View {
     }
     
     private var loadingView: some View {
-        LoadingView(message: "Searching for \"\(viewModel.searchQuery)\"...")
+        SearchLoadingSkeletonView()
     }
     
     // MARK: - Search Menu

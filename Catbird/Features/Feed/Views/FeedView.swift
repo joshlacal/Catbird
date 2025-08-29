@@ -66,15 +66,11 @@ struct FeedView: View {
         if !isInitialized {
           isInitialized = true
           feedStateStore.setModelContext(modelContext)
-          
-          // Only load initial data on first initialization if posts are empty
-          if stateManager.posts.isEmpty {
-            logger.debug("Loading initial data for empty feed on first init: \(fetch.identifier)")
-            await stateManager.loadInitialData()
-          }
-        } else if stateManager.posts.isEmpty && stateManager.currentFeedType.identifier != fetch.identifier {
-          // Only load if switching to a different feed type that has no data
-          logger.debug("Loading initial data for new feed type: \(fetch.identifier)")
+        }
+        
+        // Always attempt to load initial data if posts are empty
+        if stateManager.posts.isEmpty {
+          logger.debug("Loading initial data for empty feed: \(fetch.identifier)")
           await stateManager.loadInitialData()
         } else {
           logger.debug("Skipping initial data load - feed already has \(stateManager.posts.count) posts")

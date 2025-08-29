@@ -78,7 +78,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var pendingLoadTask: Task<Void, Never>?
   
   // MARK: - UIUpdateLink for coordinated UI updates
+  #if !targetEnvironment(macCatalyst)
+  @available(iOS 18.0, *)
   private var updateLink: UIUpdateLink?
+  #endif
   private var scrollPositionTracker = ThreadScrollPositionTracker()
 
   private var parentPosts: [ParentPost] = []
@@ -180,16 +183,22 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   deinit {
     // Clean up UIUpdateLink
-    updateLink?.isEnabled = false
-    updateLink = nil
+    #if !targetEnvironment(macCatalyst)
+    if #available(iOS 18.0, *) {
+      updateLink?.isEnabled = false
+      updateLink = nil
+    }
+    #endif
     
     // Clean up iOS 18+ optimized scroll system
+    #if !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *) {
-      let scrollSystem = optimizedScrollSystem
-      Task { @MainActor in
-        scrollSystem.cleanup()
-      }
+        let scrollSystem = optimizedScrollSystem
+        Task { @MainActor in
+            scrollSystem.cleanup()
+        }
     }
+    #endif
     
     // Remove theme observer
     NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ThemeChanged"), object: nil)
@@ -231,9 +240,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     super.viewDidAppear(animated)
     
     // Setup UIUpdateLink now that view is in window hierarchy
-    if updateLink == nil {
+    #if !targetEnvironment(macCatalyst)
+    if #available(iOS 18.0, *), updateLink == nil {
       setupUIUpdateLink()
     }
+    #endif
     
     // Ensure theming is applied after view appears (helps with material effects)
     DispatchQueue.main.async {
@@ -368,6 +379,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   // MARK: - UIUpdateLink Setup
+  #if !targetEnvironment(macCatalyst)
+  @available(iOS 18.0, *)
   private func setupUIUpdateLink() {
     guard let windowScene = view.window?.windowScene else {
       controllerLogger.warning("Cannot setup UIUpdateLink: windowScene not available")
@@ -390,6 +403,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     controllerLogger.debug("UIUpdateLink setup completed for smooth transitions")
   }
+  #endif
 
   // MARK: - UI Setup
   private func setupUI() {
@@ -1102,7 +1116,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     // Enable smooth transitions during the update
-    updateLink?.requiresContinuousUpdates = true
+    #if !targetEnvironment(macCatalyst)
+    if #available(iOS 18.0, *) {
+      updateLink?.requiresContinuousUpdates = true
+    }
+    #endif
     
     let oldestParent = parentPosts.last!
     
@@ -1254,6 +1272,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Use sophisticated position preservation like feed view
     Task { @MainActor in
+      #if !targetEnvironment(macCatalyst)
       if #available(iOS 18.0, *) {
         await applyParentPostsWithPrecisePreservation(
           newParentsCount: newParentsCount,
@@ -1264,13 +1283,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         // Fallback to simple position preservation for older iOS
         await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
       }
+      #else
+      // Fallback to simple position preservation for Catalyst
+      await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
+      #endif
       
       // Clean up loading state after positioning
       isLoadingMoreParents = false
       updateLoadingCell(isLoading: false)
       
       // Disable continuous updates now that loading is complete
-      updateLink?.requiresContinuousUpdates = false
+      #if !targetEnvironment(macCatalyst)
+      if #available(iOS 18.0, *) {
+        updateLink?.requiresContinuousUpdates = false
+      }
+      #endif
       
       controllerLogger.debug("⬆️ LOAD MORE PARENTS: Successfully added \(newParentsCount) parents with precise position preservation")
     }
@@ -1278,6 +1305,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   // MARK: - Precise Position Preservation for Parent Posts (iOS 18+)
   
+  #if !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   @MainActor
   private func applyParentPostsWithPrecisePreservation(
@@ -1310,7 +1338,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     controllerLogger.debug("✅ Applied precise position preservation for \(newParentsCount) parent posts")
   }
+  #endif
   
+  #if !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   @MainActor
   private func applyAtomicParentUpdateWithPreservation(
@@ -1354,7 +1384,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     CATransaction.setDisableActions(true)
     
     // Enable UIUpdateLink for smooth coordination
-    updateLink?.requiresContinuousUpdates = true
+    #if !targetEnvironment(macCatalyst)
+    if #available(iOS 18.0, *) {
+      updateLink?.requiresContinuousUpdates = true
+    }
+    #endif
     
     // Step 3: Set estimated position immediately to prevent visual flash
     if let targetOffset = targetOffset {
@@ -1380,6 +1414,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     controllerLogger.debug("✅ Applied atomic parent update with precise position preservation")
   }
+  #endif
   
   @MainActor
   private func applyParentPostsWithSimplePreservation(newParentsCount: Int) async {
@@ -1403,6 +1438,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   // MARK: - Thread-Specific Anchor Capture
   
+  #if !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   @MainActor
   private func captureThreadPreciseAnchor(from collectionView: UICollectionView) -> OptimizedScrollPreservationSystem.PreciseScrollAnchor? {
@@ -1463,8 +1499,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return anchor
   }
   
-  // MARK: - Thread-Specific Position Calculation
-  
   @available(iOS 18.0, *)
   @MainActor
   private func calculateThreadTargetOffset(
@@ -1520,6 +1554,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     return CGPoint(x: 0, y: clampedOffsetY)
   }
+  #endif
   
   // MARK: - Scroll Position Restoration with Retry Logic
   

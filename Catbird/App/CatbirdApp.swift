@@ -148,11 +148,15 @@ struct CatbirdApp: App {
   
   // MARK: - State
   // Use singleton AppState to prevent multiple instances
-  private let appState = AppState.shared
+  internal let appState = AppState.shared
   @State private var didInitialize = false
   @State private var isAuthenticatedWithBiometric = false
   @State private var showBiometricPrompt = false
   @State private var hasBiometricCheck = false
+  
+  // MARK: - State Restoration
+  @State internal var hasRestoredState = false
+  @State private var restorationIdentifier = "CatbirdMainApp"
 
   // MARK: - SwiftData
   let modelContainer: ModelContainer
@@ -322,10 +326,21 @@ struct CatbirdApp: App {
           
           // Configure window for state restoration
           window.restorationIdentifier = "MainWindow"
+          
+          // Enable state restoration for the window
+          window.shouldGroupAccessibilityChildren = true
+          
+          // Trigger state restoration if needed
+          Task {
+            await restoreApplicationState()
+          }
         }
         #elseif os(macOS)
         // macOS doesn't need app delegate setup or window scene handling
         // URL handler registration will be handled differently on macOS
+        Task {
+          await restoreApplicationState()
+        }
         #endif
         
         #if os(iOS)
@@ -344,6 +359,11 @@ struct CatbirdApp: App {
       .onChange(of: scenePhase) { oldPhase, newPhase in
         Task { @MainActor in
           await FeedStateStore.shared.handleScenePhaseChange(newPhase)
+          
+          // Save app state when backgrounding
+          if newPhase == .background {
+            saveApplicationState()
+          }
         }
       }
       #if os(iOS)
@@ -598,31 +618,59 @@ struct CatbirdApp: App {
   }
   
   #if os(iOS)
-  // Reset authentication when app goes to background
+  // Track background time for biometric timeout
   private func setupBackgroundNotification() {
     NotificationCenter.default.addObserver(
       forName: UIApplication.didEnterBackgroundNotification,
       object: nil,
       queue: .main
     ) { _ in
-      // Reset authentication state when app enters background
-      self.isAuthenticatedWithBiometric = false
-      // Reset biometric check to require re-authentication on foreground
-      self.hasBiometricCheck = false
+      // Store background time for timeout check
+      UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "backgroundTime")
+    }
+    
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      // Check if we should require re-authentication based on timeout
+      let backgroundTime = UserDefaults.standard.double(forKey: "backgroundTime")
+      let timeInBackground = Date().timeIntervalSince1970 - backgroundTime
+      
+      // Only require re-auth if app was backgrounded for more than 5 minutes
+      if timeInBackground > 300 { // 5 minutes
+        self.isAuthenticatedWithBiometric = false
+        self.hasBiometricCheck = false
+      }
     }
   }
   #elseif os(macOS)
-  // Reset authentication when app resigns active (macOS equivalent)
+  // Track inactive time for biometric timeout (macOS equivalent)
   private func setupBackgroundNotification() {
     NotificationCenter.default.addObserver(
       forName: NSApplication.didResignActiveNotification,
       object: nil,
       queue: .main
     ) { _ in
-      // Reset authentication state when app resigns active
-      self.isAuthenticatedWithBiometric = false
-      // Reset biometric check to require re-authentication when active again
-      self.hasBiometricCheck = false
+      // Store inactive time for timeout check
+      UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "inactiveTime")
+    }
+    
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      // Check if we should require re-authentication based on timeout
+      let inactiveTime = UserDefaults.standard.double(forKey: "inactiveTime")
+      let timeInactive = Date().timeIntervalSince1970 - inactiveTime
+      
+      // Only require re-auth if app was inactive for more than 5 minutes
+      if timeInactive > 300 { // 5 minutes
+        self.isAuthenticatedWithBiometric = false
+        self.hasBiometricCheck = false
+      }
     }
   }
   #endif

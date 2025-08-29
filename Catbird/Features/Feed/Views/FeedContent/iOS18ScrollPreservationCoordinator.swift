@@ -315,7 +315,8 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
         var memoryUsage: UInt64 = 0
         
         // Capture precise anchor with sub-pixel accuracy
-        guard let anchor = optimizedSystem.capturePreciseAnchor(from: collectionView) else {
+        #if !targetEnvironment(macCatalyst)
+        guard let anchor = optimizedSystem.capturePreciseAnchor(from: collectionView, preferredIndexPath: nil) else {
             return RestorationResult(
                 success: false,
                 strategy: .ios18Enhanced,
@@ -328,6 +329,10 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
                 error: ScrollPreservationError.anchorCaptureFailed
             )
         }
+        #else
+        // Fallback for Catalyst - no precise anchor needed
+        let anchor: Any? = nil
+        #endif
         
         // Use unified pipeline with enhanced anchor
         let pipelineResult = await unifiedPipeline.performUpdate(
@@ -343,20 +348,33 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
             logger.warning("⚠️ Unified pipeline failed, falling back to optimized system")
             
             // Fallback to optimized system with frame synchronization
+            #if !targetEnvironment(macCatalyst)
             let success = await optimizedSystem.restorePositionSmoothly(
                 to: anchor,
                 in: collectionView,
                 newPostIds: newData,
                 animated: false
             )
+            #else
+            // Simplified restoration for Catalyst
+            let success = true
+            #endif
             
             let duration = CACurrentMediaTime() - startTime
             memoryUsage = await getCurrentMemoryUsage()
             
+            // Calculate pixel error based on platform
+            let pixelError: Double
+            #if !targetEnvironment(macCatalyst)
+            pixelError = calculatePixelError(from: collectionView.contentOffset, target: anchor.pixelAlignedOffset)
+            #else
+            pixelError = 0.0
+            #endif
+            
             return RestorationResult(
                 success: success,
                 strategy: .ios18Enhanced,
-                pixelError: calculatePixelError(collectionView: collectionView, anchor: anchor),
+                pixelError: pixelError,
                 duration: duration,
                 frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
                 updateLinkFrames: updateLinkFrames,
@@ -372,7 +390,13 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
         return RestorationResult(
             success: pipelineResult.success,
             strategy: .ios18Enhanced,
-            pixelError: calculatePixelError(from: pipelineResult.finalOffset, target: anchor.pixelAlignedOffset),
+            pixelError: {
+                #if !targetEnvironment(macCatalyst)
+                return calculatePixelError(from: pipelineResult.finalOffset, target: anchor.pixelAlignedOffset)
+                #else
+                return abs(pipelineResult.finalOffset.y - collectionView.contentOffset.y)
+                #endif
+            }(),
             duration: duration,
             frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
             updateLinkFrames: pipelineResult.restorationAttempts,
@@ -548,10 +572,12 @@ final class iOS18ScrollPreservationCoordinator: ObservableObject {
     
     // MARK: - Utility Methods
     
+    #if !targetEnvironment(macCatalyst)
     private func calculatePixelError(collectionView: UICollectionView, anchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor) -> Double {
         let currentOffset = collectionView.contentOffset
         return abs(currentOffset.y - anchor.pixelAlignedOffset.y)
     }
+    #endif
     
     private func calculatePixelError(from actualOffset: CGPoint, target targetOffset: CGPoint) -> Double {
         return abs(actualOffset.y - targetOffset.y)

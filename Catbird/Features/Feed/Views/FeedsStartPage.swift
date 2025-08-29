@@ -79,13 +79,22 @@ struct FeedsStartPage: View {
     return 44 + safeAreaTop
   }
   
-  // Responsive banner height based on screen size
+  // Responsive banner height based on screen size and drawer width
   private var bannerHeight: CGFloat {
-    switch screenWidth {
-    case ..<375: return 140  // Smaller iPhones
-    case ..<768: return 160  // Standard iPhones
-    default: return 200     // iPads and larger devices
-    }
+    // Scale banner height based on drawer width and available space
+    let baseHeight: CGFloat = {
+      switch screenWidth {
+      case ..<375: return 130   // Compact iPhones
+      case ..<768: return 150   // Standard iPhones
+      case ..<1024: return 170  // iPhone Landscape / Small iPad
+      case ..<1200: return 190  // Standard iPad
+      case ..<1600: return 210  // Large iPad / Small Mac
+      default: return 240       // Very large displays
+      }
+    }()
+    
+    // Ensure banner doesn't take up more than 25% of screen height
+    return min(baseHeight, screenHeight * 0.25)
   }
   
   // Responsive avatar size
@@ -99,42 +108,59 @@ struct FeedsStartPage: View {
 
   // Sizing properties
   private let screenWidth = PlatformScreenInfo.width
+  private let screenHeight = PlatformScreenInfo.height
   private let isIPad = PlatformDeviceInfo.isIPad
   private var drawerWidth: CGFloat {
-    isIPad ? min(400, screenWidth * 0.4) : screenWidth * 0.75
+    PlatformScreenInfo.responsiveDrawerWidth
   }
   private var gridSpacing: CGFloat {
     switch screenWidth {
     case ..<375: return 8
     case ..<768: return 10
-    default: return 12
+    case ..<1024: return 12
+    case ..<1200: return 14
+    case ..<1600: return 16
+    default: return 18  // Very large displays
     }
   }
   private var horizontalPadding: CGFloat {
     switch screenWidth {
     case ..<375: return 12
     case ..<768: return 16
-    default: return 20
+    case ..<1024: return 20
+    case ..<1200: return 24
+    case ..<1600: return 28
+    default: return 32  // Very large displays
     }
   }
   private var columns: Int {
-    switch screenWidth {
-    case ..<320: return 2  // Small iPhone
-    case ..<375: return 3  // iPhone SE/Mini
-    default: return 3  // Standard iPhone, iPad - keep at 3 for larger icons
+    switch drawerWidth {
+    case ..<300: return 2  // Very small screens
+    case ..<380: return 3  // Standard layout
+    case ..<500: return 3  // Still prefer 3 columns for readability
+    case ..<600: return 4  // Large iPad/Mac - can fit 4 nicely
+    default: return 4      // Very large displays
     }
   }
   private var itemWidth: CGFloat {
-    let availableWidth =
-      drawerWidth - (horizontalPadding * 2) - (gridSpacing * CGFloat(columns - 1))
-    return availableWidth / CGFloat(columns)
+    let availableWidth = drawerWidth - (horizontalPadding * 2) - (gridSpacing * CGFloat(columns - 1))
+    let calculatedWidth = availableWidth / CGFloat(columns)
+    
+    // Ensure minimum and maximum item widths for usability
+    return max(80, min(calculatedWidth, 140))
   }
   private var iconSize: CGFloat {
+    // Base icon size on item width for better proportions
+    let baseSize = itemWidth * 0.55
+    
     switch screenWidth {
-    case ..<320: return 55
-    case ..<375: return 60
-    case ..<768: return 70  // Larger icons for better visibility
-    default: return 85  // Much larger icons on iPad for better touch targets
+    case ..<320: return max(50, min(baseSize, 60))   // Very small screens
+    case ..<375: return max(55, min(baseSize, 65))   // Small screens
+    case ..<768: return max(60, min(baseSize, 75))   // Standard phones
+    case ..<1024: return max(65, min(baseSize, 85))  // Large phones/small tablets
+    case ..<1200: return max(70, min(baseSize, 95))  // Standard tablets
+    case ..<1600: return max(75, min(baseSize, 105)) // Large tablets
+    default: return max(80, min(baseSize, 110))      // Very large displays
     }
   }
 
@@ -760,27 +786,31 @@ struct FeedsStartPage: View {
   
   @ViewBuilder
   private var mainContent: some View {
-    ScrollView {
-      VStack(spacing: 0) {
-        // Stretchy banner header
-        GeometryReader { geometry in
+    GeometryReader { geometry in
+      let availableWidth = geometry.size.width
+      let contentWidth = min(availableWidth, drawerWidth)
+      
+      ScrollView {
+        VStack(spacing: 0) {
+          // Banner header using Apple's flexible header system
           bannerHeaderView()
-            .frame(width: drawerWidth)
-            .frame(height: max(bannerHeight, bannerHeight + geometry.frame(in: .global).minY))
-            .offset(y: geometry.frame(in: .global).minY > 0 ? -geometry.frame(in: .global).minY : 0)
-            .clipped()
+            .flexibleHeaderContent()
+          
+          // Main content below the banner
+          feedsContent()
+            .frame(maxWidth: contentWidth)
         }
-        .frame(width: drawerWidth, height: bannerHeight)
-        
-        // Main content below the banner
-        feedsContent()
+      }
+      .flexibleHeaderScrollView()
+      .frame(width: contentWidth)
+      .frame(maxWidth: drawerWidth)
+      .clipped()
+      .ignoresSafeArea(edges: .top)
+      .refreshable {
+        await handleRefresh()
       }
     }
-    .frame(width: drawerWidth)
-    .ignoresSafeArea(edges: .top)
-    .refreshable {
-      await handleRefresh()
-    }
+    .frame(maxWidth: drawerWidth)
     .overlay(alignment: .topTrailing) {
       // Overlays
       loadingOverlay()
@@ -829,24 +859,26 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private func bannerHeaderView() -> some View {
-    ZStack(alignment: .bottomLeading) {
-      // Banner Image
-      bannerImageView
-      .frame(width: drawerWidth)
-      .clipped()
+    GeometryReader { geometry in
+      let availableWidth = geometry.size.width
+      let contentWidth = min(availableWidth, drawerWidth)
       
-      // Scrim overlay for text visibility
-      LinearGradient(
-        colors: [.black.opacity(0.6), .black.opacity(0.0)],
-        startPoint: .bottom,
-        endPoint: .center
-      )
-      .frame(width: drawerWidth)
-      
-      // Profile Info
-      VStack(alignment: .leading, spacing: 2) {
-        HStack(spacing: 8) {
-          // Avatar
+      ZStack(alignment: .bottomLeading) {
+        // Banner Image - uses available width
+        bannerImageView
+          .frame(width: contentWidth)
+        
+        // Scrim overlay for text visibility
+        LinearGradient(
+          colors: [.black.opacity(0.6), .clear],
+          startPoint: .bottom,
+          endPoint: .center
+        )
+        .frame(width: contentWidth)
+        
+        // Profile Info - responsive layout
+        HStack(spacing: max(8, horizontalPadding * 0.4)) {
+          // Avatar with responsive sizing
           Group {
             if let avatarURL = profile?.avatar?.url {
               AsyncProfileImage(url: avatarURL, size: avatarSize)
@@ -858,18 +890,19 @@ struct FeedsStartPage: View {
                   .frame(width: avatarSize, height: avatarSize)
                 
                 Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
-                  .appFont(size: avatarSize * 0.4) // Scale text with avatar
+                  .appFont(size: avatarSize * 0.4)
                   .foregroundColor(.accentColor)
               }
             }
           }
-          .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 2))
+          .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: max(1.5, avatarSize * 0.025)))
+          .frame(width: avatarSize, height: avatarSize)
           
-          // Display Name and Handle
+          // Display Name and Handle - responsive text sizing
           VStack(alignment: .leading, spacing: 2) {
             if let displayName = profile?.displayName, !displayName.isEmpty {
               Text(displayName)
-                .font(.system(size: screenWidth < 375 ? 14 : 16, weight: .bold))
+                .font(.system(size: responsiveTextSize(base: 16, min: 14, max: 18), weight: .bold))
                 .foregroundStyle(.white)
                 .shadow(radius: 2)
                 .lineLimit(1)
@@ -877,7 +910,7 @@ struct FeedsStartPage: View {
             }
             if let handle = profile?.handle {
               Text("@\(handle.description)")
-                .font(.system(size: screenWidth < 375 ? 12 : 14))
+                .font(.system(size: responsiveTextSize(base: 14, min: 12, max: 16)))
                 .foregroundStyle(.white.opacity(0.9))
                 .shadow(radius: 2)
                 .lineLimit(1)
@@ -888,12 +921,14 @@ struct FeedsStartPage: View {
           
           Spacer(minLength: 0)
         }
-        .frame(maxWidth: drawerWidth - (horizontalPadding * 2))
+        .padding(.horizontal, horizontalPadding)
+        .padding(.bottom, max(12, bannerHeight * 0.08))
+        .frame(maxWidth: contentWidth)
       }
-      .padding(.horizontal, horizontalPadding)
-      .padding(.bottom, 12)
+      .frame(width: contentWidth)
     }
-    .frame(width: drawerWidth)
+    .frame(height: bannerHeight)
+    .frame(maxWidth: drawerWidth)
     .contentShape(Rectangle())
     .onTapGesture {
       if let userDID = appState.authManager.state.userDID {
@@ -910,6 +945,13 @@ struct FeedsStartPage: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("My Profile")
     .accessibilityHint("Double tap to view your profile. Long press to switch accounts.")
+  }
+  
+  // Helper function for responsive text sizing
+  private func responsiveTextSize(base: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
+    let scaleFactor = drawerWidth / 375.0  // Base on iPhone standard width
+    let scaledSize = base * scaleFactor
+    return Swift.max(min, Swift.min(scaledSize, max))
   }
 
   @ViewBuilder
@@ -1004,8 +1046,10 @@ struct FeedsStartPage: View {
               Spacer(minLength: 200)
           }
       }
-      .padding(30)
-      .background(Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))) // Add background to content
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, max(20, horizontalPadding * 0.75))
+      .frame(maxWidth: .infinity)
+      .background(Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)))
   }
 
   // MARK: - Overlays
@@ -1046,7 +1090,6 @@ struct FeedsStartPage: View {
             image
               .resizable()
               .aspectRatio(contentMode: .fill)
-              .frame(width: drawerWidth)
           } else {
             fallbackGradientBanner
           }
@@ -1055,6 +1098,7 @@ struct FeedsStartPage: View {
         defaultGradientBanner
       }
     }
+    .clipped()
   }
   
   @ViewBuilder
@@ -1067,7 +1111,6 @@ struct FeedsStartPage: View {
       startPoint: .topLeading,
       endPoint: .bottomTrailing
     )
-    .frame(width: drawerWidth)
   }
   
   @ViewBuilder
@@ -1080,7 +1123,6 @@ struct FeedsStartPage: View {
       startPoint: .topLeading,
       endPoint: .bottomTrailing
     )
-    .frame(width: drawerWidth)
   }
 }
 
@@ -1133,8 +1175,6 @@ nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
   }
 }
 
-// MARK: - Stretchy Header Extensions
-// Removed - using inline GeometryReader approach instead for better reliability
 
 // MARK: - View Modifier Extension
 extension View {

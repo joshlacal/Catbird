@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/exyte/Chat.git",
       "state" : {
-        "revision" : "5de3a3f4a77c846ddf0a63105808e75d47100b73",
-        "version" : "2.6.4"
+        "revision" : "b9c9a6ebbc8be000029a2ae896876783a589cefb",
+        "version" : "2.6.8"
       }
     },
     {
@@ -62,6 +62,15 @@
       "state" : {
         "branch" : "main",
         "revision" : "f5f2670f33830857c7f7cdf9f28c527b88581ff7"
+      }
+    },
+    {
+      "identity" : "kingfisher",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/onevcat/Kingfisher",
+      "state" : {
+        "revision" : "2015fda791daa72c8058619545a593bf8c1dd59f",
+        "version" : "8.5.0"
       }
     },
     {
@@ -149,8 +158,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "870f4d5fe5fcfedc13f25d70e103150511746404",
-        "version" : "1.11.0"
+        "revision" : "20c451f1ad8e344e61ddbb34ef196653d4b73ea6",
+        "version" : "1.13.0"
       }
     },
     {
@@ -167,8 +176,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-crypto.git",
       "state" : {
-        "revision" : "176abc28e002a9952470f08745cd26fad9286776",
-        "version" : "3.13.3"
+        "revision" : "d1c6b70f7c5f19fb0b8750cb8dcdf2ea6e2d8c34",
+        "version" : "3.15.0"
       }
     },
     {

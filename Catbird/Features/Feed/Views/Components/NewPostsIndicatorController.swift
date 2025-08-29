@@ -135,7 +135,7 @@ final class NewPostsIndicatorController: NSObject {
     container.addSubview(hc.view)
     NSLayoutConstraint.activate([
       hc.view.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-      hc.view.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+      hc.view.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
     ])
 
     hostingController = hc

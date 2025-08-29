@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="21701" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+    <device id="retina6_12" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="21678"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <!--View Controller-->
+        <scene sceneID="EHf-IW-A2E">
+            <objects>
+                <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <!-- Background Gradient View -->
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="backgroundView">
+                                <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                                <color key="backgroundColor" red="0.12" green="0.25" blue="0.65" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                            </view>
+                            
+                            <!-- Content Container -->
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="contentContainer">
+                                <rect key="frame" x="20" y="59" width="353" height="759"/>
+                                <subviews>
+                                    <!-- Deep Shadow Icon (Bottom Layer) -->
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" alpha="0.30000000000000004" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="CatbirdIcon" translatesAutoresizingMaskIntoConstraints="NO" id="deepShadowIcon">
+                                        <rect key="frame" x="57.666666666666664" y="219.66666666666669" width="237.5" height="237.5"/>
+                                        <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" secondItem="deepShadowIcon" secondAttribute="height" multiplier="1:1" id="deepShadow-aspect"/>
+                                            <constraint firstAttribute="width" constant="237.5" id="deepShadow-width"/>
+                                        </constraints>
+                                    </imageView>
+                                    
+                                    <!-- Mid Shadow Icon (Middle Layer) -->
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" alpha="0.80000000000000004" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="CatbirdIcon" translatesAutoresizingMaskIntoConstraints="NO" id="midShadowIcon">
+                                        <rect key="frame" x="54" y="212.5" width="245" height="245"/>
+                                        <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" secondItem="midShadowIcon" secondAttribute="height" multiplier="1:1" id="midShadow-aspect"/>
+                                            <constraint firstAttribute="width" constant="245" id="midShadow-width"/>
+                                        </constraints>
+                                    </imageView>
+                                    
+                                    <!-- Main Icon (Top Layer) -->
+                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="CatbirdIcon" translatesAutoresizingMaskIntoConstraints="NO" id="mainIcon">
+                                        <rect key="frame" x="51.5" y="204.5" width="250" height="250"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" secondItem="mainIcon" secondAttribute="height" multiplier="1:1" id="mainIcon-aspect"/>
+                                            <constraint firstAttribute="width" constant="250" priority="999" id="mainIcon-width"/>
+                                            <constraint firstAttribute="width" relation="lessThanOrEqual" constant="300" id="mainIcon-maxWidth"/>
+                                            <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="120" id="mainIcon-minWidth"/>
+                                        </constraints>
+                                    </imageView>
+                                    
+                                    <!-- Title Label -->
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="Catbird" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="YES" translatesAutoresizingMaskIntoConstraints="NO" id="titleLabel">
+                                        <rect key="frame" x="96.666666666666671" y="478.66666666666674" width="160" height="41"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="160" id="title-minWidth"/>
+                                        </constraints>
+                                        <fontDescription key="fontDescription" type="system" weight="heavy" pointSize="34"/>
+                                        <color key="textColor" systemColor="labelColor"/>
+                                        <nil key="highlightedColor"/>
+                                    </label>
+                                    
+                                    <!-- Subtitle Label -->
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="for Bluesky" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="YES" translatesAutoresizingMaskIntoConstraints="NO" id="subtitleLabel">
+                                        <rect key="frame" x="126.66666666666667" y="522.66666666666663" width="100" height="24"/>
+                                        <constraints>
+                                            <constraint firstAttribute="width" relation="greaterThanOrEqual" constant="100" id="subtitle-minWidth"/>
+                                        </constraints>
+                                        <fontDescription key="fontDescription" type="system" weight="medium" pointSize="20"/>
+                                        <color key="textColor" systemColor="secondaryLabelColor"/>
+                                        <nil key="highlightedColor"/>
+                                    </label>
+                                </subviews>
+                                <constraints>
+                                    <!-- Deep Shadow Icon Constraints -->
+                                    <constraint firstItem="deepShadowIcon" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="deepShadow-centerX"/>
+                                    <constraint firstItem="deepShadowIcon" firstAttribute="centerY" secondItem="contentContainer" secondAttribute="centerY" constant="-35" id="deepShadow-centerY"/>
+                                    
+                                    <!-- Mid Shadow Icon Constraints -->
+                                    <constraint firstItem="midShadowIcon" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="midShadow-centerX"/>
+                                    <constraint firstItem="midShadowIcon" firstAttribute="centerY" secondItem="contentContainer" secondAttribute="centerY" constant="-42" id="midShadow-centerY"/>
+                                    
+                                    <!-- Main Icon Constraints -->
+                                    <constraint firstItem="mainIcon" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="mainIcon-centerX"/>
+                                    <constraint firstItem="mainIcon" firstAttribute="centerY" secondItem="contentContainer" secondAttribute="centerY" constant="-50" id="mainIcon-centerY"/>
+                                    
+                                    <!-- Title Label Constraints -->
+                                    <constraint firstItem="titleLabel" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="title-centerX"/>
+                                    <constraint firstItem="titleLabel" firstAttribute="top" secondItem="mainIcon" secondAttribute="bottom" constant="24" id="title-spacing"/>
+                                    
+                                    <!-- Subtitle Label Constraints -->
+                                    <constraint firstItem="subtitleLabel" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="subtitle-centerX"/>
+                                    <constraint firstItem="subtitleLabel" firstAttribute="top" secondItem="titleLabel" secondAttribute="bottom" constant="3" id="subtitle-spacing"/>
+                                </constraints>
+                            </view>
+                        </subviews>
+                        <constraints>
+                            <!-- Background View Constraints -->
+                            <constraint firstItem="backgroundView" firstAttribute="top" secondItem="Ze5-6b-2t3" secondAttribute="top" id="bg-top"/>
+                            <constraint firstItem="backgroundView" firstAttribute="leading" secondItem="Ze5-6b-2t3" secondAttribute="leading" id="bg-leading"/>
+                            <constraint firstAttribute="trailing" secondItem="backgroundView" secondAttribute="trailing" id="bg-trailing"/>
+                            <constraint firstAttribute="bottom" secondItem="backgroundView" secondAttribute="bottom" id="bg-bottom"/>
+                            
+                            <!-- Content Container Constraints -->
+                            <constraint firstItem="contentContainer" firstAttribute="top" secondItem="6Tk-OE-BBY" secondAttribute="top" id="content-top"/>
+                            <constraint firstItem="contentContainer" firstAttribute="leading" secondItem="6Tk-OE-BBY" secondAttribute="leading" constant="20" id="content-leading"/>
+                            <constraint firstItem="6Tk-OE-BBY" firstAttribute="trailing" secondItem="contentContainer" secondAttribute="trailing" constant="20" id="content-trailing"/>
+                            <constraint firstItem="6Tk-OE-BBY" firstAttribute="bottom" secondItem="contentContainer" secondAttribute="bottom" id="content-bottom"/>
+                        </constraints>
+                        <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="53" y="375"/>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="CatbirdIcon" width="1024" height="1024"/>
+        <systemColor name="labelColor">
+            <color white="0.0" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+        </systemColor>
+        <systemColor name="secondaryLabelColor">
+            <color red="0.23529411760000001" green="0.23529411760000001" blue="0.26274509800000001" alpha="0.59999999999999998" colorSpace="custom" customColorSpace="sRGB"/>
+        </systemColor>
+    </resources>
+</document>

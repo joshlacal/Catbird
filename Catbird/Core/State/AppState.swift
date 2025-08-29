@@ -45,7 +45,7 @@ final class AppState {
   @ObservationIgnored var tabTappedAgain: Int?
   
   // Current user's profile data for optimistic updates
-  @ObservationIgnored var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
+  var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
 
   // MARK: - Component Managers
 
@@ -241,6 +241,14 @@ final class AppState {
           } else if case .unauthenticated = state {
             // Always clear clients when state becomes unauthenticated, regardless of initialization status.
             self.logger.info("Auth state changed to unauthenticated. Clearing clients.")
+            
+            // Clear current user profile on logout/session expiry
+            self.currentUserProfile = nil
+            self.logger.debug("Cleared current user profile on unauthenticated state")
+            
+            // Clear user-specific composer drafts
+            self.logger.debug("Cleared composer drafts on unauthenticated state")
+            
             // Clear client on logout or session expiry
             self.postManager.updateClient(nil)
             self.preferencesManager.updateClient(nil)
@@ -435,6 +443,10 @@ final class AppState {
   func switchToAccount(did: String) async throws {
     logger.info("Switching to account: \(did)")
 
+    // Clear current user profile before switching
+    currentUserProfile = nil
+    logger.debug("SWITCH: Cleared current user profile")
+
     // 3. Yield before account switch to ensure UI updates
     await Task.yield()
     logger.debug("SWITCH: Yielded after resetting profile state")
@@ -458,6 +470,11 @@ final class AppState {
   func refreshAfterAccountSwitch() async {
     // Update client references in all managers
     logger.info("Refreshing data after account switch")
+
+    // Clear current user profile to ensure fresh data
+    currentUserProfile = nil
+    logger.debug("SWITCH: Cleared current user profile in refresh")
+
 
     // Clear old prefetched data
     await prefetchedFeedCache.clear()
@@ -491,6 +508,14 @@ final class AppState {
       logger.info("Successfully synchronized preferences with app settings after account switch")
     } catch {
       logger.error("Failed to refresh preferences after account switch: \(error)")
+    }
+
+    // Load the new user's profile
+    if let userDID = currentUserDID {
+      logger.info("Loading current user profile for new account: \(userDID)")
+      await loadCurrentUserProfile(did: userDID)
+    } else {
+      logger.warning("No current user DID available after account switch")
     }
   }
 

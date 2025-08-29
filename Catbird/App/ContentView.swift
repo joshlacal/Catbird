@@ -10,6 +10,7 @@ struct ContentView: View {
   @State private var selectedTab = 0
   @State private var lastTappedTab: Int?
   @State private var authRetryAttempted = false
+  @State private var hasRestoredState = false
 
   var body: some View {
     Group {
@@ -69,6 +70,10 @@ struct ContentView: View {
         DispatchQueue.main.async {
           Task { @MainActor in
             try? await Task.sleep(for: .seconds(0.1))
+            
+            // Trigger feed loading immediately after authentication
+            await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
+            
             // Check for onboarding after successful authentication
             appState.onboardingManager.checkForWelcomeOnboarding()
           }
@@ -212,6 +217,7 @@ struct MainContentView18: View {
   @State private var showingNewMessageSheet = false
   @State private var hasInitializedFeed = false
   @State private var showingOnboarding = false
+  @State private var hasRestoredState = false
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
@@ -221,7 +227,7 @@ struct MainContentView18: View {
   var body: some View {
     ZStack(alignment: .top) {
       #if os(iOS)
-      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen) {
+      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
         TabView(
           selection: Binding(
             get: { selectedTab },
@@ -320,6 +326,11 @@ struct MainContentView18: View {
             }
           }
           
+          // Restore UI state
+          Task {
+            await restoreUIState()
+          }
+          
           // Note: Theme change updates are now handled by @Observable system in AppState
           // No need for NotificationCenter observers that conflict with SwiftUI observation
             
@@ -357,6 +368,9 @@ struct MainContentView18: View {
           navigationManager.registerTabSelectionCallback { newTab in
             selectedTab = newTab
           }
+          
+          // Restore drawer state after initial setup
+          restoreDrawerState()
         }
         .safeAreaInset(edge: .bottom) {
           if selectedTab == 0 || selectedTab == 3 {
@@ -407,6 +421,9 @@ struct MainContentView18: View {
               appState.onboardingManager.completeWelcomeOnboarding()
             }
           }
+        }
+        .onChange(of: isDrawerOpen) { _, newValue in
+          saveDrawerState()
         }
       } drawer: {
         FeedsStartPage(
@@ -614,7 +631,7 @@ struct MainContentView17: View {
   var body: some View {
     ZStack(alignment: .top) {
       #if os(iOS)
-      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen) {
+      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
         TabView(
           selection: Binding(
             get: { selectedTab },
@@ -769,6 +786,9 @@ struct MainContentView17: View {
         navigationManager.registerTabSelectionCallback { newTab in
           selectedTab = newTab
         }
+        
+        // Restore drawer state after initial setup
+        restoreDrawerState()
       }
       .safeAreaInset(edge: .bottom) {
         if selectedTab == 0 {
@@ -819,6 +839,9 @@ struct MainContentView17: View {
             appState.onboardingManager.completeWelcomeOnboarding()
           }
         }
+      }
+      .onChange(of: isDrawerOpen) { _, newValue in
+        saveDrawerState()
       }
       } drawer: {
         FeedsStartPage(
@@ -1190,3 +1213,66 @@ struct MainContentView17: View {
 //    }
 //  }
 //}
+
+// MARK: - State Restoration Extensions
+
+extension ContentView {
+}
+
+extension MainContentView18 {
+  @MainActor
+  func restoreUIState() async {
+    guard !hasRestoredState else { return }
+    hasRestoredState = true
+    
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
+    
+    // Restore selected tab
+    let savedTab = defaults.integer(forKey: "last_selected_tab")
+    if savedTab >= 0 && savedTab <= 4 {
+      selectedTab = savedTab
+      print("[ContentView] Restored selected tab: \(savedTab)")
+    }
+    
+    // Clean up restoration flags
+    defaults.removeObject(forKey: "should_restore_drawer_open")
+  }
+  
+  @MainActor
+  func restoreDrawerState() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
+    
+    // Restore drawer state if flagged for restoration
+    if defaults.bool(forKey: "should_restore_drawer_open") && selectedTab == 0 {
+      isDrawerOpen = true
+      defaults.removeObject(forKey: "should_restore_drawer_open")
+      print("[ContentView] Restored drawer open state")
+    }
+  }
+  
+  @MainActor
+  func saveDrawerState() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
+    defaults.set(isDrawerOpen, forKey: "drawer_was_open")
+  }
+}
+
+extension MainContentView17 {
+  @MainActor
+  func restoreDrawerState() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
+    
+    // Restore drawer state if flagged for restoration
+    if defaults.bool(forKey: "should_restore_drawer_open") && selectedTab == 0 {
+      isDrawerOpen = true
+      defaults.removeObject(forKey: "should_restore_drawer_open")
+      print("[ContentView] Restored drawer open state")
+    }
+  }
+  
+  @MainActor
+  func saveDrawerState() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
+    defaults.set(isDrawerOpen, forKey: "drawer_was_open")
+  }
+}

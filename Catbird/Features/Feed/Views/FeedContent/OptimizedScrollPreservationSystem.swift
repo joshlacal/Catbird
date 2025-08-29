@@ -5,7 +5,7 @@
 //  Optimized scroll preservation using iOS 18 UIUpdateLink for pixel-perfect, frame-synchronized updates
 //
 
-#if os(iOS)
+#if os(iOS) && !targetEnvironment(macCatalyst)
 import UIKit
 import os
 
@@ -785,11 +785,14 @@ extension FeedGapLoadingManager.GapLoadingStrategy {
     )
 }
 
-#else
+#endif // os(iOS) && !targetEnvironment(macCatalyst)
 
-// MARK: - macOS Stub
+#if os(macOS) || targetEnvironment(macCatalyst)
+
+// MARK: - macOS/Catalyst Stub
 
 @available(macOS 15.0, *)
+@available(macCatalyst 15.0, *)
 @MainActor
 final class OptimizedScrollPreservationSystem {
     

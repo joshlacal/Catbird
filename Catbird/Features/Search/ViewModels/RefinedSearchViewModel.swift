@@ -28,6 +28,7 @@ enum SearchState {
     
     // MARK: - Filtering
     var selectedContentType: ContentType = .all
+    var searchSort: SearchSort = .top
     var filterDate: FilterDate = .anytime
     var filterContentTypes: Set<ContentType> = []
     var filterLanguages: Set<String> = []
@@ -67,6 +68,10 @@ enum SearchState {
     private let appState: AppState
     private let searchHistoryManager = SearchHistoryManager()
     private let logger = Logger(subsystem: "blue.catbird", category: "RefinedSearchViewModel")
+    
+    // MARK: - Debouncing
+    private var searchTask: Task<Void, Never>?
+    private let searchDebounceTime: TimeInterval = 0.3
     
     // MARK: - Computed Properties
     
@@ -127,6 +132,9 @@ enum SearchState {
     func updateSearch(query: String, client: ATProtoClient) {
         searchQuery = query
         
+        // Cancel previous search task
+        searchTask?.cancel()
+        
         if query.isEmpty {
             // Reset to idle state when query is empty
             searchState = .idle
@@ -137,14 +145,14 @@ enum SearchState {
             return
         }
         
-        // Update search state
+        // Update search state immediately for UI responsiveness
         if searchState == .idle || searchState == .results {
             searchState = .searching
         }
         
         isCommittedSearch = false
         
-        // Generate enhanced suggestions with history and trending
+        // Generate enhanced suggestions with history and trending (immediate)
         let trendingTerms = trendingTopics.map { $0.topic ?? "" }.filter { !$0.isEmpty }
         typeaheadSuggestions = SearchSuggestion.generateSuggestions(
             for: query, 
@@ -152,8 +160,13 @@ enum SearchState {
             trending: trendingTerms
         )
         
-        // Fetch typeahead results
-        Task {
+        // Debounced network search
+        searchTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(searchDebounceTime))
+            
+            // Check if task was cancelled during sleep
+            guard !Task.isCancelled else { return }
+            
             await fetchTypeahead(query: query, client: client)
         }
     }

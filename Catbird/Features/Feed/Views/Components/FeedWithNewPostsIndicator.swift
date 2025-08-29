@@ -35,8 +35,7 @@ struct FeedWithNewPostsIndicator: View {
       // New posts indicator overlay with dynamic island & safe area awareness
       if stateManager.hasNewPosts && stateManager.newPostsCount > 0 {
         GeometryReader { geometry in
-          VStack {
-              Spacer(minLength: 25)
+          VStack(alignment: .center) {
             HStack {
               Spacer()
               
@@ -54,7 +53,7 @@ struct FeedWithNewPostsIndicator: View {
                 insertion: .move(edge: .top).combined(with: .opacity),
                 removal: .opacity
               ))
-              // Removed .id() modifier to prevent forced view recreation
+              .padding(.top, 75)
               
               Spacer()
             }
@@ -62,6 +61,7 @@ struct FeedWithNewPostsIndicator: View {
             
             Spacer()
           }
+          .frame(maxHeight: .infinity, alignment: .top)
         }
         .allowsHitTesting(true)
         .zIndex(1000) // Ensure it's on top
@@ -97,10 +97,10 @@ struct FeedWithNewPostsIndicator: View {
     let safeAreaTop = geometry.safeAreaInsets.top
     let deviceModel = PlatformDeviceInfo.userInterfaceIdiom
     
-    // CRITICAL FIX: Account for navigation bar height, not just safe area
-    // Navigation bar in iOS is typically 44pt tall, plus we need spacing
-    let navigationBarHeight: CGFloat = 44
-    let additionalSpacing: CGFloat = 8
+    // CRITICAL FIX: Account for actual navigation bar height in current setup
+    // The Timeline navigation bar appears to be taller than standard 44pt
+    let navigationBarHeight: CGFloat = 56 // Increased to account for larger nav bar
+    let additionalSpacing: CGFloat = 12 // More spacing to avoid overlap
     
     // Start with safe area + navigation bar + spacing
     var topPadding = safeAreaTop + navigationBarHeight + additionalSpacing
@@ -116,7 +116,7 @@ struct FeedWithNewPostsIndicator: View {
     }
     
     // For devices without large titles or in compact state, use minimum viable padding
-    let minimumPadding = safeAreaTop + navigationBarHeight + 4 // Tighter spacing when nav bar is collapsed
+    let minimumPadding = safeAreaTop + navigationBarHeight + 8 // More spacing to clear nav bar
     topPadding = max(topPadding, minimumPadding)
     
     print("📱 POSITIONING: safeAreaTop=\(safeAreaTop), navBarHeight=\(navigationBarHeight), finalPadding=\(topPadding)")
