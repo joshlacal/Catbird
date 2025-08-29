@@ -518,7 +518,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#if command -v swiftlint >/dev/null 2>&1\n#then\n#    swiftlint\n#    swiftlint --fix\n#else\n#    echo \"warning: `swiftlint` command not found - See https://github.com/realm/SwiftLint#installation for installation instructions.\"\n#fi\n";
+			shellScript = "#if command -v swiftlint >/dev/null 2>&1\n#then\n#    swiftlint\n#    swiftlint --fix\n#else\n#    echo \"warning: `swiftlint` command not found - See https://github.com/realm/SwiftLint#installation for installation instructions.\"\n#fi\n\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n      echo \"Generating dSYMs for frameworks without them...\"\n\n      # Find all frameworks in the built products directory\n      find \"$BUILT_PRODUCTS_DIR\" -name \"*.framework\" | while read framework; do\n          framework_name=$(basename \"$framework\" .framework)\n          dsym_path=\"$BUILT_PRODUCTS_DIR/$framework_name.framework.dSYM\"\n\n          # Check if dSYM already exists\n          if [ ! -d \"$dsym_path\" ]; then\n              echo \"Generating dSYM for $framework_name\"\n              dsymutil \"$framework/$framework_name\" -o \"$dsym_path\" 2>/dev/null || true\n          fi\n      done\n\n      # Specifically handle GiphyUISDK if it exists\n      giphy_framework=\"$BUILT_PRODUCTS_DIR/GiphyUISDK.framework\"\n      if [ -d \"$giphy_framework\" ]; then\n          echo \"Ensuring GiphyUISDK dSYM exists\"\n          dsymutil \"$giphy_framework/GiphyUISDK\" -o\n  \"$BUILT_PRODUCTS_DIR/GiphyUISDK.framework.dSYM\" 2>/dev/null || true\n      fi\n  fi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

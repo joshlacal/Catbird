@@ -139,12 +139,12 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
                 keyComponents.append(feedURI.replacingOccurrences(of: "at://", with: "").replacingOccurrences(of: "/", with: "_"))
             }
         case .custom:
-            if let customURL = configuration.customFeedURL {
-                keyComponents.append(customURL.replacingOccurrences(of: "at://", with: "").replacingOccurrences(of: "/", with: "_"))
+            if !configuration.customFeedURL.isEmpty {
+                keyComponents.append(configuration.customFeedURL.replacingOccurrences(of: "at://", with: "").replacingOccurrences(of: "/", with: "_"))
             }
         case .profile:
-            if let handle = configuration.profileHandle {
-                keyComponents.append(handle.replacingOccurrences(of: "@", with: ""))
+            if !configuration.profileHandle.isEmpty {
+                keyComponents.append(configuration.profileHandle.replacingOccurrences(of: "@", with: ""))
             }
         case .timeline:
             break // No additional key needed
@@ -182,9 +182,9 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
         }
         
         // Additional filtering for profile mode
-        if configuration.effectiveFeedType == .profile, let profileHandle = configuration.profileHandle {
+        if configuration.effectiveFeedType == .profile && !configuration.profileHandle.isEmpty {
             filteredPosts = posts.filter { post in
-                post.authorHandle.lowercased().contains(profileHandle.lowercased().replacingOccurrences(of: "@", with: ""))
+                post.authorHandle.lowercased().contains(configuration.profileHandle.lowercased().replacingOccurrences(of: "@", with: ""))
             }
         }
         
@@ -293,17 +293,17 @@ struct CatbirdFeedWidgetEntryView : View {
         
         switch entry.configuration.effectiveFeedType {
         case .profile:
-            if let handle = entry.configuration.profileHandle {
+            if !entry.configuration.profileHandle.isEmpty {
                 components.host = "profile"
-                components.path = "/\(handle)"
+                components.path = "/\(entry.configuration.profileHandle)"
             } else {
                 components.host = "feed"
                 components.path = "/timeline"
             }
         case .custom:
-            if let feedURL = entry.configuration.customFeedURL {
+            if !entry.configuration.customFeedURL.isEmpty {
                 components.host = "feed"
-                components.queryItems = [URLQueryItem(name: "url", value: feedURL)]
+                components.queryItems = [URLQueryItem(name: "url", value: entry.configuration.customFeedURL)]
             } else {
                 components.host = "feed"
                 components.path = "/timeline"
@@ -490,8 +490,8 @@ struct MediumFeedWidget: View {
             return FeedWidgetProvider().getFeedDisplayName(for: entry.configuration.selectedFeedURI) ?? "Saved Feed"
         case .custom: return "Custom Feed"
         case .profile:
-            if let handle = entry.configuration.profileHandle {
-                return handle.replacingOccurrences(of: "@", with: "")
+            if !entry.configuration.profileHandle.isEmpty {
+                return entry.configuration.profileHandle.replacingOccurrences(of: "@", with: "")
             }
             return "Profile"
         }
@@ -612,8 +612,8 @@ struct LargeFeedWidget: View {
             return FeedWidgetProvider().getFeedDisplayName(for: entry.configuration.selectedFeedURI) ?? "Saved Feed"
         case .custom: return "Custom Feed"
         case .profile:
-            if let handle = entry.configuration.profileHandle {
-                return "\(handle.replacingOccurrences(of: "@", with: ""))'s Posts"
+            if !entry.configuration.profileHandle.isEmpty {
+                return "\(entry.configuration.profileHandle.replacingOccurrences(of: "@", with: ""))'s Posts"
             }
             return "Profile Posts"
         }
@@ -747,8 +747,8 @@ struct ExtraLargeFeedWidget: View {
             return FeedWidgetProvider().getFeedDisplayName(for: entry.configuration.selectedFeedURI) ?? "Saved Feed"
         case .custom: return "Custom Feed"
         case .profile:
-            if let handle = entry.configuration.profileHandle {
-                return "\(handle.replacingOccurrences(of: "@", with: ""))'s Posts"
+            if !entry.configuration.profileHandle.isEmpty {
+                return "\(entry.configuration.profileHandle.replacingOccurrences(of: "@", with: ""))'s Posts"
             }
             return "Profile Posts"
         }
