@@ -81,23 +81,22 @@ struct EnhancedFeedPost: View, Equatable {
   @ViewBuilder
   private var threadContent: some View {
     let mode = threadDisplayMode
-    // Debug log to understand what's happening
     
-      Group {
-          switch mode {
-          case .standard:
-              standardThreadContent
-              
-          case .expanded(let postCount):
-              expandedThreadContent(postCount: postCount)
-              
-          case .collapsed(let hiddenCount):
-              collapsedThreadContent(hiddenCount: hiddenCount)
-          }
+    Group {
+      switch mode {
+      case .standard:
+        standardThreadContent
+        
+      case .expanded(let postCount):
+        expandedThreadContent(postCount: postCount)
+        
+      case .collapsed(let hiddenCount):
+        collapsedThreadContent(hiddenCount: hiddenCount)
       }
-          .onAppear {
-              // Initialize post appearance
-          }
+    }
+    .onAppear {
+      // Initialize post appearance
+    }
   }
   
   // MARK: - Thread Display Mode
@@ -304,23 +303,6 @@ struct EnhancedFeedPost: View, Equatable {
   private func mainPostContent(_ post: AppBskyFeedDefs.FeedViewPost) -> some View {
     // Determine grandparent author for reposts of replies
     let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = {
-      // Debug: Check if this is a repost
-      let isRepost = { () -> Bool in
-        if case .appBskyFeedDefsReasonRepost = post.reason { return true }
-        return false
-      }()
-      
-      // Debug: Check if there's reply context
-      let hasReplyContext = post.reply != nil
-      
-      // Debug logging
-      print("DEBUG EnhancedFeedPost - Post ID: \(post.id)")
-      print("DEBUG EnhancedFeedPost - Is repost: \(isRepost)")
-      print("DEBUG EnhancedFeedPost - Has reply context: \(hasReplyContext)")
-      if let reply = post.reply {
-        print("DEBUG EnhancedFeedPost - Reply parent type: \(reply.parent)")
-      }
-      
       // If this is a repost, check the original post for reply context
       if case .appBskyFeedDefsReasonRepost = post.reason {
         // For reposts, the reply context is on the original post (post.post), not the repost wrapper
@@ -328,21 +310,13 @@ struct EnhancedFeedPost: View, Equatable {
            let originalPost = originalPostRecord as? AppBskyFeedPost,
            let originalReply = originalPost.reply
             {
-            let parentRef = originalReply.parent
-          // We need to find the parent post to get the author
-          // The parentRef only has URI and CID, we need the actual parent post data
-          // This should come from the feed data if available
-          print("DEBUG EnhancedFeedPost - Found original post reply context, parent URI: \(parentRef.uri)")
-          
           // Check if we have parent post data in the feed reply context
           if let replyContext = post.reply,
              case let .appBskyFeedDefsPostView(parentPost) = replyContext.parent {
-            print("DEBUG EnhancedFeedPost - Found grandparent author from feed context: \(parentPost.author.handle)")
             return parentPost.author
           }
         }
       }
-      print("DEBUG EnhancedFeedPost - No grandparent author found")
       return nil
     }()
     
