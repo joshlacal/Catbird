@@ -86,5 +86,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact
 
-- Bluesky: [@josh.tel](https://bsky.app/profile/josh.tel)
+- Bluesky: [@josh.uno](https://bsky.app/profile/josh.uno)
 - GitHub: [@joshlacal](https://github.com/joshlacal)
