@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>blue.catbird.posting.retry</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -19,22 +23,18 @@
 	<array>
 		<string>FeedIntentIntent</string>
 	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>Catbird needs camera access to let you capture photos and videos for your posts.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Catbird needs microphone access to record audio for voice notes and video posts.</string>
 	<key>NSUserNotificationUsageDescription</key>
 	<string>Catbird needs permission to send you notifications about mentions, replies, and interactions with your posts.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 		<string>remote-notification</string>
+		<string>fetch</string>
+		<string>processing</string>
 	</array>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:catbird.blue</string>
 	</array>
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
 </dict>
 </plist>

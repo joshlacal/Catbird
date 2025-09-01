@@ -988,7 +988,7 @@ class VideoPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
       pipLogger.error("❌ PiP failed to start for video \(self.modelId): \(error.localizedDescription)")
       pipLogger.error("❌ PiP error code: \((error as NSError).code), domain: \((error as NSError).domain)")
       pipLogger.error("❌ PiP userInfo: \((error as NSError).userInfo)")
-      print("❌ PiP DETAILED ERROR - Code: \((error as NSError).code), Domain: \((error as NSError).domain), Description: \(error.localizedDescription)")
+      logger.debug("❌ PiP DETAILED ERROR - Code: \((error as NSError).code), Domain: \((error as NSError).domain), Description: \(error.localizedDescription)")
     Task { @MainActor in
       coordinator?.didFailToStartPiP(for: modelId, error: error)
     }

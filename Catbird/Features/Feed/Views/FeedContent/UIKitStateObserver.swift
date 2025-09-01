@@ -22,7 +22,7 @@ final class UIKitStateObserver<T: Observable> {
         startObserving()
     }
     
-    private func startObserving() {
+    func startObserving() {
         observationTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             

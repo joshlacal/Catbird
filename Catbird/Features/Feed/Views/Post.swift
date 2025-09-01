@@ -9,6 +9,7 @@ import SwiftUI
 import Petrel
 import Translation
 import NaturalLanguage
+import OSLog
 #if os(iOS)
 import UIKit
 #endif
@@ -17,6 +18,8 @@ struct Post: View, Equatable {
     static func == (lhs: Post, rhs: Post) -> Bool {
         lhs.post == rhs.post
     }
+    
+    private let logger = Logger(subsystem: "blue.catbird", category: "Translation")
     
     let post: AppBskyFeedPost
     let isSelectable: Bool
@@ -98,13 +101,6 @@ struct Post: View, Equatable {
             // Main post content with enhanced typography
             if !post.text.isEmpty {
                 TappableTextView(attributedString: post.facetsAsAttributedString, textSize: textSize, textStyle: textStyle, textDesign: textDesign, textWeight: textWeight, fontWidth: fontWidth, lineSpacing: lineSpacing, letterSpacing: letterSpacing)
-                //                    .typography(
-                //                        design: postTextDesign,
-                //                        weight: postTextWeight,
-                //                        lineSpacing: Typography.LineHeight.normal,
-                //                        letterSpacing: Typography.LetterSpacing.tight
-                //                    )
-
                     .modifier(SelectableModifier(isSelectable: isSelectable))
                     .padding(3)
                     .transition(.opacity)
@@ -114,7 +110,7 @@ struct Post: View, Equatable {
             // Translated text with improved styling
             if showTranslation, let translatedText = translatedText {
                 Text(translatedText)
-                    .bodyStyle(weight: .light, lineHeight: Typography.LineHeight.relaxed)
+                    .bodyStyle(size: Typography.Size.body, weight: .light, lineHeight: Typography.LineHeight.relaxed)
                     .italic()
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
@@ -143,7 +139,7 @@ struct Post: View, Equatable {
                     HStack(spacing: 8) {
                         ForEach(tags, id: \.self) { tag in
                             Text("#\(tag)")
-                            //                                .customScaledFont(size: 13, weight: .medium, design: .rounded)
+                                .customScaledFont(size: 13, weight: .medium, design: .rounded)
                                 .foregroundColor(Color.accentColor)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
@@ -161,6 +157,12 @@ struct Post: View, Equatable {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: showTranslation && translatedText != nil && translationError == nil)
+        .modifier(TranslationTaskModifier(config: translationConfig) { session in
+            if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *),
+               let translationSession = session as? TranslationSession {
+                await performTranslation(session: translationSession)
+            }
+        })
         .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
             ForEach(sourceLanguages, id: \.languageCode) { language in
                 let languageName = Locale.current.localizedString(forLanguageCode: language.languageCode?.identifier ?? "") ?? language.languageCode?.identifier ?? "Unknown"
@@ -276,35 +278,45 @@ struct Post: View, Equatable {
             let availability = LanguageAvailability()
             let status = await availability.status(from: sourceLanguage, to: targetLanguage)
             
+            logger.debug("Translation status: \(String(describing: status)) for \(String(describing:sourceLanguage)) -> \(String(describing:targetLanguage))")
+            
             await MainActor.run {
                 switch status {
                 case .installed, .supported:
                     // Proceed with translation
                     if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
-                        translationConfig = TranslationSession.Configuration(source: sourceLanguage, target: targetLanguage)
+                        let config = TranslationSession.Configuration(source: sourceLanguage, target: targetLanguage)
+                        translationConfig = config
+                        logger.debug("Translation configuration set")
                     }
                 case .unsupported:
                     // Handle unsupported language pairing
                     translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    logger.debug("Translation unsupported for language pair")
                 @unknown default:
                     translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    logger.debug("Translation status unknown")
                 }
             }
         } else {
             await MainActor.run {
                 translationError = NSLocalizedString("Translation requires iOS 17.4 or later.", comment: "")
+                logger.debug("Translation not available - iOS version too old")
             }
         }
     }
     
     @available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *)
     private func performTranslation(session: TranslationSession) async {
+        logger.debug("Starting translation...")
         do {
             await MainActor.run {
                 isTranslating = true
+                translationError = nil
             }
             
             let response = try await session.translate(post.text)
+            logger.debug("Translation completed successfully")
             
             await MainActor.run {
                 withAnimation {
@@ -315,7 +327,7 @@ struct Post: View, Equatable {
                 }
             }
         } catch {
-            logger.debug("Translation error: \(error)")
+            logger.debug("Translation error: \(error.localizedDescription)")
             await MainActor.run {
                 withAnimation {
                     translationError = NSLocalizedString("Failed to translate. Please try again later.", comment: "")
@@ -340,14 +352,19 @@ extension Post {
 
 // MARK: - Modifiers
 
-@available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *)
 struct TranslationTaskModifier: ViewModifier {
     let config: Any?
-    let action: (TranslationSession) async -> Void
+    let action: (Any) async -> Void
     
     func body(content: Content) -> some View {
         if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
-            content.translationTask(config as? TranslationSession.Configuration, action: action)
+            if let config = config as? TranslationSession.Configuration {
+                content.translationTask(config) { session in
+                    await action(session)
+                }
+            } else {
+                content
+            }
         } else {
             content
         }

@@ -26,6 +26,7 @@ struct FeedView: View {
   
   // State
   @State private var isInitialized = false
+  @State private var stateManager: FeedStateManager?
   
   // Performance
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedView")
@@ -41,51 +42,47 @@ struct FeedView: View {
   // MARK: - Body
   var body: some View {
     Group {
-      // Get or create state manager from the store
-      let stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
+      if let stateManager = stateManager {
+        FeedCollectionView(
+          stateManager: stateManager,
+          navigationPath: $path
+        )
+      } else {
+        ProgressView()
+          .onAppear {
+            // Initialize state manager once
+            self.stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
+          }
+      }
+    }
+    .task(id: fetch.identifier) {
+      guard let stateManager = stateManager else { return }
       
-      FeedWithNewPostsIndicator(
-        stateManager: stateManager,
-        navigationPath: $path
-      )
-      #if os(iOS)
-      .modifier(
-        iOS18StateRestorationSupport(feedType: fetch)
-      )
-      #endif
-      #if DEBUG
-      // Add debug gesture to test the indicator
-      .onTapGesture(count: 3) {
-        // Triple tap to trigger test indicator
-        stateManager.debugTriggerNewPostsIndicator(count: 5)
-        print("🐛 DEBUG: Triggered test new posts indicator via triple tap")
+      // Set model context on first appearance
+      if !isInitialized {
+        isInitialized = true
+        feedStateStore.setModelContext(modelContext)
       }
-      #endif
-      .task(id: fetch.identifier) {
-        // Set model context on first appearance
-        if !isInitialized {
-          isInitialized = true
-          feedStateStore.setModelContext(modelContext)
-        }
-        
-        // Always attempt to load initial data if posts are empty
-        if stateManager.posts.isEmpty {
-          logger.debug("Loading initial data for empty feed: \(fetch.identifier)")
-          await stateManager.loadInitialData()
-        } else {
-          logger.debug("Skipping initial data load - feed already has \(stateManager.posts.count) posts")
-        }
+      
+      // Always attempt to load initial data if posts are empty
+      if stateManager.posts.isEmpty {
+        logger.debug("Loading initial data for empty feed: \(fetch.identifier)")
+        await stateManager.loadInitialData()
+      } else {
+        logger.debug("Skipping initial data load - feed already has \(stateManager.posts.count) posts")
       }
-      .onChange(of: fetch) { oldValue, newValue in
-        guard oldValue != newValue else { return }
-        
-        logger.debug("Feed type changed from \(oldValue.identifier) to \(newValue.identifier)")
-        
-        // This is a user-initiated feed switch - mark it and trigger proper loading
-        Task { @MainActor in
-          await stateManager.updateFetchType(newValue, preserveScrollPosition: false)
-        }
+    }
+    .onChange(of: fetch) { oldValue, newValue in
+      guard oldValue != newValue else { return }
+      logger.debug("Feed type changed from \(oldValue.identifier) to \(newValue.identifier)")
+      
+      // Switch to a dedicated state manager per feed to keep per-feed scroll state
+      let newManager = feedStateStore.stateManager(for: newValue, appState: appState)
+      self.stateManager = newManager
+      Task { @MainActor in
+        if newManager.posts.isEmpty { await newManager.loadInitialData() }
       }
+    }
       .onChange(of: scenePhase) { oldPhase, newPhase in
         logger.debug("Scene phase changed: \(String(describing: oldPhase)) -> \(String(describing: newPhase))")
         
@@ -94,7 +91,6 @@ struct FeedView: View {
         }
       }
     }
-  }
 }
 
 // MARK: - Preview

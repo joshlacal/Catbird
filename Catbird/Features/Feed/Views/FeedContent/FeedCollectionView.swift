@@ -150,7 +150,7 @@ struct SimpleFeedCollectionWrapper: View {
     @State private var isInitialized = false
     
     var body: some View {
-        if let stateManager = stateManager {
+        if var stateManager = stateManager {
             FeedCollectionView(
                 stateManager: stateManager,
                 navigationPath: $navigationPath
@@ -162,30 +162,19 @@ struct SimpleFeedCollectionWrapper: View {
                     await stateManager.loadInitialData()
                 }
             }
-            .onChange(of: feedType) { newFeedType in
-                Task {
-                    await stateManager.updateFetchType(newFeedType)
+            .onChange(of: feedType) {
+                // Switch to a dedicated manager per feed to keep per-feed scroll state
+                let newManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                stateManager = newManager
+                Task { @MainActor in
+                    if newManager.posts.isEmpty { await newManager.loadInitialData() }
                 }
             }
         } else {
             Color.clear
                 .onAppear {
-                    // Create the state manager
-                    let feedManager = FeedManager(
-                        client: appState.atProtoClient,
-                        fetchType: feedType
-                    )
-                    
-                    let feedModel = FeedModel(
-                        feedManager: feedManager,
-                        appState: appState
-                    )
-                    
-                    self.stateManager = FeedStateManager(
-                        appState: appState,
-                        feedModel: feedModel,
-                        feedType: feedType
-                    )
+                    // Resolve a per-feed state manager from the shared store
+                    self.stateManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
                 }
         }
     }
@@ -202,7 +191,7 @@ struct FeedCollectionWrapper: View {
     @State private var isInitialized = false
     
     var body: some View {
-        if let stateManager = stateManager {
+        if var stateManager = stateManager {
             FeedCollectionView(
                 stateManager: stateManager,
                 navigationPath: $navigationPath
@@ -214,30 +203,19 @@ struct FeedCollectionWrapper: View {
                     await stateManager.loadInitialData()
                 }
             }
-            .onChange(of: feedType) { newFeedType in
-                Task {
-                    await stateManager.updateFetchType(newFeedType)
+            .onChange(of: feedType) {
+                // Switch to the store-managed manager for the new feed
+                let newManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                stateManager = newManager
+                Task { @MainActor in
+                    if newManager.posts.isEmpty { await newManager.loadInitialData() }
                 }
             }
         } else {
             Color.clear
                 .onAppear {
-                    // Create the state manager
-                    let feedManager = FeedManager(
-                        client: appState.atProtoClient,
-                        fetchType: feedType
-                    )
-                    
-                    let feedModel = FeedModel(
-                        feedManager: feedManager,
-                        appState: appState
-                    )
-                    
-                    self.stateManager = FeedStateManager(
-                        appState: appState,
-                        feedModel: feedModel,
-                        feedType: feedType
-                    )
+                    // Resolve a per-feed state manager from the shared store
+                    self.stateManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
                 }
         }
     }

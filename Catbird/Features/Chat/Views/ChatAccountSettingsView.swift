@@ -266,6 +266,15 @@ struct ChatShareSheet: UIViewControllerRepresentable {
   
   func makeUIViewController(context: Context) -> UIActivityViewController {
     let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+    // Configure iPad popover anchor to prevent presentation crash
+    if let popover = controller.popoverPresentationController {
+      if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+         let root = windowScene.windows.first?.rootViewController?.view {
+        popover.sourceView = root
+        popover.sourceRect = CGRect(x: root.bounds.midX, y: root.bounds.midY, width: 0, height: 0)
+        popover.permittedArrowDirections = []
+      }
+    }
     return controller
   }
   

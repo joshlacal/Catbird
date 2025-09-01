@@ -86,6 +86,8 @@ struct ThreadViewMainPostView: View {
                   .allowsTightening(true)
                   .fixedSize(horizontal: true, vertical: false)
                   .padding(.bottom, 1)
+                  .transaction { $0.animation = nil }
+                  .contentTransition(.identity)
 
                 Text("@\(post.author.handle)".truncated(to: 30))
                   .appSubheadline()
@@ -95,6 +97,8 @@ struct ThreadViewMainPostView: View {
                   .allowsTightening(true)
                   .fixedSize(horizontal: true, vertical: false)
                   .padding(.bottom, 1)
+                  .transaction { $0.animation = nil }
+                  .contentTransition(.identity)
 
               }
               .padding(.leading, 3)
@@ -124,6 +128,8 @@ struct ThreadViewMainPostView: View {
                 .padding(.vertical, 6)
                 .padding(.leading, 6)
                 .padding(.trailing, 6)
+                .transaction { txn in txn.animation = nil }
+                .contentTransition(.identity)
                 #else
                 TappableTextView(
                   attributedString: feedPost.facetsAsAttributedString,
@@ -164,6 +170,8 @@ struct ThreadViewMainPostView: View {
               .textScale(.secondary)
               .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
               .padding(Self.baseUnit * 3)
+              .transaction { $0.animation = nil }
+              .contentTransition(.identity)
           }
         }
 

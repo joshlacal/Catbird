@@ -167,6 +167,56 @@ extension PostComposerViewModel {
         // Sync media state to current thread
         syncMediaStateToCurrentThread()
     }
+
+    // MARK: - Reorder Media Items
+    @MainActor
+    func moveMediaItemLeft(id: UUID) {
+        guard let idx = mediaItems.firstIndex(where: { $0.id == id }), idx > 0 else { return }
+        mediaItems.swapAt(idx, idx - 1)
+        syncMediaStateToCurrentThread()
+    }
+
+    @MainActor
+    func moveMediaItemRight(id: UUID) {
+        guard let idx = mediaItems.firstIndex(where: { $0.id == id }), idx < mediaItems.count - 1 else { return }
+        mediaItems.swapAt(idx, idx + 1)
+        syncMediaStateToCurrentThread()
+    }
+
+    // MARK: - Crop Image to Square
+    @MainActor
+    func cropMediaItemToSquare(id: UUID) {
+        guard let index = mediaItems.firstIndex(where: { $0.id == id }), let data = mediaItems[index].rawData else { return }
+        #if os(iOS)
+        if let image = UIImage(data: data) {
+            let size = min(image.size.width, image.size.height)
+            let originX = (image.size.width - size) / 2.0
+            let originY = (image.size.height - size) / 2.0
+            let cropRect = CGRect(x: originX, y: originY, width: size, height: size)
+            if let cg = image.cgImage?.cropping(to: cropRect) {
+                let squared = UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
+                if let jpeg = squared.jpegData(compressionQuality: 0.9) {
+                    mediaItems[index].rawData = jpeg
+                    mediaItems[index].image = Image(uiImage: squared)
+                    mediaItems[index].aspectRatio = CGSize(width: squared.size.width, height: squared.size.height)
+                }
+            }
+        }
+        #elseif os(macOS)
+        // macOS crop not implemented
+        #endif
+    }
+
+    // MARK: - Reorder by index
+    @MainActor
+    func moveMediaItem(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex != destinationIndex,
+              mediaItems.indices.contains(sourceIndex),
+              mediaItems.indices.contains(destinationIndex) else { return }
+        let item = mediaItems.remove(at: sourceIndex)
+        mediaItems.insert(item, at: destinationIndex)
+        syncMediaStateToCurrentThread()
+    }
     
     // MARK: - Alt Text Management
 

@@ -7,9 +7,67 @@
 
 import SwiftUI
 import Petrel
+import os
 
 #if os(iOS)
 import UIKit
+
+// MARK: - Custom UITextView with Link Menu Support
+
+class LinkEditableTextView: UITextView {
+    weak var linkCreationDelegate: LinkCreationDelegate?
+    var requestFocusOnAttach: Bool = false
+    
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        
+        // Only add "Create Link" if there's selected text
+        guard selectedRange.length > 0,
+              !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            logger.debug("📝 buildMenu: No valid text selected")
+            return
+        }
+        
+        logger.debug("📝 buildMenu: Adding Create Link action for selected text: '\(self.selectedText)'")
+        
+        let createLinkAction = UIAction(
+            title: "Create Link",
+            image: UIImage(systemName: "link"),
+            identifier: UIAction.Identifier("createLink")
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            let capturedText = self.selectedText
+            let capturedRange = self.selectedRange
+            logger.debug("📝 Create Link action triggered with text: '\(capturedText)' range: \(capturedRange)")
+            self.linkCreationDelegate?.requestLinkCreation(for: capturedText, in: capturedRange)
+        }
+        
+        // Add our custom action to the standard edit menu
+        let linkMenu = UIMenu(title: "", options: .displayInline, children: [createLinkAction])
+        builder.insertSibling(linkMenu, afterMenu: .standardEdit)
+    }
+    
+    private var selectedText: String {
+        guard selectedRange.length > 0,
+              let textRange = selectedTextRange else { return "" }
+        return text(in: textRange) ?? ""
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if requestFocusOnAttach, window != nil {
+            DispatchQueue.main.async { [weak self] in
+                _ = self?.becomeFirstResponder()
+            }
+        }
+    }
+}
+
+// MARK: - Link Creation Protocol
+
+protocol LinkCreationDelegate: AnyObject {
+    func requestLinkCreation(for text: String, in range: NSRange)
+}
 
 // MARK: - Enhanced Rich Text Editor with Link Support
 
@@ -22,11 +80,21 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   let onGenmojiDetected: ([String]) -> Void
   let onTextChanged: (NSAttributedString) -> Void
   let onLinkCreationRequested: (String, NSRange) -> Void
+  var focusOnAppear: Bool = false
+  // When this value changes, we explicitly request first responder again
+  var focusActivationID: UUID? = nil
+  
   
   func makeUIView(context: Context) -> UITextView {
-    let textView = UITextView()
+    let textView = LinkEditableTextView()
     textView.delegate = context.coordinator
-    textView.font = UIFont.systemFont(ofSize: 17)
+    textView.linkCreationDelegate = context.coordinator
+    textView.requestFocusOnAttach = focusOnAppear
+    textView.font = getAppropriateFont()
+    // Ensure newly typed text uses the desired font
+    if let font = textView.font {
+      textView.typingAttributes[.font] = font
+    }
     textView.backgroundColor = .clear
     textView.isScrollEnabled = true
     textView.isEditable = true
@@ -40,21 +108,35 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
     
-    // Set up custom menu for link creation
-    setupCustomMenu(for: textView)
-    
-    // Add edit menu interaction for iOS 16+
-    if #available(iOS 16.0, *), let editMenuInteraction = context.coordinator.editMenuInteraction {
-      textView.addInteraction(editMenuInteraction)
-    }
-    
+    // Debug: Creation log removed to avoid noisy repeated logs during re-render cycles
+    // Set focus request flag - the textView will handle this in didMoveToWindow
+    textView.requestFocusOnAttach = focusOnAppear
     return textView
   }
   
+  private func getAppropriateFont() -> UIFont {
+    // Use the same approach as RichTextEditor for consistency
+    return UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+  }
+  
   func updateUIView(_ uiView: UITextView, context: Context) {
+    // Update font if needed
+    let newFont = getAppropriateFont()
+    if uiView.font != newFont {
+      uiView.font = newFont
+      uiView.typingAttributes[.font] = newFont
+      context.coordinator.updateFontRelatedSettings(in: uiView)
+    }
+    
     if uiView.attributedText != attributedText {
       let previousSelectedRange = uiView.selectedRange
-      uiView.attributedText = attributedText
+      // Ensure displayed text has a font attribute; UITextView.font is ignored
+      // when setting attributedText, so we apply a default font to ranges missing it.
+      let displayText = context.coordinator.applyingDefaultFontIfMissing(
+        attributedText,
+        defaultFont: newFont
+      )
+      uiView.attributedText = displayText
       
       // Restore selection if possible
       if previousSelectedRange.location <= uiView.text.count {
@@ -64,39 +146,58 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     
     // Update placeholder
     context.coordinator.updatePlaceholder(placeholder, in: uiView)
+
+    // Handle explicit focus re-activation
+    if context.coordinator.lastFocusID != focusActivationID, let _ = focusActivationID {
+      context.coordinator.lastFocusID = focusActivationID
+      DispatchQueue.main.async {
+        _ = uiView.becomeFirstResponder()
+      }
+    }
   }
   
   func makeCoordinator() -> Coordinator {
     Coordinator(self)
   }
   
-  private func setupCustomMenu(for textView: UITextView) {
-    // For iOS 16+, we'll use UIEditMenuInteraction through the coordinator
-    // The actual menu setup is handled in the coordinator's textViewDidChangeSelection
-    // This ensures the menu appears when text is selected
-    
-    // Enable text selection highlighting
-    textView.isSelectable = true
-    textView.isEditable = true
-  }
   
-  class Coordinator: NSObject, UITextViewDelegate {
+  class Coordinator: NSObject, UITextViewDelegate, LinkCreationDelegate {
     let parent: EnhancedRichTextEditor
     private var placeholderLabel: UILabel?
-    var editMenuInteraction: UIEditMenuInteraction?
+    private var isSanitizing = false
+    private let rtLogger = Logger(subsystem: "blue.catbird", category: "RichText.Legacy")
+    var lastFocusID: UUID? = nil
     
     init(_ parent: EnhancedRichTextEditor) {
       self.parent = parent
       super.init()
-      
-      // Set up edit menu interaction for iOS 16+
-      if #available(iOS 16.0, *) {
-        editMenuInteraction = UIEditMenuInteraction(delegate: self)
-      }
     }
     
     func textViewDidChange(_ textView: UITextView) {
-      // Update attributed text binding
+      // Sanitize to keep only link attributes
+      if !isSanitizing {
+        let sanitized = textView.attributedText.ctb_keepOnlyLinkAttribute()
+        if sanitized != textView.attributedText {
+          // Prevent recursion
+          isSanitizing = true
+          let previousSelectedRange = textView.selectedRange
+          // Ensure the displayed text maintains the default font
+            let font = textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+          let withFont = applyingDefaultFontIfMissing(sanitized, defaultFont: font)
+          textView.attributedText = withFont
+          // Restore selection if possible
+          if previousSelectedRange.location <= textView.text.count {
+            textView.selectedRange = previousSelectedRange
+          }
+          isSanitizing = false
+        }
+      }
+
+      // Debug summary
+      let counts = summarizeNS(textView.attributedText)
+      rtLogger.debug("Legacy change: len=\(textView.text.count), runs=\(counts.runs), linkRuns=\(counts.linkRuns)")
+
+      // Update attributed text binding (already sanitized)
       parent.attributedText = textView.attributedText
       
       // Update link facets based on text changes
@@ -110,6 +211,13 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       
       // Detect genmoji
       detectGenmoji(in: textView.text)
+    }
+    
+    // MARK: - LinkCreationDelegate
+    
+    func requestLinkCreation(for text: String, in range: NSRange) {
+      logger.debug("📝 Coordinator: Link creation requested with text: '\(text)' range: \(range)")
+      parent.onLinkCreationRequested(text, range)
     }
     
     func textView(_ textView: UITextView, shouldInteractWith textAttachment: NSTextAttachment, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
@@ -126,16 +234,24 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
       if interaction == .invokeDefaultAction {
         // Handle link taps - you might want to open URLs or show edit options
+        rtLogger.debug("Legacy tap URL=\(URL.absoluteString) range=\(characterRange.debugDescription)")
         return false
       }
       return true
     }
     
     func textViewDidChangeSelection(_ textView: UITextView) {
-      // Could be used to show link creation options when text is selected
+      // Handle text selection changes
       let selectedRange = textView.selectedRange
+      logger.debug("📝 Text selection changed: \(selectedRange)")
+      
+      // The UIEditMenuInteraction will handle showing the menu automatically
+      // when appropriate (e.g., after a long press or double-tap selection)
       if selectedRange.length > 0 {
-        // Text is selected - could show link creation UI
+        logger.debug("📝 Text is selected, length: \(selectedRange.length)")
+        // Text is selected - menu will appear on appropriate gesture
+      } else {
+        logger.debug("📝 No text selected")
       }
     }
     
@@ -146,6 +262,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       
       let newFacets = extractLinkFacetsFromAttributedText(textView.attributedText)
       parent.linkFacets = newFacets
+      rtLogger.debug("Legacy facets updated: count=\(newFacets.count)")
     }
     
     private func extractLinkFacetsFromAttributedText(_ attributedText: NSAttributedString) -> [RichTextFacetUtils.LinkFacet] {
@@ -168,21 +285,34 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     
     func updatePlaceholder(_ placeholder: String, in textView: UITextView) {
       if placeholderLabel == nil {
-        placeholderLabel = UILabel()
-        placeholderLabel?.font = textView.font
-        placeholderLabel?.textColor = .placeholderText
-        placeholderLabel?.numberOfLines = 0
-        textView.addSubview(placeholderLabel!)
-        
-        placeholderLabel?.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        placeholderLabel = label
+        // Match the typing font exactly (falls back to textView.font)
+        let typingFont = (textView.typingAttributes[.font] as? UIFont) ?? textView.font
+        label.font = typingFont
+        label.textColor = .placeholderText
+        label.numberOfLines = 0
+        label.adjustsFontForContentSizeCategory = true
+        label.text = placeholder
+        textView.addSubview(label)
+
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        // Align the placeholder to the actual text region.
+        // Using textLayoutGuide ensures perfect alignment with the caret/text,
+        // regardless of textContainerInset, contentInset, or padding.
+          let guide = textView.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-          placeholderLabel!.topAnchor.constraint(equalTo: textView.topAnchor, constant: 8),
-          placeholderLabel!.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 5),
-          placeholderLabel!.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -5)
+          label.topAnchor.constraint(equalTo: guide.topAnchor),
+          label.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+          label.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor)
         ])
       }
-      
-      placeholderLabel?.text = placeholder
+
+      // Keep font in sync with current typing attributes
+      if let currentTypingFont = (textView.typingAttributes[.font] as? UIFont) ?? textView.font {
+        placeholderLabel?.font = currentTypingFont
+      }
       placeholderLabel?.isHidden = !textView.text.isEmpty
     }
     
@@ -200,44 +330,35 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
         parent.onGenmojiDetected(genmojis)
       }
     }
+    
+    func updateFontRelatedSettings(in textView: UITextView) {
+      // Update placeholder font when textView font or typing attributes change
+      let typingFont = (textView.typingAttributes[.font] as? UIFont) ?? textView.font
+      placeholderLabel?.font = typingFont
+      if let font = textView.font {
+        textView.typingAttributes[.font] = font
+      }
+    }
+
+    // Apply a default font to any ranges that lack an explicit font attribute.
+    func applyingDefaultFontIfMissing(_ source: NSAttributedString, defaultFont: UIFont) -> NSAttributedString {
+      let mutable = NSMutableAttributedString(attributedString: source)
+      var location = 0
+      while location < mutable.length {
+        var range = NSRange(location: 0, length: 0)
+        let attrs = mutable.attributes(at: location, effectiveRange: &range)
+        if attrs[.font] == nil {
+          var newAttrs = attrs
+          newAttrs[.font] = defaultFont
+          mutable.setAttributes(newAttrs, range: range)
+        }
+        location = range.location + range.length
+      }
+      return mutable
+    }
   }
 }
 
-// MARK: - UIEditMenuInteractionDelegate
-
-@available(iOS 16.0, *)
-extension EnhancedRichTextEditor.Coordinator: UIEditMenuInteractionDelegate {
-  
-  func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration, suggestedActions: [UIMenuElement]) -> UIMenu? {
-    
-    // Only add our custom menu if there's selected text
-    guard let textView = interaction.view as? UITextView,
-          textView.selectedRange.length > 0 else {
-      return UIMenu(children: suggestedActions)
-    }
-    
-    let selectedText = (textView.text as NSString).substring(with: textView.selectedRange)
-    
-    // Only show "Create Link" if there's non-empty selected text
-    guard !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return UIMenu(children: suggestedActions)
-    }
-    
-    // Create the "Create Link" action
-    let createLinkAction = UIAction(
-      title: "Create Link",
-      image: UIImage(systemName: "link")
-    ) { [weak self] _ in
-      self?.parent.onLinkCreationRequested(selectedText, textView.selectedRange)
-    }
-    
-    // Combine our custom action with the suggested actions
-    var allActions = suggestedActions
-    allActions.insert(createLinkAction, at: 0)
-    
-    return UIMenu(children: allActions)
-  }
-}
 
 #else
 
@@ -259,3 +380,35 @@ struct EnhancedRichTextEditor: View {
 }
 
 #endif
+
+// MARK: - NSAttributedString Sanitizer (links-only)
+
+private extension NSAttributedString {
+  /// Returns a copy of the receiver where only the `.link` attribute is preserved
+  /// for each attributed run. All other attributes are stripped.
+  func ctb_keepOnlyLinkAttribute() -> NSAttributedString {
+    let mutable = NSMutableAttributedString(attributedString: self)
+    var location = 0
+    while location < mutable.length {
+      var range = NSRange(location: 0, length: 0)
+      let attrs = mutable.attributes(at: location, effectiveRange: &range)
+      if let link = attrs[.link] {
+        mutable.setAttributes([.link: link], range: range)
+      } else {
+        mutable.setAttributes([:], range: range)
+      }
+      location = range.location + range.length
+    }
+    return mutable
+  }
+}
+
+private func summarizeNS(_ ns: NSAttributedString) -> (runs: Int, linkRuns: Int) {
+  var runs = 0
+  var linkRuns = 0
+  ns.enumerateAttributes(in: NSRange(location: 0, length: ns.length)) { attrs, _, _ in
+    runs += 1
+    if attrs[.link] != nil { linkRuns += 1 }
+  }
+  return (runs, linkRuns)
+}

@@ -225,7 +225,7 @@ final class PlayerContainer: UIView {
       guard let self = self, !self.isCleanedUp else { return }
       if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error {
         // Log error but don't crash
-        print("Player failed to play to end: \(error)")
+        logger.debug("Player failed to play to end: \(error)")
       }
     }
   }
@@ -439,7 +439,7 @@ final class PlayerContainerMac: NSView {
     ) { [weak self] notification in
       guard let self = self, !self.isCleanedUp else { return }
       if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error {
-        print("Player failed to play to end: \(error)")
+        logger.debug("Player failed to play to end: \(error)")
       }
     }
   }

@@ -30,11 +30,8 @@ struct SettingsView: View {
             profile: profile,
             isLoadingProfile: isLoadingProfile,
             profileError: profileError,
-            isAuthenticationError: isAuthenticationError,
-            handleReAuthentication: handleReAuthentication
+            isAuthenticationError: isAuthenticationError
           )
-          .listRowInsets(EdgeInsets())
-          .listRowBackground(Color.clear)
         }
 
         // Main settings categories
@@ -473,7 +470,6 @@ struct SettingsView: View {
 // MARK: - Component Views
 
 struct AccountHeaderView: View {
-    @Environment(\.colorScheme) private var currentColorScheme
   @Binding var isShowingAccountSwitcher: Bool
   let availableAccounts: Int
   let appState: AppState
@@ -485,58 +481,36 @@ struct AccountHeaderView: View {
   
   // Auth handling closures
   let isAuthenticationError: (Error) -> Bool
-  let handleReAuthentication: () async -> Void
 
   var body: some View {
-    // Don't show "Signed in as" at all if user is not authenticated
+    // Keep it native: simple list-style row without custom chrome
     if case .authenticated = appState.authState {
-      VStack(spacing: 12) {
-        HStack {
-          Text("Signed in as")
-            .appHeadline()
-          Spacer()
+      Button {
+        isShowingAccountSwitcher = true
+      } label: {
+        VStack(alignment: .leading, spacing: 4) {
+          AccountSwitchButton(
+            availableAccounts: availableAccounts,
+            profile: profile,
+            isLoadingProfile: isLoadingProfile
+          )
 
-          if isLoadingProfile {
-            ProgressView()
-          } else if let handle = profile?.handle.description {
-            Text("@\(handle)")
-              .fontWeight(.medium)
-          } else if let error = profileError {
-            // Check if this is an authentication error (401) 
+          if let error = profileError {
             if isAuthenticationError(error) {
-              Button("Sign In Again") {
-                Task {
-                  await handleReAuthentication()
-                }
-              }
-              .foregroundStyle(.blue)
-              .fontWeight(.medium)
+              Text("Session expired. Tap to sign in.")
+                .appCaption()
+                .foregroundStyle(.red)
             } else {
-              Text("Unable to load profile")
+              Text("Unable to load profile.")
+                .appCaption()
                 .foregroundStyle(.secondary)
-                .fontWeight(.medium)
             }
-          } else {
-            Text("Unknown")
-              .fontWeight(.medium)
           }
         }
-      .padding(.horizontal)
-      .padding(.top, 8)
-
-      AccountSwitchButton(
-        availableAccounts: availableAccounts,
-        isShowingAccountSwitcher: $isShowingAccountSwitcher,
-        appState: appState,
-        profile: profile,
-        isLoadingProfile: isLoadingProfile
-      )
-      .padding(.horizontal)
-      .padding(.bottom, 8)
-      .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: currentColorScheme))
-      .clipShape(RoundedRectangle(cornerRadius: 10))
-      .id(appState.currentUserDID)
+        .contentShape(Rectangle())
       }
+      .buttonStyle(.plain)
+      .id(appState.currentUserDID)
     } else {
       // Show nothing when not authenticated - user will see LoginView instead
       EmptyView()
@@ -546,23 +520,18 @@ struct AccountHeaderView: View {
 
 struct AccountSwitchButton: View {
   let availableAccounts: Int
-  @Binding var isShowingAccountSwitcher: Bool
-  let appState: AppState
   
   // Profile-related properties
   let profile: AppBskyActorDefs.ProfileViewDetailed?
   let isLoadingProfile: Bool
 
   var body: some View {
-    Button {
-      isShowingAccountSwitcher = true
-    } label: {
       HStack(spacing: 12) {
         // Avatar image
         ProfileAvatarView(
           url: profile?.avatar?.url,
           fallbackText: profile?.handle.description.prefix(1).uppercased() ?? "?",
-          size: 50
+          size: 44
         )
 
         VStack(alignment: .leading, spacing: 4) {
@@ -608,9 +577,7 @@ struct AccountSwitchButton: View {
           .foregroundColor(.gray)
           .appFont(AppTextRole.footnote)
       }
-      .padding(12)
-    }
-    .buttonStyle(PlainButtonStyle())
+      // Use the default list row metrics for a more native feel
   }
 }
 

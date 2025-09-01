@@ -7,6 +7,7 @@
 
 #if os(iOS)
 import UIKit
+import Nuke
 #elseif os(macOS)
 import AppKit
 #endif
@@ -19,59 +20,10 @@ private let avatarLogger = Logger(subsystem: "blue.catbird", category: "AvatarIm
 // MARK: - Cross-Platform Image Extensions
 
 extension PlatformImage {
+    // Prefer the centralized implementation in CrossPlatformImage.swift.
+    // Keep this as a thin adapter to the shared API name to avoid duplication.
     func circularCropped(to size: CGSize) -> PlatformImage? {
-        #if os(iOS)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            // Draw a path to clip to a circular shape
-            let path = UIBezierPath(ovalIn: CGRect(origin: .zero, size: size))
-            path.addClip()
-            
-            // Calculate scaling to fill the circle
-            let aspectWidth = size.width / self.size.width
-            let aspectHeight = size.height / self.size.height
-            let aspectRatio = max(aspectWidth, aspectHeight)
-            
-            let scaledWidth = self.size.width * aspectRatio
-            let scaledHeight = self.size.height * aspectRatio
-            let drawingRect = CGRect(
-                x: (size.width - scaledWidth) / 2,
-                y: (size.height - scaledHeight) / 2,
-                width: scaledWidth,
-                height: scaledHeight
-            )
-            
-            self.draw(in: drawingRect)
-        }
-        #elseif os(macOS)
-        return NSImage(size: size, flipped: false) { rect in
-            guard let context = NSGraphicsContext.current?.cgContext else {
-                avatarLogger.error("Failed to get current graphics context")
-                return false
-            }
-            
-            // Create circular clipping path
-            let path = NSBezierPath(ovalIn: rect)
-            path.addClip()
-            
-            // Calculate scaling to fill the circle
-            let aspectWidth = size.width / self.size.width
-            let aspectHeight = size.height / self.size.height
-            let aspectRatio = max(aspectWidth, aspectHeight)
-            
-            let scaledWidth = self.size.width * aspectRatio
-            let scaledHeight = self.size.height * aspectRatio
-            let drawingRect = CGRect(
-                x: (size.width - scaledWidth) / 2,
-                y: (size.height - scaledHeight) / 2,
-                width: scaledWidth,
-                height: scaledHeight
-            )
-            
-            self.draw(in: drawingRect)
-            return true
-        }
-        #endif
+        return self.circularCroppedImage(to: size)
     }
 }
 
@@ -86,7 +38,7 @@ class AvatarImageLoader {
     
     // Helper method to resize images
     private func resizeImage(_ image: PlatformImage, to size: CGSize) -> PlatformImage? {
-        return image.circularCropped(to: size)
+        return image.circularCroppedImage(to: size)
     }
     
     func loadAvatar(for did: String, client: ATProtoClient?, size: CGFloat = 24, completion: @escaping (PlatformImage?) -> Void) {
@@ -105,32 +57,47 @@ class AvatarImageLoader {
             do {
                 guard let client = client else {
                     avatarLogger.debug("Client is nil, cannot load avatar for DID: \(did)")
-                    return nil
+                    return nil as PlatformImage?
                 }
                 
                 // Fetch profile
                 let profile = try await client.app.bsky.actor.getProfile(
-                    input: .init(actor: ATIdentifier(string: did))
+                    input: .init(actor: try ATIdentifier(string: did))
                 ).data
                 
-                // Download avatar if available
+                // Download avatar if available using Nuke (off-main decode + caching)
                 if let avatarURL = profile?.finalAvatarURL() {
-                    
+                    #if os(iOS)
+                    let request = ImageRequest(url: avatarURL)
+                    let response = try await ImagePipeline.shared.image(for: request)
+                    let image = response
+                    // Cache the rounded result for consistent reuse
+                    let targetSize = CGSize(width: size, height: size)
+                    if let rounded = image.circularCroppedImage(to: targetSize) {
+                        self.cache.setObject(rounded, forKey: cacheKey)
+                        return rounded
+                    } else {
+                        self.cache.setObject(image, forKey: cacheKey)
+                        return image
+                    }
+                    #else
                     let (data, _) = try await URLSession.shared.data(from: avatarURL)
                     if let image = PlatformImage(data: data) {
-                        // Resize image before caching
                         let sizeToUse = CGSize(width: size, height: size)
                         if let resizedImage = self.resizeImage(image, to: sizeToUse) {
-                            // Cache the resized result
                             self.cache.setObject(resizedImage, forKey: cacheKey)
                             return resizedImage
+                        } else {
+                            self.cache.setObject(image, forKey: cacheKey)
+                            return image
                         }
                     }
+                    #endif
                 }
-                return nil
+                return nil as PlatformImage?
             } catch {
-                avatarLogger.debug("Avatar loading error: \(error)")
-                return nil
+                avatarLogger.debug("Avatar loading error: \(error.localizedDescription)")
+                return nil as PlatformImage?
             }
         }
         
@@ -157,11 +124,13 @@ struct UIKitAvatarView: UIViewRepresentable {
     let did: String?
     let client: ATProtoClient?
     let size: CGFloat
+    let avatarURL: URL?
     
-    init(did: String?, client: ATProtoClient?, size: CGFloat = 24) {
+    init(did: String?, client: ATProtoClient?, size: CGFloat = 24, avatarURL: URL? = nil) {
         self.did = did
         self.client = client
         self.size = size
+        self.avatarURL = avatarURL
     }
     
     func makeUIView(context: Context) -> UIImageView {
@@ -170,33 +139,66 @@ struct UIKitAvatarView: UIViewRepresentable {
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.layer.cornerRadius = size / 2
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.widthAnchor.constraint(equalToConstant: size).isActive = true
+        imageView.heightAnchor.constraint(equalToConstant: size).isActive = true
         
         // Set placeholder image
-        let placeholder = UIImage(systemName: "person.crop.circle.fill")
+        let placeholder = PlatformImage.systemImage(named: "person.crop.circle.fill")
         imageView.image = placeholder
+        #if os(iOS)
         imageView.tintColor = UIColor.secondaryLabel
+        #endif
         
         return imageView
     }
     
     func updateUIView(_ uiView: UIImageView, context: Context) {
-        // Set frame explicitly
-        uiView.frame = CGRect(x: 0, y: 0, width: size, height: size)
+        // Ensure fixed size via constraints
+        if uiView.constraints.isEmpty {
+            uiView.translatesAutoresizingMaskIntoConstraints = false
+            uiView.widthAnchor.constraint(equalToConstant: size).isActive = true
+            uiView.heightAnchor.constraint(equalToConstant: size).isActive = true
+            uiView.layer.cornerRadius = size / 2
+        }
         
-        // Reset to placeholder if no DID
-        guard let did = did else {
-            uiView.image = UIImage(systemName: "person.crop.circle.fill")
+        // Reset to placeholder if no DID and no direct URL
+        guard did != nil || avatarURL != nil else {
+            uiView.image = PlatformImage.systemImage(named: "person.crop.circle.fill")
             return
         }
         
-        // Load avatar
-        AvatarImageLoader.shared.loadAvatar(for: did, client: client, size: size) { image in
-            if let image = image {
-                UIView.transition(with: uiView, duration: 0.3, options: .transitionCrossDissolve) {
-                    uiView.image = image
+        // Prefer direct avatarURL when available (avoids extra profile fetch)
+        if let directURL = avatarURL {
+            let request = ImageRequest(url: directURL)
+            ImagePipeline.shared.loadImage(with: request) { result in
+                switch result {
+                case .success(let response):
+                    let image = response.image
+                    DispatchQueue.main.async {
+                        UIView.transition(with: uiView, duration: 0.25, options: .transitionCrossDissolve) {
+                            uiView.image = image
+                        }
+                    }
+                case .failure:
+                    DispatchQueue.main.async {
+                        uiView.image = PlatformImage.systemImage(named: "person.crop.circle.fill")
+                    }
                 }
-            } else {
-                uiView.image = UIImage(systemName: "person.crop.circle.fill")
+            }
+            return
+        }
+
+        // Fallback: load via DID using profile fetch
+        if let did = did {
+            AvatarImageLoader.shared.loadAvatar(for: did, client: client, size: size) { image in
+                if let image = image {
+                    UIView.transition(with: uiView, duration: 0.3, options: .transitionCrossDissolve) {
+                        uiView.image = image
+                    }
+                } else {
+                    uiView.image = PlatformImage.systemImage(named: "person.crop.circle.fill")
+                }
             }
         }
     }

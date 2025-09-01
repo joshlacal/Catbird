@@ -80,7 +80,7 @@ struct ContentView: View {
         }
       } else if case .error(let message) = newValue {
         // Log authentication errors for debugging
-        print("[ContentView] Authentication error: \(message)")
+        logger.debug("[ContentView] Authentication error: \(message)")
       }
     }
     .applyTheme(appState.themeManager)
@@ -198,6 +198,22 @@ struct AuthErrorView: View {
 
 // MARK: - Main Content Container View
 
+// Helper to apply matched transition source only on iOS 26+
+@available(iOS 18.0, *)
+private struct ComposeSourceModifier: ViewModifier {
+  let namespace: Namespace.ID
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content
+        .matchedTransitionSource(id: "compose", in: namespace)
+    } else {
+      content
+    }
+  }
+}
+
 @available(iOS 18.0, *)
 struct MainContentView18: View {
   private let appState = AppState.shared
@@ -218,6 +234,8 @@ struct MainContentView18: View {
   @State private var hasInitializedFeed = false
   @State private var showingOnboarding = false
   @State private var hasRestoredState = false
+  // Namespace for iOS 26 matched transitions
+  @Namespace private var composeTransitionNamespace
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
@@ -277,22 +295,25 @@ struct MainContentView18: View {
           }
           .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
 
-          Tab("Profile", systemImage: "person", value: 3) {
-            NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-              UnifiedProfileView(
-                appState: appState,
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab,
-                path: appState.navigationManager.pathBinding(for: 3)
-              )
-              .id(appState.currentUserDID)
-              .navigationDestination(for: NavigationDestination.self) { destination in
-                NavigationHandler.viewForDestination(
-                  destination,
-                  path: appState.navigationManager.pathBinding(for: 3),
+          // Profile Tab - Hidden on iPhone to save space
+          if !PlatformDeviceInfo.isPhone {
+            Tab("Profile", systemImage: "person", value: 3) {
+              NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+                UnifiedProfileView(
                   appState: appState,
-                  selectedTab: $selectedTab
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab,
+                  path: appState.navigationManager.pathBinding(for: 3)
                 )
+                .id(appState.currentUserDID)
+                .navigationDestination(for: NavigationDestination.self) { destination in
+                  NavigationHandler.viewForDestination(
+                    destination,
+                    path: appState.navigationManager.pathBinding(for: 3),
+                    appState: appState,
+                    selectedTab: $selectedTab
+                  )
+                }
               }
             }
           }
@@ -373,7 +394,7 @@ struct MainContentView18: View {
           restoreDrawerState()
         }
         .safeAreaInset(edge: .bottom) {
-          if selectedTab == 0 || selectedTab == 3 {
+          if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
             ZStack(alignment: .trailing) {
               // This creates space for the tab bar
               Color.clear.frame(height: 49)  // Tab bar height
@@ -381,9 +402,15 @@ struct MainContentView18: View {
               FAB(
                 composeAction: { showingPostComposer = true },
                 feedsAction: {},
-                showFeedsButton: false
+                showFeedsButton: false,
+                hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
+                clearDraftAction: {
+                  appState.composerDraftManager.clearDraft()
+                }
               )
-              .offset(y: -100)  // Position FAB above tab bar
+              .offset(x: -5, y: -70)  // Position FAB above tab bar
+              // Mark FAB as the source of the Liquid Glass morph on iOS 26
+              .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
             }
           } else {
             // If no FAB, still provide space for tab bar
@@ -391,16 +418,40 @@ struct MainContentView18: View {
           }
         }
         .sheet(isPresented: $showingPostComposer) {
-          PostComposerView(
-            appState: appState,
-            onMinimize: { composer in
-              appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-              showingPostComposer = false
+          if #available(iOS 26.0, *) {
+            Group {
+              if let draft = appState.composerDraftManager.currentDraft {
+                PostComposerViewUIKit(
+                  restoringFromDraft: draft,
+                  appState: appState
+                )
+              } else {
+                PostComposerViewUIKit(
+                  appState: appState
+                )
+              }
             }
-          )
-          .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
-          .presentationDragIndicator(.visible)
-          .presentationBackground(.thinMaterial)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            // Link the sheet to the FAB for Liquid Glass morph
+            .navigationTransition(.zoom(sourceID: "compose", in: composeTransitionNamespace))
+          } else {
+            Group {
+              if let draft = appState.composerDraftManager.currentDraft {
+                PostComposerViewUIKit(
+                  restoringFromDraft: draft,
+                  appState: appState
+                )
+              } else {
+                PostComposerViewUIKit(
+                  appState: appState
+                )
+              }
+            }
+            .presentationDetents([PresentationDetent.large])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(.thinMaterial)
+          }
         }
         .sheet(isPresented: $showingNewMessageSheet) {
           NewMessageView()
@@ -487,22 +538,25 @@ struct MainContentView18: View {
         }
         .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
 
-        Tab("Profile", systemImage: "person", value: 3) {
-          NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-            UnifiedProfileView(
-              appState: appState,
-              selectedTab: $selectedTab,
-              lastTappedTab: $lastTappedTab,
-              path: appState.navigationManager.pathBinding(for: 3)
-            )
-            .id(appState.currentUserDID)
-            .navigationDestination(for: NavigationDestination.self) { destination in
-              NavigationHandler.viewForDestination(
-                destination,
-                path: appState.navigationManager.pathBinding(for: 3),
+        // Profile Tab - Hidden on iPhone to save space
+        if !PlatformDeviceInfo.isPhone {
+          Tab("Profile", systemImage: "person", value: 3) {
+            NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+              UnifiedProfileView(
                 appState: appState,
-                selectedTab: $selectedTab
+                selectedTab: $selectedTab,
+                lastTappedTab: $lastTappedTab,
+                path: appState.navigationManager.pathBinding(for: 3)
               )
+              .id(appState.currentUserDID)
+              .navigationDestination(for: NavigationDestination.self) { destination in
+                NavigationHandler.viewForDestination(
+                  destination,
+                  path: appState.navigationManager.pathBinding(for: 3),
+                  appState: appState,
+                  selectedTab: $selectedTab
+                )
+              }
             }
           }
         }
@@ -563,7 +617,7 @@ struct MainContentView18: View {
         }
       }
       .overlay(alignment: .bottomTrailing) {
-        if selectedTab == 0 || selectedTab == 3 {
+        if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
           FAB(
             composeAction: { showingPostComposer = true },
             feedsAction: {},
@@ -571,16 +625,25 @@ struct MainContentView18: View {
           )
           .padding(.bottom, 20)
           .padding(.trailing, 20)
+          // Mark FAB as the source for the iOS 26 morph
+          .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
         }
       }
       .sheet(isPresented: $showingPostComposer) {
-        PostComposerView(
-          appState: appState,
-          onMinimize: { composer in
-            appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-            showingPostComposer = false
-          }
-        )
+        if #available(iOS 26.0, *) {
+          PostComposerViewUIKit(
+            appState: appState
+          )
+          .presentationDetents([.medium, .large])
+          .presentationDragIndicator(.visible)
+          .navigationTransition(.zoom(sourceID: "compose", in: composeTransitionNamespace))
+        } else {
+          PostComposerViewUIKit(
+            appState: appState
+          )
+          .presentationDetents([PresentationDetent.large])
+          .presentationDragIndicator(.hidden)
+        }
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
@@ -600,6 +663,26 @@ struct MainContentView18: View {
       
       NetworkStatusIndicator()
     }
+    #if targetEnvironment(macCatalyst)
+    // Global Cmd-R binding for Mac Catalyst to refresh the current feed when on Home tab
+    .overlay(alignment: .topLeading) {
+      // Invisible button to register the keyboard shortcut reliably across the view
+      Button(action: {
+        Task { @MainActor in
+          if selectedTab == 0 { // Only refresh on the Home tab
+            let manager = FeedStateStore.shared.stateManager(for: selectedFeed, appState: appState)
+            await manager.refresh()
+          }
+        }
+      }) { EmptyView() }
+      .keyboardShortcut("r", modifiers: .command)
+      .opacity(0.001)
+      .accessibilityHidden(true)
+    }
+    #endif
+    // Provide the composer transition namespace to descendants so reply buttons
+    // and other triggers can participate in the zoom transition to the composer.
+    .environment(\.composerTransitionNamespace, composeTransitionNamespace)
   }
 }
 
@@ -701,28 +784,30 @@ struct MainContentView17: View {
         .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
         .tag(2)
 
-        // Profile Tab
-        NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-          UnifiedProfileView(
-            appState: appState,
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab,
-            path: appState.navigationManager.pathBinding(for: 3)
-          )
-          .id(appState.currentUserDID)
-          .navigationDestination(for: NavigationDestination.self) { destination in
-            NavigationHandler.viewForDestination(
-              destination,
-              path: appState.navigationManager.pathBinding(for: 3),
+        // Profile Tab - Hidden on iPhone to save space
+        if !PlatformDeviceInfo.isPhone {
+          NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+            UnifiedProfileView(
               appState: appState,
-              selectedTab: $selectedTab
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab,
+              path: appState.navigationManager.pathBinding(for: 3)
             )
+            .id(appState.currentUserDID)
+            .navigationDestination(for: NavigationDestination.self) { destination in
+              NavigationHandler.viewForDestination(
+                destination,
+                path: appState.navigationManager.pathBinding(for: 3),
+                appState: appState,
+                selectedTab: $selectedTab
+              )
+            }
           }
+          .tabItem {
+            Label("Profile", systemImage: "person")
+          }
+          .tag(3)
         }
-        .tabItem {
-          Label("Profile", systemImage: "person")
-        }
-        .tag(3)
 
         #if os(iOS)
         // Chat Tab (iOS only)
@@ -801,7 +886,7 @@ struct MainContentView17: View {
               feedsAction: {},
               showFeedsButton: false
             )
-            .offset(y: -100)  // Position FAB above tab bar
+            .offset(x: -5, y: -70)  // Position FAB above tab bar
           }
         } else {
           // If no FAB, still provide space for tab bar
@@ -809,12 +894,8 @@ struct MainContentView17: View {
         }
       }
       .sheet(isPresented: $showingPostComposer) {
-        PostComposerView(
-          appState: appState,
-          onMinimize: { composer in
-            appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-            showingPostComposer = false
-          }
+        PostComposerViewUIKit(
+          appState: appState
         )
         .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
         .presentationDragIndicator(.visible)
@@ -911,28 +992,30 @@ struct MainContentView17: View {
         .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
         .tag(2)
 
-        // Profile Tab
-        NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-          UnifiedProfileView(
-            appState: appState,
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab,
-            path: appState.navigationManager.pathBinding(for: 3)
-          )
-          .id(appState.currentUserDID)
-          .navigationDestination(for: NavigationDestination.self) { destination in
-            NavigationHandler.viewForDestination(
-              destination,
-              path: appState.navigationManager.pathBinding(for: 3),
+        // Profile Tab - Hidden on iPhone to save space
+        if !PlatformDeviceInfo.isPhone {
+          NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+            UnifiedProfileView(
               appState: appState,
-              selectedTab: $selectedTab
+              selectedTab: $selectedTab,
+              lastTappedTab: $lastTappedTab,
+              path: appState.navigationManager.pathBinding(for: 3)
             )
+            .id(appState.currentUserDID)
+            .navigationDestination(for: NavigationDestination.self) { destination in
+              NavigationHandler.viewForDestination(
+                destination,
+                path: appState.navigationManager.pathBinding(for: 3),
+                appState: appState,
+                selectedTab: $selectedTab
+              )
+            }
           }
+          .tabItem {
+            Label("Profile", systemImage: "person")
+          }
+          .tag(3)
         }
-        .tabItem {
-          Label("Profile", systemImage: "person")
-        }
-        .tag(3)
       }
       .onAppear {
         // Similar initialization as iOS
@@ -984,13 +1067,11 @@ struct MainContentView17: View {
         }
       }
       .sheet(isPresented: $showingPostComposer) {
-        PostComposerView(
-          appState: appState,
-          onMinimize: { composer in
-            appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-            showingPostComposer = false
-          }
+        PostComposerViewUIKit(
+          appState: appState
         )
+        .presentationDetents([PresentationDetent.large])
+        .presentationDragIndicator(.hidden)
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
@@ -1010,6 +1091,22 @@ struct MainContentView17: View {
       
       NetworkStatusIndicator()
     }
+    #if targetEnvironment(macCatalyst)
+    // Global Cmd-R binding for Mac Catalyst to refresh the current feed when on Home tab
+    .overlay(alignment: .topLeading) {
+      Button(action: {
+        Task { @MainActor in
+          if selectedTab == 0 { // Only refresh on the Home tab
+            let manager = FeedStateStore.shared.stateManager(for: selectedFeed, appState: appState)
+            await manager.refresh()
+          }
+        }
+      }) { EmptyView() }
+      .keyboardShortcut("r", modifiers: .command)
+      .opacity(0.001)
+      .accessibilityHidden(true)
+    }
+    #endif
   }
 }
 
@@ -1230,8 +1327,14 @@ extension MainContentView18 {
     // Restore selected tab
     let savedTab = defaults.integer(forKey: "last_selected_tab")
     if savedTab >= 0 && savedTab <= 4 {
-      selectedTab = savedTab
-      print("[ContentView] Restored selected tab: \(savedTab)")
+      // On iPhone, don't restore profile tab (tab 3) - fallback to home (tab 0)
+      if savedTab == 3 && PlatformDeviceInfo.isPhone {
+        selectedTab = 0
+        logger.debug("[ContentView] Restored tab 3 -> tab 0 (iPhone)")
+      } else {
+        selectedTab = savedTab
+        logger.debug("[ContentView] Restored selected tab: \(savedTab)")
+      }
     }
     
     // Clean up restoration flags
@@ -1246,7 +1349,7 @@ extension MainContentView18 {
     if defaults.bool(forKey: "should_restore_drawer_open") && selectedTab == 0 {
       isDrawerOpen = true
       defaults.removeObject(forKey: "should_restore_drawer_open")
-      print("[ContentView] Restored drawer open state")
+      logger.debug("[ContentView] Restored drawer open state")
     }
   }
   
@@ -1266,7 +1369,7 @@ extension MainContentView17 {
     if defaults.bool(forKey: "should_restore_drawer_open") && selectedTab == 0 {
       isDrawerOpen = true
       defaults.removeObject(forKey: "should_restore_drawer_open")
-      print("[ContentView] Restored drawer open state")
+      logger.debug("[ContentView] Restored drawer open state")
     }
   }
   

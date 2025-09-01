@@ -12,6 +12,9 @@ import Observation
 import SwiftUI
 import Petrel
 import os
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor @Observable
 final class FeedStateManager: StateInvalidationSubscriber {
@@ -481,6 +484,32 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // This will be called by the UIKit controller when needed
         // We store the anchor for later restoration
     }
+    
+    /// Captures scroll position from UICollectionView (called by controller)
+    #if os(iOS)
+    func captureScrollAnchor(from collectionView: UICollectionView) {
+        guard !posts.isEmpty else { return }
+        
+        let visibleIndexPaths = collectionView.indexPathsForVisibleItems.sorted()
+        guard let firstVisibleIndexPath = visibleIndexPaths.first,
+              firstVisibleIndexPath.item < posts.count else { return }
+        
+        let post = posts[firstVisibleIndexPath.item]
+        
+        // Calculate offset from the top of the visible cell
+        let cellFrame = collectionView.cellForItem(at: firstVisibleIndexPath)?.frame ?? .zero
+        let contentOffsetY = collectionView.contentOffset.y
+        let offsetFromTop = contentOffsetY - cellFrame.minY
+        
+        scrollAnchor = ScrollAnchor(
+            postID: post.id,
+            offsetFromTop: offsetFromTop,
+            timestamp: Date()
+        )
+        
+        logger.debug("📍 Captured scroll anchor for post: \(post.id), offset: \(offsetFromTop)")
+    }
+    #endif
     
     /// Sets a scroll anchor for position restoration
     func setScrollAnchor(_ anchor: ScrollAnchor) {

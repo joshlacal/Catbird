@@ -169,7 +169,15 @@ extension PostComposerViewModel {
             urlCards = firstEntry.urlCards
             outlineTags = firstEntry.hashtags
             
+            // Preserve font attributes when exiting thread mode
+            #if os(iOS)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+            ]
+            richAttributedText = NSAttributedString(string: postText, attributes: attributes)
+            #else
             richAttributedText = NSAttributedString(string: postText)
+            #endif
         }
         
         // Reset to single post mode
@@ -290,7 +298,7 @@ extension PostComposerViewModel {
         
         // Process embeds for each post
         var allEmbeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?] = []
-        for entry in validEntries {
+        for (idx, entry) in validEntries.enumerated() {
             var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
             if let gif = entry.selectedGif {
                 embed = try await createGifEmbed(gif)
@@ -303,7 +311,12 @@ extension PostComposerViewModel {
                 embed = try await createVideoEmbed()
                 self.videoItem = nil // Clear it
             } else if let urlCard = entry.urlCards.values.first {
-                embed = await createExternalEmbedWithThumbnail(urlCard)
+                // Only create an external embed if this post doesn't already contain
+                // inline link facets. Inline links should remain as rich text, not embeds.
+                let facetsForEntry = idx < allFacets.count ? allFacets[idx] : []
+                if !facetsContainLinks(facetsForEntry) {
+                    embed = await createExternalEmbedWithThumbnail(urlCard)
+                }
             }
             allEmbeds.append(embed)
         }
@@ -318,22 +331,40 @@ extension PostComposerViewModel {
         }
         
         // Create the entire thread in one batch operation
-        try await postManager.createThread(
-            posts: postTexts,
-            languages: selectedLanguages,
-            selfLabels: selfLabels,
-            hashtags: outlineTags,
-            facets: allFacets,
-            embeds: allEmbeds,
-            threadgateAllowRules: threadgateRules
-        )
+        do {
+            try await postManager.createThread(
+                posts: postTexts,
+                languages: selectedLanguages,
+                selfLabels: selfLabels,
+                hashtags: outlineTags,
+                facets: allFacets,
+                embeds: allEmbeds,
+                threadgateAllowRules: threadgateRules
+            )
+        } catch {
+            let nsErr = error as NSError
+            if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
+                ComposerOutbox.shared.enqueueThread(texts: postTexts, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
+                appState.composerDraftManager.clearDraft()
+                logger.info("Thread queued offline")
+                return
+            }
+            throw error
+        }
+        
+        // Clear draft on successful post creation
+        appState.composerDraftManager.clearDraft()
     }
     
     private func processFacetsForText(_ text: String) async -> [AppBskyRichtextFacet] {
         // Temporarily set postText for facet processing
         let originalText = postText
         postText = text
-        let facets = await processFacets()
+        var facets = await processFacets()
+        // Merge in manual inline link facets (legacy path support)
+        if !manualLinkFacets.isEmpty {
+            facets.append(contentsOf: manualLinkFacets)
+        }
         postText = originalText
         return facets
     }
@@ -382,9 +413,14 @@ extension PostComposerViewModel {
             // Handle quote post embed
             embed = createQuoteEmbed(quotedPost)
         } else if let urlCard = urlCards.values.first {
-            logger.debug("Creating external link embed")
-            // Handle external link embed with thumbnail support
-            embed = await createExternalEmbedWithThumbnail(urlCard)
+            // If the post contains inline link facets, prefer keeping them inline
+            // and do NOT create an external embed.
+            if !facetsContainLinks(facets) {
+                logger.debug("Creating external link embed")
+                embed = await createExternalEmbedWithThumbnail(urlCard)
+            } else {
+                logger.debug("Inline link facets present; skipping external link embed")
+            }
         } else {
             logger.debug("No embed needed")
         }
@@ -401,19 +437,44 @@ extension PostComposerViewModel {
         // Create the post
         logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
         
-        try await postManager.createPost(
-            postText,
-            languages: selectedLanguages,
-            metadata: [:],
-            hashtags: outlineTags,
-            facets: facets,
-            parentPost: parentPost,
-            selfLabels: selfLabels,
-            embed: embed,
-            threadgateAllowRules: threadgateRules
-        )
+        do {
+            try await postManager.createPost(
+                postText,
+                languages: selectedLanguages,
+                metadata: [:],
+                hashtags: outlineTags,
+                facets: facets,
+                parentPost: parentPost,
+                selfLabels: selfLabels,
+                embed: embed,
+                threadgateAllowRules: threadgateRules
+            )
+        } catch {
+            // If offline, enqueue into outbox and surface queued status
+            let nsErr = error as NSError
+            if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
+                ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
+                appState.composerDraftManager.clearDraft()
+                logger.info("Post queued offline")
+                return
+            }
+            throw error
+        }
+        
+        // Clear draft on successful post creation
+        appState.composerDraftManager.clearDraft()
         
         logger.info("Post created successfully")
+    }
+
+    // MARK: - Helpers
+    private func facetsContainLinks(_ facets: [AppBskyRichtextFacet]) -> Bool {
+        for facet in facets {
+            for feature in facet.features {
+                if case .appBskyRichtextFacetLink = feature { return true }
+            }
+        }
+        return false
     }
     
     // MARK: - Thumbnail Management
@@ -421,8 +482,24 @@ extension PostComposerViewModel {
     /// Pre-upload thumbnails for all URL cards that don't have them yet
     @MainActor
     func preUploadThumbnails() async {
-        for urlCard in urlCards.values {
-            if !urlCard.image.isEmpty && thumbnailCache[urlCard.url] == nil && urlCard.thumbnailBlob == nil {
+        let urlCardsToProcess = urlCards.values.filter {
+            !$0.image.isEmpty && thumbnailCache[$0.url] == nil && $0.thumbnailBlob == nil
+        }
+        
+        // Process thumbnails in background to avoid blocking UI
+        if #available(iOS 16.0, macOS 13.0, *), let optimizer = performanceOptimizer {
+            for urlCard in urlCardsToProcess {
+                do {
+                    try await optimizer.executeThumbnailUpload {
+                        await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+                    }
+                } catch {
+                    logger.error("Failed to upload thumbnail for \(urlCard.url): \(error)")
+                }
+            }
+        } else {
+            // Fallback for older OS versions
+            for urlCard in urlCardsToProcess {
                 await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
             }
         }
@@ -449,7 +526,19 @@ extension PostComposerViewModel {
         }
         
         logger.info("Retrying thumbnail upload for: \(url)")
-        await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+        
+        // Use performance optimizer for retry if available
+        if #available(iOS 16.0, macOS 13.0, *), let optimizer = performanceOptimizer {
+            do {
+                try await optimizer.executeThumbnailUpload {
+                    await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+                }
+            } catch {
+                logger.error("Failed to retry thumbnail upload for \(url): \(error)")
+            }
+        } else {
+            await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
+        }
     }
     
     // MARK: - Additional Helper Methods
@@ -536,8 +625,15 @@ extension PostComposerViewModel {
         urlCards = entry.urlCards
         outlineTags = entry.hashtags
         
-        // Sync attributed text
+        // Sync attributed text with proper font attributes
+        #if os(iOS)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+        ]
+        richAttributedText = NSAttributedString(string: postText, attributes: attributes)
+        #else
         richAttributedText = NSAttributedString(string: postText)
+        #endif
         
         // Update content after loading
         updatePostContent()
@@ -545,6 +641,29 @@ extension PostComposerViewModel {
     
     func removeThreadEntry(at index: Int) {
         removeThreadPost(at: index)
+        // If only one entry remains, automatically revert to single-post mode
+        if isThreadMode && threadEntries.count <= 1 {
+            currentThreadIndex = 0
+            exitThreadMode()
+        }
+    }
+
+    func moveThreadEntry(from index: Int, direction: Int) {
+        // direction: -1 for up, +1 for down
+        let newIndex = index + direction
+        guard threadEntries.indices.contains(index), threadEntries.indices.contains(newIndex) else { return }
+        let entry = threadEntries.remove(at: index)
+        threadEntries.insert(entry, at: newIndex)
+        currentThreadIndex = newIndex
+    }
+
+    func moveThreadEntry(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex != destinationIndex,
+              threadEntries.indices.contains(sourceIndex),
+              threadEntries.indices.contains(destinationIndex) else { return }
+        let entry = threadEntries.remove(at: sourceIndex)
+        threadEntries.insert(entry, at: destinationIndex)
+        currentThreadIndex = destinationIndex
     }
     
     // MARK: - Embed Creation Helpers
@@ -799,47 +918,95 @@ extension PostComposerViewModel {
     // MARK: - Facet Processing
     
     private func processFacets() async -> [AppBskyRichtextFacet] {
-        var facets: [AppBskyRichtextFacet] = []
+        // Use the same PostParser logic that's used for real-time parsing to ensure consistency
+        logger.debug("PostComposer: processFacets called with postText='\(self.postText)' (length=\(self.postText.count))")
+        let (_, _, facets, _, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
         
-        // Process mentions
+        // Try to resolve any unresolved mentions for posting
+        var enhancedFacets = facets
+        let unresolvedMentions = extractUnresolvedMentions(from: postText)
+        
+        if !unresolvedMentions.isEmpty {
+            logger.debug("PostComposer: Found \(unresolvedMentions.count) unresolved mentions, attempting to resolve")
+            let resolvedMentionFacets = await resolveAndCreateMentionFacets(for: unresolvedMentions)
+            enhancedFacets.append(contentsOf: resolvedMentionFacets)
+        }
+        
+        // Merge in manual inline link facets (from UIKit editor)
+        logger.debug("PostComposer: Checking manualLinkFacets: count=\(self.manualLinkFacets.count), isEmpty=\(self.manualLinkFacets.isEmpty)")
+        if !manualLinkFacets.isEmpty {
+            logger.debug("PostComposer: Adding \(self.manualLinkFacets.count) manual link facets: \(self.manualLinkFacets)")
+            enhancedFacets.append(contentsOf: manualLinkFacets)
+        } else {
+            logger.debug("PostComposer: No manual link facets to add")
+        }
+        
+        logger.debug("PostComposer: Final facets count: \(enhancedFacets.count)")
+        return enhancedFacets
+    }
+    
+    /// Extract mention handles from text that aren't in resolvedProfiles
+    private func extractUnresolvedMentions(from text: String) -> [(handle: String, range: NSRange)] {
+        var unresolved: [(String, NSRange)] = []
+        
         let mentionPattern = #"@([a-zA-Z0-9.-]+)"#
         if let regex = try? NSRegularExpression(pattern: mentionPattern, options: []) {
-            let matches = regex.matches(in: postText, options: [], range: NSRange(location: 0, length: postText.count))
+            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.count))
             
             for match in matches {
-                if let range = Range(match.range, in: postText) {
-                    let handle = String(postText[range].dropFirst()) // Remove @
+                if let range = Range(match.range, in: text) {
+                    let handle = String(text[range].dropFirst()) // Remove @
                     
-                    // Check if we have a resolved profile for this handle
-                    if let profile = resolvedProfiles[handle] {
-                        let byteRange = calculateByteRange(for: match.range, in: postText)
-                        let mention = AppBskyRichtextFacet.Mention(did: profile.did)
-                        let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
-                        
-                        let facet = AppBskyRichtextFacet(
-                            index: AppBskyRichtextFacet.ByteSlice(
-                                byteStart: byteRange.location,
-                                byteEnd: byteRange.location + byteRange.length
-                            ),
-                            features: [feature]
-                        )
-                        facets.append(facet)
+                    // Only include if not already resolved
+                    if resolvedProfiles[handle] == nil {
+                        unresolved.append((handle, match.range))
                     }
                 }
             }
         }
         
-        // Process URLs
-        let urlPattern = #"https?://[^\s]+"#
-        if let regex = try? NSRegularExpression(pattern: urlPattern, options: []) {
-            let matches = regex.matches(in: postText, options: [], range: NSRange(location: 0, length: postText.count))
-            
-            for match in matches {
-                if let range = Range(match.range, in: postText) {
-                    let urlString = String(postText[range])
-                    let byteRange = calculateByteRange(for: match.range, in: postText)
-                    let link = AppBskyRichtextFacet.Link(uri: URI(uriString: urlString))
-                    let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetLink(link)
+        return unresolved
+    }
+    
+    /// Attempt to resolve mentions and create facets for them
+    private func resolveAndCreateMentionFacets(for mentions: [(handle: String, range: NSRange)]) async -> [AppBskyRichtextFacet] {
+        guard let client = appState.atProtoClient else { return [] }
+        
+        var newFacets: [AppBskyRichtextFacet] = []
+        
+        for (handle, range) in mentions {
+            do {
+                // Try to resolve the profile
+                let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
+                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActors(input: params)
+                
+                if responseCode >= 200 && responseCode < 300,
+                   let response = searchResponse,
+                   let profile = response.actors.first,
+                   profile.handle.description.lowercased() == handle.lowercased() {
+                    
+                    // Store resolved profile for future use
+                    let profileBasic = AppBskyActorDefs.ProfileViewBasic(
+                        did: profile.did,
+                        handle: profile.handle,
+                        displayName: profile.displayName,
+                        avatar: profile.avatar,
+                        associated: profile.associated,
+                        viewer: profile.viewer,
+                        labels: profile.labels,
+                        createdAt: profile.createdAt,
+                        verification: profile.verification,
+                        status: profile.status
+                    )
+                    
+                    await MainActor.run {
+                        resolvedProfiles[handle] = profileBasic
+                    }
+                    
+                    // Create mention facet
+                    let byteRange = calculateByteRange(for: range, in: postText)
+                    let mention = AppBskyRichtextFacet.Mention(did: profile.did)
+                    let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
                     
                     let facet = AppBskyRichtextFacet(
                         index: AppBskyRichtextFacet.ByteSlice(
@@ -848,36 +1015,18 @@ extension PostComposerViewModel {
                         ),
                         features: [feature]
                     )
-                    facets.append(facet)
-                }
-            }
-        }
-        
-        // Process hashtags
-        let hashtagPattern = #"#[a-zA-Z0-9_]+"#
-        if let regex = try? NSRegularExpression(pattern: hashtagPattern, options: []) {
-            let matches = regex.matches(in: postText, options: [], range: NSRange(location: 0, length: postText.count))
-            
-            for match in matches {
-                if let range = Range(match.range, in: postText) {
-                    let tag = String(postText[range].dropFirst()) // Remove #
-                    let byteRange = calculateByteRange(for: match.range, in: postText)
-                    let hashtag = AppBskyRichtextFacet.Tag(tag: tag)
-                    let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetTag(hashtag)
+                    newFacets.append(facet)
                     
-                    let facet = AppBskyRichtextFacet(
-                        index: AppBskyRichtextFacet.ByteSlice(
-                            byteStart: byteRange.location,
-                            byteEnd: byteRange.location + byteRange.length
-                        ),
-                        features: [feature]
-                    )
-                    facets.append(facet)
+                    logger.debug("PostComposer: Successfully resolved mention @\(handle) -> \(profile.did.didString())")
+                } else {
+                    logger.debug("PostComposer: Could not resolve mention @\(handle)")
                 }
+            } catch {
+                logger.error("PostComposer: Failed to resolve mention @\(handle): \(error)")
             }
         }
         
-        return facets
+        return newFacets
     }
     
     private func calculateByteRange(for range: NSRange, in text: String) -> NSRange {

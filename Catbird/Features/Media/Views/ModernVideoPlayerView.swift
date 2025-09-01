@@ -489,46 +489,46 @@ struct PiPButton: View {
 
   var body: some View {
     Button(action: {
-      print("🎬 PiP button tapped - isPossible: \(controller.isPictureInPicturePossible), isActive: \(controller.isPictureInPictureActive)")
+      logger.debug("🎬 PiP button tapped - isPossible: \(controller.isPictureInPicturePossible), isActive: \(controller.isPictureInPictureActive)")
       
       if controller.isPictureInPictureActive {
-        print("🎬 Stopping PiP")
+        logger.debug("🎬 Stopping PiP")
         controller.stopPictureInPicture()
       } else {
-        print("🎬 Starting PiP")
+        logger.debug("🎬 Starting PiP")
         
         
         // Ensure video is playing before attempting PiP - this is often required
         if let player = controller.playerLayer.player {
-          print("🎬 Player rate: \(player.rate), status: \(player.currentItem?.status.rawValue ?? -1)")
+          logger.debug("🎬 Player rate: \(player.rate), status: \(player.currentItem?.status.rawValue ?? -1)")
           
           // Check if app is in foreground active state (required for PiP)
           #if os(iOS)
           guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                 windowScene.activationState == .foregroundActive else {
-            print("❌ App not in foreground active state - cannot start PiP")
-            print("🎬 Current scene state: \(UIApplication.shared.connectedScenes.first?.activationState.rawValue ?? -1)")
+            logger.debug("❌ App not in foreground active state - cannot start PiP")
+            logger.debug("🎬 Current scene state: \(UIApplication.shared.connectedScenes.first?.activationState.rawValue ?? -1)")
             return
           }
           #endif
           
           // If video is not playing, start it first
           if player.rate == 0 {
-            print("🎬 Video not playing, starting playback first")
+            logger.debug("🎬 Video not playing, starting playback first")
             player.safePlay()
             
             // Wait a moment for playback to start, then attempt PiP
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-              print("🎬 Attempting PiP after starting playback")
+              logger.debug("🎬 Attempting PiP after starting playback")
               controller.startPictureInPicture()
             }
           } else {
             // Video is already playing, attempt PiP immediately
-            print("🎬 Video already playing, starting PiP immediately")
+            logger.debug("🎬 Video already playing, starting PiP immediately")
             controller.startPictureInPicture()
           }
         } else {
-          print("❌ No player found in controller layer")
+          logger.debug("❌ No player found in controller layer")
         }      }
     }) {
       Image(systemName: controller.isPictureInPictureActive ? "pip.exit" : "pip.enter")
@@ -538,7 +538,7 @@ struct PiPButton: View {
     }
     .disabled(!controller.isPictureInPicturePossible)
     .onAppear {
-      print("🎬 PiP button appeared - isPossible: \(controller.isPictureInPicturePossible), isActive: \(controller.isPictureInPictureActive)")
+      logger.debug("🎬 PiP button appeared - isPossible: \(controller.isPictureInPicturePossible), isActive: \(controller.isPictureInPictureActive)")
     }
   }
 }

@@ -403,10 +403,10 @@ struct FeedContinuityView: View {
       // when gaps are detected in the post list
     }
     .onAppear {
-      print("🟦 FeedContinuityView appeared - showingBanner: \(continuityManager.showingBanner), currentBanner: \(String(describing: continuityManager.currentBanner))")
+      logger.debug("🟦 FeedContinuityView appeared - showingBanner: \(continuityManager.showingBanner), currentBanner: \(String(describing: continuityManager.currentBanner))")
     }
     .onChange(of: continuityManager.showingBanner) { oldValue, newValue in
-      print("🟦 FeedContinuityView showingBanner changed from \(oldValue) to \(newValue)")
+      logger.debug("🟦 FeedContinuityView showingBanner changed from \(oldValue) to \(newValue)")
     }
   }
 }

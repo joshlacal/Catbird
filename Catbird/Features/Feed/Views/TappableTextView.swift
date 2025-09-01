@@ -86,9 +86,8 @@ struct TappableTextView: View {
                     .minimumScaleFactor(0.9)
                     .textSelectionAffinity(.automatic)
                     .textSelection(.disabled)
-                    .animation(.spring(duration: 0.3), value: dynamicTypeSize)
-                    .animation(.spring(duration: 0.3), value: fontManager.sizeScale)
-                    .animation(.spring(duration: 0.3), value: fontManager.fontDesign)
+                    // Disable animations to prevent any fly-in or size-change animations
+                    .transaction { $0.animation = nil }
                     .environment(
                         \.openURL,
                          OpenURLAction { url in

@@ -97,6 +97,7 @@ struct NotificationsView: View {
     .pickerStyle(.segmented)
     .frame(height: 36)
     .frame(maxWidth: 600)
+    .frame(maxWidth: .infinity, alignment: .center)
     .padding(.horizontal, 16)
     .padding(.vertical, 8)
     .listRowInsets(EdgeInsets())
@@ -106,7 +107,7 @@ struct NotificationsView: View {
   @ViewBuilder
   private var notificationContentWithHeader: some View {
     if let error = viewModel.error {
-      VStack(spacing: DesignTokens.Spacing.none) {
+        VStack(alignment: .center, spacing: DesignTokens.Spacing.none) {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         

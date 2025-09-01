@@ -177,7 +177,7 @@ struct ChatTabView: View {
       ChatFAB(newMessageAction: {
         showingNewMessageSheet = true
       })
-      .offset(y: -80)
+      .offset(x: -5, y: -70)  // Position FAB above tab bar
     }
     .ignoresSafeArea()
 #if os(iOS)

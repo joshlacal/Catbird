@@ -8,10 +8,13 @@
 import AVFoundation
 import Foundation
 import NukeUI
+import os
 import Petrel
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+
+private let postComposerLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposer")
 
 struct PostComposerView: View {
     @Environment(AppState.self) private var appState
@@ -36,15 +39,29 @@ struct PostComposerView: View {
     @State private var selectedRangeForLink = NSRange()
     @State private var linkFacets: [RichTextFacetUtils.LinkFacet] = []
     
+    // iOS 26+ AttributedString and TextEditor support (store as Any? to avoid availability on stored properties)
+    @State private var attributedTextSelectionStorage: Any?
+
+    // Convenience accessors for iOS 26+
+    @available(iOS 26.0, macOS 15.0, *)
+    private var attributedTextSelection: AttributedTextSelection? {
+        get { attributedTextSelectionStorage as? AttributedTextSelection }
+        set { attributedTextSelectionStorage = newValue }
+    }
+    
     // Audio recording state
     @State private var showingAudioRecorder = false
     @State private var showingAudioVisualizerPreview = false
     @State private var currentAudioURL: URL?
     @State private var currentAudioDuration: TimeInterval = 0
+    // Visualizer generation progress
+    @State private var isGeneratingVisualizerVideo = false
+    @State private var visualizerService = AudioVisualizerService()
     
-    // Minimize functionality
-    @State private var dragOffset: CGFloat = 0
-    private let minimizeThreshold: CGFloat = 100
+    // Account switching state
+    @State private var showingAccountSwitcher = false
+    
+    // Minimize via button only (gesture removed)
     
     // Minimize callback - called when composer should be minimized
     let onMinimize: ((PostComposerViewModel) -> Void)?
@@ -53,18 +70,28 @@ struct PostComposerView: View {
         self._viewModel = State(
             wrappedValue: PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState))
         self.onMinimize = onMinimize
+        
+        if #available(iOS 26.0, macOS 15.0, *) {
+            self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
+        } else {
+            self._attributedTextSelectionStorage = State(wrappedValue: nil)
+        }
     }
     
-    init(restoringFrom draft: ComposerDraft, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
-        let viewModel = PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState)
-        // Restore text content
-        viewModel.postText = draft.text
-        viewModel.richAttributedText = NSAttributedString(string: draft.text)
-        // NOTE: In a full implementation, we would also restore media items, GIF selection, etc.
-        // This would require serializing those components in the ComposerDraft struct
+    
+    init(restoringFromDraft draft: PostComposerDraft, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
+        let viewModel = PostComposerViewModel(parentPost: nil, quotedPost: nil, appState: appState)
+        // Restore full draft state
+        viewModel.restoreDraftState(draft)
         
         self._viewModel = State(wrappedValue: viewModel)
         self.onMinimize = onMinimize
+        
+        if #available(iOS 26.0, macOS 15.0, *) {
+            self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
+        } else {
+            self._attributedTextSelectionStorage = State(wrappedValue: nil)
+        }
     }
     
     var body: some View {
@@ -87,6 +114,28 @@ struct PostComposerView: View {
             .toolbarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                // User profile button for account switching
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: {
+                        showingAccountSwitcher = true
+                    }) {
+                        #if os(iOS)
+                        UIKitAvatarView(
+                            did: appState.currentUserDID,
+                            client: appState.atProtoClient,
+                            size: 32
+                        )
+                        #else
+                        AvatarView(
+                            did: appState.currentUserDID,
+                            client: appState.atProtoClient,
+                            size: 32
+                        )
+                        #endif
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         // Show confirmation if there's content that would be lost
@@ -136,9 +185,11 @@ struct PostComposerView: View {
                     )
                 }
             }
+            // Navigation background uses default appearance again
             .task {
                 await viewModel.loadUserLanguagePreference()
             }
+            .id(appState.currentUserDID)
     }
     
     private var configuredWithModifiers: some View {
@@ -244,7 +295,8 @@ struct PostComposerView: View {
                 LinkCreationDialog(
                     selectedText: selectedTextForLink,
                     onComplete: { url in
-                        addLinkFacet(url: url, range: selectedRangeForLink)
+                        // Backward-compatible call; prefer new overload with display text
+                        addLinkFacet(url: url, displayText: selectedTextForLink, range: selectedRangeForLink)
                         showingLinkCreation = false
                     },
                     onCancel: {
@@ -268,27 +320,40 @@ struct PostComposerView: View {
                     }
                 )
             }
-            // Audio visualizer preview sheet
-            .sheet(isPresented: $showingAudioVisualizerPreview, onDismiss: {
-                // Restore focus when visualizer preview dismisses
+            // Removed secondary preview screen per request; generation happens directly
+            .sheet(isPresented: $isGeneratingVisualizerVideo) {
+                VStack(spacing: 24) {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        ProgressView(value: visualizerService.progress, total: 1.0)
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+                            .scaleEffect(1.4)
+                        Text("Generating Video…")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text("This may take a few seconds depending on length.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding()
+                .presentationDetents([.fraction(0.35)])
+                .presentationDragIndicator(.hidden)
+                .interactiveDismissDisabled(true)
+            }
+            // Account switcher sheet
+            .sheet(isPresented: $showingAccountSwitcher, onDismiss: {
+                // Restore focus when account switcher dismisses
                 Task { @MainActor in
                     isTextFieldFocused = true
                 }
             }) {
-                if let audioURL = currentAudioURL {
-                    AudioVisualizerPreview(
-                        audioURL: audioURL,
-                        audioDuration: currentAudioDuration,
-                        onVideoGenerated: { videoURL in
-                            handleVideoGenerated(videoURL)
-                        },
-                        onCancel: {
-                            showingAudioVisualizerPreview = false
-                            currentAudioURL = nil
-                            currentAudioDuration = 0
-                        }
-                    )
-                }
+                AccountSwitcherView()
+            }
+            // Global keyboard shortcuts
+            .onReceive(NotificationCenter.default.publisher(for: .init("CreateLinkKeyboardShortcut"))) { _ in
+                handleLinkCreation()
             }
     }
     
@@ -296,11 +361,6 @@ struct PostComposerView: View {
     
     private var mainContentView: some View {
         VStack(spacing: 0) {
-            // Drag handle for minimize gesture (only show if minimize callback is provided)
-            if onMinimize != nil {
-                dragHandle
-            }
-            
             // Main content area with scrollable content
             ZStack {
                 Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme)
@@ -317,49 +377,7 @@ struct PostComposerView: View {
             // Toolbar pinned to bottom
             keyboardToolbar
         }
-        .offset(y: dragOffset)
-        .gesture(
-            // Only add drag gesture if minimize callback is provided
-            onMinimize != nil ? 
-            DragGesture()
-                .onChanged { value in
-                    // Only allow downward drag for minimize
-                    if value.translation.height > 0 {
-                        dragOffset = value.translation.height
-                    }
-                }
-                .onEnded { value in
-                    if value.translation.height > minimizeThreshold {
-                        handleMinimize()
-                    } else {
-                        // Snap back to original position
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            dragOffset = 0
-                        }
-                    }
-                }
-            : nil
-        )
-    }
-    
-    private var dragHandle: some View {
-        VStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color.secondary.opacity(0.4))
-                .frame(width: 40, height: 5)
-                .padding(.top, 12)
-            
-            HStack {
-                Text("Drag down to minimize")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-        }
-        .background(Color.systemBackground)
+        // Drag-to-minimize gesture intentionally removed
     }
     
     @ViewBuilder
@@ -444,11 +462,11 @@ struct PostComposerView: View {
     // Get appropriate navigation title based on compose mode
     private func getNavigationTitle() -> String {
         if viewModel.isThreadMode {
-            return "New Thread"
+            return "Thread"
         } else if viewModel.parentPost == nil && viewModel.quotedPost == nil {
-            return "New Post"
+            return "Post"
         } else if viewModel.quotedPost != nil {
-            return "Quote Post"
+            return "Quote"
         } else {
             return "Reply"
         }
@@ -620,8 +638,8 @@ struct PostComposerView: View {
     
     private var textEditorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Clean text editor without overlaid placeholder
-            EnhancedRichTextEditor(
+            // Modern SwiftUI TextEditor with AttributedString (iOS 26+) or legacy fallback
+            ModernEnhancedRichTextEditor(
                 attributedText: $viewModel.richAttributedText,
                 linkFacets: $linkFacets,
                 placeholder: "What's on your mind?",
@@ -641,10 +659,16 @@ struct PostComposerView: View {
                         }
                     }
                 },
-                onTextChanged: { attributedText in
-                    viewModel.updateFromAttributedText(attributedText)
+                onTextChanged: nil,
+                onAttributedTextChanged: { attributed in
+                    if #available(iOS 26.0, macOS 15.0, *) {
+                        viewModel.updateFromAttributedString(attributed)
+                    } else {
+                        viewModel.updateFromAttributedText(NSAttributedString(attributed))
+                    }
                 },
                 onLinkCreationRequested: { selectedText, range in
+                    logger.debug("📝 PostComposer: Link creation requested with text: '\(selectedText)' range: \(range)")
                     selectedTextForLink = selectedText
                     selectedRangeForLink = range
                     showingLinkCreation = true
@@ -654,37 +678,97 @@ struct PostComposerView: View {
             .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
             .focused($isTextFieldFocused)
+            // Route URL taps to the in-app handler
+            .environment(\.openURL, OpenURLAction { url in
+                appState.urlHandler.handle(url)
+            })
             .task { @MainActor in
                 isTextFieldFocused = true
             }
             
-            // Show mention suggestions below the text editor
+            // Show mention suggestions below the text editor for all iOS versions
+            // Note: When iOS 26+ ships built-in suggestions for TextEditor, this can be scoped to older OS versions.
             mentionSuggestionsView
         }
     }
     
     private var mentionSuggestionsView: some View {
-        VStack(alignment: .leading) {
-            ForEach(viewModel.mentionSuggestions, id: \.did) { profile in
-                Button(action: {
-                    viewModel.insertMention(profile)
-                }) {
-                    HStack {
-                        Text("@\(profile.handle.description)")
-                        Text(profile.displayName ?? "")
-                            .foregroundColor(.secondary)
+        Group {
+            if !viewModel.mentionSuggestions.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.mentionSuggestions.enumerated()), id: \.element.did) { index, profile in
+                        Button(action: {
+                            viewModel.insertMention(profile)
+                        }) {
+                            HStack(spacing: 12) {
+                                // Avatar
+                                Group {
+                                    if let avatarURL = profile.avatar {
+                                        AsyncImage(url: URL(string: avatarURL.description)) { image in
+                                            image
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fill)
+                                        } placeholder: {
+                                            Circle()
+                                                .fill(Color.secondary.opacity(0.3))
+                                        }
+                                    } else {
+                                        Circle()
+                                            .fill(Color.secondary.opacity(0.3))
+                                    }
+                                }
+                                .frame(width: 32, height: 32)
+                                .clipShape(Circle())
+                                
+                                // Profile info
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(profile.displayName ?? profile.handle.description)
+                                        .appFont(AppTextRole.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                        .lineLimit(1)
+                                    
+                                    Text("@\(profile.handle.description)")
+                                        .appFont(AppTextRole.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .background(
+                            Rectangle()
+                                .fill(Color.clear)
+                                .onTapGesture {
+                                    viewModel.insertMention(profile)
+                                }
+                        )
+                        
+                        // Divider between items (except last)
+                        if index < viewModel.mentionSuggestions.count - 1 {
+                            Divider()
+                                .padding(.leading, 60) // Align with text content
+                        }
                     }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 10)
-                    .background(Color.systemBackground)
-                    .cornerRadius(8)
                 }
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.regularMaterial)
+                        .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
+                )
+                .padding(.top, 8)
             }
         }
-        .background(Color.systemBackground)
-        .cornerRadius(8)
-        .shadow(radius: 2)
-        .opacity(viewModel.mentionSuggestions.isEmpty ? 0 : 1)
     }
     
     private var mediaSection: some View {
@@ -707,13 +791,17 @@ struct PostComposerView: View {
                     isAltTextEditorPresented: $viewModel.isAltTextEditorPresented,
                     maxImagesAllowed: viewModel.maxImagesAllowed,
                     onAddMore: { photoPickerVisible = true },
+                    onMoveLeft: { id in viewModel.moveMediaItemLeft(id: id) },
+                    onMoveRight: { id in viewModel.moveMediaItemRight(id: id) },
+                    onCropSquare: { id in viewModel.cropMediaItemToSquare(id: id) },
                     onPaste: {
-                        // ✅ CLEANED: Unified paste handling
                         Task {
                             await viewModel.handleMediaPaste([])
                         }
                     },
-                    hasClipboardMedia: viewModel.hasClipboardMedia()
+                    hasClipboardMedia: viewModel.hasClipboardMedia(),
+                    onReorder: { from, to in viewModel.moveMediaItem(from: from, to: to) }
+                    // onExternalImageDrop is iOS-only and optional; omitted here
                 )
                 .padding(.vertical, 8)
             } else {
@@ -927,6 +1015,11 @@ struct PostComposerView: View {
                     })
                 }
                 
+                // Modern rich text formatting (iOS 26+)
+                if #available(iOS 26.0, macOS 15.0, *) {
+                    richTextFormattingButtons
+                }
+                
                 // Menu
                 Menu {
                     Button(action: {
@@ -936,12 +1029,11 @@ struct PostComposerView: View {
                     }
                     
                     Button(action: {
-                        // For now, show a simple alert - in a real implementation
-                        // this would integrate with the text selection system
-                        showingLinkCreation = true
+                        handleLinkCreation()
                     }) {
                         Label("Create Link", systemImage: "link")
                     }
+                    .keyboardShortcut("l", modifiers: .command)
                     
                     Divider()
                     
@@ -993,7 +1085,7 @@ struct PostComposerView: View {
                     }) {
                         Label("Content Labels", systemImage: "tag")
                     }
-                    
+                    // Account switching available via avatar button in the navigation bar
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .appFont(size: 22)
@@ -1006,6 +1098,158 @@ struct PostComposerView: View {
         }
         .background(Color.secondarySystemBackground)
         .id("postComposerToolbar") // Stable identity to prevent SwiftUI from recreating
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private var richTextFormattingButtons: some View {
+        HStack(spacing: 12) {
+            // Link button (links-only policy)
+            Button(action: {
+                requestLinkCreation()
+            }) {
+                Image(systemName: "link")
+                    .appFont(size: 18)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .keyboardShortcut("l", modifiers: .command)
+        }
+    }
+    
+    // MARK: - iOS 26+ Text Formatting Methods
+    
+    @Environment(\.fontResolutionContext) private var fontResolutionContext
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private var isBoldSelected: Bool {
+        guard let attributedTextSelection = attributedTextSelection else { return false }
+        let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
+        
+        switch indices {
+        case .insertionPoint:
+            // Could use typingAttributes(in:) for insertion point; default to false for now
+            return false
+        case .ranges(let rangeSet):
+            if let firstRange = rangeSet.ranges.first, !firstRange.isEmpty {
+                let attributes = viewModel.attributedPostText[firstRange]
+                if let font = attributes.font {
+                    let resolved = font.resolve(in: fontResolutionContext)
+                    return resolved.isBold
+                }
+            }
+            return false
+        }
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private var isItalicSelected: Bool {
+        guard let attributedTextSelection = attributedTextSelection else { return false }
+        let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
+        
+        switch indices {
+        case .insertionPoint:
+            return false
+        case .ranges(let rangeSet):
+            if let firstRange = rangeSet.ranges.first, !firstRange.isEmpty {
+                let attributes = viewModel.attributedPostText[firstRange]
+                if let font = attributes.font {
+                    let resolved = font.resolve(in: fontResolutionContext)
+                    return resolved.isItalic
+                }
+            }
+            return false
+        }
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private var isUnderlineSelected: Bool {
+        guard let attributedTextSelection = attributedTextSelection else { return false }
+        let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
+        
+        switch indices {
+        case .insertionPoint:
+            return false
+        case .ranges(let rangeSet):
+            if let firstRange = rangeSet.ranges.first, !firstRange.isEmpty {
+                let attributes = viewModel.attributedPostText[firstRange]
+                return attributes.underlineStyle != nil && attributes.underlineStyle != .none
+            }
+            return false
+        }
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private func toggleBold() {
+        guard var selection = attributedTextSelection else { return }
+        viewModel.attributedPostText.transformAttributes(in: &selection) { container in
+            let currentFont = container.font ?? .body
+            let resolved = currentFont.resolve(in: fontResolutionContext)
+            container.font = currentFont.bold(!resolved.isBold)
+        }
+        attributedTextSelectionStorage = selection
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private func toggleItalic() {
+        guard var selection = attributedTextSelection else { return }
+        viewModel.attributedPostText.transformAttributes(in: &selection) { container in
+            let currentFont = container.font ?? .body
+            let resolved = currentFont.resolve(in: fontResolutionContext)
+            container.font = currentFont.italic(!resolved.isItalic)
+        }
+        attributedTextSelectionStorage = selection
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private func toggleUnderline() {
+        guard var selection = attributedTextSelection else { return }
+        viewModel.attributedPostText.transformAttributes(in: &selection) { container in
+            let currentStyle = container.underlineStyle ?? .none
+            container.underlineStyle = currentStyle == .none ? .single : .none
+        }
+        attributedTextSelectionStorage = selection
+    }
+    
+    @available(iOS 26.0, macOS 15.0, *)
+    private func requestLinkCreation() {
+        guard let attributedTextSelection = attributedTextSelection else { return }
+        let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
+        
+        switch indices {
+        case .insertionPoint(let caret):
+            // Allow link insertion at caret; use URL as display text
+            let location = viewModel.attributedPostText.utf16.distance(from: viewModel.attributedPostText.startIndex, to: caret)
+            selectedTextForLink = ""
+            selectedRangeForLink = NSRange(location: location, length: 0)
+            showingLinkCreation = true
+        case .ranges(let rangeSet):
+            if let range = rangeSet.ranges.first {
+                let selectedText = String(viewModel.attributedPostText[range].characters)
+                let location = viewModel.attributedPostText.utf16.distance(from: viewModel.attributedPostText.startIndex, to: range.lowerBound)
+                let length = viewModel.attributedPostText.utf16.distance(from: range.lowerBound, to: range.upperBound)
+                let nsRange = NSRange(location: location, length: length)
+                
+                logger.debug("📝 PostComposer: Link creation requested with text: '\(selectedText)' range: \(nsRange)")
+                selectedTextForLink = selectedText
+                selectedRangeForLink = nsRange
+                showingLinkCreation = true
+            } else {
+                logger.debug("📝 PostComposer: No selection range found for link creation")
+            }
+        }
+    }
+    
+    // MARK: - Link Creation Methods
+    
+    /// Unified link creation handler that works across iOS versions
+    private func handleLinkCreation() {
+        if #available(iOS 26.0, macOS 15.0, *) {
+            requestLinkCreation()
+        } else {
+            // For legacy versions, trigger link creation at current cursor position
+            selectedTextForLink = ""
+            selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
+            showingLinkCreation = true
+        }
     }
     
     // Get the appropriate text for the post button
@@ -1038,15 +1282,15 @@ struct PostComposerView: View {
                 dismiss()
             } catch {
                 isSubmitting = false
-                print("PostComposerView: Failed to create post - \(error)")
+                logger.debug("PostComposerView: Failed to create post - \(error)")
                 
                 // Get more specific error message
                 let errorMessage: String
                 if let nsError = error as NSError? {
                     errorMessage = nsError.localizedDescription
-                    print("PostComposerView: NSError domain: \(nsError.domain), code: \(nsError.code)")
+                    logger.debug("PostComposerView: NSError domain: \(nsError.domain), code: \(nsError.code)")
                     if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-                        print("PostComposerView: Underlying error: \(underlyingError)")
+                        logger.debug("PostComposerView: Underlying error: \(underlyingError)")
                     }
                 } else {
                     errorMessage = error.localizedDescription
@@ -1072,34 +1316,59 @@ struct PostComposerView: View {
     
     // MARK: - Link Facet Methods
     
-    private func addLinkFacet(url: URL, range: NSRange) {
-        let linkFacet = RichTextFacetUtils.LinkFacet(
-            range: range,
-            url: url,
-            displayText: selectedTextForLink
-        )
+    private func addLinkFacet(url: URL, displayText: String?, range: NSRange) {
+        logger.debug("Composer.addLinkFacet url=\(url.absoluteString) range=\(range.debugDescription)")
         
-        linkFacets.append(linkFacet)
-        
-        let newAttributedText = RichTextFacetUtils.addLinkFacet(
-            to: viewModel.richAttributedText,
-            url: url,
-            range: range
-        )
-        
-        viewModel.richAttributedText = newAttributedText
+        // Use modern approach for iOS 26+ and legacy approach for older versions
+        if #available(iOS 26.0, macOS 15.0, *) {
+            // Convert NSRange to AttributedString range
+            let start = viewModel.attributedPostText.index(
+                viewModel.attributedPostText.startIndex, 
+                offsetByCharacters: range.location
+            )
+            let end = viewModel.attributedPostText.index(
+                start, 
+                offsetByCharacters: range.length
+            )
+            let attrRange = start..<end
+            
+            let display = (displayText?.isEmpty == false) ? displayText : nil
+            viewModel.insertLinkWithAttributedString(url: url, displayText: display, at: attrRange)
+            
+        } else {
+            // Legacy: apply NSAttributedString attributes or insert when at caret
+            let newAttributedText = RichTextFacetUtils.addOrInsertLinkFacet(
+                to: viewModel.richAttributedText,
+                url: url,
+                range: range,
+                displayText: displayText
+            )
+            viewModel.richAttributedText = newAttributedText
+            
+            // Update the plain text from the attributed text
+            viewModel.postText = newAttributedText.string
+            
+            // Maintain local tracking for older flow if needed
+            let effectiveRange = range.length == 0 ? NSRange(location: range.location, length: (displayText?.count ?? 0)) : range
+            let linkFacet = RichTextFacetUtils.LinkFacet(
+                range: effectiveRange,
+                url: url,
+                displayText: displayText ?? ""
+            )
+            linkFacets.append(linkFacet)
+            logger.debug("Composer.legacy linkFacets count=\(linkFacets.count)")
+        }
     }
     
+    
     private func updateFacetsInPost() {
-        // Convert link facets to AT Protocol facets for post creation
-        let atProtocolFacets = RichTextFacetUtils.createFacets(
-            from: linkFacets,
-            in: viewModel.postText
-        )
-        
-        // Update the view model with the facets
-        // This would need to be added to PostComposerViewModel
-        // viewModel.linkFacets = atProtocolFacets
+        // Modern flow uses Petrel's AttributedString.toFacets(); legacy can use utility fallback
+        if #available(iOS 26.0, macOS 15.0, *) {
+            // Facets are computed inside updateFromAttributedString/updatePostContent
+            return
+        } else {
+            _ = RichTextFacetUtils.createFacets(from: linkFacets, in: viewModel.postText)
+        }
     }
     
     // MARK: - Audio Recording Methods
@@ -1112,16 +1381,46 @@ struct PostComposerView: View {
         currentAudioURL = audioURL
         currentAudioDuration = duration
         showingAudioRecorder = false
-        showingAudioVisualizerPreview = true
+        // Generate visualizer video directly (no intermediate preview screen)
+        Task {
+            await generateVisualizerVideoDirectly(from: audioURL, duration: duration)
+        }
     }
     
     private func handleVideoGenerated(_ videoURL: URL) {
         // Convert the generated video to a MediaItem and add it to the composer
         Task {
             await viewModel.processGeneratedVideoFromAudio(videoURL)
-            showingAudioVisualizerPreview = false
             currentAudioURL = nil
             currentAudioDuration = 0
+        }
+    }
+
+    private func generateVisualizerVideoDirectly(from audioURL: URL, duration: TimeInterval) async {
+        let service = visualizerService
+        await MainActor.run { isGeneratingVisualizerVideo = true }
+        let username = appState.currentUserProfile?.handle.description ?? "user"
+        let avatarURL = appState.currentUserProfile?.avatar?.description
+        do {
+            let videoURL = try await service.generateVisualizerVideo(
+                audioURL: audioURL,
+                profileImage: nil,
+                username: username,
+                accentColor: Color.accentColor,
+                duration: duration,
+                avatarURL: avatarURL
+            )
+            await MainActor.run {
+                self.handleVideoGenerated(videoURL)
+                self.isGeneratingVisualizerVideo = false
+            }
+        } catch {
+            await MainActor.run {
+                self.currentAudioURL = nil
+                self.currentAudioDuration = 0
+                self.isGeneratingVisualizerVideo = false
+            }
+            postComposerLogger.debug("Visualizer generation failed: \(error.localizedDescription)")
         }
     }
 }

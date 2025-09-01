@@ -110,13 +110,33 @@ enum SearchState {
         loadRecentProfileSearches()
         loadSavedSearches()
         
-        // Register for state invalidation events
+        // Don't subscribe immediately - wait until view appears
+    }
+    
+    /// Track subscription state to avoid double subscription
+    private var isSubscribed = false
+    
+    /// Subscribe to state invalidation events when view becomes active
+    func subscribeToEvents() {
+        guard !isSubscribed else { return }
         appState.stateInvalidationBus.subscribe(self)
+        isSubscribed = true
+        logger.debug("RefinedSearchViewModel subscribed to state invalidation bus")
+    }
+    
+    /// Unsubscribe from state invalidation events when view becomes inactive
+    func unsubscribeFromEvents() {
+        guard isSubscribed else { return }
+        appState.stateInvalidationBus.unsubscribe(self)
+        isSubscribed = false
+        logger.debug("RefinedSearchViewModel unsubscribed from state invalidation bus")
     }
     
     deinit {
-        // Unregister from state invalidation events
-        appState.stateInvalidationBus.unsubscribe(self)
+        // Ensure we unsubscribe on deallocation
+        if isSubscribed {
+            appState.stateInvalidationBus.unsubscribe(self)
+        }
     }
     
     // MARK: - Public Methods

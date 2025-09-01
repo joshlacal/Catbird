@@ -2,8 +2,7 @@
 //  FeedCollectionViewControllerIntegrated.swift
 //  Catbird
 //
-//  Production-ready UIKit feed controller with unified scroll preservation
-//  Uses OptimizedScrollPreservationSystem with UIUpdateLink for iOS 18+
+//  High-performance UIKit feed controller with SwiftUI cell hosting
 //
 
 #if os(iOS)
@@ -23,27 +22,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     private enum Section: Int, CaseIterable {
         case main = 0
     }
-    
-    // MARK: - Cross-Platform Compatibility Types
-    
-    #if targetEnvironment(macCatalyst)
-    // Fallback types for Mac Catalyst
-    private struct MacCatalystScrollAnchor {
-        let indexPath: IndexPath
-        let postId: String
-        let contentOffset: CGPoint
-        let viewportRelativeY: CGFloat
-        let itemFrameY: CGFloat
-        let itemHeight: CGFloat
-        let visibleHeightInViewport: CGFloat
-        let timestamp: TimeInterval
-        let displayScale: CGFloat
-    }
-    
-    private enum MacCatalystScrollDirection {
-        case up, down, none
-    }
-    #endif
     
     private struct PostItem: Hashable {
         let id: String
@@ -69,19 +47,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     /// Navigation
     private let navigationPath: Binding<NavigationPath>
     
-    /// Unified scroll preservation system
-    private let unifiedScrollPipeline = UnifiedScrollPreservationPipeline()
-    
-    /// Optimized scroll system for iOS 18+ (not available on Mac Catalyst)
-    #if !targetEnvironment(macCatalyst)
-    @available(iOS 18.0, *)
-    private lazy var optimizedScrollSystem = OptimizedScrollPreservationSystem()
-    
-    /// Gap loading manager for iOS 18+
-    @available(iOS 18.0, *)
-    private lazy var gapLoadingManager = FeedGapLoadingManager()
-    #endif
-    
     /// Load more coordination
     var loadMoreTask: Task<Void, Never>?
     
@@ -93,23 +58,14 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     
     /// Refresh state tracking
     private var isRefreshing = false
-    private var pullToRefreshAnchor: UnifiedScrollPreservationPipeline.ScrollAnchor?
     
     /// App lifecycle tracking
     private var isAppInBackground = false
     private var backgroundObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
-    private var resignActiveObserver: NSObjectProtocol?
-    private var becomeActiveObserver: NSObjectProtocol?
-    
-    /// Automatic persistence
-    private var persistenceTimer: Timer?
-    private var lastPersistedOffset: CGFloat = 0
-    private let persistenceThreshold: CGFloat = 100 // Only persist if scrolled more than this
     
     /// Logging
     let controllerLogger = Logger(subsystem: "blue.catbird", category: "FeedCollectionIntegrated")
-    
     
     // MARK: - Initialization
     
@@ -132,7 +88,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     // MARK: - Theme Support
     
     private func setupThemeObserver() {
-        // Listen for theme changes from ThemeManager
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleThemeChange),
@@ -144,15 +99,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     @objc private func handleThemeChange() {
         DispatchQueue.main.async { [weak self] in
             self?.updateThemeColors()
-        }
-    }
-    
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        
-        // Update background colors when system appearance changes
-        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            updateThemeColors()
         }
     }
     
@@ -169,9 +115,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        // Set initial theme colors
         updateThemeColors()
-        
         setupCollectionView()
         setupDataSource()
         setupRefreshControl()
@@ -179,67 +123,48 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         setupScrollToTopCallback()
         setupAppLifecycleObservers()
         setupThemeObserver()
-        setupAutomaticPersistence()
-        
-        // Register with iOS 18+ state restoration coordinator
-        if #available(iOS 18.0, *) {
-            let identifier = "feed_controller_\(stateManager.currentFeedType.identifier)"
-            iOS18StateRestorationCoordinator.shared.registerController(self, identifier: identifier)
-            controllerLogger.debug("📝 Registered with iOS 18+ restoration coordinator: \(identifier)")
-        }
-        
-        // Initial data load will be handled in viewWillAppear for proper position restoration
     }
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         
         Task { @MainActor in
-            // Always ensure we have data loaded if posts are empty
             if stateManager.posts.isEmpty {
-                controllerLogger.debug("📥 Controller: Loading initial data for empty feed")
+                controllerLogger.debug("📥 Loading initial data for empty feed")
                 await loadInitialData()
             } else {
-                controllerLogger.debug("📄 Controller: Feed already has \(self.stateManager.posts.count) posts")
-            }
-            
-            // Then restore persisted scroll position if available (only for chronological feeds)
-            if stateManager.currentFeedType.isChronological,
-               let persistedState = loadPersistedScrollState() {
-                await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.viewAppearance(persistedState: persistedState))
+                controllerLogger.debug("📄 Feed already has \\(self.stateManager.posts.count) posts")
+                await performUpdate()
             }
         }
     }
     
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
         
-        // Resume automatic persistence
-        startAutomaticPersistence()
+        // Capture scroll position when view disappears to preserve it
+        captureCurrentScrollPosition()
     }
     
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
+    deinit {
+        stateObserver?.stopObserving()
+        loadMoreTask?.cancel()
         
-        // Save current position before view disappears
-        savePersistedScrollState()
-        
-        // Pause automatic persistence
-        stopAutomaticPersistence()
-    }
-    
-    override func didReceiveMemoryWarning() {
-        super.didReceiveMemoryWarning()
-        
-        Task { @MainActor in
-            await handleMemoryWarning()
+        if let backgroundObserver = backgroundObserver {
+            NotificationCenter.default.removeObserver(backgroundObserver)
         }
+        if let foregroundObserver = foregroundObserver {
+            NotificationCenter.default.removeObserver(foregroundObserver)
+        }
+        
+        NotificationCenter.default.removeObserver(self)
+        controllerLogger.debug("🧹 FeedCollectionViewControllerIntegrated deinitialized")
     }
     
-    // MARK: - Setup
+    // MARK: - Collection View Setup
     
     private func setupCollectionView() {
-        let layout = createOptimizedLayout()
+        let layout = createLayout()
         
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.translatesAutoresizingMaskIntoConstraints = false
@@ -247,12 +172,12 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
         
-        // Remove all margins and insets (match legacy controller)
+        // Remove all margins and insets
         collectionView.layoutMargins = .zero
         collectionView.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
         collectionView.contentInset = .zero
         
-        // Configure behavior (match legacy controller)
+        // Configure behavior
         collectionView.contentInsetAdjustmentBehavior = .automatic
         collectionView.alwaysBounceVertical = true
         collectionView.keyboardDismissMode = .onDrag
@@ -263,7 +188,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         
         view.addSubview(collectionView)
         
-        // Use Auto Layout constraints like legacy controller
+        // Use Auto Layout constraints
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -272,12 +197,12 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         ])
     }
     
-    private func createOptimizedLayout() -> UICollectionViewLayout {
+    private func createLayout() -> UICollectionViewLayout {
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         
         // Match legacy controller's configuration exactly
         configuration.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getCurrentColorScheme()))
-        configuration.showsSeparators = false // Handle separators in SwiftUI
+        configuration.showsSeparators = false // Disable UIKit separators - let SwiftUI handle them
         
         // Configure header/footer
         configuration.headerMode = .none
@@ -288,9 +213,6 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         configuration.trailingSwipeActionsConfigurationProvider = nil
         
         let layout = UICollectionViewCompositionalLayout.list(using: configuration)
-        
-        // Remove layout margins
-        layout.configuration.contentInsetsReference = .none
         
         return layout
     }
@@ -303,7 +225,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
                 return
             }
             
-            // Reset cell margins (match legacy controller)
+            // Reset cell margins
             cell.layoutMargins = .zero
             cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
             
@@ -313,7 +235,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             
             let viewModel = self.stateManager.viewModel(for: post)
             
-            // Configure cell with UIHostingConfiguration (match legacy exactly)
+            // Configure cell with UIHostingConfiguration
             cell.contentConfiguration = UIHostingConfiguration {
                 AnyView(
                     FeedPostRow(
@@ -326,9 +248,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             }
             .margins(.all, 0)
             
-            // Remove cell state handler to reduce memory overhead (match legacy)
+            // Remove cell state handler to reduce memory overhead
             cell.configurationUpdateHandler = nil
-            
         }
         
         dataSource = UICollectionViewDiffableDataSource<Section, PostItem>(
@@ -348,57 +269,131 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         collectionView.refreshControl = refreshControl
     }
     
-    func setupObservers() {
-        stateObserver = UIKitStateObserver.observeFeedStateManager(
-            stateManager,
-            onPostsChanged: { [weak self] posts in
-                guard let self = self else { return }
-                Task {
-                    await self.performUpdate(type: .normalUpdate)
-                }
-            },
-            onLoadingStateChanged: { [weak self] loadingState in
-                guard let self = self else { return }
-                self.updateRefreshControl(for: loadingState)
-            },
-            onScrollAnchorChanged: { [weak self] anchor in
-                // Handle scroll anchor changes if needed for state preservation
-                guard let self = self else { return }
-                self.handleScrollAnchorChange(anchor)
-            }
-        )
-    }
-    
-    func setupScrollToTopCallback() {
-        stateManager.scrollToTopCallback = { [weak self] in
-            self?.scrollToTop(animated: true)
+    @objc private func handleRefresh() {
+        Task { @MainActor in
+            controllerLogger.debug("🔄 Fast refresh triggered")
+            isRefreshing = true
+            
+            await stateManager.refresh()
+            await performUpdate()
         }
     }
+    
+    // MARK: - State Management
+    
+    @MainActor
+    func performUpdate() async {
+        guard !isAppInBackground else {
+            controllerLogger.debug("⏸️ Skipping update - app in background")
+            return
+        }
+        
+        controllerLogger.debug("🔄 Fast update: Creating snapshot")
+        
+        var snapshot = NSDiffableDataSourceSnapshot<Section, PostItem>()
+        snapshot.appendSections([.main])
+        
+        let items = stateManager.posts.map { PostItem(id: $0.id) }
+        snapshot.appendItems(items, toSection: .main)
+        
+        await dataSource.apply(snapshot, animatingDifferences: false)
+        
+        if isRefreshing {
+            refreshControl.endRefreshing()
+            isRefreshing = false
+        }
+        
+        controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
+    }
+    
+    @MainActor
+    func loadInitialData() async {
+        controllerLogger.debug("📥 Loading initial data")
+        await stateManager.loadInitialData()
+        await performUpdate()
+    }
+    
+    // MARK: - Observers
+    
+    private func setupObservers() {
+        stateObserver = UIKitStateObserver(observing: stateManager) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.performUpdate()
+            }
+        }
+        stateObserver?.startObserving()
+    }
+    
+    private func setupScrollToTopCallback() {
+        // Note: scrollToTop functionality will be handled differently
+        // as setScrollToTopCallback was part of scroll preservation system
+    }
+    
+    private func scrollToTop() {
+        guard !stateManager.posts.isEmpty else { return }
+        
+        let indexPath = IndexPath(item: 0, section: 0)
+        collectionView.scrollToItem(at: indexPath, at: .top, animated: true)
+    }
+    
+    // MARK: - Scroll Position Management
+    
+    /// Captures the current scroll position and saves it to the state manager
+    private func captureCurrentScrollPosition() {
+        guard let collectionView = collectionView else { return }
+        #if os(iOS)
+        stateManager.captureScrollAnchor(from: collectionView)
+        #endif
+    }
+    
+    /// Restores scroll position from the state manager's scroll anchor
+    private func restoreScrollPosition() {
+        guard let collectionView = collectionView,
+              let anchor = stateManager.getScrollAnchor(),
+              let postIndex = stateManager.index(of: anchor.postID) else {
+            // No saved position or post not found, scroll to top
+            resetScrollToTop()
+            return
+        }
+        
+        let indexPath = IndexPath(item: postIndex, section: 0)
+        
+        // Scroll to the post first
+        collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+        
+        // Then adjust by the saved offset
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let collectionView = self.collectionView else { return }
+            
+            let currentOffset = collectionView.contentOffset
+            let adjustedOffset = CGPoint(
+                x: currentOffset.x,
+                y: currentOffset.y + anchor.offsetFromTop
+            )
+            
+            // Ensure we don't scroll beyond bounds
+            let maxOffsetY = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+            let clampedOffset = CGPoint(
+                x: adjustedOffset.x,
+                y: max(0, min(adjustedOffset.y, maxOffsetY))
+            )
+            
+            collectionView.setContentOffset(clampedOffset, animated: false)
+            self.controllerLogger.debug("📍 Restored scroll position for post: \(anchor.postID), offset: \(anchor.offsetFromTop)")
+        }
+    }
+    
+    /// Resets scroll position to the top
+    private func resetScrollToTop() {
+        guard let collectionView = collectionView else { return }
+        collectionView.setContentOffset(.zero, animated: false)
+        controllerLogger.debug("🔝 Reset scroll position to top")
+    }
+    
+    // MARK: - App Lifecycle
     
     private func setupAppLifecycleObservers() {
-        // Legacy UIKit observers for compatibility - primary lifecycle now handled via SwiftUI scene phase
-        // These provide additional granularity when needed but should not conflict with scene phase handling
-        
         #if os(iOS)
-        // App resigning active (provides more specific timing than scene phase inactive)
-        resignActiveObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleAppWillResignActive()
-        }
-        
-        // App becoming active (coordinates with scene phase active)
-        becomeActiveObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleAppDidBecomeActive()
-        }
-        
-        // Keep background/foreground observers but rely on scene phase for primary logic
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -414,869 +409,113 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         ) { [weak self] _ in
             self?.handleAppWillEnterForeground()
         }
-        #elseif os(macOS)
-        // App resigning active (provides more specific timing than scene phase inactive)
-        resignActiveObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleAppWillResignActive()
-        }
-        
-        // App becoming active (coordinates with scene phase active)
-        becomeActiveObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleAppDidBecomeActive()
-        }
-        
-        // Keep background/foreground observers but rely on scene phase for primary logic
-        backgroundObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleAppDidEnterBackground()
-        }
-        
-        foregroundObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.handleAppWillEnterForeground()
-        }
         #endif
     }
-    
-    private func setupAutomaticPersistence() {
-        // Set up periodic persistence while scrolling
-        persistenceTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.savePersistedScrollStateIfNeeded()
-        }
-    }
-    
-    
-    private func startAutomaticPersistence() {
-        persistenceTimer?.fire()
-    }
-    
-    private func stopAutomaticPersistence() {
-        persistenceTimer?.invalidate()
-    }
-    
-    // MARK: - App Lifecycle Handling
     
     private func handleAppDidEnterBackground() {
-        controllerLogger.debug("📱 UIKit: App entering background - coordinate with scene phase")
+        controllerLogger.debug("📱 App entering background")
         isAppInBackground = true
-        
-        // Save position immediately (scene phase coordination handles the main logic)
-        savePersistedScrollState(force: true)
-        
-        // Cancel any ongoing tasks to prevent crashes
         loadMoreTask?.cancel()
-        
-        // Clean up iOS 18+ resources (not available on Mac Catalyst)
-        #if !targetEnvironment(macCatalyst)
-        if #available(iOS 18.0, *) {
-            optimizedScrollSystem.cleanup()
-        }
-        #endif
     }
     
     private func handleAppWillEnterForeground() {
-        controllerLogger.debug("📱 UIKit: App entering foreground - defer to scene phase logic")
+        controllerLogger.debug("📱 App entering foreground")
         isAppInBackground = false
-        
-        // Don't automatically restore here - let scene phase coordination handle it
-        // This prevents double restoration attempts
-        controllerLogger.debug("📱 UIKit: Foreground handling deferred to scene phase coordination")
     }
     
-    private func handleAppWillResignActive() {
-        controllerLogger.debug("📱 UIKit: App resigning active - proactive save")
-        
-        // Proactive save for precise restoration (coordinates with scene phase inactive)
-        savePersistedScrollStateIfNeeded()
-    }
+    // MARK: - State Manager Updates
     
-    private func handleAppDidBecomeActive() {
-        controllerLogger.debug("📱 UIKit: App became active - resume operations")
+    func updateStateManager(_ newStateManager: FeedStateManager) {
+        guard newStateManager !== stateManager else { return }
         
-        // Resume normal operation if not in background
-        if !isAppInBackground {
-            startAutomaticPersistence()
-        }
-    }
-    
-    // MARK: - Scene Phase Coordination
-    
-    /// Handle scene phase restoration coordinated by FeedStateStore
-    @MainActor
-    func handleScenePhaseRestoration() async {
-        controllerLogger.debug("🎭 UIKit: Handling scene phase restoration")
+        controllerLogger.info("🔄 Fast switching state manager: \\(self.stateManager.currentFeedType.identifier) → \\(newStateManager.currentFeedType.identifier)")
         
-        // Only restore if we have persisted state and aren't currently loading
-        guard !stateManager.isLoading else {
-            controllerLogger.debug("🎭 UIKit: Currently loading - skipping restoration")
-            return
-        }
+        // Capture scroll position for the current feed before switching
+        captureCurrentScrollPosition()
         
-        // Make sure we have posts and collection view is ready
-        guard !stateManager.posts.isEmpty,
-              collectionView.numberOfSections > 0 else {
-            controllerLogger.debug("🎭 UIKit: No posts or collection view not ready - skipping restoration")
-            return
-        }
-        
-        // Only load persisted state for chronological feeds
-        guard stateManager.currentFeedType.isChronological,
-              let persistedState = loadPersistedScrollState() else {
-            controllerLogger.debug("🎭 UIKit: No persisted state or non-chronological feed - skipping restoration")
-            return
-        }
-        
-        // Perform restoration update
-        await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.viewAppearance(persistedState: persistedState))
-        controllerLogger.debug("🎭 UIKit: Scene phase restoration completed")
-    }
-    
-    // MARK: - Data Loading
-    
-    @MainActor
-    func loadInitialData() async {
-        await stateManager.loadInitialData()
-        await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.normalUpdate)
-    }
-    
-    @objc private func handleRefresh() {
-        Task { @MainActor in
-            // Use pre-captured anchor if available
-            let anchor = pullToRefreshAnchor ?? captureCurrentAnchor()
-            await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.refresh(anchor: anchor))
-            pullToRefreshAnchor = nil
-        }
-    }
-    
-    @MainActor
-    private func performLoadMore() async {
-        guard !stateManager.isLoading, !stateManager.hasReachedEnd else { return }
-        
+        // Cancel ongoing operations
         loadMoreTask?.cancel()
-        loadMoreTask = Task {
-            await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.loadMore)
-        }
-        
-        await loadMoreTask?.value
-    }
-    
-    @MainActor
-    private func handleMemoryWarning() async {
-        controllerLogger.warning("⚠️ Memory warning received")
-        await performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType.memoryWarning)
-    }
-    
-    // MARK: - Unified Update System
-    
-    @MainActor
-    func performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
-        // Don't perform updates if app is in background
-        guard !isAppInBackground else {
-            controllerLogger.debug("⏸️ Skipping update - app in background")
-            return
-        }
-        
-        controllerLogger.debug("🔄 Starting update: \(String(describing: type))")
-        
-        // Save position before update for recovery
-        let preUpdateState = captureCurrentScrollState()
-        
-        // Determine which system to use based on iOS version and platform
-        #if !targetEnvironment(macCatalyst)
-        if #available(iOS 18.0, *) {
-            await performOptimizedUpdate(type: type)
-        } else {
-            await performStandardUpdate(type: type)
-        }
-        #else
-        // Mac Catalyst: Use standard update system only
-        await performStandardUpdate(type: type)
-        #endif
-        
-        // If update failed and we have a pre-update state, try to restore it
-        if let state = preUpdateState, collectionView.contentOffset.y <= 0 {
-            // Only restore if scroll position seems lost (at top when it shouldn't be)
-            _ = await restorePersistedState(state)
-        }
-    }
-    
-    #if !targetEnvironment(macCatalyst)
-    @available(iOS 18.0, *)
-    @MainActor
-    private func performOptimizedUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
-        // Store the old posts before update for proper scroll preservation
-        let oldPosts = stateManager.posts.map { $0.id }
-        
-        // Use the appropriate anchor based on update type
-        var capturedAnchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor?
-        
-        switch type {
-        case .refresh(let refreshAnchor):
-            // Store the old post count to detect if new posts were loaded
-            let oldPostCount = oldPosts.count
-            
-            // Only preserve scroll position for chronological feeds
-            if stateManager.currentFeedType.isChronological {
-                // For refresh, use the pre-captured anchor during pull gesture
-                if let refreshAnchorAny = refreshAnchor,
-                   let refreshAnchor = refreshAnchorAny as? UnifiedScrollPreservationPipeline.ScrollAnchor,
-                   refreshAnchor.indexPath.item < oldPosts.count {
-                    // Convert UnifiedScrollPreservationPipeline.ScrollAnchor to PreciseScrollAnchor
-                    if let attributes = collectionView.layoutAttributesForItem(at: refreshAnchor.indexPath) {
-                        // Calculate viewport-relative position accounting for safe area
-                        let safeAreaTop = collectionView.adjustedContentInset.top
-                        let currentContentOffset = collectionView.contentOffset.y
-                        
-                        // The viewport-relative position should be relative to the safe area top
-                        let viewportRelativeY = attributes.frame.origin.y - (currentContentOffset + safeAreaTop)
-                        
-                        capturedAnchor = OptimizedScrollPreservationSystem.PreciseScrollAnchor(
-                            indexPath: refreshAnchor.indexPath,
-                            postId: oldPosts[refreshAnchor.indexPath.item], // Use OLD post ID
-                            contentOffset: refreshAnchor.contentOffset,
-                            viewportRelativeY: viewportRelativeY, // Use safe-area-relative position
-                            itemFrameY: attributes.frame.origin.y,
-                            itemHeight: attributes.frame.height,
-                            visibleHeightInViewport: attributes.frame.height,
-                            timestamp: CACurrentMediaTime(),
-                            displayScale: PlatformScreenInfo.scale
-                        )
-                    }
-                } else {
-                    // Fallback: capture current anchor if no refresh anchor
-                    capturedAnchor = optimizedScrollSystem.capturePreciseAnchor(
-                        from: collectionView,
-                        preferredIndexPath: nil
-                    )
-                }
-            } else {
-                // Non-chronological feeds: no scroll preservation on refresh
-                capturedAnchor = nil
-                controllerLogger.debug("🔄 Non-chronological feed - will scroll to top after refresh")
-                // Clear any existing new posts indicator since we're refreshing
-                stateManager.clearNewPostsIndicator()
-            }
-            isRefreshing = true
-            await stateManager.refresh()
-            
-            // Check if any new posts were actually loaded
-            let newPostCount = stateManager.posts.count
-            if newPostCount == oldPostCount && stateManager.currentFeedType.isChronological {
-                // No new posts loaded - adjust anchor to show large title (only for chronological)
-                capturedAnchor = adjustAnchorForLargeTitle(anchor: capturedAnchor)
-                controllerLogger.debug("🔄 No new posts loaded - adjusted anchor for large title display")
-            }
-            
-        case .loadMore:
-            // For load more, capture current position before loading
-            capturedAnchor = optimizedScrollSystem.capturePreciseAnchor(
-                from: collectionView,
-                preferredIndexPath: nil
-            )
-            await stateManager.loadMore()
-            
-        case .newPostsAtTop:
-            // For new posts at top, capture current anchor before update
-            capturedAnchor = optimizedScrollSystem.capturePreciseAnchor(
-                from: collectionView,
-                preferredIndexPath: nil
-            )
-            await stateManager.smartRefresh()
-            
-        case .memoryWarning:
-            // Clear non-visible cells to free memory
-            collectionView.visibleCells.forEach { cell in
-                if let indexPath = collectionView.indexPath(for: cell),
-                   !collectionView.indexPathsForVisibleItems.contains(indexPath) {
-                    cell.contentConfiguration = nil
-                }
-            }
-            
-        case .feedSwitch:
-            // Handle feed type changes
-            break
-            
-        case .normalUpdate:
-            // Standard update without special handling
-            capturedAnchor = optimizedScrollSystem.capturePreciseAnchor(
-                from: collectionView,
-                preferredIndexPath: nil
-            )
-            break
-            
-        case .viewAppearance(let persistedState):
-            if let state = persistedState {
-                let restorationSucceeded = await restorePersistedState(state)
-                if restorationSucceeded {
-                    // Successful restoration - skip anchor-based restoration
-                    return
-                }
-                // If restoration failed, continue to anchor-based restoration below
-            }
-        }
-        
-        // Apply the snapshot WITH position preservation to prevent visual flash
-        await applyOptimizedSnapshotWithPreservation(anchor: capturedAnchor)
-        
-        // Check for gaps and load if needed (only for chronological feeds)
-        if stateManager.currentFeedType.isChronological {
-            let visibleIndexPaths = collectionView.indexPathsForVisibleItems
-            if !visibleIndexPaths.isEmpty {
-                await gapLoadingManager.detectAndLoadGaps(
-                    stateManager: stateManager,
-                    visibleIndexPaths: visibleIndexPaths
-                )
-            }
-        }
-        
-        // End refreshing if needed
-        if isRefreshing {
-            refreshControl.endRefreshing()
-            isRefreshing = false
-        }
-    }
-    #endif // !targetEnvironment(macCatalyst)
-    
-    // MARK: - Standard Update System (iOS <18.0 and Mac Catalyst)
-    
-    @MainActor
-    private func performStandardUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
-        // Use the unified pipeline for older iOS versions and Mac Catalyst
-        let currentData = stateManager.posts.map { $0.id }
-        
-        // Perform the data operation
-        switch type {
-        case .refresh:
-            isRefreshing = true
-            await stateManager.refresh()
-            
-            // For non-chronological feeds, scroll to top after refresh
-            if !stateManager.currentFeedType.isChronological {
-                collectionView.setContentOffset(CGPoint(x: 0, y: -collectionView.adjustedContentInset.top), animated: false)
-                controllerLogger.debug("🔄 Non-chronological feed - scrolled to top after refresh")
-            }
-            
-        case .loadMore:
-            await stateManager.loadMore()
-            
-        case .newPostsAtTop, .memoryWarning, .feedSwitch, .normalUpdate:
-            // Handle other update types as needed
-            await stateManager.refresh()
-            
-        case .viewAppearance:
-            // For view appearance, just apply the current state
-            break
-        }
-        
-        // Apply the update directly to the collection view (standard approach)
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PostItem>()
-        snapshot.appendSections([.main])
-        
-        let items = stateManager.posts.map { PostItem(id: $0.id) }
-        snapshot.appendItems(items, toSection: .main)
-        
-        // Apply without animation for better performance and position preservation
-        await dataSource.apply(snapshot, animatingDifferences: false)
-        
-        controllerLogger.debug("✅ Standard update completed with \(items.count) posts")
-        
-        if isRefreshing {
-            refreshControl.endRefreshing()
-            isRefreshing = false
-        }
-    }
-    
-    #if !targetEnvironment(macCatalyst)
-    @available(iOS 18.0, *)
-    @MainActor
-    private func applyOptimizedSnapshotWithPreservation(anchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor?) async {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PostItem>()
-        snapshot.appendSections([.main])
-        
-        let items = stateManager.posts.map { PostItem(id: $0.id) }
-        snapshot.appendItems(items, toSection: .main)
-        
-        if let anchor = anchor {
-            let postIds = stateManager.posts.map { $0.id }
-            
-            // SIMPLIFIED APPROACH: Pre-calculate target offset using layout estimation
-            // This avoids the complexity of UIUpdateLink timing issues
-            var targetOffset: CGPoint?
-            
-            // Find where the anchor post will be in the new data
-            if let newIndex = postIds.firstIndex(of: anchor.postId) {
-                let newIndexPath = IndexPath(item: newIndex, section: 0)
-                
-                // Estimate the target position based on current layout
-                if let currentFirstVisible = collectionView.indexPathsForVisibleItems.sorted().first,
-                   let currentAttributes = collectionView.layoutAttributesForItem(at: currentFirstVisible) {
-                    
-                    // Calculate estimated position of anchor in new layout
-                    let estimatedItemHeight = currentAttributes.frame.height
-                    let estimatedItemY = CGFloat(newIndex) * estimatedItemHeight
-                    let safeAreaTop = collectionView.adjustedContentInset.top
-                    
-                    // Calculate target offset to maintain viewport position
-                    let targetOffsetY = estimatedItemY - anchor.viewportRelativeY
-                    
-                    // Clamp to valid bounds
-                    let minOffset = -safeAreaTop
-                    let maxEstimatedContentHeight = CGFloat(postIds.count) * estimatedItemHeight
-                    let maxOffset = max(minOffset, maxEstimatedContentHeight - collectionView.bounds.height + safeAreaTop)
-                    
-                    targetOffset = CGPoint(
-                        x: 0,
-                        y: max(minOffset, min(targetOffsetY, maxOffset))
-                    )
-                }
-            }
-            
-            // Apply both changes in a single, atomic operation
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            
-            // Step 1: Apply the snapshot
-            await dataSource.apply(snapshot, animatingDifferences: false)
-            
-            // Step 2: Immediately set target offset (estimated position)
-            if let targetOffset = targetOffset {
-                collectionView.setContentOffset(targetOffset, animated: false)
-            }
-            
-            // Step 3: Force layout to get accurate positions
-            collectionView.layoutIfNeeded()
-            
-            // Step 4: Fine-tune position with actual layout data
-            if let finalTargetOffset = optimizedScrollSystem.calculateTargetOffset(
-                for: anchor,
-                newPostIds: postIds,
-                in: collectionView
-            ) {
-                collectionView.setContentOffset(finalTargetOffset, animated: false)
-            }
-            
-            CATransaction.commit()
-            
-            controllerLogger.debug("✅ Simplified atomic snapshot + scroll restoration completed")
-            
-        } else {
-            // No anchor - just apply snapshot normally
-            await dataSource.apply(snapshot, animatingDifferences: false)
-        }
-        
-        // Log the result
-        if anchor != nil {
-            controllerLogger.debug("✅ Applied snapshot with simplified position preservation")
-        } else {
-            controllerLogger.debug("✅ Applied snapshot without position preservation")
-        }
-    }
-    
-    @available(iOS 18.0, *)
-    @MainActor
-    private func applyOptimizedSnapshot() async {
-        // Legacy method for cases without position preservation
-        await applyOptimizedSnapshotWithPreservation(anchor: nil)
-    }
-    
-    /// Adjusts the anchor to ensure large title is shown when no new posts are loaded
-    @available(iOS 18.0, *)
-    private func adjustAnchorForLargeTitle(anchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor?) -> OptimizedScrollPreservationSystem.PreciseScrollAnchor? {
-        guard let anchor = anchor else { return nil }
-        
-        // Check if the user was near the top when they pulled to refresh
-        let currentOffset = collectionView.contentOffset.y
-        let safeAreaTop = collectionView.adjustedContentInset.top
-        let largeTitleThreshold: CGFloat = -safeAreaTop + 100 // Threshold for showing large title
-        
-        // If user was near the top, adjust anchor to show large title
-        if currentOffset <= largeTitleThreshold {
-            controllerLogger.debug("📏 Adjusting anchor for large title: current offset \(currentOffset), threshold \(largeTitleThreshold)")
-            
-            // Create a modified anchor that forces large title display
-            return OptimizedScrollPreservationSystem.PreciseScrollAnchor(
-                indexPath: anchor.indexPath,
-                postId: anchor.postId,
-                contentOffset: CGPoint(x: 0, y: -safeAreaTop), // Force to large title position
-                viewportRelativeY: max(anchor.viewportRelativeY, -safeAreaTop), // Ensure viewport shows navigation area
-                itemFrameY: anchor.itemFrameY,
-                itemHeight: anchor.itemHeight,
-                visibleHeightInViewport: anchor.visibleHeightInViewport,
-                timestamp: anchor.timestamp,
-                displayScale: anchor.displayScale
-            )
-        }
-        
-        // If user was scrolled down, keep original anchor
-        return anchor
-    }
-    #endif // !targetEnvironment(macCatalyst)
-    
-    // MARK: - Scroll Position Helpers
-    
-    private func captureCurrentAnchor() -> UnifiedScrollPreservationPipeline.ScrollAnchor {
-        return UnifiedScrollPreservationPipeline.ScrollAnchor(from: collectionView)
-    }
-    
-    private func scrollToTop(animated: Bool) {
-        let topOffset = CGPoint(x: 0, y: -collectionView.adjustedContentInset.top)
-        collectionView.setContentOffset(topOffset, animated: animated)
-    }
-    
-    // MARK: - Persistence
-    
-    private func captureCurrentScrollState() -> PersistedScrollState? {
-        guard let firstVisible = collectionView.indexPathsForVisibleItems.sorted().first,
-              firstVisible.item < stateManager.posts.count else { return nil }
-        
-        let post = stateManager.posts[firstVisible.item]
-        
-        // Calculate how much the top post is scrolled out of the safe area
-        // This should be the distance from the top of the safe area to the top of the post
-        var offsetFromSafeArea: CGFloat = 0
-        if let attributes = collectionView.layoutAttributesForItem(at: firstVisible) {
-            let safeAreaTop = collectionView.adjustedContentInset.top
-            let currentOffset = collectionView.contentOffset.y
-            
-            // Distance from safe area top to post top in content coordinates
-            offsetFromSafeArea = attributes.frame.origin.y - (currentOffset + safeAreaTop)
-        }
-        
-        return PersistedScrollState(
-            postID: post.id,
-            offsetFromTop: offsetFromSafeArea, // Now relative to safe area, not absolute viewport
-            contentOffset: collectionView.contentOffset.y
-        )
-    }
-    
-    func savePersistedScrollState(force: Bool = false) {
-        // Only save scroll state for chronological feeds
-        guard stateManager.currentFeedType.isChronological else { return }
-        
-        guard let firstVisible = collectionView.indexPathsForVisibleItems.sorted().first,
-              firstVisible.item < stateManager.posts.count else { return }
-        
-        let post = stateManager.posts[firstVisible.item]
-        
-        // Calculate how much the top post is scrolled out of the safe area
-        var offsetFromSafeArea: CGFloat = 0
-        if let attributes = collectionView.layoutAttributesForItem(at: firstVisible) {
-            let safeAreaTop = collectionView.adjustedContentInset.top
-            let currentOffset = collectionView.contentOffset.y
-            
-            // Distance from safe area top to post top in content coordinates
-            offsetFromSafeArea = attributes.frame.origin.y - (currentOffset + safeAreaTop)
-        }
-        
-        let state = PersistedScrollState(
-            postID: post.id,
-            offsetFromTop: offsetFromSafeArea, // Now relative to safe area
-            contentOffset: collectionView.contentOffset.y
-        )
-        
-        // Save to UserDefaults with timestamp
-        let key = "feed_scroll_\(stateManager.currentFeedType.identifier)"
-        if let encoded = try? JSONEncoder().encode(state) {
-            UserDefaults.standard.set(encoded, forKey: key)
-            UserDefaults.standard.set(Date(), forKey: "\(key)_timestamp")
-            lastPersistedOffset = collectionView.contentOffset.y
-            controllerLogger.debug("💾 Saved scroll position: post=\(post.id), offset=\(self.collectionView.contentOffset.y)")
-        }
-    }
-    
-    func loadPersistedScrollState() -> PersistedScrollState? {
-        // Only load persisted state for chronological feeds
-        guard stateManager.currentFeedType.isChronological else { return nil }
-        
-        let key = "feed_scroll_\(stateManager.currentFeedType.identifier)"
-        
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let state = try? JSONDecoder().decode(PersistedScrollState.self, from: data) else {
-            return nil
-        }
-        
-        // Check if state is too old (> 1 hour)
-        if let timestamp = UserDefaults.standard.object(forKey: "\(key)_timestamp") as? Date {
-            let age = Date().timeIntervalSince(timestamp)
-            if age > 3600 { // 1 hour
-                controllerLogger.debug("⏰ Persisted state too old (\(age)s), ignoring")
-                return nil
-            }
-        }
-        
-        controllerLogger.debug("📖 Loaded persisted scroll state: post=\(state.postID)")
-        return state
-    }
-    
-    private func savePersistedScrollStateIfNeeded() {
-        let currentOffset = collectionView.contentOffset.y
-        let delta = abs(currentOffset - lastPersistedOffset)
-        
-        // Only save if scrolled significantly
-        if delta > persistenceThreshold {
-            savePersistedScrollState()
-        }
-    }
-    
-    @MainActor
-    private func restorePersistedState(_ state: PersistedScrollState) async -> Bool {
-        // Don't restore persisted state for non-chronological feeds
-        guard stateManager.currentFeedType.isChronological else {
-            controllerLogger.debug("⏭️ Skipping state restoration for non-chronological feed")
-            return false
-        }
-        
-        guard let index = stateManager.posts.firstIndex(where: { $0.id == state.postID }) else {
-            controllerLogger.warning("⚠️ Could not find persisted post \(state.postID) - using smart fallback")
-            // Instead of failing completely, try to restore approximate position
-            await restoreApproximatePosition(contentOffset: state.contentOffset)
-            return false
-        }
-        
-        let indexPath = IndexPath(item: index, section: 0)
-        
-        // Ensure the collection view has data before trying to access it
-        guard collectionView.numberOfSections > 0 else {
-            controllerLogger.warning("⚠️ Collection view has no sections yet - deferring restoration")
-            return false
-        }
-        
-        // Wait for layout if needed
-        if collectionView.numberOfItems(inSection: 0) == 0 {
-            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-            
-            // Check again after waiting
-            guard collectionView.numberOfSections > 0 && 
-                  collectionView.numberOfItems(inSection: 0) > index else {
-                controllerLogger.warning("⚠️ Collection view not ready after wait - using fallback")
-                await restoreApproximatePosition(contentOffset: state.contentOffset)
-                return false
-            }
-        }
-        
-        // Get the item's attributes
-        guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else {
-            controllerLogger.warning("⚠️ No attributes for item at \(indexPath) - using smart fallback")
-            // Fallback to approximate position based on saved content offset
-            await restoreApproximatePosition(contentOffset: state.contentOffset)
-            return false
-        }
-        
-        // Calculate target offset to restore exact position relative to safe area
-        let safeAreaTop = collectionView.adjustedContentInset.top
-        let targetOffset = attributes.frame.origin.y - safeAreaTop - state.offsetFromTop
-        let safeOffset = clampOffsetToContent(targetOffset)
-        
-        // Apply the offset
-        collectionView.setContentOffset(CGPoint(x: 0, y: safeOffset), animated: false)
-        
-        controllerLogger.debug("✅ Restored scroll position to post \(state.postID) at offset \(safeOffset)")
-        return true
-    }
-    
-    @MainActor
-    private func restoreApproximatePosition(contentOffset: CGFloat) async {
-        controllerLogger.debug("🔄 Attempting approximate position restoration to offset \(contentOffset)")
-        
-        // Wait for layout completion to ensure content size is accurate
-        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-        
-        // Use the saved content offset, but ensure it's within valid bounds
-        let safeOffset = clampOffsetToContent(contentOffset)
-        
-        // Apply the offset - this maintains position relative to content, not absolute top
-        collectionView.setContentOffset(CGPoint(x: 0, y: safeOffset), animated: false)
-        
-        controllerLogger.debug("✅ Restored approximate position at offset \(safeOffset)")
-    }
-    
-    private func clampOffsetToContent(_ offsetY: CGFloat) -> CGFloat {
-        let contentInset = collectionView.adjustedContentInset
-        let minOffset = -contentInset.top  // Allow scrolling above content (shows toolbar)
-        let maxOffset = max(minOffset, collectionView.contentSize.height - collectionView.bounds.height + contentInset.bottom)
-        
-        return max(minOffset, min(offsetY, maxOffset))
-    }
-    
-    // MARK: - Cleanup
-    
-    private func cleanup() {
-        // Save final position
-        savePersistedScrollState(force: true)
-        
-        // Unregister from iOS 18+ state restoration coordinator
-        if #available(iOS 18.0, *) {
-            let identifier = "feed_controller_\(stateManager.currentFeedType.identifier)"
-            iOS18StateRestorationCoordinator.shared.unregisterController(identifier: identifier)
-            controllerLogger.debug("❌ Unregistered from iOS 18+ restoration coordinator: \(identifier)")
-        }
-        
-        // Cancel tasks and stop observation
         stateObserver?.stopObserving()
-        stateObserver = nil
-        loadMoreTask?.cancel()
         
-        // Stop timers
-        persistenceTimer?.invalidate()
-        persistenceTimer = nil
+        // Update the state manager
+        stateManager = newStateManager
         
-        // Remove observers
-        if let observer = backgroundObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = foregroundObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = resignActiveObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = becomeActiveObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        // Restart observations
+        setupObservers()
+        setupScrollToTopCallback()
         
-        // Clean up iOS 18+ resources (not available on Mac Catalyst)
-        #if !targetEnvironment(macCatalyst)
-        if #available(iOS 18.0, *) {
-            optimizedScrollSystem.cleanup()
+        // Load fresh data for new feed
+        Task { @MainActor in
+            await loadInitialData()
+            
+            // After loading data, restore the scroll position for the new feed
+            // Give the collection view a moment to update its content
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.restoreScrollPosition()
+            }
         }
-        #endif
-    }
-    
-    deinit {
-        // Remove theme observer
-        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ThemeChanged"), object: nil)
-        cleanup()
     }
 }
 
 // MARK: - UICollectionViewDelegate
 
+@available(iOS 16.0, *)
 extension FeedCollectionViewControllerIntegrated: UICollectionViewDelegate {
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        let offset = scrollView.contentOffset.y
-        onScrollOffsetChanged?(offset)
-        
-        // Capture anchor during pull-to-refresh gesture
-        if scrollView.isTracking && offset < -50 && pullToRefreshAnchor == nil {
-            pullToRefreshAnchor = captureCurrentAnchor()
-            controllerLogger.debug("📍 Captured pull-to-refresh anchor at offset: \(offset)")
-        }
-        
-        // Check for load more trigger
-        let contentHeight = scrollView.contentSize.height
-        let frameHeight = scrollView.frame.height
-        let triggerPoint = contentHeight - frameHeight * 2
-        
-        if offset > triggerPoint && !stateManager.isLoading && !stateManager.hasReachedEnd {
+    func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+        // Trigger load more when approaching the end
+        let totalItems = stateManager.posts.count
+        if indexPath.item >= totalItems - 5 {
             Task { @MainActor in
-                await performLoadMore()
+                if !stateManager.posts.isEmpty {
+                    await stateManager.loadMore()
+                }
             }
         }
         
-        // Dismiss new posts indicator when scrolled to top
-        // But only if user is manually scrolling (not during programmatic scrolls)
-        if scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
-            if stateManager.shouldDismissNewPostsIndicator(for: offset) {
-                controllerLogger.debug("🔴 NEW_POSTS_INDICATOR: Dismissing indicator due to scroll to top - offset: \(offset)")
-                stateManager.clearNewPostsIndicator()
-            }
-        }
+        // Notify scroll offset callback
+        onScrollOffsetChanged?(collectionView.contentOffset.y)
     }
     
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        // Save scroll position for restoration
-        savePersistedScrollState()
-        
-        // Preload content to prevent gaps (only for chronological feeds, iOS 18+ native only)
-        #if !targetEnvironment(macCatalyst)
-        if #available(iOS 18.0, *), stateManager.currentFeedType.isChronological {
-            Task { @MainActor in
-                let visibleRange = collectionView.indexPathsForVisibleItems
-                    .map { $0.item }
-                    .reduce(into: (min: Int.max, max: Int.min)) { result, item in
-                        result.min = min(result.min, item)
-                        result.max = max(result.max, item)
-                    }
-                
-                guard visibleRange.min != Int.max else { return }
-                
-                let range = visibleRange.min..<(visibleRange.max + 1)
-                let direction: FeedGapLoadingManager.ScrollDirection = {
-                    let currentOffset = scrollView.contentOffset.y
-                    let lastOffset = scrollView.contentOffset.y - scrollView.contentInset.top
-                    if currentOffset > lastOffset {
-                        return .down
-                    } else if currentOffset < lastOffset {
-                        return .up
-                    } else {
-                        return .none
-                    }
-                }()
-                
-                await gapLoadingManager.preloadToPreventGaps(
-                    stateManager: stateManager,
-                    scrollDirection: direction,
-                    visibleRange: range
-                )
-            }
-        }
-        #endif // !targetEnvironment(macCatalyst)
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        onScrollOffsetChanged?(scrollView.contentOffset.y)
     }
 }
 
 // MARK: - UICollectionViewDataSourcePrefetching
 
+@available(iOS 16.0, *)
 extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-        // Trigger load more if approaching end
-        let maxItem = indexPaths.map { $0.item }.max() ?? 0
-        let totalItems = stateManager.posts.count
-        
-        if maxItem > totalItems - 10 && !stateManager.isLoading && !stateManager.hasReachedEnd {
-            Task { @MainActor in
-                await performLoadMore()
+        // Prefetch content for upcoming cells
+        for indexPath in indexPaths {
+            if indexPath.item < stateManager.posts.count {
+                let post = stateManager.posts[indexPath.item]
+                // Prefetch images or other content if needed
+                _ = post // Use post for prefetching
             }
         }
     }
 }
 
-// PersistedScrollState already conforms to Codable in UnifiedScrollPreservationPipeline.swift
+// MARK: - Helper Functions
+
+@available(iOS 16.0, *)
+extension FeedCollectionViewControllerIntegrated {
+    private func getEffectiveColorScheme() -> ColorScheme {
+        #if os(iOS)
+        let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
+        return stateManager.appState.themeManager.effectiveColorScheme(for: systemScheme)
+        #else
+        return .light
+        #endif
+    }
+}
+
 #else
-/// macOS stub implementation - FeedCollectionViewController not available on macOS
+// MARK: - macOS Stub
+
 @available(macOS 13.0, *)
 final class FeedCollectionViewControllerIntegrated: NSViewController {
-    private let feedCollectionLogger = Logger(subsystem: "blue.catbird", category: "FeedCollectionIntegrated")
-    
-    private enum Section: Int, CaseIterable {
-        case main = 0
-    }
-    
-    private struct PostItem: Hashable {
-        let id: String
-        
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(id)
-        }
-        
-        static func == (lhs: PostItem, rhs: PostItem) -> Bool {
-            lhs.id == rhs.id
-        }
-    }
-    
     var stateManager: FeedStateManager
     private let navigationPath: Binding<NavigationPath>
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -1290,102 +529,14 @@ final class FeedCollectionViewControllerIntegrated: NSViewController {
         self.navigationPath = navigationPath
         self.onScrollOffsetChanged = onScrollOffsetChanged
         super.init(nibName: nil, bundle: nil)
-        feedCollectionLogger.warning("FeedCollectionViewControllerIntegrated not supported on macOS")
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        feedCollectionLogger.warning("FeedCollectionViewControllerIntegrated not supported on macOS")
-    }
-    
-    func performUpdate(type: UnifiedScrollPreservationPipeline.UpdateType) async {
-        feedCollectionLogger.warning("performUpdate not supported on macOS")
-    }
-    
-    func loadInitialData() async {
-        feedCollectionLogger.warning("loadInitialData not supported on macOS")
-    }
-    
-    func handleScenePhaseRestoration() async {
-        feedCollectionLogger.warning("handleScenePhaseRestoration not supported on macOS")
-    }
-    
-    func savePersistedScrollState(force: Bool = false) {
-        feedCollectionLogger.warning("savePersistedScrollState not supported on macOS")
-    }
-    
-    func loadPersistedScrollState() -> PersistedScrollState? {
-        feedCollectionLogger.warning("loadPersistedScrollState not supported on macOS")
-        return nil
+    func updateStateManager(_ newStateManager: FeedStateManager) {
+        stateManager = newStateManager
     }
 }
 #endif
-
-// MARK: - State Change Handlers Extension
-
-extension FeedCollectionViewControllerIntegrated {
-    
-    func updateRefreshControl(for loadingState: FeedStateManager.LoadingState) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            switch loadingState {
-            case .refreshing:
-                if !self.refreshControl.isRefreshing {
-                    self.refreshControl.beginRefreshing()
-                }
-            case .idle, .loading, .loadingMore, .error:
-                if self.refreshControl.isRefreshing {
-                    self.refreshControl.endRefreshing()
-                }
-            }
-        }
-    }
-    
-    func handleScrollAnchorChange(_ anchor: FeedStateManager.ScrollAnchor?) {
-        // This method can be used to respond to programmatic scroll anchor changes
-        // from the state manager (e.g., during state restoration)
-        guard let anchor = anchor, !anchor.isStale else { return }
-        
-        // Only apply if we're not currently user-scrolling
-        guard !collectionView.isTracking && !collectionView.isDragging else { return }
-        
-        controllerLogger.debug("🎯 Handling scroll anchor change: \(anchor.postID)")
-        
-        // Apply the scroll anchor if appropriate
-        Task {
-            await self.restoreScrollPositionFromAnchor(anchor)
-        }
-    }
-    
-    private func restoreScrollPositionFromAnchor(_ anchor: FeedStateManager.ScrollAnchor) async {
-        guard let index = stateManager.posts.firstIndex(where: { $0.id == anchor.postID }) else {
-            controllerLogger.warning("⚠️ Could not find post for scroll anchor: \(anchor.postID)")
-            return
-        }
-        
-        let indexPath = IndexPath(item: index, section: 0)
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Scroll to the post with the preserved offset
-            self.collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
-            
-            // Adjust for the specific offset if needed
-            if anchor.offsetFromTop > 0 {
-                let currentOffset = self.collectionView.contentOffset
-                let adjustedOffset = CGPoint(
-                    x: currentOffset.x,
-                    y: currentOffset.y + anchor.offsetFromTop
-                )
-                self.collectionView.setContentOffset(adjustedOffset, animated: false)
-            }
-        }
-    }
-}
-

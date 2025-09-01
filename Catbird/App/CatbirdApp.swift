@@ -30,20 +30,20 @@ struct CatbirdApp: App {
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
       // FaultOrdering debugging and setup for physical devices
-      print("🔍 App launched with environment:")
+      logger.debug("🔍 App launched with environment:")
       for (key, value) in ProcessInfo.processInfo.environment {
         if key.contains("FAULT") || key.contains("RUN_") || key.contains("DYLD") || key.contains("XCTest") {
-          print("  \(key) = \(value)")
+          logger.debug("  \(key) = \(value)")
         }
       }
       
       // CRITICAL FOR PHYSICAL DEVICE: Force set environment variables if in test environment
       if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-        print("🧪 Running in XCTest environment - checking for FaultOrdering flags")
+        logger.debug("🧪 Running in XCTest environment - checking for FaultOrdering flags")
         
         // Only set FaultOrdering variables if explicitly requested
         if ProcessInfo.processInfo.environment["ENABLE_FAULT_ORDERING"] == "1" {
-          print("✅ FaultOrdering explicitly enabled via ENABLE_FAULT_ORDERING")
+          logger.debug("✅ FaultOrdering explicitly enabled via ENABLE_FAULT_ORDERING")
           
           // Force set the environment variables that FaultOrdering needs
           setenv("RUN_FAULT_ORDER", "1", 1)
@@ -52,20 +52,20 @@ struct CatbirdApp: App {
           
           // Verify they were set
           if let runFaultOrder = getenv("RUN_FAULT_ORDER") {
-            print("✅ RUN_FAULT_ORDER set to: \(String(cString: runFaultOrder))")
+            logger.debug("✅ RUN_FAULT_ORDER set to: \(String(cString: runFaultOrder))")
           }
           if let runFaultOrderSetup = getenv("RUN_FAULT_ORDER_SETUP") {
-            print("✅ RUN_FAULT_ORDER_SETUP set to: \(String(cString: runFaultOrderSetup))")
+            logger.debug("✅ RUN_FAULT_ORDER_SETUP set to: \(String(cString: runFaultOrderSetup))")
           }
         } else {
-          print("⚠️ FaultOrdering not enabled - set ENABLE_FAULT_ORDERING=1 to activate")
+          logger.debug("⚠️ FaultOrdering not enabled - set ENABLE_FAULT_ORDERING=1 to activate")
         }
       }
       
       // Check if FaultOrdering framework is loaded
       if ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" || 
          ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-        print("🔍 FaultOrdering mode detected in AppDelegate")
+        logger.debug("🔍 FaultOrdering mode detected in AppDelegate")
         
         // Check if debugger is attached (this is what FaultOrdering checks)
         var info = kinfo_proc()
@@ -73,11 +73,11 @@ struct CatbirdApp: App {
         var size = MemoryLayout<kinfo_proc>.stride
         let result = sysctl(&mib, 4, &info, &size, nil, 0)
         let debuggerAttached = (result == 0) && (info.kp_proc.p_flag & P_TRACED) != 0
-        print("🔍 Debugger attached: \(debuggerAttached)")
+        logger.debug("🔍 Debugger attached: \(debuggerAttached)")
         
         // For physical devices, the debugger might not be attached in the traditional sense
         if !debuggerAttached {
-          print("⚠️ Debugger not attached - FaultOrdering may not work correctly")
+          logger.debug("⚠️ Debugger not attached - FaultOrdering may not work correctly")
         }
       }
       
@@ -346,12 +346,20 @@ struct CatbirdApp: App {
         #if os(iOS)
         // Setup background notification observer
         setupBackgroundNotification()
+        // Register BGTask scheduler for outbox retries (once)
+        if #available(iOS 13.0, *) {
+          BGTaskSchedulerManager.registerIfNeeded()
+          BGTaskSchedulerManager.schedule()
+        }
         #endif
         
         // Initialize FeedStateStore with model context for persistence
         Task { @MainActor in
           FeedStateStore.shared.setModelContext(modelContext)
         }
+
+        // Import shared drafts from the Share Extension, if any
+        IncomingSharedDraftHandler.importIfAvailable()
       }
       .environment(appState)
       .modelContainer(modelContainer)

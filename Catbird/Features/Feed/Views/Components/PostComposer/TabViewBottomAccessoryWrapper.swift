@@ -36,24 +36,14 @@ struct TabViewBottomAccessoryWrapper: View {
     .sheet(isPresented: $showingFullComposer) {
       if let draft = appState.composerDraftManager.currentDraft {
         // Restore minimized composer
-        PostComposerView(
-          restoringFrom: draft,
-          parentPost: getParentPost(for: draft),
-          quotedPost: getQuotedPost(for: draft),
-          appState: appState,
-          onMinimize: { composer in
-            appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-            showingFullComposer = false
-          }
+        PostComposerViewUIKit(
+          restoringFromDraft: draft,
+          appState: appState
         )
       } else {
         // Create new composer
-        PostComposerView(
-          appState: appState,
-          onMinimize: { composer in
-            appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-            showingFullComposer = false
-          }
+        PostComposerViewUIKit(
+          appState: appState
         )
       }
     }
@@ -119,17 +109,20 @@ struct TabViewBottomAccessoryWrapper: View {
     .buttonStyle(.plain)
   }
   
-  private func minimizedComposerButton(draft: ComposerDraft) -> some View {
+  private func minimizedComposerButton(draft: PostComposerDraft) -> some View {
     Button(action: {
       showingFullComposer = true
     }) {
       HStack(spacing: 8) {
-        // Context indicator
-        if draft.parentPostURI != nil {
+        // Context indicator based on thread entries
+        let hasParent = draft.threadEntries.first?.parentPostURI != nil
+        let hasQuoted = draft.threadEntries.first?.quotedPostURI != nil
+        
+        if hasParent {
           Image(systemName: "arrowshape.turn.up.left")
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(.accentColor)
-        } else if draft.quotedPostURI != nil {
+        } else if hasQuoted {
           Image(systemName: "quote.bubble")
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(.accentColor)
@@ -140,7 +133,7 @@ struct TabViewBottomAccessoryWrapper: View {
         }
         
         // Draft content preview
-        let previewText = draft.text.isEmpty ? "Draft in progress..." : draft.text
+        let previewText = draft.postText.isEmpty ? "Draft in progress..." : draft.postText
         Text("Draft: \(String(previewText.prefix(30)))\(previewText.count > 30 ? "..." : "")")
           .font(.system(size: 14))
           .foregroundColor(.primary)
@@ -149,24 +142,28 @@ struct TabViewBottomAccessoryWrapper: View {
         Spacer()
         
         // Media indicators
-        if draft.hasMedia || draft.hasVideo || draft.hasGif {
+        let hasMedia = !draft.mediaItems.isEmpty
+        let hasVideo = draft.videoItem != nil
+        let hasGif = draft.selectedGif != nil
+        
+        if hasMedia || hasVideo || hasGif {
           HStack(spacing: 4) {
-            if draft.hasMedia {
+            if hasMedia {
               Image(systemName: "photo")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
-              if draft.mediaCount > 1 {
-                Text("\(draft.mediaCount)")
+              if draft.mediaItems.count > 1 {
+                Text("\(draft.mediaItems.count)")
                   .font(.system(size: 10, weight: .semibold))
                   .foregroundColor(.secondary)
               }
             }
-            if draft.hasVideo {
+            if hasVideo {
               Image(systemName: "video")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
             }
-            if draft.hasGif {
+            if hasGif {
               Text("GIF")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.secondary)
@@ -175,7 +172,7 @@ struct TabViewBottomAccessoryWrapper: View {
         }
         
         // Character count
-        let remaining = 300 - draft.characterCount
+        let remaining = 300 - draft.postText.count
         if remaining < 20 {
           Text("\(remaining)")
             .font(.system(size: 12, weight: .medium))
@@ -199,14 +196,13 @@ struct TabViewBottomAccessoryWrapper: View {
   }
   
   // Helper methods to get posts from URIs (simplified - in real implementation would fetch from cache)
-  private func getParentPost(for draft: ComposerDraft) -> AppBskyFeedDefs.PostView? {
-    // TODO: Implement post lookup by URI from appState cache
+  private func getParentPost(for draft: PostComposerDraft) -> AppBskyFeedDefs.PostView? {
+    // Lookup deferred: implement URI-based cache fetch via appState when available.
     return nil
   }
   
-  private func getQuotedPost(for draft: ComposerDraft) -> AppBskyFeedDefs.PostView? {
-    // TODO: Implement post lookup by URI from appState cache  
+  private func getQuotedPost(for draft: PostComposerDraft) -> AppBskyFeedDefs.PostView? {
+    // Lookup deferred: implement URI-based cache fetch via appState when available.
     return nil
   }
 }
-

@@ -81,6 +81,12 @@ final class PostComposerViewModel {
   var mentionSuggestions: [AppBskyActorDefs.ProfileViewBasic] = []
   var resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:]
   
+  // MARK: - Manual Link Facets (legacy inline links)
+  /// Facets derived from inline link attributes when using legacy NSAttributedString path.
+  /// These are merged into the facets used for posting so inline links survive even when
+  /// the visible text does not contain the raw URL.
+  var manualLinkFacets: [AppBskyRichtextFacet] = []
+  
   // MARK: - State Properties
   
   var isPosting: Bool = false
@@ -93,6 +99,19 @@ final class PostComposerViewModel {
   // MARK: - Private Properties
   
   let appState: AppState
+  
+  // MARK: - Performance Optimization
+  
+  @available(iOS 16.0, macOS 13.0, *)
+  private var _performanceOptimizer: PostComposerPerformanceOptimizer?
+  
+  @available(iOS 16.0, macOS 13.0, *)
+  var performanceOptimizer: PostComposerPerformanceOptimizer? {
+    if _performanceOptimizer == nil {
+      _performanceOptimizer = PostComposerPerformanceOptimizer()
+    }
+    return _performanceOptimizer
+  }
   
   // MARK: - Constants
   
@@ -155,6 +174,17 @@ final class PostComposerViewModel {
     
     // Initialize thread mode properly
     setupInitialState()
+    
+    // Initialize performance optimization
+    if #available(iOS 16.0, macOS 13.0, *) {
+      _ = performanceOptimizer // Initialize lazily
+    }
+  }
+
+  // MARK: - Manual Link Facets Update
+  func updateManualLinkFacets(from linkFacets: [RichTextFacetUtils.LinkFacet]) {
+    manualLinkFacets = RichTextFacetUtils.createFacets(from: linkFacets, in: postText)
+    logger.debug("PostComposerVM: Updated manualLinkFacets to \(self.manualLinkFacets.count) facets from \(linkFacets.count) linkFacets, postText length: \(self.postText.count)")
   }
   
   // MARK: - Initialization and State Management
@@ -184,13 +214,13 @@ final class PostComposerViewModel {
   func saveDraftState() -> PostComposerDraft {
     return PostComposerDraft(
       postText: postText,
-      mediaItems: mediaItems,
-      videoItem: videoItem,
+      mediaItems: mediaItems.map(CodableMediaItem.init),
+      videoItem: videoItem.map(CodableMediaItem.init),
       selectedGif: selectedGif,
       selectedLanguages: selectedLanguages,
       selectedLabels: selectedLabels,
       outlineTags: outlineTags,
-      threadEntries: threadEntries,
+      threadEntries: threadEntries.map { CodableThreadEntry(from: $0, parentPost: parentPost, quotedPost: quotedPost) },
       isThreadMode: isThreadMode,
       currentThreadIndex: currentThreadIndex
     )
@@ -206,18 +236,26 @@ final class PostComposerViewModel {
     }
     
     postText = draft.postText
-    mediaItems = draft.mediaItems
-    videoItem = draft.videoItem
+    mediaItems = draft.mediaItems.map { $0.toMediaItem() }
+    videoItem = draft.videoItem?.toMediaItem()
     selectedGif = draft.selectedGif
     selectedLanguages = draft.selectedLanguages
     selectedLabels = draft.selectedLabels
     outlineTags = draft.outlineTags
-    threadEntries = draft.threadEntries
+    threadEntries = draft.threadEntries.map { $0.toThreadEntry() }
     isThreadMode = draft.isThreadMode
     currentThreadIndex = draft.currentThreadIndex
     
     richAttributedText = NSAttributedString(string: postText)
     updatePostContent()
+
+    // If the restored draft contains a video URL but no thumbnail yet, generate it now
+    if let restoredVideo = videoItem, restoredVideo.image == nil, restoredVideo.rawVideoURL != nil {
+      var loadingVideo = restoredVideo
+      loadingVideo.isLoading = true
+      videoItem = loadingVideo
+      Task { await loadVideoThumbnail(for: loadingVideo) }
+    }
   }
   
   // MARK: - Media Item Model

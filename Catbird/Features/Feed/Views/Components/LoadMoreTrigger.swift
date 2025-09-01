@@ -104,7 +104,7 @@ struct LoadMoreTrigger: View {
     // Preview with a simple loading action
     LoadMoreTrigger {
         try? await Task.sleep(for: .seconds(2))
-        print("More content loaded")
+        logger.debug("More content loaded")
     }
     .frame(width: 300, height: 50)
     .border(.gray)

@@ -349,7 +349,7 @@ enum AuthenticationError: LocalizedError {
 
 #Preview("Error State") {
   ErrorStateView.networkError {
-    print("Retry tapped")
+    logger.debug("Retry tapped")
   }
 }
 
@@ -360,7 +360,7 @@ enum AuthenticationError: LocalizedError {
     systemImage: "tray",
     actionTitle: "Find People to Follow"
   ) {
-    print("Action tapped")
+    logger.debug("Action tapped")
   }
 }
 

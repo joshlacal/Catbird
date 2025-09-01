@@ -11,31 +11,41 @@ struct FAB: View {
     let composeAction: () -> Void
     let feedsAction: () -> Void
     let showFeedsButton: Bool
+    let hasMinimizedComposer: Bool
+    let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
     @Namespace private var glassNamespace
 
-    private let circleSize: CGFloat = 60
+    private let circleSize: CGFloat = 62
+    
+    init(composeAction: @escaping () -> Void, feedsAction: @escaping () -> Void, showFeedsButton: Bool, hasMinimizedComposer: Bool = false, clearDraftAction: (() -> Void)? = nil) {
+        self.composeAction = composeAction
+        self.feedsAction = feedsAction
+        self.showFeedsButton = showFeedsButton
+        self.hasMinimizedComposer = hasMinimizedComposer
+        self.clearDraftAction = clearDraftAction
+    }
     
     var body: some View {
         VStack {
             Spacer()
             HStack(spacing: 12) {
                 if showFeedsButton {
-                    if #available(macOS 26.0, *) {
+                    if #available(iOS 26.0, *) {
                         feedsButton
-                            .adaptiveGlassEffect(in: Circle())
+                            .glassEffect()
+                            .clipShape(Circle())
                     } else {
                         feedsButton
                     }
                 }
                 Spacer()
-                if #available(macOS 26.0, *) {
-                    
+                if #available(iOS 26.0, *) {
                     composeButton
-                        .adaptiveGlassEffect(style: .accentTinted, in: Circle(), interactive: true)
+                        .glassEffect()
+                        .clipShape(Circle())
                 } else {
                     composeButton
-
                 }
             }
             .padding(.horizontal, 16)
@@ -64,14 +74,57 @@ struct FAB: View {
     
     private var composeButton: some View {
         Button(action: composeAction) {
-            Image(systemName: "pencil")
+            // Center the SF Symbol at 30x30, then place the badge
+            // relative to the symbol's bounds (not the full 62pt circle).
+            ZStack {
+                if #available(iOS 26.0, *) {
+                    // iOS 26: Use Liquid Glass styling for the FAB surface
+                    symbolWithBadge
+                        .foregroundStyle(.white)
+                } else {
+                    // Pre‑iOS 26: Classic filled circle appearance
+                    symbolWithBadge
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: circleSize, height: circleSize)
+            .background(
+                   
+                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
+                    
+            )
+            .contentShape(Circle())
+        }
+        .contextMenu {
+            if hasMinimizedComposer && clearDraftAction != nil {
+                Button("Clear Draft", role: .destructive) {
+                    clearDraftAction?()
+                }
+            }
+        }
+    }
+
+    // Builds the symbol and, when needed, a small badge anchored to the
+    // symbol's top‑right corner so it plays nicely with Liquid Glass.
+    private var symbolWithBadge: some View {
+        ZStack(alignment: .topTrailing) {
+            Image(systemName: hasMinimizedComposer ? "doc.text" : "pencil")
                 .resizable()
                 .scaledToFit()
                 .frame(width: 30, height: 30)
-                .foregroundStyle(.white)
-                .frame(width: circleSize, height: circleSize)
-                .background(.blue, in: Circle()) // Ensure visibility
-                .contentShape(Circle())
+
+            if hasMinimizedComposer {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 10, height: 10)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white, lineWidth: 1.5)
+                    )
+                    // Nudge inward slightly to sit over the symbol's corner
+                    .offset(x: -1.5, y: 1.5)
+                    .allowsHitTesting(false)
+            }
         }
     }
     

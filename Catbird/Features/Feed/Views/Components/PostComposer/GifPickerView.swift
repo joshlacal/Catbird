@@ -261,7 +261,7 @@ struct GifPickerView: View {
                 self.categories = response.tags
             }
         } catch {
-            print("Failed to load categories: \(error)")
+            logger.debug("Failed to load categories: \(error)")
         }
     }
     
@@ -275,7 +275,7 @@ struct GifPickerView: View {
             
             // Check for HTTP errors
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                print("Autocomplete API returned status code: \(httpResponse.statusCode)")
+                logger.debug("Autocomplete API returned status code: \(httpResponse.statusCode)")
                 await MainActor.run {
                     self.suggestions = []
                     self.showingSuggestions = false
@@ -304,7 +304,7 @@ struct GifPickerView: View {
                 self.suggestions = []
                 self.showingSuggestions = false
             }
-            print("Failed to load suggestions for '\(query)': \(error)")
+            logger.debug("Failed to load suggestions for '\(query)': \(error)")
         }
     }
     
@@ -331,7 +331,7 @@ struct GifPickerView: View {
             await MainActor.run {
                 self.isLoading = false
             }
-            print("Failed to search GIFs: \(error)")
+            logger.debug("Failed to search GIFs: \(error)")
         }
     }
 }

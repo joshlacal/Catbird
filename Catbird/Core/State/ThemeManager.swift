@@ -151,7 +151,7 @@ import OSLog
             
             // Configure with system defaults - no custom colors
             standardAppearance.configureWithDefaultBackground()
-            scrollEdgeAppearance.configureWithTransparentBackground()  // Proper for large titles
+            scrollEdgeAppearance.configureWithDefaultBackground()  // Proper for large titles
             compactAppearance.configureWithOpaqueBackground()
             
             // Apply custom typography to all appearances
@@ -596,7 +596,7 @@ import OSLog
 //                appearance.shadowColor = .clear
 //            }
 //        } else {
-            appearance.configureWithTransparentBackground()
+            appearance.configureWithDefaultBackground()
 //        }
     }
     #endif

@@ -19,32 +19,13 @@
                             <!-- Background Gradient View -->
                             <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="backgroundView">
                                 <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
-                                <color key="backgroundColor" red="0.12" green="0.25" blue="0.65" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                <color key="backgroundColor" red="0.318" green="0.573" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                             </view>
                             
                             <!-- Content Container -->
                             <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="contentContainer">
                                 <rect key="frame" x="20" y="59" width="353" height="759"/>
                                 <subviews>
-                                    <!-- Deep Shadow Icon (Bottom Layer) -->
-                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" alpha="0.30000000000000004" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="CatbirdIcon" translatesAutoresizingMaskIntoConstraints="NO" id="deepShadowIcon">
-                                        <rect key="frame" x="57.666666666666664" y="219.66666666666669" width="237.5" height="237.5"/>
-                                        <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-                                        <constraints>
-                                            <constraint firstAttribute="width" secondItem="deepShadowIcon" secondAttribute="height" multiplier="1:1" id="deepShadow-aspect"/>
-                                            <constraint firstAttribute="width" constant="237.5" id="deepShadow-width"/>
-                                        </constraints>
-                                    </imageView>
-                                    
-                                    <!-- Mid Shadow Icon (Middle Layer) -->
-                                    <imageView clipsSubviews="YES" userInteractionEnabled="NO" alpha="0.80000000000000004" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="CatbirdIcon" translatesAutoresizingMaskIntoConstraints="NO" id="midShadowIcon">
-                                        <rect key="frame" x="54" y="212.5" width="245" height="245"/>
-                                        <color key="backgroundColor" white="0.0" alpha="0.0" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-                                        <constraints>
-                                            <constraint firstAttribute="width" secondItem="midShadowIcon" secondAttribute="height" multiplier="1:1" id="midShadow-aspect"/>
-                                            <constraint firstAttribute="width" constant="245" id="midShadow-width"/>
-                                        </constraints>
-                                    </imageView>
                                     
                                     <!-- Main Icon (Top Layer) -->
                                     <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="CatbirdIcon" translatesAutoresizingMaskIntoConstraints="NO" id="mainIcon">
@@ -80,14 +61,6 @@
                                     </label>
                                 </subviews>
                                 <constraints>
-                                    <!-- Deep Shadow Icon Constraints -->
-                                    <constraint firstItem="deepShadowIcon" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="deepShadow-centerX"/>
-                                    <constraint firstItem="deepShadowIcon" firstAttribute="centerY" secondItem="contentContainer" secondAttribute="centerY" constant="-35" id="deepShadow-centerY"/>
-                                    
-                                    <!-- Mid Shadow Icon Constraints -->
-                                    <constraint firstItem="midShadowIcon" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="midShadow-centerX"/>
-                                    <constraint firstItem="midShadowIcon" firstAttribute="centerY" secondItem="contentContainer" secondAttribute="centerY" constant="-42" id="midShadow-centerY"/>
-                                    
                                     <!-- Main Icon Constraints -->
                                     <constraint firstItem="mainIcon" firstAttribute="centerX" secondItem="contentContainer" secondAttribute="centerX" id="mainIcon-centerX"/>
                                     <constraint firstItem="mainIcon" firstAttribute="centerY" secondItem="contentContainer" secondAttribute="centerY" constant="-50" id="mainIcon-centerY"/>

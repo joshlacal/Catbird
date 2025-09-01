@@ -133,6 +133,18 @@ struct SelectableTextView: UIViewRepresentable {
     // Text selection configuration - enabled for thread main posts
     textView.textDragInteraction?.isEnabled = true
     
+    // Disable implicit Core Animation on common layer actions to prevent any fly-in
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    textView.layer.actions = noAnim
+    textView.textContainer.layoutManager?.allowsNonContiguousLayout = false
+
     return textView
   }
   
@@ -144,11 +156,18 @@ struct SelectableTextView: UIViewRepresentable {
     // Create NSAttributedString with proper font attributes
     let nsAttributedString = createNSAttributedString(from: attributedString, isEmojiOnly: isEmojiOnly)
     
-    if uiView.attributedText != nsAttributedString {
-      uiView.attributedText = nsAttributedString
-      // Trigger immediate layout update after content changes
-      uiView.invalidateIntrinsicContentSize()
-      uiView.setNeedsLayout()
+    UIView.performWithoutAnimation {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      defer { CATransaction.commit() }
+
+      if uiView.attributedText != nsAttributedString {
+        uiView.attributedText = nsAttributedString
+        // Trigger immediate layout update after content changes
+        uiView.invalidateIntrinsicContentSize()
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
+      }
     }
     
     // Apply theme colors
@@ -262,4 +281,3 @@ struct SelectableTextView: UIViewRepresentable {
   }
 }
 #endif
-

@@ -160,17 +160,17 @@ struct LastMessagePreview: View {
       switch lastMessage {
       case .chatBskyConvoDefsMessageView(let messageView):
           Text(messageView.sender.did.didString() == appState.currentUserDID ? "You: \(messageView.text)" : messageView.text)
-          .appSubheadline()
+          .appCallout()
           .foregroundColor(.gray)
           .lineLimit(2)
       case .chatBskyConvoDefsDeletedMessageView:
         Text("Message deleted")
-          .appSubheadline()
+              .appCallout()
           .foregroundColor(.gray)
           .italic()
       case .unexpected:
         Text("Unsupported message")
-          .appSubheadline()
+              .appCallout()
           .foregroundColor(.gray)
           .italic()
       }

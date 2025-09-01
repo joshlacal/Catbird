@@ -1,13 +1,8 @@
 import Petrel
 import SwiftUI
-#if os(iOS)
 import UIKit
-#elseif os(macOS)
-import AppKit
-#endif
 import os
 
-#if os(iOS)
 // MARK: - UIKit Color Scheme Helper
 extension UIViewController {
     func getCurrentColorScheme() -> ColorScheme {
@@ -78,7 +73,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var pendingLoadTask: Task<Void, Never>?
   
   // MARK: - UIUpdateLink for coordinated UI updates
-  #if !targetEnvironment(macCatalyst)
+  #if os(iOS) && !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   private var updateLink: UIUpdateLink?
   #endif
@@ -88,10 +83,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var mainPost: AppBskyFeedDefs.PostView?
   private var replyWrappers: [ReplyWrapper] = []
 
+  // MARK: - Snapshot Serialization
+  // Prevent overlapping diffable snapshot applications which can cause
+  // UICollectionView invalid item count crashes under rapid updates.
+  private var isApplyingSnapshot = false
+  private var pendingSnapshot: NSDiffableDataSourceSnapshot<Section, Item>?
+
   private static let mainPostID = "main-post-id"
   
-  // Height calculator for precise post height estimations
-  private let postHeightCalculator = PostHeightCalculator.shared
+  // Estimated height for parent posts (used for scroll position preservation)
+  private let estimatedParentPostHeight: CGFloat = 120.0
   
   // Optimized scroll system for iOS 18+
   @available(iOS 18.0, *)
@@ -105,7 +106,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     private lazy var collectionView: UICollectionView = {
         let layout = createCompositionalLayout()
         let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+        collectionView.backgroundColor = .systemBackground
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.showsVerticalScrollIndicator = true
         collectionView.prefetchDataSource = self
@@ -119,7 +120,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private lazy var loadingView: UIView = {
     let container = UIView()
     container.translatesAutoresizingMaskIntoConstraints = false
-      container.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      container.backgroundColor = .systemBackground
 
     let activityIndicator = UIActivityIndicatorView(style: .medium)
     activityIndicator.translatesAutoresizingMaskIntoConstraints = false
@@ -166,6 +167,34 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   private lazy var dataSource = createDataSource()
 
+  // Centralized, serialized snapshot application to avoid race conditions
+  @MainActor
+  private func applySnapshot(
+    _ snapshot: NSDiffableDataSourceSnapshot<Section, Item>,
+    animatingDifferences: Bool
+  ) {
+    // If an apply is in-flight, coalesce to the latest snapshot
+    if isApplyingSnapshot {
+      pendingSnapshot = snapshot
+      return
+    }
+
+    isApplyingSnapshot = true
+
+    UIView.performWithoutAnimation {
+      dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+        guard let self else { return }
+        self.isApplyingSnapshot = false
+
+        // If another snapshot arrived while applying, apply the latest now
+        if let next = self.pendingSnapshot {
+          self.pendingSnapshot = nil
+          self.applySnapshot(next, animatingDifferences: false)
+        }
+      }
+    }
+  }
+
   // MARK: - Initialization
   init(appState: AppState, postURI: ATProtocolURI, path: Binding<NavigationPath>) {
     self.appState = appState
@@ -183,7 +212,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   deinit {
     // Clean up UIUpdateLink
-    #if !targetEnvironment(macCatalyst)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *) {
       updateLink?.isEnabled = false
       updateLink = nil
@@ -191,17 +220,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     #endif
     
     // Clean up iOS 18+ optimized scroll system
-    #if !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *) {
-        let scrollSystem = optimizedScrollSystem
-        Task { @MainActor in
-            scrollSystem.cleanup()
-        }
+      let scrollSystem = optimizedScrollSystem
+      Task { @MainActor in
+        scrollSystem.cleanup()
+      }
     }
-    #endif
-    
-    // Remove theme observer
-    NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ThemeChanged"), object: nil)
     
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
@@ -217,9 +241,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Prevent VoiceOver from auto-scrolling
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
-    
-    // Observe theme changes
-    setupThemeObserver()
     
     loadInitialThread()
   }
@@ -240,7 +261,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     super.viewDidAppear(animated)
     
     // Setup UIUpdateLink now that view is in window hierarchy
-    #if !targetEnvironment(macCatalyst)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *), updateLink == nil {
       setupUIUpdateLink()
     }
@@ -261,42 +282,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       configureNavigationAndToolbarTheme()
       
       // Update collection view background
-        let currentScheme = getCurrentColorScheme()
-        let dynamicBackgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: currentScheme))
-        collectionView.backgroundColor = dynamicBackgroundColor
-        view.backgroundColor = dynamicBackgroundColor
-        loadingView.backgroundColor = dynamicBackgroundColor
+        collectionView.backgroundColor = .systemBackground
+        view.backgroundColor = .systemBackground
+        loadingView.backgroundColor = .systemBackground
     }
   }
   
   // MARK: - Theme Configuration
-  
-  private func setupThemeObserver() {
-    // Listen for theme changes from ThemeManager
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleThemeChange),
-      name: NSNotification.Name("ThemeChanged"),
-      object: nil
-    )
-  }
-  
-  @objc private func handleThemeChange() {
-    DispatchQueue.main.async { [weak self] in
-      self?.updateBackgroundColors()
-    }
-  }
-  
-  private func updateBackgroundColors() {
-    let currentScheme = getCurrentColorScheme()
-    let dynamicBackgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: currentScheme))
-    
-    collectionView.backgroundColor = dynamicBackgroundColor
-    view.backgroundColor = dynamicBackgroundColor
-    loadingView.backgroundColor = dynamicBackgroundColor
-    
-    controllerLogger.debug("Updated thread view background colors for theme change")
-  }
   
   private func configureNavigationAndToolbarTheme() {
     let currentScheme = getCurrentColorScheme()
@@ -306,7 +298,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // MARK: - Configure Navigation Bar
 //    if let navigationBar = navigationController?.navigationBar {
 //        let navAppearance = UINavigationBarAppearance()
-//        
+//
 //        if isDarkMode && isBlackMode {
 //            // True black mode
 //            navAppearance.configureWithOpaqueBackground()
@@ -321,16 +313,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 //            // Light mode
 //            navAppearance.configureWithDefaultBackground()
 //        }
-//        
+//
 //        // Apply width=120 fonts to navigation bar
 //        NavigationFontConfig.applyFonts(to: navAppearance)
-//        
+//
 //        // Apply the navigation bar appearance
 //        navigationBar.standardAppearance = navAppearance
 //        navigationBar.scrollEdgeAppearance = navAppearance
 //        navigationBar.compactAppearance = navAppearance
 //    }
-//    
+//
     // MARK: - Configure Tab Bar (only if present)
     guard let tabBarController = self.tabBarController else { return }
     
@@ -341,7 +333,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 //        tabBarAppearance.configureWithOpaqueBackground()
 //        tabBarAppearance.backgroundColor = UIColor.black
 //        tabBarAppearance.shadowColor = .clear
-//        
+//
 //        // Set blue tint color for better visibility on black
 //        tabBarController.tabBar.tintColor = UIColor.systemBlue
 //    } else if isDarkMode {
@@ -349,14 +341,14 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 //        tabBarAppearance.configureWithOpaqueBackground()
 //        tabBarAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
 //        tabBarAppearance.shadowColor = .clear
-//        
+//
 //        // Reset tint color to system default (not black)
 //        tabBarController.tabBar.tintColor = nil
 //    } else {
 //        // Light mode - use system background
 //        tabBarAppearance.configureWithDefaultBackground()
 //        tabBarAppearance.backgroundColor = UIColor.systemBackground
-//        
+//
 //        // Explicitly set blue tint color to ensure visibility
 //        tabBarController.tabBar.tintColor = UIColor.systemBlue
 //    }
@@ -379,7 +371,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   // MARK: - UIUpdateLink Setup
-  #if !targetEnvironment(macCatalyst)
+  #if os(iOS) && !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   private func setupUIUpdateLink() {
     guard let windowScene = view.window?.windowScene else {
@@ -407,13 +399,23 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   // MARK: - UI Setup
   private func setupUI() {
-      view.backgroundColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: getCurrentColorScheme()))
+      view.backgroundColor = .systemBackground
 
-    // Initially hide collection view to prevent content flickering
-    collectionView.alpha = 0
+    // Ensure collection view is visible without animated fade-in
+    collectionView.alpha = 1
 
     view.addSubview(collectionView)
     view.addSubview(loadingView)
+
+    // Disable implicit Core Animation on common layer actions to prevent fly-in
+    collectionView.layer.actions = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
 
     NSLayoutConstraint.activate([
       collectionView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -673,7 +675,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
       loadingView.isHidden = true
       
-      // Apply snapshot synchronously
+      // Apply snapshot synchronously without animations
       updateDataSnapshot(animatingDifferences: false)
       
       isLoading = false
@@ -681,32 +683,31 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       if mainPost != nil && !hasScrolledToMainPost {
         // Wait for collection view to complete layout after snapshot application
         // This is crucial when load more cell is present
-        collectionView.performBatchUpdates({
-          // Force layout update
-          self.collectionView.layoutIfNeeded()
-        }) { _ in
+        UIView.performWithoutAnimation {
+          collectionView.performBatchUpdates({
+            // Force layout update
+            self.collectionView.layoutIfNeeded()
+          }) { _ in }
+        }
+        // Proceed immediately after ensuring layout without animations
+        do {
           // Now scroll to main post after layout is complete
           self.scrollToMainPostWithPartialParentVisibility(animated: false)
           self.hasScrolledToMainPost = true
           
-          // Fade in collection view
-          UIView.animate(withDuration: 0.25) {
-            self.collectionView.alpha = 1
-          } completion: { _ in
-            // If VoiceOver is running, post focus to main post
-            if UIAccessibility.isVoiceOverRunning {
-              self.focusVoiceOverOnMainPost()
-            }
-          }
-        }
-      } else {
-        UIView.animate(withDuration: 0.25) {
+          // Ensure collection view is visible (no animation)
           self.collectionView.alpha = 1
-        } completion: { _ in
           // If VoiceOver is running, post focus to main post
           if UIAccessibility.isVoiceOverRunning {
             self.focusVoiceOverOnMainPost()
           }
+        }
+      } else {
+        // Ensure collection view is visible (no animation)
+        self.collectionView.alpha = 1
+        // If VoiceOver is running, post focus to main post
+        if UIAccessibility.isVoiceOverRunning {
+          self.focusVoiceOverOnMainPost()
         }
       }
     }
@@ -786,7 +787,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
 
-  private func updateDataSnapshot(animatingDifferences: Bool = true) {
+  private func updateDataSnapshot(animatingDifferences: Bool = false) {
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
 
     // Add all sections
@@ -813,8 +814,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Add bottom spacer
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
 
-    // Apply snapshot synchronously
-    dataSource.apply(snapshot, animatingDifferences: animatingDifferences)
+    // Apply snapshot via serialized helper to avoid overlap
+    applySnapshot(snapshot, animatingDifferences: false)
   }
 
   private func updateLoadingCell(isLoading: Bool) {
@@ -826,7 +827,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
 
     snapshot.reconfigureItems([loadMoreItem])
-    dataSource.apply(snapshot, animatingDifferences: false)
+    applySnapshot(snapshot, animatingDifferences: false)
     controllerLogger.debug("⬆️ LOAD MORE PARENTS: Updated loading cell, isLoading = \(isLoading)")
   }
 
@@ -1116,7 +1117,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     // Enable smooth transitions during the update
-    #if !targetEnvironment(macCatalyst)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *) {
       updateLink?.requiresContinuousUpdates = true
     }
@@ -1197,7 +1198,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           var snapshot = dataSource.snapshot()
           if let loadMoreItem = snapshot.itemIdentifiers(inSection: .loadMoreParents).first {
             snapshot.deleteItems([loadMoreItem])
-              await dataSource.apply(snapshot, animatingDifferences: true)
+            applySnapshot(snapshot, animatingDifferences: false)
           }
         }
         
@@ -1260,7 +1261,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
     }
     
-    // Add replies 
+    // Add replies
     let replyItems = replyWrappers.map { Item.reply($0) }
     snapshot.appendItems(replyItems, toSection: .replies)
     
@@ -1268,32 +1269,22 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
     
     // Apply snapshot immediately for layout calculation
-    dataSource.apply(snapshot, animatingDifferences: false)
+    applySnapshot(snapshot, animatingDifferences: false)
     
     // Use sophisticated position preservation like feed view
     Task { @MainActor in
-      #if !targetEnvironment(macCatalyst)
-      if #available(iOS 18.0, *) {
         await applyParentPostsWithPrecisePreservation(
           newParentsCount: newParentsCount,
           oldParentCount: oldParentCount,
           scrollAnchor: scrollAnchor
         )
-      } else {
-        // Fallback to simple position preservation for older iOS
-        await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
-      }
-      #else
-      // Fallback to simple position preservation for Catalyst
-      await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
-      #endif
-      
+        
       // Clean up loading state after positioning
       isLoadingMoreParents = false
       updateLoadingCell(isLoading: false)
       
       // Disable continuous updates now that loading is complete
-      #if !targetEnvironment(macCatalyst)
+      #if os(iOS) && !targetEnvironment(macCatalyst)
       if #available(iOS 18.0, *) {
         updateLink?.requiresContinuousUpdates = false
       }
@@ -1305,7 +1296,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   // MARK: - Precise Position Preservation for Parent Posts (iOS 18+)
   
-  #if !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   @MainActor
   private func applyParentPostsWithPrecisePreservation(
@@ -1324,9 +1314,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Store current post URIs to track content changes (include all thread content)
     let currentPostIds = (
-      parentPosts.map { $0.post.uri.uriString() } + 
+      parentPosts.map { $0.post.uri.uriString() } +
       [mainPost?.uri.uriString()].compactMap { $0 } +
-      replyWrappers.map { $0.id }
+      replyWrappers.map { $0.post.uri.uriString() }
     )
     
     // Apply atomic update with position preservation (like feed view does)
@@ -1338,9 +1328,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     controllerLogger.debug("✅ Applied precise position preservation for \(newParentsCount) parent posts")
   }
-  #endif
   
-  #if !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   @MainActor
   private func applyAtomicParentUpdateWithPreservation(
@@ -1384,7 +1372,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     CATransaction.setDisableActions(true)
     
     // Enable UIUpdateLink for smooth coordination
-    #if !targetEnvironment(macCatalyst)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *) {
       updateLink?.requiresContinuousUpdates = true
     }
@@ -1414,31 +1402,22 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     controllerLogger.debug("✅ Applied atomic parent update with precise position preservation")
   }
-  #endif
   
   @MainActor
   private func applyParentPostsWithSimplePreservation(newParentsCount: Int) async {
-    // Fallback implementation for iOS < 18 - now with precise height calculations
-    var totalNewParentHeight: CGFloat = 0
-    
-    // Calculate precise height for each new parent post
-    let newParents = Array(parentPosts.suffix(newParentsCount))
-    for parent in newParents {
-      totalNewParentHeight += postHeightCalculator.calculateParentPostHeight(for: parent)
-    }
-    
+    // Fallback implementation for iOS < 18
+    let newParentHeight = CGFloat(newParentsCount) * estimatedParentPostHeight
     let currentOffset = collectionView.contentOffset.y
-    let adjustedOffset = CGPoint(x: 0, y: currentOffset + totalNewParentHeight)
+    let adjustedOffset = CGPoint(x: 0, y: currentOffset + newParentHeight)
     
     // Preserve scroll position by offsetting for new content above
     collectionView.setContentOffset(adjustedOffset, animated: false)
     
-    controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts with precise height: \(totalNewParentHeight)")
+    controllerLogger.debug("✅ Applied simple position preservation for \(newParentsCount) parent posts")
   }
   
   // MARK: - Thread-Specific Anchor Capture
   
-  #if !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
   @MainActor
   private func captureThreadPreciseAnchor(from collectionView: UICollectionView) -> OptimizedScrollPreservationSystem.PreciseScrollAnchor? {
@@ -1450,28 +1429,35 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     // Get the post URI for this index path from thread structure
+    // CRITICAL FIX: Use correct section mappings from Section enum
     let postId: String
     switch firstVisibleIndexPath.section {
-    case 0: // Parent posts
-      guard firstVisibleIndexPath.item < parentPosts.count else {
+    case Section.loadMoreParents.rawValue: // Section 0 - Load more trigger
+      controllerLogger.debug("⚠️ Cannot anchor to load more trigger, skipping")
+      return nil
+      
+    case Section.parentPosts.rawValue: // Section 1 - Parent posts
+      guard firstVisibleIndexPath.item < parentPosts.reversed().count else {
         controllerLogger.debug("⚠️ Parent index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      postId = parentPosts[firstVisibleIndexPath.item].post.uri.uriString()
+      // parentPosts are displayed in reverse order, so map the index correctly
+      let reversedIndex = parentPosts.count - 1 - firstVisibleIndexPath.item
+      postId = parentPosts[reversedIndex].post.uri.uriString()
       
-    case 1: // Main post
+    case Section.mainPost.rawValue: // Section 2 - Main post
       guard let mainPostUri = mainPost?.uri.uriString() else {
         controllerLogger.debug("⚠️ Main post has no URI")
         return nil
       }
       postId = mainPostUri
       
-    case 2: // Replies
+    case Section.replies.rawValue: // Section 3 - Replies
       guard firstVisibleIndexPath.item < replyWrappers.count else {
         controllerLogger.debug("⚠️ Reply index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      postId = replyWrappers[firstVisibleIndexPath.item].id
+      postId = replyWrappers[firstVisibleIndexPath.item].post.uri.uriString()
       
     default:
       controllerLogger.debug("⚠️ Unknown section for anchor capture: \(firstVisibleIndexPath.section)")
@@ -1492,12 +1478,14 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       itemHeight: attributes.frame.height,
       visibleHeightInViewport: min(attributes.frame.height, collectionView.bounds.height),
       timestamp: CACurrentMediaTime(),
-      displayScale: PlatformScreenInfo.scale
+      displayScale: UIScreen.main.scale
     )
     
     controllerLogger.debug("🎯 Thread anchor captured - section: \(firstVisibleIndexPath.section), item: \(firstVisibleIndexPath.item), postId: \(postId)")
     return anchor
   }
+  
+  // MARK: - Thread-Specific Position Calculation
   
   @available(iOS 18.0, *)
   @MainActor
@@ -1507,22 +1495,24 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     in collectionView: UICollectionView
   ) -> CGPoint? {
     // Create a mapping from thread content to collection view indices
+    // CRITICAL FIX: Use correct section mappings from Section enum
     let threadContentToIndexPath: [String: IndexPath] = {
       var mapping: [String: IndexPath] = [:]
       
-      // Parent posts section (section 0)
-      for (index, parentPost) in parentPosts.enumerated() {
-        mapping[parentPost.post.uri.uriString()] = IndexPath(item: index, section: 0)
+      // Parent posts section (Section.parentPosts.rawValue = 1)
+      // Parents are displayed in reverse order, so map accordingly
+      for (displayIndex, parentPost) in parentPosts.reversed().enumerated() {
+        mapping[parentPost.post.uri.uriString()] = IndexPath(item: displayIndex, section: Section.parentPosts.rawValue)
       }
       
-      // Main post section (section 1, item 0)
+      // Main post section (Section.mainPost.rawValue = 2, item 0)
       if let mainPostUri = mainPost?.uri.uriString() {
-        mapping[mainPostUri] = IndexPath(item: 0, section: 1)
+        mapping[mainPostUri] = IndexPath(item: 0, section: Section.mainPost.rawValue)
       }
       
-      // Replies section (section 2)
+      // Replies section (Section.replies.rawValue = 3)
       for (index, replyWrapper) in replyWrappers.enumerated() {
-        mapping[replyWrapper.id] = IndexPath(item: index, section: 2)
+        mapping[replyWrapper.post.uri.uriString()] = IndexPath(item: index, section: Section.replies.rawValue)
       }
       
       return mapping
@@ -1554,7 +1544,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     return CGPoint(x: 0, y: clampedOffsetY)
   }
-  #endif
   
   // MARK: - Scroll Position Restoration with Retry Logic
   
@@ -2063,8 +2052,27 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
     
-    // Apply with animation for optimistic updates
-    dataSource.apply(snapshot, animatingDifferences: true)
+    // Apply without animation for optimistic updates to avoid fly-in
+    applySnapshot(snapshot, animatingDifferences: false)
+  }
+}
+
+// MARK: - ParentPost Extensions
+extension ParentPost {
+  /// Safely extracts URI from parent post union
+  var uri: ATProtocolURI? {
+    switch post {
+    case .appBskyFeedDefsThreadViewPost(let threadPost):
+      return threadPost.post.uri
+    case .appBskyFeedDefsNotFoundPost(let notFoundPost):
+      return notFoundPost.uri
+    case .appBskyFeedDefsBlockedPost(let blockedPost):
+      return blockedPost.uri
+    case .pending:
+      return nil // Pending posts don't have stable URIs
+    case .unexpected:
+      return nil // Unexpected posts don't have accessible URIs
+    }
   }
 }
 
@@ -2139,6 +2147,17 @@ final class ParentPostCell: UICollectionViewCell {
   override init(frame: CGRect) {
     super.init(frame: frame)
     // Background color will be set in configure method
+    // Disable implicit layer animations on this cell
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
   }
 
   required init?(coder: NSCoder) {
@@ -2150,13 +2169,15 @@ final class ParentPostCell: UICollectionViewCell {
       contentView.backgroundColor = .systemBackground
     
     let content = AnyView(
-      ParentPostView(
-        parentPost: parentPost,
-        path: path,
-        appState: appState
-      )
-      .padding(.horizontal, 3)
-      .padding(.vertical, 3)
+      WidthLimitedContainer(maxWidth: 600) {
+        ParentPostView(
+          parentPost: parentPost,
+          path: path,
+          appState: appState
+        )
+        .padding(.horizontal, 3)
+        .padding(.vertical, 3)
+      }
     )
 
     // Only reconfigure if needed (using post id as identity check)
@@ -2168,7 +2189,7 @@ final class ParentPostCell: UICollectionViewCell {
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
-        content
+        content.transaction { txn in txn.animation = nil }
       }
       .margins(.all, .zero)
     }
@@ -2191,6 +2212,18 @@ final class MainPostCell: UICollectionViewCell {
     isAccessibilityElement = false
     contentView.isAccessibilityElement = false
     contentView.shouldGroupAccessibilityChildren = true
+
+    // Disable implicit layer animations on this cell
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
   }
 
   required init?(coder: NSCoder) {
@@ -2204,15 +2237,18 @@ final class MainPostCell: UICollectionViewCell {
     // Avoid removing/readding subviews if configuration hasn't changed
     let content = AnyView(
       VStack(spacing: 0) {
-        ThreadViewMainPostView(
-          post: post,
-          showLine: false,
-          path: path,
-          appState: appState
-        )
-        .padding(.horizontal, 6)
-        .padding(.vertical, 6)
+        WidthLimitedContainer(maxWidth: 600) {
+          ThreadViewMainPostView(
+            post: post,
+            showLine: false,
+            path: path,
+            appState: appState
+          )
+          .padding(.horizontal, 6)
+          .padding(.vertical, 6)
+        }
 
+        // Full-bleed divider across entire screen width
         Divider()
           .padding(.bottom, 9)
       }
@@ -2227,7 +2263,7 @@ final class MainPostCell: UICollectionViewCell {
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
-        content
+        content.transaction { txn in txn.animation = nil }
       }
       .margins(.all, .zero)
     }
@@ -2244,6 +2280,17 @@ final class ReplyCell: UICollectionViewCell {
   override init(frame: CGRect) {
     super.init(frame: frame)
     // Background color will be set in configure method
+    // Disable implicit layer animations on this cell
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
   }
 
   required init?(coder: NSCoder) {
@@ -2259,14 +2306,17 @@ final class ReplyCell: UICollectionViewCell {
     
     let content = AnyView(
       VStack(spacing: 0) {
-        ReplyView(
-          replyWrapper: replyWrapper,
-          opAuthorID: opAuthorID,
-          path: path,
-          appState: appState
-        )
-        .padding(.horizontal, 10)
+        WidthLimitedContainer(maxWidth: 600) {
+          ReplyView(
+            replyWrapper: replyWrapper,
+            opAuthorID: opAuthorID,
+            path: path,
+            appState: appState
+          )
+          .padding(.horizontal, 10)
+        }
 
+        // Full-bleed divider across entire screen width
         Divider()
           .padding(.vertical, 3)
       }
@@ -2281,7 +2331,7 @@ final class ReplyCell: UICollectionViewCell {
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
-        content
+        content.transaction { txn in txn.animation = nil }
       }
       .margins(.all, .zero)
     }
@@ -2302,6 +2352,17 @@ final class LoadMoreCell: UICollectionViewCell {
   override init(frame: CGRect) {
     super.init(frame: frame)
     setupViews()
+    // Disable implicit layer animations on this cell
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
   }
 
   required init?(coder: NSCoder) {
@@ -2321,7 +2382,7 @@ final class LoadMoreCell: UICollectionViewCell {
     
     label.translatesAutoresizingMaskIntoConstraints = false
     label.text = "Loading more parents..."
-    label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
+      label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
     label.textColor = UIColor.systemGray
     label.isAccessibilityElement = false
     
@@ -2381,6 +2442,17 @@ final class SpacerCell: UICollectionViewCell {
   override init(frame: CGRect) {
     super.init(frame: frame)
     // This cell doesn't need special background handling
+    // Disable implicit layer animations on this cell
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
   }
 
   required init?(coder: NSCoder) {
@@ -2389,6 +2461,28 @@ final class SpacerCell: UICollectionViewCell {
 }
 
 // MARK: - Supporting SwiftUI Views
+/// Centers its content and constrains it to a maximum width while allowing the
+/// surrounding container (e.g., collection view cell) to be full-width.
+struct WidthLimitedContainer<Content: View>: View {
+  let maxWidth: CGFloat
+  @ViewBuilder var content: Content
+
+  init(maxWidth: CGFloat = 600, @ViewBuilder content: () -> Content) {
+    self.maxWidth = maxWidth
+    self.content = content()
+  }
+
+  var body: some View {
+    HStack(spacing: 0) {
+      Spacer(minLength: 0)
+      content
+        .frame(maxWidth: maxWidth, alignment: .center)
+      Spacer(minLength: 0)
+    }
+    .frame(maxWidth: .infinity)
+  }
+}
+
 struct ParentPostView: View {
   let parentPost: ParentPost
   @Binding var path: NavigationPath
@@ -2575,7 +2669,6 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   }
 }
 
-// ThreadView is now defined in ThreadView.swift for cross-platform compatibility
 
 extension AppBskyFeedDefs.ThreadViewPostParentUnion {
   func getThreadViewPost() throws -> AppBskyFeedDefs.ThreadViewPost? {
@@ -2655,4 +2748,22 @@ extension AppBskyFeedDefs.ThreadViewPost {
     return false
   }
 }
-#endif
+
+// MARK: - ReplyWrapper Extensions
+extension ReplyWrapper {
+  /// Computed property to access the post from the reply union
+  var post: AppBskyFeedDefs.PostView {
+    switch reply {
+    case .appBskyFeedDefsThreadViewPost(let threadPost):
+      return threadPost.post
+    case .appBskyFeedDefsNotFoundPost(let notFound):
+      // Create a placeholder PostView for not found posts
+      fatalError("Cannot access post from not found reply: \(notFound.uri.uriString())")
+    case .appBskyFeedDefsBlockedPost(let blocked):
+      // Create a placeholder PostView for blocked posts  
+      fatalError("Cannot access post from blocked reply: \(blocked.uri.uriString())")
+    default:
+      fatalError("Cannot access post from unexpected reply type")
+    }
+  }
+}

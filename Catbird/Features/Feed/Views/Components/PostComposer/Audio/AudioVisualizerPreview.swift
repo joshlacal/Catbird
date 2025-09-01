@@ -159,21 +159,19 @@ struct AudioVisualizerPreview: View {
   
   private var previewVisualizationSection: some View {
     VStack(spacing: 24) {
-      // Mock video preview frame
+      // Mock video preview frame (properly constrained and clipped)
       ZStack {
-        // Background with accent color
-        RoundedRectangle(cornerRadius: 16)
+        // Background with accent color + border
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
           .fill(Color.accentColor)
-          .aspectRatio(16/9, contentMode: .fit)
-          .overlay(
-            RoundedRectangle(cornerRadius: 16)
-              .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-          )
-        
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+
+        // Content constrained to the same frame
         VStack(spacing: 16) {
           // Real waveform visualization
           realWaveformPreview
-          
+
           // Profile picture placeholder
           if let profile = appState.currentUserProfile,
              let avatarURL = profile.avatar {
@@ -196,16 +194,16 @@ struct AudioVisualizerPreview: View {
               .fill(Color.white.opacity(0.3))
               .frame(width: 80, height: 80)
           }
-          
+
           // Mock timer and username
           HStack {
-            Text(formatDuration(audioDuration - currentTime))
+            Text(formatDuration(max(0, audioDuration - currentTime)))
               .font(.title3)
               .fontWeight(.semibold)
               .foregroundColor(.white.opacity(0.9))
-            
+
             Spacer()
-            
+
             if let profile = appState.currentUserProfile {
               Text("@\(profile.handle.description)")
                 .font(.title3)
@@ -215,9 +213,14 @@ struct AudioVisualizerPreview: View {
           }
           .padding(.horizontal, 20)
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
+      .frame(maxWidth: .infinity)
+      .aspectRatio(16/9, contentMode: .fit)
+      .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
       .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
-      
+
       // Playback progress
       playbackProgressView
     }
@@ -242,15 +245,18 @@ struct AudioVisualizerPreview: View {
             .frame(width: 3, height: max(4, CGFloat(baseHeight)))
         }
       } else {
-        // Use real waveform data
-        ForEach(Array(waveformData.enumerated()), id: \.offset) { index, waveformPoint in
-          let progress = currentTime / audioDuration
-          let barProgress = waveformPoint.timestamp / audioDuration
-          
+        // Downsample to a fixed bar count to prevent overflow/perf spikes
+        let maxBars = 120
+        let step = max(1, waveformData.count / maxBars)
+        ForEach(Array(stride(from: 0, to: waveformData.count, by: step)), id: \.self) { i in
+          let waveformPoint = waveformData[i]
+          let progress = currentTime / max(0.1, audioDuration)
+          let barProgress = waveformPoint.timestamp / max(0.1, audioDuration)
+
           // Scale amplitude to appropriate height
           let baseHeight = CGFloat(waveformPoint.amplitude * 40 + 8) // Scale 0-1 to 8-48 pixels
           let activity = barProgress <= progress ? 1.0 : 0.3
-          
+
           RoundedRectangle(cornerRadius: 1)
             .fill(Color.white.opacity(0.8 * activity))
             .frame(width: 3, height: max(4, baseHeight))
@@ -391,7 +397,7 @@ struct AudioVisualizerPreview: View {
         isLoadingWaveform = false
       }
     } catch {
-      print("Failed to analyze audio waveform: \(error)")
+      logger.debug("Failed to analyze audio waveform: \(error)")
       await MainActor.run {
         isLoadingWaveform = false
         // Keep waveformData empty, which will show a fallback visualization

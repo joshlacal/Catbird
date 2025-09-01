@@ -1028,8 +1028,8 @@ final class AppState {
   /// Present the post composer for creating a new post, reply, or quote post
   @MainActor
   func presentPostComposer(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil) {
-    // Create the post composer view with either a parent post (for reply) or quoted post
-    let composerView = PostComposerView(
+    // Create the UIKit-backed post composer view with either a parent post (for reply) or quoted post
+    let composerView = PostComposerViewUIKit(
       parentPost: parentPost,
       quotedPost: quotedPost,
       appState: self
@@ -1042,7 +1042,8 @@ final class AppState {
     
     // Configure presentation style
     hostingController.modalPresentationStyle = .formSheet
-    hostingController.isModalInPresentation = true
+    // Allow swipe-to-dismiss to enable draft auto-persist on dismiss
+    hostingController.isModalInPresentation = false
     
     // Present the composer using the appropriate window system
     if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,

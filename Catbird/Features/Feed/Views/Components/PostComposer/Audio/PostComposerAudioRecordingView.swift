@@ -529,7 +529,7 @@ final class AudioPlaybackService: NSObject, AVAudioPlayerDelegate {
       self.progressTimer = nil
       
       if let error = error {
-        print("Audio playback decode error: \(error)")
+        logger.debug("Audio playback decode error: \(error)")
       }
     }
   }

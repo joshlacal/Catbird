@@ -115,12 +115,12 @@ struct FeedsStartPage: View {
   }
   private var gridSpacing: CGFloat {
     switch screenWidth {
-    case ..<375: return 8
-    case ..<768: return 10
-    case ..<1024: return 12
-    case ..<1200: return 14
-    case ..<1600: return 16
-    default: return 18  // Very large displays
+    case ..<375: return 4
+    case ..<768: return 6
+    case ..<1024: return 8
+    case ..<1200: return 10
+    case ..<1600: return 12
+    default: return 14  // Very large displays
     }
   }
   private var horizontalPadding: CGFloat {
@@ -150,17 +150,17 @@ struct FeedsStartPage: View {
     return max(80, min(calculatedWidth, 140))
   }
   private var iconSize: CGFloat {
-    // Base icon size on item width for better proportions
-    let baseSize = itemWidth * 0.55
+    // Base icon size on item width for better proportions - increased from 0.55 to 0.70
+    let baseSize = itemWidth * 0.70
     
     switch screenWidth {
-    case ..<320: return max(50, min(baseSize, 60))   // Very small screens
-    case ..<375: return max(55, min(baseSize, 65))   // Small screens
-    case ..<768: return max(60, min(baseSize, 75))   // Standard phones
-    case ..<1024: return max(65, min(baseSize, 85))  // Large phones/small tablets
-    case ..<1200: return max(70, min(baseSize, 95))  // Standard tablets
-    case ..<1600: return max(75, min(baseSize, 105)) // Large tablets
-    default: return max(80, min(baseSize, 110))      // Very large displays
+    case ..<320: return max(60, min(baseSize, 70))   // Very small screens - increased minimums
+    case ..<375: return max(65, min(baseSize, 80))   // Small screens
+    case ..<768: return max(70, min(baseSize, 90))   // Standard phones
+    case ..<1024: return max(75, min(baseSize, 100)) // Large phones/small tablets
+    case ..<1200: return max(80, min(baseSize, 110)) // Standard tablets
+    case ..<1600: return max(85, min(baseSize, 120)) // Large tablets
+    default: return max(90, min(baseSize, 130))      // Very large displays
     }
   }
 
@@ -624,8 +624,10 @@ struct FeedsStartPage: View {
             }
             Spacer()
           }
+          .transition(.scale.combined(with: .opacity))
         }
       }
+      .animation(.easeInOut(duration: 0.2), value: isEditingFeeds)
     )
     .onDrag {
       draggedFeedItem = feedURI
@@ -795,17 +797,19 @@ struct FeedsStartPage: View {
           // Banner header using Apple's flexible header system
           bannerHeaderView()
             .flexibleHeaderContent()
+            .background(Color.accentColor.opacity(0.05))
           
           // Main content below the banner
           feedsContent()
             .frame(maxWidth: contentWidth)
         }
+        .frame(maxWidth: contentWidth, alignment: .center)
       }
       .flexibleHeaderScrollView()
       .frame(width: contentWidth)
       .frame(maxWidth: drawerWidth)
       .clipped()
-      .ignoresSafeArea(edges: .top)
+      .ignoresSafeArea(edges: [.top, .bottom])
       .refreshable {
         await handleRefresh()
       }
@@ -859,76 +863,70 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private func bannerHeaderView() -> some View {
-    GeometryReader { geometry in
-      let availableWidth = geometry.size.width
-      let contentWidth = min(availableWidth, drawerWidth)
+    ZStack(alignment: .bottomLeading) {
+      // Banner Image - constrained to drawer width
+      bannerImageView
+        .frame(maxWidth: drawerWidth)
       
-      ZStack(alignment: .bottomLeading) {
-        // Banner Image - uses available width
-        bannerImageView
-          .frame(width: contentWidth)
-        
-        // Scrim overlay for text visibility
-        LinearGradient(
-          colors: [.black.opacity(0.6), .clear],
-          startPoint: .bottom,
-          endPoint: .center
-        )
-        .frame(width: contentWidth)
-        
-        // Profile Info - responsive layout
-        HStack(spacing: max(8, horizontalPadding * 0.4)) {
-          // Avatar with responsive sizing
-          Group {
-            if let avatarURL = profile?.avatar?.url {
-              AsyncProfileImage(url: avatarURL, size: avatarSize)
-            } else {
-              // Fallback avatar
-              ZStack {
-                Circle()
-                  .fill(Color.white.opacity(0.9))
-                  .frame(width: avatarSize, height: avatarSize)
-                
-                Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
-                  .appFont(size: avatarSize * 0.4)
-                  .foregroundColor(.accentColor)
-              }
+      // Scrim overlay for text visibility
+      LinearGradient(
+        colors: [.black.opacity(0.6), .clear],
+        startPoint: .bottom,
+        endPoint: .center
+      )
+      .frame(maxWidth: drawerWidth)
+      
+      // Profile Info - responsive layout
+      HStack(spacing: max(8, horizontalPadding * 0.4)) {
+        // Avatar with responsive sizing
+        Group {
+          if let avatarURL = profile?.avatar?.url {
+            AsyncProfileImage(url: avatarURL, size: avatarSize)
+          } else {
+            // Fallback avatar
+            ZStack {
+              Circle()
+                .fill(Color.white.opacity(0.9))
+                .frame(width: avatarSize, height: avatarSize)
+              
+              Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
+                .appFont(size: avatarSize * 0.4)
+                .foregroundColor(.accentColor)
             }
           }
-          .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: max(1.5, avatarSize * 0.025)))
-          .frame(width: avatarSize, height: avatarSize)
-          
-          // Display Name and Handle - responsive text sizing
-          VStack(alignment: .leading, spacing: 2) {
-            if let displayName = profile?.displayName, !displayName.isEmpty {
-              Text(displayName)
-                .font(.system(size: responsiveTextSize(base: 16, min: 14, max: 18), weight: .bold))
-                .foregroundStyle(.white)
-                .shadow(radius: 2)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            }
-            if let handle = profile?.handle {
-              Text("@\(handle.description)")
-                .font(.system(size: responsiveTextSize(base: 14, min: 12, max: 16)))
-                .foregroundStyle(.white.opacity(0.9))
-                .shadow(radius: 2)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            }
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          
-          Spacer(minLength: 0)
         }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.bottom, max(12, bannerHeight * 0.08))
-        .frame(maxWidth: contentWidth)
+        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: max(1.5, avatarSize * 0.025)))
+        .frame(width: avatarSize, height: avatarSize)
+        
+        // Display Name and Handle - responsive text sizing
+        VStack(alignment: .leading, spacing: 2) {
+          if let displayName = profile?.displayName, !displayName.isEmpty {
+            Text(displayName)
+              .font(.system(size: responsiveTextSize(base: 16, min: 14, max: 18), weight: .bold))
+              .foregroundStyle(.white)
+              .shadow(radius: 2)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+          if let handle = profile?.handle {
+            Text("@\(handle.description)")
+              .font(.system(size: responsiveTextSize(base: 14, min: 12, max: 16)))
+              .foregroundStyle(.white.opacity(0.9))
+              .shadow(radius: 2)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        
+        Spacer(minLength: 0)
       }
-      .frame(width: contentWidth)
+      .padding(.horizontal, horizontalPadding)
+      .padding(.bottom, max(12, bannerHeight * 0.08))
+      .frame(maxWidth: drawerWidth)
     }
-    .frame(height: bannerHeight)
     .frame(maxWidth: drawerWidth)
+    .clipped()
     .contentShape(Rectangle())
     .onTapGesture {
       if let userDID = appState.authManager.state.userDID {
@@ -984,7 +982,9 @@ struct FeedsStartPage: View {
 
                   if isEditingFeeds {
                       Button {
-                          isEditingFeeds = false
+                          withAnimation(.easeInOut(duration: 0.2)) {
+                              isEditingFeeds = false
+                          }
                       } label: {
                           Image(systemName: "checkmark")
                               .appFont(size: 16)
@@ -994,9 +994,11 @@ struct FeedsStartPage: View {
                       .accessibilityAddTraits(.isButton)
                   } else {
                       Button {
-                          isEditingFeeds = true
+                          withAnimation(.easeInOut(duration: 0.2)) {
+                              isEditingFeeds = true
+                          }
                       } label: {
-                          Image(systemName: "slider.horizontal.3")
+                          Image(systemName: "pencil")
                               .appFont(size: 16)
                       }
                       .tint(.accentColor.opacity(0.8))
@@ -1009,6 +1011,7 @@ struct FeedsStartPage: View {
           }
           .padding(.top, 24) // Add top padding to separate from banner
           .padding(.bottom, 24)
+          .animation(.easeInOut(duration: 0.2), value: isEditingFeeds)
 
           // Search bar
           if isSearchBarVisible {
@@ -1025,6 +1028,10 @@ struct FeedsStartPage: View {
               // Add Feed button in edit mode
               if isEditingFeeds {
                   addFeedButton()
+                      .transition(.asymmetric(
+                          insertion: .opacity.combined(with: .move(edge: .top)),
+                          removal: .opacity.combined(with: .move(edge: .top))
+                      ))
               }
 
               // Big default feed button as first feed in hierarchy
@@ -1045,6 +1052,7 @@ struct FeedsStartPage: View {
               // Extra space at bottom
               Spacer(minLength: 200)
           }
+          .animation(.easeInOut(duration: 0.3), value: isEditingFeeds)
       }
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, max(20, horizontalPadding * 0.75))
@@ -1090,8 +1098,12 @@ struct FeedsStartPage: View {
             image
               .resizable()
               .aspectRatio(contentMode: .fill)
+              .overlay(Color.black.opacity(0.15).blendMode(.overlay))
+          } else if state.error != nil {
+            fallbackGradientBanner
           } else {
             fallbackGradientBanner
+              .overlay(ProgressView().tint(.white))
           }
         }
       } else {

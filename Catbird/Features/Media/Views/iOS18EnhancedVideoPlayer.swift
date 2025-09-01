@@ -818,7 +818,17 @@ struct VideoShareSheet: UIViewControllerRepresentable {
     let videoURL: URL
     
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [videoURL], applicationActivities: nil)
+        let vc = UIActivityViewController(activityItems: [videoURL], applicationActivities: nil)
+        // Configure iPad popover anchor to avoid crash
+        if let popover = vc.popoverPresentationController {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let root = windowScene.windows.first?.rootViewController?.view {
+                popover.sourceView = root
+                popover.sourceRect = CGRect(x: root.bounds.midX, y: root.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+        }
+        return vc
     }
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

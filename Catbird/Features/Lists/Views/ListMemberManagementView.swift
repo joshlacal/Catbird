@@ -237,7 +237,7 @@ struct ListMemberManagementView: View {
   
   init(listURI: String) {
     self.listURI = listURI
-    print("🔵 ListMemberManagementView init with URI: \(listURI)")
+    logger.debug("🔵 ListMemberManagementView init with URI: \(listURI)")
   }
   
   var body: some View {
@@ -344,10 +344,10 @@ struct ListMemberManagementView: View {
   
   @MainActor
   private func initializeView() async {
-    print("🔵 ListMemberManagementView initializeView started")
-    print("🔵 Input listURI: '\(listURI)'")
-    print("🔵 appState.isAuthenticated: \(appState.isAuthenticated)")
-    print("🔵 appState.atProtoClient != nil: \(appState.atProtoClient != nil)")
+    logger.debug("🔵 ListMemberManagementView initializeView started")
+    logger.debug("🔵 Input listURI: '\(listURI)'")
+    logger.debug("🔵 appState.isAuthenticated: \(appState.isAuthenticated)")
+    logger.debug("🔵 appState.atProtoClient != nil: \(appState.atProtoClient != nil)")
     
     // Reset state
     initializationFailed = false
@@ -355,49 +355,49 @@ struct ListMemberManagementView: View {
     
     do {
       // Validate URI format
-      print("🔵 Validating URI format...")
+      logger.debug("🔵 Validating URI format...")
       guard !listURI.isEmpty && listURI.contains("at://") else {
-        print("🔴 URI validation failed: empty=\(!listURI.isEmpty), contains-at=\(listURI.contains("at://"))")
+        logger.debug("🔴 URI validation failed: empty=\(!listURI.isEmpty), contains-at=\(listURI.contains("at://"))")
         throw InitializationError.invalidURI(listURI)
       }
-      print("🔵 URI validation passed")
+      logger.debug("🔵 URI validation passed")
       
       // Check authentication
-      print("🔵 Checking authentication...")
+      logger.debug("🔵 Checking authentication...")
       guard appState.isAuthenticated else {
-        print("🔴 Authentication check failed")
+        logger.debug("🔴 Authentication check failed")
         throw InitializationError.notAuthenticated
       }
-      print("🔵 Authentication check passed")
+      logger.debug("🔵 Authentication check passed")
       
       // Wait for client to be available (with reasonable timeout)
-      print("🔵 Waiting for ATProto client...")
+      logger.debug("🔵 Waiting for ATProto client...")
       var attempts = 0
       let maxAttempts = 30 // 3 seconds max wait
       while appState.atProtoClient == nil && attempts < maxAttempts {
-        print("🔵 Waiting for ATProto client (attempt \(attempts + 1)/\(maxAttempts))")
+        logger.debug("🔵 Waiting for ATProto client (attempt \(attempts + 1)/\(maxAttempts))")
         try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         attempts += 1
       }
       
       guard appState.atProtoClient != nil else {
-        print("🔴 ATProto client not available after waiting")
+        logger.debug("🔴 ATProto client not available after waiting")
         throw InitializationError.clientNotAvailable
       }
-      print("🔵 ATProto client is available")
+      logger.debug("🔵 ATProto client is available")
       
       // Create viewModel with consistent AppState
-      print("🔵 Creating viewModel with consistent AppState")
+      logger.debug("🔵 Creating viewModel with consistent AppState")
       viewModel = ListMemberManagementViewModel(listURI: listURI, appState: appState)
       
       // Load data
-      print("🔵 Loading initial data")
+      logger.debug("🔵 Loading initial data")
       await viewModel?.loadData()
       
-      print("🔵 ListMemberManagementView initialization successful")
+      logger.debug("🔵 ListMemberManagementView initialization successful")
       
     } catch {
-      print("🔴 ListMemberManagementView initialization failed: \(error)")
+      logger.debug("🔴 ListMemberManagementView initialization failed: \(error)")
       initializationFailed = true
       errorMessage = error.localizedDescription
     }

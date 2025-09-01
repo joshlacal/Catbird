@@ -57,6 +57,22 @@ struct HomeView: View {
         .toolbar {
           leadingToolbarContent
           trailingToolbarContent
+          #if targetEnvironment(macCatalyst)
+          // Add a refresh button for Mac Catalyst and bind Cmd-R
+          ToolbarItem(placement: .primaryAction) {
+            Button {
+              Task { @MainActor in
+                let manager = FeedStateStore.shared.stateManager(for: selectedFeed, appState: appState)
+                await manager.refresh()
+              }
+            } label: {
+              Image(systemName: "arrow.clockwise")
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh Feed")
+            .accessibilityLabel("Refresh feed")
+          }
+          #endif
         }
         .navigationDestination(for: NavigationDestination.self) { destination in
           NavigationHandler.viewForDestination(
@@ -72,13 +88,11 @@ struct HomeView: View {
   
   @ViewBuilder
   private func feedContentView(navigationPath: Binding<NavigationPath>) -> some View {
-    // Use NativeFeedContentView for all iOS versions
     nativeFeedView(navigationPath: navigationPath)
   }
   
   @ViewBuilder
   private func nativeFeedView(navigationPath: Binding<NavigationPath>) -> some View {
-    // Use the proven FeedView -> NativeFeedContentView integration pattern
     FeedView(
       fetch: selectedFeed,
       path: navigationPath,
@@ -92,7 +106,7 @@ struct HomeView: View {
       Button(action: {
         isDrawerOpen = true
       }) {
-        Image(systemName: "circle.grid.3x3.circle")
+        Image(systemName: "square.grid.3x3.fill")
           .foregroundStyle(isRootView ? Color.accentColor : Color.secondary)
       }
       .disabled(!isRootView)
@@ -109,7 +123,7 @@ struct HomeView: View {
         AvatarView(
           did: appState.currentUserDID,
           client: appState.atProtoClient,
-          size: 28
+          size: 30
         )
       }
       .accessibilityLabel("Profile and settings")

@@ -88,7 +88,7 @@ struct EmojiReactionPicker: View {
 struct EmojiReactionPicker_Previews: PreviewProvider {
   static var previews: some View {
     EmojiReactionPicker(isPresented: .constant(true)) { emoji in
-      print("Selected: \(emoji)")
+      logger.debug("Selected: \(emoji)")
     }
     .padding()
   }

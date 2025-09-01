@@ -44,30 +44,30 @@ struct NewPostsIndicator: View {
             )
           )
           .onAppear { 
-            print("🟢 NEW_POSTS_INDICATOR: NewPostsIndicator content appeared - count=\(newPostsCount), isVisible=\(isVisible)")
+            logger.debug("🟢 NEW_POSTS_INDICATOR: NewPostsIndicator content appeared - count=\(newPostsCount), isVisible=\(isVisible)")
             handleAppear() 
           }
           .onDisappear { 
-            print("🔴 NEW_POSTS_INDICATOR: NewPostsIndicator content disappeared")
+            logger.debug("🔴 NEW_POSTS_INDICATOR: NewPostsIndicator content disappeared")
             cancelAutoDismiss() 
           }
       } else {
         // Add debug for why it's not rendering
         Color.clear
           .onAppear {
-            print("🔴 NEW_POSTS_INDICATOR: shouldRender=false - count=\(newPostsCount), lastCount=\(lastCount), isVisible=\(isVisible), lastDismissDate=\(lastDismissDate)")
+            logger.debug("🔴 NEW_POSTS_INDICATOR: shouldRender=false - count=\(newPostsCount), lastCount=\(lastCount), isVisible=\(isVisible), lastDismissDate=\(lastDismissDate)")
           }
       }
     }
     .animation(.spring(response: 0.5, dampingFraction: 0.78), value: shouldRender)
     .onChange(of: newPostsCount) { newValue in
-      print("🔄 NEW_POSTS_INDICATOR: newPostsCount changed from \(lastCount) to \(newValue)")
+      logger.debug("🔄 NEW_POSTS_INDICATOR: newPostsCount changed from \(lastCount) to \(newValue)")
       guard newValue != lastCount else { return }
       if newValue > lastCount {  // Got more
-        print("🟢 NEW_POSTS_INDICATOR: Showing new batch")
+        logger.debug("🟢 NEW_POSTS_INDICATOR: Showing new batch")
         showNewBatch()
       } else if newValue == 0 {
-        print("🔴 NEW_POSTS_INDICATOR: Dismissing indicator")
+        logger.debug("🔴 NEW_POSTS_INDICATOR: Dismissing indicator")
         dismiss(animated: true)
       }
       lastCount = newValue

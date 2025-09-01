@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 
 /// A horizontally scrolling gallery of media items with an option to add more
 struct MediaGalleryView: View {
@@ -15,8 +16,18 @@ struct MediaGalleryView: View {
     @Binding var isAltTextEditorPresented: Bool
     let maxImagesAllowed: Int
     let onAddMore: () -> Void
+    var onMoveLeft: ((UUID) -> Void)? = nil
+    var onMoveRight: ((UUID) -> Void)? = nil
+    var onCropSquare: ((UUID) -> Void)? = nil
     var onPaste: (() -> Void)?
     var hasClipboardMedia: Bool = false
+    var onReorder: ((Int, Int) -> Void)? = nil
+    #if os(iOS)
+    var onExternalImageDrop: (([Data]) -> Void)? = nil
+    #endif
+
+    @State private var draggingId: UUID?
+    @State private var isExternalTargeted: Bool = false
     
     private let itemSize: CGFloat = 100
     private let spacing: CGFloat = 12
@@ -40,12 +51,58 @@ struct MediaGalleryView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: spacing) {
                     // Existing media items
-                    ForEach(mediaItems) { item in
-                        MediaItemView(
-                            item: item,
-                            onRemove: { removeMediaItem(withId: item.id) },
-                            onEditAlt: { beginEditingAltText(for: item.id) }
-                        )
+                    ForEach(Array(mediaItems.enumerated()), id: \.element.id) { index, item in
+                        VStack(spacing: 6) {
+                            MediaItemView(
+                                item: item,
+                                onRemove: { removeMediaItem(withId: item.id) },
+                                onEditAlt: { beginEditingAltText(for: item.id) }
+                            )
+                            .draggable(item.id.uuidString)
+                            .dropDestination(for: String.self) { items, _ in
+                                guard let idStr = items.first,
+                                      let sourceIndex = mediaItems.firstIndex(where: { $0.id.uuidString == idStr }) else { return false }
+                                if let onReorder = onReorder {
+                                    onReorder(sourceIndex, index)
+                                } else {
+                                    reorderLocal(from: sourceIndex, to: index)
+                                }
+                                return true
+                            }
+                            #if os(iOS)
+                            .onDrop(of: [UTType.image], isTargeted: $isExternalTargeted) { providers in
+                                guard let onExternalImageDrop = onExternalImageDrop else { return false }
+                                var datas: [Data] = []
+                                let group = DispatchGroup()
+                                for p in providers {
+                                    group.enter()
+                                    p.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                                        if let data = data { datas.append(data) }
+                                        group.leave()
+                                    }
+                                }
+                                group.notify(queue: .main) {
+                                    if !datas.isEmpty { onExternalImageDrop(datas) }
+                                }
+                                return true
+                            }
+                            .overlay(alignment: .topTrailing) {
+                                if isExternalTargeted {
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundStyle(Color.accentColor)
+                                        .padding(6)
+                                }
+                            }
+                            #endif
+                            HStack(spacing: 8) {
+                                if let onMoveLeft = onMoveLeft { Button(action: { onMoveLeft(item.id) }) { Image(systemName: "arrow.left") } }
+                                if let onMoveRight = onMoveRight { Button(action: { onMoveRight(item.id) }) { Image(systemName: "arrow.right") } }
+                                if let onCropSquare = onCropSquare { Button(action: { onCropSquare(item.id) }) { Image(systemName: "crop") } }
+                            }
+                            .buttonStyle(.borderless)
+                            .appFont(AppTextRole.caption2)
+                            .foregroundStyle(.secondary)
+                        }
                     }
                     
                     // Paste button (if clipboard has media and we can add more)
@@ -114,6 +171,14 @@ struct MediaGalleryView: View {
     private func beginEditingAltText(for id: UUID) {
         currentEditingMediaId = id
         isAltTextEditorPresented = true
+    }
+
+    private func reorderLocal(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex != destinationIndex,
+              mediaItems.indices.contains(sourceIndex),
+              mediaItems.indices.contains(destinationIndex) else { return }
+        let item = mediaItems.remove(at: sourceIndex)
+        mediaItems.insert(item, at: destinationIndex)
     }
 }
 

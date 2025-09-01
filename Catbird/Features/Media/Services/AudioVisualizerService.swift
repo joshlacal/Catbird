@@ -174,6 +174,23 @@ final class AudioVisualizerService {
     }
     #endif
   }
+
+  /// Returns current resident memory usage in MB (best-effort on iOS)
+  private func currentMemoryUsageMB() -> UInt64? {
+    #if os(iOS)
+    var info = mach_task_basic_info()
+    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+    let kr = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+        task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+      }
+    }
+    if kr == KERN_SUCCESS {
+      return info.resident_size / (1024 * 1024)
+    }
+    #endif
+    return nil
+  }
   
   /// Cleans up resources between retry attempts
   private func cleanupResourcesForRetry() async {
@@ -290,10 +307,10 @@ final class AudioVisualizerService {
     }
     defer { timeoutTask.cancel() }
     
-    return try await withTaskCancellationHandler {
-      return try await withRetry(
+    return try await withTaskCancellationHandler(operation: {
+      try await withRetry(
         operation: {
-            try await self.performVideoGeneration(
+          try await self.performVideoGeneration(
             audioURL: audioURL,
             profileImage: profileImage,
             username: username,
@@ -303,9 +320,9 @@ final class AudioVisualizerService {
         },
         context: "Video Generation"
       )
-    } onCancel: {
+    }, onCancel: {
       timeoutTask.cancel()
-    }
+    })
   }
   
   private func performVideoGeneration(
@@ -481,7 +498,9 @@ final class AudioVisualizerService {
       kCVPixelBufferWidthKey as String: Int(size.width),
       kCVPixelBufferHeightKey as String: Int(size.height),
       kCVPixelBufferCGImageCompatibilityKey as String: true,
-      kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+      kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+      // Backed by IOSurface to reduce copies and improve pool reuse
+      kCVPixelBufferIOSurfacePropertiesKey as String: [:]
     ]
     
     return AVAssetWriterInputPixelBufferAdaptor(
@@ -513,6 +532,9 @@ final class AudioVisualizerService {
     let frameTimeInterval = 1.0 / Double(fps)
     
     logger.debug("Starting on-demand frame generation...")
+    if let memStart = currentMemoryUsageMB() {
+      logger.debug("Memory at start of frame gen: \(memStart)MB")
+    }
     
     // Use proper AVAssetWriter pattern with requestMediaDataWhenReady
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -531,14 +553,15 @@ final class AudioVisualizerService {
         }
         
         pixelBufferAdaptor.assetWriterInput.requestMediaDataWhenReady(on: self.videoQueue) {
-          autoreleasepool {
-            // Check if already completed to prevent duplicate execution
-            guard !isCompleted else { return }
-            
-            while pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData && currentFrameIndex < totalFrames && !isCompleted {
+          // Check if already completed to prevent duplicate execution
+          guard !isCompleted else { return }
+
+          while pixelBufferAdaptor.assetWriterInput.isReadyForMoreMediaData && currentFrameIndex < totalFrames && !isCompleted {
+            // Drain autoreleased UIKit/CoreGraphics objects every frame
+            autoreleasepool {
               let currentTime = Double(currentFrameIndex) * frameTimeInterval
               let presentationTime = CMTime(value: Int64(currentFrameIndex), timescale: fps)
-              
+
               // Generate frame on-demand to minimize memory usage
               do {
                 let frameImage = try self.renderMemoryEfficientFrameSync(
@@ -549,27 +572,27 @@ final class AudioVisualizerService {
                   accentColor: accentColor,
                   videoSize: videoSize
                 )
-                
+
                 // Convert to pixel buffer using pool
                 guard let pixelBuffer = self.createPooledPixelBuffer(from: frameImage, adaptor: pixelBufferAdaptor) else {
                   self.logger.debug("Failed to create pixel buffer for frame \(currentFrameIndex)")
                   currentFrameIndex += 1
-                  continue
+                  return
                 }
-                
+
                 // Append the frame
                 let success = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime)
                 if !success {
                   self.logger.debug("Failed to append frame \(currentFrameIndex)")
                 }
-                
+
                 currentFrameIndex += 1
-                
-                // Update progress
+
+                // Update progress on main
                 DispatchQueue.main.async {
                   self.progress += frameProgressIncrement
                 }
-                
+
                 if currentFrameIndex % 30 == 0 {
                   self.logger.debug("Encoded frame \(currentFrameIndex)/\(totalFrames)")
                 }
@@ -582,7 +605,7 @@ final class AudioVisualizerService {
                 return
               }
             }
-            
+
             // Check if we're done and haven't already completed
             if currentFrameIndex >= totalFrames && !isCompleted {
               isCompleted = true
@@ -1717,11 +1740,14 @@ final class AudioVisualizerService {
     
     while audioReader.status == .reading {
       if let sampleBuffer = audioReaderOutput.copyNextSampleBuffer() {
+        // Wait asynchronously until writer is ready, then append within an autoreleasepool (synchronous)
         while !audioInput.isReadyForMoreMediaData {
-          try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+          // Back off very briefly to avoid busy-waiting and memory growth
+          try await Task.sleep(nanoseconds: 5_000_000) // 5ms
         }
-        
-        audioInput.append(sampleBuffer)
+        autoreleasepool {
+          _ = audioInput.append(sampleBuffer)
+        }
       }
     }
   }

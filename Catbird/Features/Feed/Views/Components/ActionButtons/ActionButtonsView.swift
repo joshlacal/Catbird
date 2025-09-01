@@ -62,6 +62,8 @@ struct ActionButtonsView: View {
   @State private var viewModel: ActionButtonViewModel
   @State private var showRepostOptions: Bool = false
   @State private var showingPostComposer: Bool = false
+  // Per-post matched transition namespace for reply → composer zoom
+  @Namespace private var replyTransition
 
   // Consolidated interaction state
   @State private var interactionState: PostInteractionState
@@ -81,6 +83,8 @@ struct ActionButtonsView: View {
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
+  // Unique zoom source id per post to ensure correct return target
+  private var replySourceID: String { "reply-\(post.uri.uriString())" }
 
   // MARK: - Initialization
   init(
@@ -124,6 +128,12 @@ struct ActionButtonsView: View {
       .accessibilityIdentifier("replyButton")
         .accessibilityLabel("Reply. Replies count: \(post.replyCount ?? 0)")
       .disabled(post.viewer?.replyDisabled ?? false)
+      // Subtle glass and mark as the matched transition source for this post
+      .padding(.vertical, isBig ? 3 : 2)
+      .padding(.horizontal, isBig ? 6 : 5)
+      #if os(iOS)
+      .modifier(ReplyZoomSource(id: replySourceID, namespace: replyTransition))
+      #endif
       Spacer()
 
       // Repost Button (includes quote option)
@@ -233,14 +243,24 @@ struct ActionButtonsView: View {
         #endif
     }
     .sheet(isPresented: $showingPostComposer) {
-      PostComposerView(
-        parentPost: post, 
-        appState: appState,
-        onMinimize: { composer in
-          appState.composerDraftManager.storeDraft(ComposerDraft(from: composer))
-          showingPostComposer = false
-        }
-      )
+      Group {
+        PostComposerViewUIKit(
+          parentPost: post,
+          appState: appState
+        )
+        #if os(iOS)
+        .presentationDetents({
+          if #available(iOS 26.0, *) { return [.medium, .large] } else { return [PresentationDetent.large] }
+        }())
+        .presentationDragIndicator({
+          if #available(iOS 26.0, *) { return .visible } else { return .hidden }
+        }())
+        #endif
+      }
+      #if os(iOS)
+      // Link the composer sheet to this reply button's transition namespace
+      .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
+      #endif
     }
   }
 
@@ -324,3 +344,34 @@ struct InteractionButton: View {
     .accessibleAnimation(animateScale ? .snappy(duration: 0.2) : nil, value: isActive, appState: appState)
   }
 }
+
+#if os(iOS)
+// MARK: - Matched transition helpers (iOS 26+ safe wrappers)
+private struct ReplyZoomSource: ViewModifier {
+  let id: String
+  let namespace: Namespace.ID
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content.matchedTransitionSource(id: id, in: namespace) { source in
+        source
+      }
+    } else {
+      content
+    }
+  }
+}
+
+private struct ReplyZoomDestination: ViewModifier {
+  let id: String
+  let namespace: Namespace.ID
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content.navigationTransition(.zoom(sourceID: id, in: namespace))
+    } else {
+      content
+    }
+  }
+}
+#endif

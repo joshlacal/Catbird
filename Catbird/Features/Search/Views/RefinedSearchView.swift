@@ -43,6 +43,9 @@ struct RefinedSearchView: View {
         NavigationStack(path: navigationPath) {
             mainContentContainer
         }
+        .onChange(of: selectedTab) { _, newTab in
+            handleTabChange(newTab)
+        }
         .onChange(of: lastTappedTab) { _, newValue in
             handleTabTap(newValue)
         }
@@ -51,6 +54,9 @@ struct RefinedSearchView: View {
         }
         .onAppear {
             initializeOnAppear()
+        }
+        .onDisappear {
+            handleViewDisappear()
         }
         .sheet(isPresented: $isShowingFilters) {
             FilterView(viewModel: viewModel)
@@ -396,8 +402,28 @@ struct RefinedSearchView: View {
     }
     
     private func initializeOnAppear() {
+        // Subscribe to events only if this is the active search tab
+        if selectedTab == 1 {
+            viewModel.subscribeToEvents()
+        }
+        
         if let client = appState.atProtoClient {
             viewModel.initialize(client: client)
+        }
+    }
+    
+    private func handleViewDisappear() {
+        // Always unsubscribe when view disappears to prevent memory leaks
+        viewModel.unsubscribeFromEvents()
+    }
+    
+    private func handleTabChange(_ newTab: Int) {
+        if newTab == 1 {
+            // Search tab became active - subscribe to events
+            viewModel.subscribeToEvents()
+        } else {
+            // Search tab became inactive - unsubscribe from events
+            viewModel.unsubscribeFromEvents()
         }
     }
     

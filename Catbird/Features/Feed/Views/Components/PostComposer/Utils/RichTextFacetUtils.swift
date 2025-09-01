@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import os
 import Petrel
 
 #if os(iOS)
@@ -20,6 +21,7 @@ import AppKit
 // MARK: - Facet Management
 
 struct RichTextFacetUtils {
+  private static let logger = Logger(subsystem: "blue.catbird", category: "RichText.Utils")
   
   /// Represents a link facet with its range and URL
   struct LinkFacet: Identifiable, Equatable {
@@ -33,19 +35,12 @@ struct RichTextFacetUtils {
     }
   }
   
-  /// Convert character-based NSRange to byte-based range for AT Protocol facets
-  static func characterRangeToByteRange(_ characterRange: NSRange, in text: String) -> NSRange {
-    let startIndex = text.index(text.startIndex, offsetBy: characterRange.location)
-    let endIndex = text.index(startIndex, offsetBy: characterRange.length)
-    
-    let startData = String(text[..<startIndex]).data(using: .utf8) ?? Data()
-    let rangeData = String(text[startIndex..<endIndex]).data(using: .utf8) ?? Data()
-    
-    return NSRange(location: startData.count, length: rangeData.count)
-  }
+  // Petrel’s RichText.swift provides AttributedString.toFacets() which converts
+  // linked ranges into AppBskyRichtextFacet using UTF-8 offsets. Prefer that.
   
-  /// Add a link facet to attributed text
+  /// Add a link facet to attributed text (range must be non-empty)
   static func addLinkFacet(to attributedText: NSAttributedString, url: URL, range: NSRange) -> NSAttributedString {
+    logger.debug("Utils.addLinkFacet url=\(url.absoluteString) range=\(range.debugDescription)")
     let mutableText = NSMutableAttributedString(attributedString: attributedText)
     mutableText.addAttribute(.link, value: url, range: range)
     
@@ -58,66 +53,92 @@ struct RichTextFacetUtils {
     mutableText.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
     return mutableText
   }
-  
-  /// Convert byte-based range to character-based range for UI display
-  static func byteRangeToCharacterRange(_ byteRange: NSRange, in text: String) -> NSRange? {
-    let textData = text.data(using: .utf8) ?? Data()
-    
-    guard byteRange.location + byteRange.length <= textData.count else { return nil }
-    
-    let beforeBytes = textData.prefix(byteRange.location)
-    let rangeBytes = textData.subdata(in: byteRange.location..<(byteRange.location + byteRange.length))
-    
-    guard let beforeString = String(data: beforeBytes, encoding: .utf8),
-          let rangeString = String(data: rangeBytes, encoding: .utf8) else {
-      return nil
+
+  /// Add or insert a link at the specified range. If the range length is zero, this will
+  /// insert a visible display string and apply link styling to that new range.
+  static func addOrInsertLinkFacet(
+    to attributedText: NSAttributedString,
+    url: URL,
+    range: NSRange,
+    displayText: String?
+  ) -> NSAttributedString {
+    let mutable = NSMutableAttributedString(attributedString: attributedText)
+
+    // Determine display text when inserting at caret
+    let visible = displayText?.isEmpty == false ? displayText! : shortenForDisplay(url)
+
+    if range.length == 0 {
+      // Insert display text at caret
+      let insertLocation = max(0, min(range.location, mutable.length))
+      let linkRun = NSMutableAttributedString(string: visible)
+      #if os(iOS)
+      linkRun.addAttribute(.foregroundColor, value: UIColor.systemBlue, range: NSRange(location: 0, length: linkRun.length))
+      #elseif os(macOS)
+      linkRun.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: NSRange(location: 0, length: linkRun.length))
+      #endif
+      linkRun.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: NSRange(location: 0, length: linkRun.length))
+      linkRun.addAttribute(.link, value: url, range: NSRange(location: 0, length: linkRun.length))
+      mutable.insert(linkRun, at: insertLocation)
+    } else {
+      // Apply link styling to existing range
+      return addLinkFacet(to: attributedText, url: url, range: range)
     }
-    
-    return NSRange(location: beforeString.count, length: rangeString.count)
+
+    return mutable
+  }
+
+  /// Shorten URL for display (domain + truncated path)
+  private static func shortenForDisplay(_ url: URL) -> String {
+    let host = url.host ?? url.absoluteString
+    let path = url.path
+    if path.isEmpty || path == "/" { return host }
+    let maxPath = 15
+    if path.count > maxPath {
+      let truncated = String(path.prefix(maxPath)) + "..."
+      return host + truncated
+    }
+    return host + path
   }
   
-  /// Create AppBskyRichtextFacet objects from link facets
+  // If you need to translate byte ranges to characters for UI, use Petrel’s
+  // String.index(atUTF8Offset:) utilities instead of manual conversions.
+  
+  /// Create facets using Petrel conversion with proper Unicode handling
   static func createFacets(from linkFacets: [LinkFacet], in text: String) -> [AppBskyRichtextFacet] {
-    return linkFacets.compactMap { linkFacet in
-      let byteRange = characterRangeToByteRange(linkFacet.range, in: text)
+    logger.debug("Utils.createFacets from=\(linkFacets.count) textLen=\(text.count)")
+    
+    var attributed = AttributedString(text)
+    
+    for facet in linkFacets {
+      // Validate range before conversion
+      guard facet.range.location >= 0,
+            facet.range.location + facet.range.length <= text.count else {
+        logger.error("Utils.createFacets: Invalid range \(facet.range.debugDescription) for text length \(text.count)")
+        continue
+      }
       
-      let byteSlice = AppBskyRichtextFacet.ByteSlice(
-        byteStart: byteRange.location,
-        byteEnd: byteRange.location + byteRange.length
-      )
+      // Convert NSRange to AttributedString range
+      let start = attributed.index(attributed.startIndex, offsetByCharacters: facet.range.location)
+      let end = attributed.index(start, offsetByCharacters: facet.range.length)
+      let range = start..<end
       
-      guard let uri = URI(linkFacet.url.absoluteString) else { return nil }
-      let linkFeature = AppBskyRichtextFacet.Link(uri: uri)
-      return AppBskyRichtextFacet(index: byteSlice, features: [.appBskyRichtextFacetLink(linkFeature)])
+      attributed[range].link = facet.url
+      attributed[range].foregroundColor = .accentColor
+      attributed[range].underlineStyle = .single
+    }
+    
+    do {
+      let facets = try attributed.toFacets() ?? []
+      logger.debug("Utils.createFacets toFacets=\(facets.count)")
+      return facets
+    } catch {
+      logger.error("Utils.createFacets failed: \(error.localizedDescription)")
+      return []
     }
   }
   
-  /// Parse existing facets from a post to recreate link facets for editing
-  static func parseExistingFacets(_ facets: [AppBskyRichtextFacet], in text: String) -> [LinkFacet] {
-    return facets.compactMap { facet in
-      // Look for link features in this facet
-      for feature in facet.features {
-        if case .appBskyRichtextFacetLink(let linkFeature) = feature {
-          // Convert byte range to character range
-          let byteRange = NSRange(location: facet.index.byteStart, length: facet.index.byteEnd - facet.index.byteStart)
-          guard let characterRange = byteRangeToCharacterRange(byteRange, in: text),
-                let url = URL(string: linkFeature.uri.description) else {
-            continue
-          }
-          
-          let nsString = text as NSString
-          let displayText = nsString.substring(with: characterRange)
-          
-          return LinkFacet(
-            range: characterRange,
-            url: url,
-            displayText: displayText
-          )
-        }
-      }
-      return nil
-    }
-  }
+  /// Parse existing facets to edit: use Petrel’s offsets; leave as-is for now,
+  /// PostComposer fetches facets elsewhere via Petrel helpers.
   
   /// Generate attributed string with link styling
   static func createAttributedString(from text: String, linkFacets: [LinkFacet], baseAttributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
@@ -137,6 +158,7 @@ struct RichTextFacetUtils {
   
   /// Validate URL and return a standardized version
   static func validateAndStandardizeURL(_ urlString: String) -> URL? {
+    logger.debug("Utils.validateURL input='\(urlString)'")
     var processedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
     
     // Add https:// if no scheme is present
@@ -144,10 +166,12 @@ struct RichTextFacetUtils {
       processedURL = "https://" + processedURL
     }
     
-    return URL(string: processedURL)
+    let result = URL(string: processedURL)
+    logger.debug("Utils.validateURL result='\(result?.absoluteString ?? "nil")'")
+    return result
   }
   
-  /// Update link facets when text changes, adjusting ranges as needed
+  /// Update link facets when text changes, adjusting ranges as needed with proper Unicode handling
   static func updateFacetsForTextChange(
     linkFacets: [LinkFacet],
     in editedRange: NSRange,
@@ -155,7 +179,24 @@ struct RichTextFacetUtils {
     originalText: String,
     newText: String
   ) -> [LinkFacet] {
-    return linkFacets.compactMap { facet in
+    logger.debug("Utils.updateFacets changeRange=\(editedRange.debugDescription) delta=\(changeLength) originalLen=\(originalText.count) newLen=\(newText.count) currentFacets=\(linkFacets.count)")
+    
+    // Validate inputs
+    guard editedRange.location >= 0,
+          editedRange.location <= originalText.count,
+          editedRange.location + editedRange.length <= originalText.count else {
+      logger.error("Utils.updateFacets: Invalid editedRange \(editedRange.debugDescription) for originalText length \(originalText.count)")
+      return []
+    }
+    
+    let updated: [LinkFacet] = linkFacets.compactMap { facet in
+      // Validate facet range
+      guard facet.range.location >= 0,
+            facet.range.location + facet.range.length <= originalText.count else {
+        logger.error("Utils.updateFacets: Invalid facet range \(facet.range.debugDescription) for originalText length \(originalText.count)")
+        return nil
+      }
+      
       let facetEndLocation = facet.range.location + facet.range.length
       
       if facetEndLocation <= editedRange.location {
@@ -164,7 +205,16 @@ struct RichTextFacetUtils {
       } else if facet.range.location >= editedRange.location + editedRange.length {
         // Facet is entirely after the edit - adjust location
         let newLocation = facet.range.location + changeLength
-        guard newLocation >= 0 && newLocation < newText.count else { return nil }
+        guard newLocation >= 0 && newLocation <= newText.count else { 
+          logger.debug("Utils.updateFacets: Adjusted facet location \(newLocation) out of bounds for newText length \(newText.count)")
+          return nil 
+        }
+        
+        // Validate adjusted range
+        guard newLocation + facet.range.length <= newText.count else {
+          logger.debug("Utils.updateFacets: Adjusted facet range exceeds newText bounds")
+          return nil
+        }
         
         return LinkFacet(
           range: NSRange(location: newLocation, length: facet.range.length),
@@ -173,13 +223,16 @@ struct RichTextFacetUtils {
         )
       } else {
         // Facet overlaps with edit - remove it for now (user can re-add)
+        logger.debug("Utils.updateFacets: Removing overlapping facet at range \(facet.range.debugDescription)")
         return nil
       }
     }
+    logger.debug("Utils.updateFacets resultCount=\(updated.count)")
+    return updated
   }
 }
 
-// MARK: - Link Creation Dialog
+// MARK: - Enhanced Link Creation Dialog
 
 struct LinkCreationDialog: View {
   let selectedText: String
@@ -187,58 +240,51 @@ struct LinkCreationDialog: View {
   let onCancel: () -> Void
   
   @State private var urlText: String = ""
+  @State private var displayText: String = ""
   @State private var showError: Bool = false
+  @State private var errorMessage: String = ""
+  @State private var isValidating: Bool = false
+  @State private var validatedURL: URL? = nil
+  @State private var showAdvancedOptions: Bool = false
   @FocusState private var isURLFieldFocused: Bool
+  @FocusState private var isDisplayTextFocused: Bool
+  
+  private var isValidURL: Bool {
+    validatedURL != nil && !showError
+  }
   
   var body: some View {
     NavigationStack {
-      VStack(spacing: 20) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Selected Text")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
+      ScrollView {
+        VStack(spacing: 24) {
+          // Selected text section
+          if !selectedText.isEmpty {
+            selectedTextSection
+          }
           
-          Text("\"\(selectedText)\"")
-            .appFont(AppTextRole.body)
-            .padding(12)
-            .background(Color(platformColor: .platformSystemGray6))
-            .cornerRadius(8)
+          // URL input section
+          urlInputSection
+          
+          // Advanced options section
+          advancedOptionsSection
+          
+          // URL preview section
+          if let url = validatedURL {
+            urlPreviewSection(url)
+          }
+          
+          // Error section
+          if showError {
+            errorSection
+          }
         }
-        
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Link URL")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-            #if os(iOS)
-          TextField("https://example.com", text: $urlText)
-            .textFieldStyle(RoundedBorderTextFieldStyle())
-            .keyboardType(.URL)
-            .autocapitalization(.none)
-            .autocorrectionDisabled(true)
-            .focused($isURLFieldFocused)
-            #elseif os(macOS)
-            TextField("https://example.com", text: $urlText)
-              .textFieldStyle(RoundedBorderTextFieldStyle())
-              .autocorrectionDisabled(true)
-              .focused($isURLFieldFocused)
-
-            #endif
-        }
-        
-        if showError {
-          Text("Please enter a valid URL")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.red)
-        }
-        
-        Spacer()
+        .padding()
       }
-      .padding()
       .navigationTitle("Create Link")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
       #endif
-      .toolbar(content: {
+      .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             onCancel()
@@ -246,25 +292,322 @@ struct LinkCreationDialog: View {
         }
         
         ToolbarItem(placement: .confirmationAction) {
-          Button("Create") {
+          Button("Add Link") {
             createLink()
           }
-          .disabled(urlText.isEmpty)
+          .disabled(!isValidURL)
+          #if os(iOS)
+          .adaptiveGlassEffect(
+            style: .accentTinted,
+            in: Capsule(),
+            interactive: true
+          )
+          #else
+          .background(isValidURL ? Color.accentColor : Color.gray, in: Capsule())
+          #endif
+          .foregroundColor(.white)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
         }
-      })
+      }
       .onAppear {
-        isURLFieldFocused = true
+        setupInitialState()
+      }
+      .onChange(of: urlText) { _, newValue in
+        validateURL(newValue)
       }
     }
   }
   
-  private func createLink() {
-    guard let url = RichTextFacetUtils.validateAndStandardizeURL(urlText) else {
-      showError = true
+  // MARK: - UI Sections
+  
+  private var selectedTextSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label("Selected Text", systemImage: "text.cursor")
+        .appFont(AppTextRole.headline)
+        .foregroundColor(.primary)
+      
+      Text(selectedText)
+        .appFont(AppTextRole.body)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+          RoundedRectangle(cornerRadius: 12)
+            .fill(Color.accentColor.opacity(0.1))
+            .overlay(
+              RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+            )
+        )
+        .overlay(
+          HStack {
+            Spacer()
+            VStack {
+              Image(systemName: "quote.opening")
+                .appFont(size: 12)
+                .foregroundColor(.accentColor.opacity(0.6))
+              Spacer()
+            }
+            .padding(8)
+          }
+        )
+    }
+  }
+  
+  private var urlInputSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Label("Link URL", systemImage: "link")
+          .appFont(AppTextRole.headline)
+          .foregroundColor(.primary)
+        
+        Spacer()
+        
+        if isValidating {
+          ProgressView()
+            .scaleEffect(0.8)
+        } else if isValidURL {
+          Image(systemName: "checkmark.circle.fill")
+            .foregroundColor(.green)
+            .appFont(size: 16)
+        }
+      }
+      
+      VStack(spacing: 8) {
+        #if os(iOS)
+        TextField("https://example.com", text: $urlText)
+          .textFieldStyle(.roundedBorder)
+          .keyboardType(.URL)
+          .autocapitalization(.none)
+          .autocorrectionDisabled(true)
+          .focused($isURLFieldFocused)
+          .onSubmit {
+            if isValidURL {
+              createLink()
+            }
+          }
+        #else
+        TextField("https://example.com", text: $urlText)
+          .textFieldStyle(.roundedBorder)
+          .autocorrectionDisabled(true)
+          .focused($isURLFieldFocused)
+          .onSubmit {
+            if isValidURL {
+              createLink()
+            }
+          }
+        #endif
+        
+        // Quick URL suggestions
+        if urlText.isEmpty {
+          quickSuggestionsView
+        }
+      }
+    }
+  }
+  
+  private var quickSuggestionsView: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 8) {
+        ForEach(quickSuggestions, id: \.self) { suggestion in
+          Button(action: {
+            urlText = suggestion
+          }) {
+            Text(suggestion)
+              .appFont(AppTextRole.caption)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 6)
+              .background(Color.accentColor.opacity(0.1))
+              .foregroundColor(.accentColor)
+              .cornerRadius(16)
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(.horizontal, 1)
+    }
+  }
+  
+  private var quickSuggestions: [String] {
+    ["https://", "http://", "ftp://"]
+  }
+  
+  private var advancedOptionsSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Button(action: {
+        withAnimation(.easeInOut(duration: 0.3)) {
+          showAdvancedOptions.toggle()
+        }
+      }) {
+        HStack {
+          Label("Advanced Options", systemImage: "gear")
+            .appFont(AppTextRole.subheadline)
+          Spacer()
+          Image(systemName: showAdvancedOptions ? "chevron.up" : "chevron.down")
+            .appFont(size: 12)
+            .foregroundColor(.secondary)
+        }
+      }
+      .foregroundColor(.primary)
+      .buttonStyle(.plain)
+      
+      if showAdvancedOptions {
+        VStack(alignment: .leading, spacing: 12) {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Display Text")
+              .appFont(AppTextRole.caption)
+              .foregroundColor(.secondary)
+            
+            TextField(selectedText.isEmpty ? "Optional custom text" : selectedText, text: $displayText)
+              .textFieldStyle(.roundedBorder)
+              .focused($isDisplayTextFocused)
+            
+            Text("Leave empty to use the selected text or URL")
+              .appFont(AppTextRole.caption2)
+              .foregroundColor(.secondary)
+          }
+        }
+        .padding(.top, 8)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+    }
+  }
+  
+  private func urlPreviewSection(_ url: URL) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label("Preview", systemImage: "eye")
+        .appFont(AppTextRole.headline)
+        .foregroundColor(.primary)
+      
+      HStack(spacing: 12) {
+        // Link icon
+        RoundedRectangle(cornerRadius: 8)
+          .fill(Color.accentColor.opacity(0.2))
+          .frame(width: 40, height: 40)
+          .overlay(
+            Image(systemName: "link")
+              .foregroundColor(.accentColor)
+              .appFont(size: 16)
+          )
+        
+        // Link details
+        VStack(alignment: .leading, spacing: 4) {
+          Text(finalDisplayText)
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.medium)
+            .foregroundColor(.primary)
+            .lineLimit(2)
+          
+          Text(url.absoluteString)
+            .appFont(AppTextRole.caption)
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+        }
+        
+        Spacer()
+      }
+      .padding(16)
+      .background(
+        RoundedRectangle(cornerRadius: 12)
+          .fill(Color.systemBackground)
+          .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 12)
+          .stroke(Color.systemGray5, lineWidth: 1)
+      )
+    }
+  }
+  
+  private var errorSection: some View {
+    HStack(spacing: 12) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.red)
+        .appFont(size: 16)
+      
+      Text(errorMessage)
+        .appFont(AppTextRole.body)
+        .foregroundColor(.red)
+        .multilineTextAlignment(.leading)
+      
+      Spacer()
+    }
+    .padding(16)
+    .background(
+      RoundedRectangle(cornerRadius: 12)
+        .fill(Color.red.opacity(0.1))
+        .overlay(
+          RoundedRectangle(cornerRadius: 12)
+            .stroke(Color.red.opacity(0.3), lineWidth: 1)
+        )
+    )
+  }
+  
+  // MARK: - Helper Properties
+  
+  private var finalDisplayText: String {
+    if !displayText.isEmpty {
+      return displayText
+    } else if !selectedText.isEmpty {
+      return selectedText
+    } else {
+      return validatedURL?.host ?? urlText
+    }
+  }
+  
+  // MARK: - Helper Methods
+  
+  private func setupInitialState() {
+    displayText = selectedText
+    isURLFieldFocused = true
+  }
+  
+  private func validateURL(_ urlString: String) {
+    // Clear previous state
+    showError = false
+    validatedURL = nil
+    
+    // Don't validate empty strings
+    guard !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       return
     }
     
+    isValidating = true
+    
+    // Add slight delay to avoid excessive validation during typing
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+      self.performValidation(urlString)
+    }
+  }
+  
+  private func performValidation(_ urlString: String) {
+    defer { isValidating = false }
+    
+    guard let url = RichTextFacetUtils.validateAndStandardizeURL(urlString) else {
+      showError = true
+      errorMessage = "Please enter a valid URL. URLs should include a domain name (e.g., example.com or https://example.com)"
+      return
+    }
+    
+    // Additional validation
+    guard let host = url.host, !host.isEmpty else {
+      showError = true
+      errorMessage = "URL must include a valid domain name"
+      return
+    }
+    
+    // Success
+    validatedURL = url
     showError = false
+  }
+  
+  private func createLink() {
+    guard let url = validatedURL else {
+      showError = true
+      errorMessage = "Please enter a valid URL"
+      return
+    }
+    
     onComplete(url)
   }
 }

@@ -100,6 +100,8 @@ final class AppSettingsModel {
     // Privacy
     var loggedOutVisibility: Bool = true
     
+    // Developer Settings
+    
     
     // MARK: - Initializers
     
@@ -215,6 +217,8 @@ final class AppSettingsModel {
         // Privacy
         loggedOutVisibility = defaults.bool(forKey: "loggedOutVisibility")
         
+        // Developer Settings
+        
     }
     
     /// Reset all settings to defaults
@@ -305,6 +309,8 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = true
+        
+        // Developer Settings
         
     }
 }

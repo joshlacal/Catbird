@@ -13,6 +13,7 @@ import TipKit
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var currentColorScheme
+  @Environment(\.horizontalSizeClass) private var hSizeClass
   @State private var viewModel: ProfileViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
@@ -27,6 +28,9 @@ struct UnifiedProfileView: View {
   @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
     
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
+  #if DEBUG
+  private let layoutLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
+  #endif
 
   // MARK: - Initialization (keeping all initializers)
   init(
@@ -96,55 +100,60 @@ struct UnifiedProfileView: View {
   
   @ViewBuilder
     private func profileContentView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-        GeometryReader { outerGeometry in
-            let screenWidth = outerGeometry.size.width
-            let hPadding = horizontalPadding(for: screenWidth)
-            let maxWidth = maxContentWidth(for: screenWidth)
-            
-            
-            return ZStack {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        // Banner section
-                        bannerHeaderView(profile: profile)
-                            .flexibleHeaderContent()
-                            .background(Color.accentColor.opacity(0.05))
+        ZStack {
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Banner section - constrained to 600pt like other content
+                    bannerHeaderView(profile: profile)
+                        .flexibleHeaderContent()
+                        .background(Color.accentColor.opacity(0.05))
+                        .frame(maxWidth: 600, alignment: .center)
+                        .frame(maxWidth: .infinity, alignment: .center)
 
-                        // Content section
-                        VStack(spacing: 0) {
-                            ProfileHeader(
-                                profile: profile,
-                                viewModel: viewModel,
-                                appState: appState,
-                                isEditingProfile: $isEditingProfile,
-                                path: $navigationPath,
-                                screenWidth: outerGeometry.size.width,
-                                hideAvatar: false
-                            )
+                    // Content section - using NotificationsView pattern
+                    VStack(spacing: 0) {
+                        // Profile header constrained like NotificationCard
+                        ProfileHeader(
+                            profile: profile,
+                            viewModel: viewModel,
+                            appState: appState,
+                            isEditingProfile: $isEditingProfile,
+                            path: $navigationPath,
+                            screenWidth: 600, // Use constrained width like NotificationsView
+                            hideAvatar: false
+                        )
+                        .padding(.horizontal, 16)
+                        .frame(maxWidth: 600, alignment: .center)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        // Followed by section
+                        followedBySection(profile: profile)
                             .padding(.horizontal, 16)
-                            
-                            followedBySection(profile: profile, geometry: outerGeometry)
-                                .padding(.horizontal, 16)
-                            
-                            tabSelectorSection(geometry: outerGeometry)
-                                .padding(.horizontal, 16)
-                            
-                            currentTabContentSection
-                        }
-                        .padding(.horizontal, hPadding)
+                            .frame(maxWidth: 600, alignment: .center)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        // Tab selector
+                        tabSelectorSection()
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: 600, alignment: .center)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        // Posts content with full-width dividers
+                        currentTabContentSection
                     }
-                    .frame(maxWidth: maxWidth, alignment: .center)
                 }
-                .flexibleHeaderScrollView()
-                .refreshable { await refreshAllContent() }
-                .ignoresSafeArea(edges: .top)
-                .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+                // Clamp scroll content to viewport width to avoid horizontal expansion
+                .frame(maxWidth: .infinity, alignment: .center)
             }
+            .flexibleHeaderScrollView()
+            .refreshable { await refreshAllContent() }
+            .ignoresSafeArea(edges: .top)
+            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         }
     }
   // MARK: - Helper Views
   @ViewBuilder
-  private func followedBySection(profile: AppBskyActorDefs.ProfileViewDetailed, geometry: GeometryProxy) -> some View {
+  private func followedBySection(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
     if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
       FollowedByView(
         knownFollowers: viewModel.knownFollowers,
@@ -152,18 +161,16 @@ struct UnifiedProfileView: View {
         profileDID: profile.did.didString(),
         path: $navigationPath
       )
-      // Padding handled by parent container
     }
   }
   
   @ViewBuilder
-  private func tabSelectorSection(geometry: GeometryProxy) -> some View {
+  private func tabSelectorSection() -> some View {
     ProfileTabSelector(
       path: $navigationPath,
       selectedTab: $viewModel.selectedProfileTab,
       onTabChange: handleTabChange
     )
-    // Padding handled by parent container
   }
   
   private func handleTabChange(_ tab: ProfileTab) {
@@ -183,17 +190,6 @@ struct UnifiedProfileView: View {
     }
   }
 
-  // MARK: - Responsive Layout Helpers
-  private func horizontalPadding(for width: CGFloat) -> CGFloat {
-    // Consistent padding for all screen sizes
-    return 0
-  }
-  
-  private func maxContentWidth(for screenWidth: CGFloat) -> CGFloat {
-    // On larger screens (iPad/Mac), constrain to 600pt max width
-    // On smaller screens (iPhone), use full available width
-    return min(screenWidth, 600)
-  }
 
   // MARK: - New helper function for refreshing content
   private func refreshAllContent() async {
@@ -252,28 +248,37 @@ struct UnifiedProfileView: View {
     emptyMessage: String,
     loadAction: @escaping () async -> Void
   ) -> some View {
-    LazyVStack(spacing: 8) {
+    LazyVStack(spacing: 0) {
       if viewModel.isLoading && posts.isEmpty {
         ProgressView("Loading...")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
+          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
       } else if posts.isEmpty {
         emptyContentView("No Content", emptyMessage)
           .padding(.top, 40)
+          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
           .onAppear {
             Task { await loadAction() }
           }
       } else {
-        // Post rows
+        // Post rows with NotificationsView pattern - constrained content, full-width dividers
         ForEach(posts, id: \.post.uri) { post in
           Button {
             navigationPath.append(NavigationDestination.post(post.post.uri))
           } label: {
             VStack(spacing: 0) {
+              // Post content constrained like NotificationCard
               EnhancedFeedPost(
                 cachedPost: CachedFeedViewPost(feedViewPost: post),
                 path: $navigationPath
               )
+              .frame(maxWidth: 600, alignment: .center)
+              .frame(maxWidth: .infinity, alignment: .center)
+              
+              // Divider extends full width like NotificationsView
               Divider()
                 .padding(.top, 8)
             }
@@ -291,7 +296,8 @@ struct UnifiedProfileView: View {
         if viewModel.isLoadingMorePosts {
           ProgressView()
             .padding()
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: 600, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
       }
     }
@@ -616,7 +622,7 @@ struct UnifiedProfileView: View {
   // MARK: - Banner Header View
   @ViewBuilder
   private func bannerHeaderView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-    ZStack(alignment: .center) {
+    let banner = ZStack(alignment: .center) {
       if let bannerURL = profile.banner?.uriString() {
         LazyImage(url: URL(string: bannerURL)) { state in
           if let image = state.image {
@@ -631,15 +637,21 @@ struct UnifiedProfileView: View {
               .overlay(ProgressView().tint(.white))
           }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
       } else {
         Rectangle()
           .fill(Color.accentColor.opacity(0.25))
       }
     }
+    .clipped() // Ensure banner content doesn’t overflow assigned frame
     .contentShape(Rectangle())
     .accessibilityLabel("Profile banner")
+
+    if hSizeClass == .compact {
+      banner
+        .containerRelativeFrame(.horizontal)
+    } else {
+      banner
+    }
   }
   
   // Responsive banner height based on screen size
@@ -947,7 +959,8 @@ struct ProfileHeader: View {
             if !hideAvatar {
                 avatarView
                     .offset(y: -avatarSize / 2)
-                    .padding(.leading, horizontalPadding)
+                    // Use consistent 16pt padding from the content edge
+                    .padding(.leading, 16)
             }
         }
 //        .sheet(isPresented: $showingFollowersSheet) {
@@ -1249,6 +1262,34 @@ struct ProfileHeader: View {
     }
 }
 
+#if DEBUG
+// MARK: - Layout Debugging Helpers
+private struct _SizePreferenceKey: PreferenceKey {
+  static var defaultValue: CGSize = .zero
+  static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
+}
+
+private let _layoutDebugLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
+
+private extension View {
+  func debugSize(_ tag: String) -> some View {
+    background(
+      GeometryReader { proxy in
+        Color.clear.preference(key: _SizePreferenceKey.self, value: proxy.size)
+      }
+    )
+    .onPreferenceChange(_SizePreferenceKey.self) { size in
+      #if os(iOS)
+      let screenW = UIScreen.main.bounds.width
+      #else
+      let screenW = size.width
+      #endif
+      _layoutDebugLogger.debug("[\(tag)] width=\(size.width, privacy: .public), screen=\(screenW, privacy: .public), overflow=\(size.width > screenW ? "YES" : "no", privacy: .public)")
+    }
+  }
+}
+#endif
+
 // MARK: - Preview
 //#Preview {
 //  let appState = AppState.shared
@@ -1437,4 +1478,3 @@ struct ProfileImageViewerView: View {
         }
     }
     
-

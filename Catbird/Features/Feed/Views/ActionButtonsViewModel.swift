@@ -89,6 +89,18 @@ import SwiftUI
                 topController = presented
             }
             
+            // Configure iPad popover anchor to avoid runtime crash
+            if let popover = activityViewController.popoverPresentationController {
+                popover.sourceView = topController.view
+                popover.sourceRect = CGRect(
+                    x: topController.view.bounds.midX,
+                    y: topController.view.bounds.midY,
+                    width: 0,
+                    height: 0
+                )
+                popover.permittedArrowDirections = []
+            }
+
             topController.present(activityViewController, animated: true)
         }
         #endif

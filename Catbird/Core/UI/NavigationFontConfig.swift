@@ -213,7 +213,7 @@ enum NavigationFontConfig {
         } else {
             // Create and apply scrollEdge appearance if it doesn't exist
             let scrollEdgeAppearance = UINavigationBarAppearance()
-            scrollEdgeAppearance.configureWithTransparentBackground()
+            scrollEdgeAppearance.configureWithDefaultBackground()
             applyFonts(to: scrollEdgeAppearance, fontManager: fontManager)
             navigationBar.scrollEdgeAppearance = scrollEdgeAppearance
         }
@@ -223,7 +223,7 @@ enum NavigationFontConfig {
         } else {
             // Create and apply compact appearance if it doesn't exist
             let compactAppearance = UINavigationBarAppearance()
-            compactAppearance.configureWithOpaqueBackground()
+            compactAppearance.configureWithDefaultBackground()
             applyFonts(to: compactAppearance, fontManager: fontManager)
             navigationBar.compactAppearance = compactAppearance
         }

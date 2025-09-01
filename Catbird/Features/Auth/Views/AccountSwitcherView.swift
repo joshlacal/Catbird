@@ -92,7 +92,7 @@ struct AccountSwitcherView: View {
         #endif
       }
       .sheet(isPresented: $isAddingAccount) {
-        addAccountSheet
+        LoginView()
       }
       .alert(
         "Remove Account",

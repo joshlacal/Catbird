@@ -81,17 +81,119 @@ extension PlatformImage {
 
 // MARK: - Draft State Management
 
-struct PostComposerDraft {
+struct PostComposerDraft: Codable {
   let postText: String
-  let mediaItems: [PostComposerViewModel.MediaItem]
-  let videoItem: PostComposerViewModel.MediaItem?
+  let mediaItems: [CodableMediaItem]
+  let videoItem: CodableMediaItem?
   let selectedGif: TenorGif?
   let selectedLanguages: [LanguageCodeContainer]
   let selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>
   let outlineTags: [String]
-  let threadEntries: [ThreadEntry]
+  let threadEntries: [CodableThreadEntry]
   let isThreadMode: Bool
   let currentThreadIndex: Int
+}
+
+// MARK: - Codable Wrappers for Draft State
+
+struct CodableMediaItem: Codable {
+  let altText: String
+  let aspectRatio: CGSize?
+  let isLoading: Bool
+  let isAudioVisualizerVideo: Bool
+  // Optional persisted reference to local files (used for share extension imports)
+  let rawVideoURLString: String?
+  let rawImageURLString: String?
+  
+  init(from mediaItem: PostComposerViewModel.MediaItem) {
+    self.altText = mediaItem.altText
+    self.aspectRatio = mediaItem.aspectRatio
+    self.isLoading = mediaItem.isLoading
+    self.isAudioVisualizerVideo = mediaItem.isAudioVisualizerVideo
+    self.rawVideoURLString = mediaItem.rawVideoURL?.absoluteString
+    self.rawImageURLString = nil
+    // Note: We don't persist actual media data, images, or URLs for security/space reasons
+    // These will need to be re-added after restoration if needed
+  }
+  
+  func toMediaItem() -> PostComposerViewModel.MediaItem {
+    var item = PostComposerViewModel.MediaItem()
+    item.altText = altText
+    item.aspectRatio = aspectRatio
+    item.isLoading = isLoading
+    item.isAudioVisualizerVideo = isAudioVisualizerVideo
+    if let rawVideoURLString, let url = URL(string: rawVideoURLString) {
+      item.rawVideoURL = url
+    }
+    if let rawImageURLString, let url = URL(string: rawImageURLString),
+       let data = try? Data(contentsOf: url) {
+      item.rawData = data
+      if let platformImage = PlatformImage(data: data) {
+        #if os(iOS)
+        item.image = Image(uiImage: platformImage)
+        #elseif os(macOS)
+        item.image = Image(nsImage: platformImage)
+        #endif
+        item.aspectRatio = CGSize(width: platformImage.imageSize.width, height: platformImage.imageSize.height)
+        item.isLoading = false
+      }
+    }
+    return item
+  }
+}
+
+extension CodableMediaItem {
+  init(
+    altText: String,
+    aspectRatio: CGSize?,
+    isLoading: Bool,
+    isAudioVisualizerVideo: Bool,
+    rawVideoURLString: String?,
+    rawImageURLString: String?
+  ) {
+    self.altText = altText
+    self.aspectRatio = aspectRatio
+    self.isLoading = isLoading
+    self.isAudioVisualizerVideo = isAudioVisualizerVideo
+    self.rawVideoURLString = rawVideoURLString
+    self.rawImageURLString = rawImageURLString
+  }
+}
+
+struct CodableThreadEntry: Codable {
+  let text: String
+  let mediaItems: [CodableMediaItem]
+  let videoItem: CodableMediaItem?
+  let selectedGif: TenorGif?
+  let detectedURLs: [String]
+  let urlCards: [String: URLCardResponse]
+  let hashtags: [String]
+  let parentPostURI: String?
+  let quotedPostURI: String?
+  
+  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?) {
+    self.text = threadEntry.text
+    self.mediaItems = threadEntry.mediaItems.map(CodableMediaItem.init)
+    self.videoItem = threadEntry.videoItem.map(CodableMediaItem.init)
+    self.selectedGif = threadEntry.selectedGif
+    self.detectedURLs = threadEntry.detectedURLs
+    self.urlCards = threadEntry.urlCards
+    self.hashtags = threadEntry.hashtags
+    self.parentPostURI = parentPost?.uri.uriString()
+    self.quotedPostURI = quotedPost?.uri.uriString()
+  }
+  
+  func toThreadEntry() -> ThreadEntry {
+    var entry = ThreadEntry()
+    entry.text = text
+    entry.mediaItems = mediaItems.map { $0.toMediaItem() }
+    entry.videoItem = videoItem?.toMediaItem()
+    entry.selectedGif = selectedGif
+    entry.detectedURLs = detectedURLs
+    entry.urlCards = urlCards
+    entry.hashtags = hashtags
+    return entry
+  }
 }
 
 // MARK: - Language Utilities

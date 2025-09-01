@@ -30,7 +30,6 @@ final class FeedStateStore {
   
   func setModelContext(_ context: ModelContext) {
     self.modelContext = context
-    PersistentFeedStateManager.shared.setModelContext(context)
   }
   
   func stateManager(for feedType: FetchType, appState: AppState) -> FeedStateManager {
@@ -89,16 +88,6 @@ final class FeedStateStore {
       // Update the state manager's posts directly
       await stateManager.restorePersistedPosts(cachedPosts)
       
-      // Restore scroll position if available
-      if let scrollState = PersistentScrollStateManager.shared.loadScrollState(for: feedIdentifier) {
-        let anchor = FeedStateManager.ScrollAnchor(
-          postID: scrollState.postID,
-          offsetFromTop: scrollState.offsetFromTop,
-          timestamp: scrollState.timestamp
-        )
-        stateManager.setScrollAnchor(anchor)
-        logger.debug("Restored scroll position for \(feedIdentifier): post \(scrollState.postID)")
-      }
     }
   }
   
@@ -144,24 +133,6 @@ final class FeedStateStore {
       if !posts.isEmpty {
         feedDataBatch.append((identifier: identifier, posts: posts))
         
-        // Save precise scroll position using scroll anchor if available
-        if let currentAnchor = stateManager.getScrollAnchor() {
-          PersistentScrollStateManager.shared.saveScrollState(
-            feedIdentifier: identifier,
-            postID: currentAnchor.postID,
-            offsetFromTop: currentAnchor.offsetFromTop,
-            contentOffset: 0 // This will be updated by FeedCollectionViewController with actual offset
-          )
-          logger.debug("Saved precise scroll position for \(identifier): post \(currentAnchor.postID), offset \(currentAnchor.offsetFromTop)")
-        } else if let firstVisiblePost = posts.first {
-          PersistentScrollStateManager.shared.saveScrollState(
-            feedIdentifier: identifier,
-            postID: firstVisiblePost.id,
-            offsetFromTop: 0,
-            contentOffset: 0
-          )
-          logger.debug("Saved fallback scroll position for \(identifier): first post \(firstVisiblePost.id)")
-        }
       }
     }
     
@@ -351,7 +322,6 @@ final class FeedStateStore {
     for (identifier, stateManager) in stateManagers {
       // Ensure each state manager maintains its current state exactly as is
       // This is important for preventing state loss during app switching, control center, etc.
-      await stateManager.preserveCurrentState()
       logger.debug("Preserved existing state for \(identifier)")
     }
   }

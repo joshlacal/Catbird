@@ -142,7 +142,7 @@ class RichTextView: UITextView {
     }
     
     override func paste(_ sender: Any?) {
-        print("📝 RichTextEditor: paste() called")
+        logger.debug("📝 RichTextEditor: paste() called")
         
         // ✅ CLEANED: Simple paste handler - text only
         // All media handling is done by PostComposerViewModel.handleMediaPaste()
@@ -151,16 +151,16 @@ class RichTextView: UITextView {
         
         // Only handle text content in the text editor
         if pasteboard.hasStrings {
-            print("📝 Pasting text content")
+            logger.debug("📝 Pasting text content")
             super.paste(sender)
         } else {
-            print("📝 Non-text content detected - triggering media paste handler")
+            logger.debug("📝 Non-text content detected - triggering media paste handler")
             // Trigger the unified media paste handler via callback
             // Use a dummy image to signal that paste was attempted
             onImagePasted?(UIImage())
         }
         
-        print("📝 RichTextEditor: paste() completed")
+        logger.debug("📝 RichTextEditor: paste() completed")
     }
     
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
@@ -270,58 +270,58 @@ class RichTextView: UITextView {
     // MARK: - Async Image Paste Handling
     
     private func handleAsyncImagePaste(from itemProvider: NSItemProvider) {
-        print("🍃 handleAsyncImagePaste: Starting async image processing")
+        logger.debug("🍃 handleAsyncImagePaste: Starting async image processing")
         
         let imageTypes = [UTType.image.identifier, UTType.png.identifier, UTType.jpeg.identifier, UTType.tiff.identifier, UTType.gif.identifier, "public.image"]
         
         Task {
             for imageType in imageTypes {
-                print("🍃 Async: Checking type: \(imageType)")
+                logger.debug("🍃 Async: Checking type: \(imageType)")
                 if itemProvider.hasItemConformingToTypeIdentifier(imageType) {
-                    print("🍃 Async: Found conforming type: \(imageType), loading...")
+                    logger.debug("🍃 Async: Found conforming type: \(imageType), loading...")
                     
                     do {
                         let result = try await itemProvider.loadItem(forTypeIdentifier: imageType)
-                        print("🍃 Async: Item loaded, data type: \(type(of: result))")
+                        logger.debug("🍃 Async: Item loaded, data type: \(type(of: result))")
                         
                         var loadedImage: UIImage?
                         
                         if let imageData = result as? Data {
-                            print("🍃 Async: Got Data, size: \(imageData.count) bytes")
+                            logger.debug("🍃 Async: Got Data, size: \(imageData.count) bytes")
                             loadedImage = UIImage(data: imageData)
                         } else if let image = result as? UIImage {
-                            print("🍃 Async: Got UIImage directly, size: \(image.size)")
+                            logger.debug("🍃 Async: Got UIImage directly, size: \(image.size.debugDescription)")
                             loadedImage = image
                         } else if let url = result as? URL {
-                            print("🍃 Async: Got URL: \(url)")
+                            logger.debug("🍃 Async: Got URL: \(url)")
                             do {
                                 let imageData = try Data(contentsOf: url)
-                                print("🍃 Async: Loaded data from URL, size: \(imageData.count) bytes")
+                                logger.debug("🍃 Async: Loaded data from URL, size: \(imageData.count) bytes")
                                 loadedImage = UIImage(data: imageData)
                             } catch {
-                                print("🍃 Async: FAILED: Could not load data from URL: \(error)")
+                                logger.debug("🍃 Async: FAILED: Could not load data from URL: \(error)")
                             }
                         }
                         
                         if let image = loadedImage {
-                            print("🍃 Async: SUCCESS: Image loaded, calling callback on main thread")
+                            logger.debug("🍃 Async: SUCCESS: Image loaded, calling callback on main thread")
                             await MainActor.run {
                                 onImagePasted?(image)
                             }
                             return // Successfully handled, exit
                         } else {
-                            print("🍃 Async: FAILED: Could not create UIImage from result")
+                            logger.debug("🍃 Async: FAILED: Could not create UIImage from result")
                         }
                     } catch {
-                        print("🍃 Async: Error loading item: \(error)")
+                        logger.debug("🍃 Async: Error loading item: \(error)")
                         continue // Try next type
                     }
                 } else {
-                    print("🍃 Async: Type \(imageType) not conforming")
+                    logger.debug("🍃 Async: Type \(imageType) not conforming")
                 }
             }
             
-            print("🍃 Async: No suitable image type found")
+            logger.debug("🍃 Async: No suitable image type found")
         }
     }
 }
@@ -391,7 +391,7 @@ struct RichTextEditor: View {
     var onTextChanged: ((NSAttributedString) -> Void)?
     
     var body: some View {
-        // TODO: Implement macOS-specific rich text editor using NSViewRepresentable
+        // Note: Minimal macOS placeholder; a richer NSViewRepresentable editor can be introduced as needed.
         TextEditor(text: .constant(attributedText.string))
             .frame(minHeight: 100)
     }

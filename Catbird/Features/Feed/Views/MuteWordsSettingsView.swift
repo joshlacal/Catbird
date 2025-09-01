@@ -22,29 +22,23 @@ struct MuteWordsSettingsView: View {
 
   var body: some View {
     NavigationStack {
-      VStack(spacing: 0) {
-        if !muteWords.isEmpty {
-          searchBarSection
-        }
+      List {
+        addWordSection
         
-        List {
-          addWordSection
-          
-          muteWordsSection
-          
-          if !hasSearchText {
-            aboutSection
-          }
+        muteWordsSection
+        
+        if !hasSearchText && !muteWords.isEmpty {
+          aboutSection
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.sidebar)
-        #endif
-        .searchable(text: $searchText, prompt: "Search mute words")
-        .onChange(of: searchText) {
-          filterMuteWords()
-        }
+      }
+      #if os(iOS)
+      .listStyle(.insetGrouped)
+      #else
+      .listStyle(.sidebar)
+      #endif
+      .searchable(text: $searchText, prompt: "Search mute words")
+      .onChange(of: searchText) {
+        filterMuteWords()
       }
     }
     .navigationTitle("Mute Words")
@@ -78,92 +72,42 @@ struct MuteWordsSettingsView: View {
   
   // MARK: - View Components
   
-  @ViewBuilder
-  private var searchBarSection: some View {
-    if !muteWords.isEmpty {
-      VStack(spacing: DesignTokens.Spacing.none) {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-          Image(systemName: "magnifyingglass")
-            .foregroundStyle(.secondary)
-            .frame(width: DesignTokens.Size.iconSM, height: DesignTokens.Size.iconSM)
-          
-          TextField("Search mute words", text: $searchText)
-            .textFieldStyle(.plain)
-          
-          if !searchText.isEmpty {
-            Button {
-              withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-                searchText = ""
-              }
-            } label: {
-              Image(systemName: "xmark.circle.fill")
-                .foregroundStyle(.secondary)
-                .frame(width: DesignTokens.Size.iconSM, height: DesignTokens.Size.iconSM)
-            }
-            .transition(.scale.combined(with: .opacity))
-          }
-        }
-        .spacingBase(.horizontal)
-        .spacingSM(.vertical)
-        .themedElevatedBackground(appState.themeManager, elevation: .low, appSettings: appState.appSettings)
-        .cornerRadiusMD()
-        .spacingBase(.horizontal)
-        .spacingSM(.top)
-      }
-    }
-  }
   
   @ViewBuilder
   private var addWordSection: some View {
     Section {
-      VStack(spacing: DesignTokens.Spacing.base) {
-        HStack(spacing: DesignTokens.Spacing.base) {
+      HStack(spacing: DesignTokens.Spacing.sm) {
 #if os(iOS)
-          TextField("Add new mute word", text: $newMuteWord)
-            .textFieldStyle(.roundedBorder)
-            .autocorrectionDisabled(true)
-            .textInputAutocapitalization(.never)
-            .onSubmit {
-              addWordIfValid()
-            }
+        TextField("Add new mute word", text: $newMuteWord)
+          .textFieldStyle(.plain)
+          .autocorrectionDisabled(true)
+          .textInputAutocapitalization(.never)
+          .onSubmit {
+            addWordIfValid()
+          }
 #else
-          TextField("Add new mute word", text: $newMuteWord)
-            .onSubmit {
-              addWordIfValid()
-            }
+        TextField("Add new mute word", text: $newMuteWord)
+          .textFieldStyle(.plain)
+          .onSubmit {
+            addWordIfValid()
+          }
 #endif
-          
-          Button(action: addWordIfValid) {
-            Image(systemName: "plus.circle.fill")
-              .font(.title2)
-              .foregroundStyle(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
-                             Color.secondary : Color.blue)
-          }
-          .disabled(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          .scaleEffect(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.9 : 1.0)
-          .animation(.easeInOut(duration: DesignTokens.Duration.fast), value: newMuteWord.isEmpty)
-        }
         
-        if !newMuteWord.isEmpty && muteWords.contains(where: { $0.value.lowercased() == newMuteWord.lowercased() }) {
-          HStack(spacing: DesignTokens.Spacing.xs) {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .foregroundStyle(.orange)
-              .font(.caption)
-            Text("This word is already in your mute list")
-              .designFootnote()
-              .foregroundStyle(.orange)
-            Spacer()
-          }
-          .transition(.asymmetric(
-            insertion: .scale.combined(with: .opacity),
-            removal: .opacity
-          ))
+        Button(action: addWordIfValid) {
+          Image(systemName: "plus.circle.fill")
+            .foregroundStyle(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
+                .secondary : Color.blue)
         }
+        .disabled(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .buttonStyle(.plain)
       }
-      .spacingSM(.vertical)
-    } header: {
-      Label("Add Mute Word", systemImage: "plus.bubble")
-        .designCallout()
+      
+      if !newMuteWord.isEmpty && muteWords.contains(where: { $0.value.lowercased() == newMuteWord.lowercased() }) {
+        Label("This word is already in your mute list", systemImage: "exclamationmark.triangle.fill")
+          .designFootnote()
+          .foregroundStyle(.orange)
+          .transition(.opacity.combined(with: .scale))
+      }
     }
   }
   
@@ -180,22 +124,9 @@ struct MuteWordsSettingsView: View {
         muteWordsList
       }
     } header: {
-      HStack {
-        Label(hasSearchText ? "Search Results" : "Current Mute Words", 
-              systemImage: hasSearchText ? "magnifyingglass" : "text.badge.minus")
+      if !muteWords.isEmpty {
+        Text(hasSearchText ? "Search Results" : "Mute Words")
           .designCallout()
-        
-        Spacer()
-        
-        if !hasSearchText && !muteWords.isEmpty {
-          Text("\(muteWords.count)")
-            .designCaption()
-            .foregroundStyle(.secondary)
-            .spacingXS(.horizontal)
-            .spacingXS(.vertical)
-            .background(.secondary.opacity(0.2))
-            .cornerRadiusSM()
-        }
       }
     }
   }
@@ -303,29 +234,24 @@ struct MuteWordsSettingsView: View {
   
   @ViewBuilder
   private var emptyStateView: some View {
-    VStack(spacing: DesignTokens.Spacing.base) {
+    VStack(spacing: DesignTokens.Spacing.sm) {
       Image(systemName: hasSearchText ? "magnifyingglass" : "text.badge.minus")
-        .font(.title)
-        .foregroundStyle(.secondary)
-        .frame(width: DesignTokens.Size.iconXL, height: DesignTokens.Size.iconXL)
+        .font(.title2)
+        .foregroundStyle(.tertiary)
       
-      Text(hasSearchText ? "No matching mute words" : "No mute words added yet")
-        .designCallout()
+      Text(hasSearchText ? "No matching words found" : "No mute words yet")
+        .designBody()
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       
-      if hasSearchText {
-        Text("Try adjusting your search terms")
-          .designFootnote()
-          .foregroundStyle(.tertiary)
-      } else {
-        Text("Add words above to hide posts containing them from your feeds")
+      if !hasSearchText {
+        Text("Add words to hide posts containing them")
           .designFootnote()
           .foregroundStyle(.tertiary)
           .multilineTextAlignment(.center)
       }
     }
-    .spacingXL(.vertical)
+    .spacingLG(.vertical)
     .frame(maxWidth: .infinity)
   }
   

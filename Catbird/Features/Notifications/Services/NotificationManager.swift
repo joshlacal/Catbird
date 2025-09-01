@@ -163,6 +163,11 @@ final class NotificationManager: NSObject {
       Task {
         await registerDeviceToken(deviceToken)
       }
+    } else if client == nil {
+      // Client was cleared (user logged out), clean up notifications
+      Task {
+        await cleanupNotifications()
+      }
     }
   }
 
@@ -337,6 +342,62 @@ final class NotificationManager: NSObject {
     }
 
     notificationLogger.info("Started background notification checking")
+  }
+
+  /// Cleanup notifications when user logs out
+  func cleanupNotifications() async {
+    notificationLogger.info("Cleaning up notifications after logout")
+
+    // Stop unread checking timer
+    unreadCheckTimer?.invalidate()
+    unreadCheckTimer = nil
+
+    // Unregister from notification service if we have a device token
+    if let deviceToken = deviceToken {
+      await unregisterDeviceToken(deviceToken)
+    }
+
+    // Reset state
+    status = .unknown
+    notificationsEnabled = false
+    unreadCount = 0
+    deviceToken = nil
+    preferences = NotificationPreferences()
+    mutedUsers.removeAll()
+    blockedUsers.removeAll()
+    lastRelationshipSync = nil
+
+    // Clear app badge
+    #if os(iOS)
+    if #available(iOS 17.0, *) {
+      UNUserNotificationCenter.current().setBadgeCount(0) { error in
+        if let error = error {
+          self.notificationLogger.error("Failed to clear badge count: \(error.localizedDescription)")
+        }
+      }
+    } else {
+      await MainActor.run {
+        UIApplication.shared.applicationIconBadgeNumber = 0
+      }
+    }
+    #elseif os(macOS)
+    if #available(macOS 14.0, *) {
+      UNUserNotificationCenter.current().setBadgeCount(0) { error in
+        if let error = error {
+          self.notificationLogger.error("Failed to clear badge count: \(error.localizedDescription)")
+        }
+      }
+    } else {
+      await MainActor.run {
+        NSApplication.shared.dockTile.badgeLabel = nil
+      }
+    }
+    #endif
+
+    // Update widget to clear count
+    updateWidgetUnreadCount(0)
+
+    notificationLogger.info("Notification cleanup completed")
   }
 
   /// Checks for unread notifications and updates count
@@ -598,6 +659,51 @@ final class NotificationManager: NSObject {
   }
 
   // MARK: - Private Methods
+
+  /// Unregister the device token from our notification service
+  private func unregisterDeviceToken(_ token: Data) async {
+    notificationLogger.info("Unregistering device token from notification service")
+
+    do {
+      // Convert token to string format
+      let tokenString = token.map { String(format: "%02.2hhx", $0) }.joined()
+
+      // Create request
+      var request = URLRequest(url: serviceBaseURL.appendingPathComponent("unregister"))
+      request.httpMethod = "POST"
+      request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+      // Create payload with just the device token
+      let payload: [String: String] = [
+        "device_token": tokenString
+      ]
+
+      // Encode payload
+      request.httpBody = try JSONEncoder().encode(payload)
+
+      // Send request
+      let (data, response) = try await URLSession.shared.data(for: request)
+
+      // Check response (accept both 200 and 404 as success - 404 means token wasn't registered)
+      guard let httpResponse = response as? HTTPURLResponse else {
+        throw NSError(
+          domain: "NotificationManager", code: -1,
+          userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+      }
+
+      if httpResponse.statusCode == 200 || httpResponse.statusCode == 404 {
+        notificationLogger.info("Successfully unregistered device token from notification service")
+      } else {
+        let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+        notificationLogger.warning(
+          "Failed to unregister device token: HTTP \(httpResponse.statusCode) - \(errorMessage)")
+        // Don't throw here - we want to continue cleanup even if unregister fails
+      }
+    } catch {
+      notificationLogger.error("Error unregistering device token: \(error.localizedDescription)")
+      // Don't throw here - we want to continue cleanup even if unregister fails
+    }
+  }
 
   /// Register the device token with our notification service
   private func registerDeviceToken(_ token: Data) async {

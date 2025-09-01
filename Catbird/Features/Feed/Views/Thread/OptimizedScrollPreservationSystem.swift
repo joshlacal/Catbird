@@ -1,3 +1,4 @@
+
 //
 //  OptimizedScrollPreservationSystem.swift
 //  Catbird
@@ -5,9 +6,10 @@
 //  Optimized scroll preservation using iOS 18 UIUpdateLink for pixel-perfect, frame-synchronized updates
 //
 
-#if os(iOS) && !targetEnvironment(macCatalyst)
 import UIKit
 import os
+
+#if os(iOS) && !targetEnvironment(macCatalyst)
 
 @available(iOS 18.0, *)
 @MainActor
@@ -66,7 +68,6 @@ final class OptimizedScrollPreservationSystem {
     private var activeUpdateContext: UpdateContext?
     private let displayScale = PlatformScreenInfo.scale
     private let frameRateManager = AdaptiveFrameRateManager()
-    private let telemetryActor = ScrollPerformanceTelemetryActor()
     
     // A/B Testing integration for scroll preservation strategies
     private weak var abTestingFramework: ABTestingFramework?
@@ -200,15 +201,7 @@ final class OptimizedScrollPreservationSystem {
                 if error < pixelThreshold {
                     logger.debug("✅ Sub-pixel perfect scroll achieved with error: \(error)")
                     performanceMeasurement?.complete(operation: "pixel_perfect_scroll_restoration")
-                    
-                    // Track success metrics
-                    await telemetryActor.recordScrollRestoration(
-                        success: true,
-                        error: error,
-                        frameRate: Double(PlatformScreenInfo.maximumFramesPerSecond),
-                        duration: currentTime - (context?.startTime ?? currentTime)
-                    )
-                    
+                                        
                     link.isEnabled = false
                     completion(true)
                     return
@@ -796,16 +789,41 @@ extension FeedGapLoadingManager.GapLoadingStrategy {
 @MainActor
 final class OptimizedScrollPreservationSystem {
     
+    // Stub types to match iOS implementation
+    struct PreciseScrollAnchor {
+        let indexPath: IndexPath
+        let postId: String
+        let contentOffset: CGPoint
+        let viewportRelativeY: CGFloat
+        let itemFrameY: CGFloat
+        let itemHeight: CGFloat
+        let visibleHeightInViewport: CGFloat
+        let timestamp: TimeInterval
+        let displayScale: CGFloat
+        
+        var pixelAlignedOffset: CGPoint {
+            CGPoint(x: contentOffset.x, y: contentOffset.y)
+        }
+        
+        var pixelAlignedViewportY: CGFloat {
+            return viewportRelativeY
+        }
+    }
+    
     init() {
-        // No-op on macOS
+        // No-op on macOS/Catalyst
     }
     
     func preserveScrollPosition() {
-        // No-op on macOS
+        // No-op on macOS/Catalyst
     }
     
     func restoreScrollPosition() {
-        // No-op on macOS
+        // No-op on macOS/Catalyst
+    }
+    
+    func cleanup() {
+        // No-op on macOS/Catalyst
     }
 }
 

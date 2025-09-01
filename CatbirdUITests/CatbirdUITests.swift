@@ -30,12 +30,12 @@
 //    
 //    @MainActor
 //    func testLaunchWithFaultOrdering() throws {
-//        print("🚀 Starting FaultOrdering test")
+//        logger.debug("🚀 Starting FaultOrdering test")
 //        
 //        let app = XCUIApplication()
 //        
 //        let test = FaultOrderingTest { app in
-//            print("📱 Setting up app for FaultOrdering measurement")
+//            logger.debug("📱 Setting up app for FaultOrdering measurement")
 //            
 //            // Wait for app to stabilize
 //            sleep(5)
@@ -43,7 +43,7 @@
 //            // Find main UI elements and keep app active
 //            let collectionView = app.collectionViews.firstMatch
 //            if collectionView.waitForExistence(timeout: 15) {
-//                print("✅ Found collection view, starting interaction sequence")
+//                logger.debug("✅ Found collection view, starting interaction sequence")
 //                
 //                // Keep app active with realistic user interactions
 //                for i in 0..<30 {
@@ -54,7 +54,7 @@
 //                    // Occasional taps to simulate user engagement
 //                    if i % 5 == 0 {
 //                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-//                        print("⏳ Keeping app active: \(i)/30")
+//                        logger.debug("⏳ Keeping app active: \(i)/30")
 //                    }
 //                    
 //                    // Navigate between tabs periodically
@@ -74,18 +74,18 @@
 //                    }
 //                }
 //            } else {
-//                print("⚠️ Collection view not found, using fallback interactions")
+//                logger.debug("⚠️ Collection view not found, using fallback interactions")
 //                // Fallback: generic screen taps
 //                for i in 0..<20 {
 //                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 //                    sleep(2)
 //                    if i % 5 == 0 {
-//                        print("⏳ Fallback interactions: \(i)/20")
+//                        logger.debug("⏳ Fallback interactions: \(i)/20")
 //                    }
 //                }
 //            }
 //            
-//            print("✅ Completed interaction sequence")
+//            logger.debug("✅ Completed interaction sequence")
 //        }
 //        
 //        test.testApp(testCase: self, app: app)
@@ -93,7 +93,7 @@
 //    
 //    @MainActor
 //    func testBasicAppLaunch() throws {
-//        print("📱 Testing basic app launch without FaultOrdering")
+//        logger.debug("📱 Testing basic app launch without FaultOrdering")
 //        
 //        let app = XCUIApplication()
 //        
@@ -109,7 +109,7 @@
 //        let collectionView = app.collectionViews.firstMatch
 //        if collectionView.waitForExistence(timeout: 10) {
 //            collectionView.swipeUp()
-//            print("✅ Basic app functionality verified")
+//            logger.debug("✅ Basic app functionality verified")
 //        }
 //        
 //        app.terminate()
@@ -117,13 +117,13 @@
 //    
 //    @MainActor
 //    func testFaultOrderingConfiguration() throws {
-//        print("🔧 Testing FaultOrdering configuration")
+//        logger.debug("🔧 Testing FaultOrdering configuration")
 //        
 //        // Verify dylib can be found
 //        if let dylibPath = getDylibPath(dylibName: "FaultOrdering") {
-//            print("✅ FaultOrdering dylib found at: \(dylibPath)")
+//            logger.debug("✅ FaultOrdering dylib found at: \(dylibPath)")
 //        } else {
-//            print("⚠️ FaultOrdering dylib not found - may need to be linked to app target")
+//            logger.debug("⚠️ FaultOrdering dylib not found - may need to be linked to app target")
 //        }
 //        
 //        let app = XCUIApplication()
@@ -142,7 +142,7 @@
 //        XCTAssertEqual(app.state, .runningForeground, "App should launch with FaultOrdering environment")
 //        
 //        app.terminate()
-//        print("✅ FaultOrdering configuration test completed")
+//        logger.debug("✅ FaultOrdering configuration test completed")
 //    }
 //    
 //    // Helper function to find dylib
@@ -206,7 +206,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
     
     @MainActor
     func testLaunchWithFaultOrdering() throws {
-        print("🚀 Starting FaultOrdering test")
+        logger.debug("🚀 Starting FaultOrdering test")
         
         // Wait a bit to ensure any previous server is closed
         sleep(2)
@@ -214,7 +214,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
         let app = XCUIApplication()
         
         let test = FaultOrderingTest { app in
-            print("📱 Setting up app for FaultOrdering measurement")
+            logger.debug("📱 Setting up app for FaultOrdering measurement")
             
             // Wait for app to stabilize
             sleep(5)
@@ -222,7 +222,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
             // Find main UI elements and keep app active
             let collectionView = app.collectionViews.firstMatch
             if collectionView.waitForExistence(timeout: 15) {
-                print("✅ Found collection view, starting interaction sequence")
+                logger.debug("✅ Found collection view, starting interaction sequence")
                 
                 // Keep app active with realistic user interactions
                 for i in 0..<30 {
@@ -233,7 +233,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
                     // Occasional taps to simulate user engagement
                     if i % 5 == 0 {
                         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-                        print("⏳ Keeping app active: \(i)/30")
+                        logger.debug("⏳ Keeping app active: \(i)/30")
                     }
                     
                     // Navigate between tabs periodically
@@ -253,20 +253,20 @@ final class FaultOrderingLaunchTest: XCTestCase {
                     }
                 }
             } else {
-                print("⚠️ Collection view not found, using fallback interactions")
+                logger.debug("⚠️ Collection view not found, using fallback interactions")
                 // Fallback: generic screen taps
                 for i in 0..<20 {
                     app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                     sleep(2)
                     if i % 5 == 0 {
-                        print("⏳ Fallback interactions: \(i)/20")
+                        logger.debug("⏳ Fallback interactions: \(i)/20")
                     }
                 }
             }
             */
             
             app.launch()
-            print("✅ Completed interaction sequence")
+            logger.debug("✅ Completed interaction sequence")
         }
         
         test.testApp(testCase: self, app: app)
@@ -274,7 +274,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
     
     @MainActor
     func testBasicAppLaunch() throws {
-        print("📱 Testing basic app launch without FaultOrdering")
+        logger.debug("📱 Testing basic app launch without FaultOrdering")
         
         let app = XCUIApplication()
         
@@ -290,7 +290,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
         let collectionView = app.collectionViews.firstMatch
         if collectionView.waitForExistence(timeout: 10) {
             collectionView.swipeUp()
-            print("✅ Basic app functionality verified")
+            logger.debug("✅ Basic app functionality verified")
         }
         
         app.terminate()
@@ -298,13 +298,13 @@ final class FaultOrderingLaunchTest: XCTestCase {
     
     @MainActor
     func testFaultOrderingConfiguration() throws {
-        print("🔧 Testing FaultOrdering configuration")
+        logger.debug("🔧 Testing FaultOrdering configuration")
         
         // Verify dylib can be found
         if let dylibPath = getDylibPath(dylibName: "FaultOrdering") {
-            print("✅ FaultOrdering dylib found at: \(dylibPath)")
+            logger.debug("✅ FaultOrdering dylib found at: \(dylibPath)")
         } else {
-            print("⚠️ FaultOrdering dylib not found - may need to be linked to app target")
+            logger.debug("⚠️ FaultOrdering dylib not found - may need to be linked to app target")
         }
         
         let app = XCUIApplication()
@@ -323,7 +323,7 @@ final class FaultOrderingLaunchTest: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "App should launch with FaultOrdering environment")
         
         app.terminate()
-        print("✅ FaultOrdering configuration test completed")
+        logger.debug("✅ FaultOrdering configuration test completed")
     }
     
     // Helper function to find dylib

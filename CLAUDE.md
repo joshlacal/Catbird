@@ -555,3 +555,4 @@ The project includes automated quality checks:
 ---
 
 *This document is focused on essential information for effective development. For detailed MCP server usage, simulator automation, and testing patterns, see TESTING_COOKBOOK.md and other documentation files.*
+- be sure to think about capture semantics for `self` in Swift 6
