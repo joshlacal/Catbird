@@ -54,6 +54,10 @@ final class PostComposerViewModel {
   var isAltTextEditorPresented = false
   var isVideoUploading: Bool = false
   var mediaUploadManager: MediaUploadManager?
+  // If non-nil, posting is blocked due to server policy
+  var videoUploadBlockedReason: String?
+  // Optional machine-readable code for blocked state (e.g., "unconfirmed_email")
+  var videoUploadBlockedCode: String?
   
   // MARK: - GIF Properties
   
@@ -181,6 +185,40 @@ final class PostComposerViewModel {
     }
   }
 
+  // MARK: - Video Upload Eligibility
+  func checkVideoUploadEligibility(force: Bool = false) async {
+    guard videoItem != nil, let manager = mediaUploadManager else { return }
+    let result = await manager.preflightUploadPermission(force: force)
+    await MainActor.run {
+      if result.allowed {
+        self.videoUploadBlockedReason = nil
+        self.videoUploadBlockedCode = nil
+      } else {
+        self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
+        self.videoUploadBlockedCode = result.code
+      }
+    }
+  }
+
+  // MARK: - Email Verification
+  func resendVerificationEmail() async {
+    guard let manager = mediaUploadManager else { return }
+    do {
+      try await manager.requestEmailConfirmation()
+      await MainActor.run {
+        self.videoUploadBlockedReason = "Verification email sent. Check your inbox."
+        self.videoUploadBlockedCode = nil
+      }
+      // Optionally trigger a forced re-check after a short delay (user may confirm quickly)
+      try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+      _ = await manager.preflightUploadPermission(force: true)
+    } catch {
+      await MainActor.run {
+        self.videoUploadBlockedReason = "Failed to send verification email. Please try again."
+      }
+    }
+  }
+
   // MARK: - Manual Link Facets Update
   func updateManualLinkFacets(from linkFacets: [RichTextFacetUtils.LinkFacet]) {
     manualLinkFacets = RichTextFacetUtils.createFacets(from: linkFacets, in: postText)
@@ -256,6 +294,8 @@ final class PostComposerViewModel {
       videoItem = loadingVideo
       Task { await loadVideoThumbnail(for: loadingVideo) }
     }
+    // Also preflight eligibility when restoring draft with a video
+    Task { await checkVideoUploadEligibility() }
   }
   
   // MARK: - Media Item Model

@@ -13,9 +13,16 @@ Catbird is a **PRODUCTION-READY** cross-platform client for Bluesky built with S
 - **CatbirdFeedWidget**: Feed widget extension (iOS only, in development)
 
 ### Platform Support
-- **iOS 16.0+**: Full featured mobile client with UIKit optimizations
-- **macOS 13.0+**: Native macOS client with SwiftUI-based feed implementation
+- **iOS 26.0+**: Full featured mobile client with UIKit optimizations and Liquid Glass design (minimum iOS 18.0+ for legacy support)
+- **macOS Tahoe 26.0+**: Native macOS client with SwiftUI-based feed implementation and Liquid Glass (minimum macOS 13.0+ for legacy support)
 - **Shared Codebase**: ~95% code sharing between platforms using conditional compilation
+
+### iOS 26 Naming Convention
+Apple introduced a major change to OS naming at WWDC 2025, moving from sequential numbering to year-based naming:
+- **iOS 26** represents the 2025-2026 release cycle (September 2025 - September 2026)
+- What would have been iOS 19 is now iOS 26, reflecting the year it will be current
+- This naming convention applies to all Apple platforms: iOS 26, iPadOS 26, macOS Tahoe 26, watchOS 26, tvOS 26, visionOS 26
+- Provides consistency across all Apple operating systems and aligns with industry conventions (like automotive model years)
 
 ## Build and Development Commands
 
@@ -78,6 +85,164 @@ AppState (@Observable)
 - **FeedTuner** for intelligent thread consolidation in feeds
 - **A/B Testing** framework for feature experimentation
 
+## Liquid Glass API Integration
+
+### Overview
+iOS 26 introduces **Liquid Glass**, a revolutionary design system that combines the optical properties of glass with fluid animations. This translucent material creates a dynamic layer for controls and navigation elements, automatically adapting to content, lighting, and user interactions.
+
+### Core SwiftUI APIs
+
+#### Basic Glass Effects
+Apply Liquid Glass to any view using the `.glassEffect()` modifier:
+
+```swift
+Text("Hello, World!")
+  .font(.title)
+  .padding()
+  .glassEffect()  // Default: .regular in .capsule shape
+
+// Custom configuration
+Text("Custom Glass")
+  .padding()
+  .glassEffect(.regular.tint(.blue).interactive(), in: .rect(cornerRadius: 16))
+```
+
+#### Glass Variants
+- **`.regular`**: Standard Liquid Glass appearance
+- **`.clear`**: Minimal glass effect for subtle elevation
+- **`.identity`**: No effect (useful for conditional application)
+
+#### Interactive Glass
+Enable touch/pointer reactions with `.interactive()`:
+
+```swift
+Button("Interactive Button") {
+  // action
+}
+.padding()
+.glassEffect(.regular.interactive())
+```
+
+### Container-Based Rendering
+
+#### GlassEffectContainer
+Use `GlassEffectContainer` for optimal performance when applying glass effects to multiple views:
+
+```swift
+GlassEffectContainer(spacing: 20) {
+  HStack(spacing: 20) {
+    ForEach(items, id: \.id) { item in
+      ItemView(item)
+        .glassEffect()
+    }
+  }
+}
+```
+
+#### Glass Effect Unions
+Combine multiple views into a single glass shape:
+
+```swift
+@Namespace private var glassNamespace
+
+GlassEffectContainer(spacing: 10) {
+  HStack(spacing: 10) {
+    Button("First") { }
+      .glassEffect()
+      .glassEffectUnion(id: "buttonGroup", namespace: glassNamespace)
+    
+    Button("Second") { }
+      .glassEffect()
+      .glassEffectUnion(id: "buttonGroup", namespace: glassNamespace)
+  }
+}
+```
+
+### Morphing Transitions
+
+#### Glass Effect IDs
+Create smooth morphing animations during view transitions:
+
+```swift
+@State private var isExpanded = false
+@Namespace private var morphNamespace
+
+GlassEffectContainer(spacing: 40) {
+  HStack {
+    Image(systemName: "pencil")
+      .glassEffect()
+      .glassEffectID("tool", in: morphNamespace)
+    
+    if isExpanded {
+      Image(systemName: "eraser")
+        .glassEffect()
+        .glassEffectID("tool2", in: morphNamespace)
+        .transition(.glassEffect)
+    }
+  }
+}
+```
+
+### Platform-Specific Considerations
+
+#### Automatic Adoption
+Standard SwiftUI components automatically adopt Liquid Glass:
+- Navigation bars and toolbars
+- Tab bars and sidebars
+- Sheets and popovers
+- Buttons and form controls
+
+#### Custom Components
+Apply glass effects judiciously to custom components:
+- Limit to functional elements (navigation, controls)
+- Avoid overuse - glass should enhance, not distract from content
+- Test with accessibility settings (Reduce Transparency/Motion)
+
+### Performance Best Practices
+
+1. **Use containers**: Group related glass elements in `GlassEffectContainer`
+2. **Minimize nesting**: Avoid multiple layers of glass effects
+3. **Profile regularly**: Test performance across devices
+4. **Respect accessibility**: Ensure fallbacks for transparency/motion reduction
+
+### Migration from Custom Blur Effects
+
+#### Remove Custom Backgrounds
+**❌ Before (iOS 25 and earlier):**
+```swift
+.background(Material.ultraThinMaterial)
+.presentationBackground(Material.regularMaterial)
+```
+
+**✅ After (iOS 26+):**
+```swift
+// Remove custom backgrounds - system handles automatically
+// For custom elements, use .glassEffect() instead
+.glassEffect()
+```
+
+#### Update Sheet Presentations
+**❌ Before:**
+```swift
+.presentationBackground {
+  Rectangle()
+    .fill(Material.regularMaterial)
+}
+```
+
+**✅ After:**
+```swift
+// Remove - sheets automatically use Liquid Glass
+// System handles partial height insets and morphing
+```
+
+### Testing with Liquid Glass
+
+- **Accessibility**: Test with "Reduce Transparency" and "Reduce Motion" enabled
+- **Performance**: Profile glass-heavy interfaces across device tiers
+- **Visual verification**: Test against light/dark content backgrounds
+- **Cross-platform**: Verify glass appearance on both iOS and macOS
+
 ## Code Organization
 
 ### Project Structure
@@ -117,6 +282,12 @@ AppState (@Observable)
 - **2 spaces** indentation (not tabs)
 - **MARK:** comments to organize code sections
 - **AppNavigationManager** for all navigation
+- **Liquid Glass best practices**:
+  - Use `GlassEffectContainer` for grouped glass elements
+  - Prefer system glass effects over custom blur materials
+  - Apply `.glassEffect()` sparingly to avoid visual overload
+  - Test with accessibility settings (Reduce Transparency/Motion)
+  - Remove custom `Material` backgrounds in favor of automatic adoption
 
 ## Cross-Platform Development
 
@@ -178,7 +349,7 @@ Always include both platforms in `@available` annotations:
 
 **✅ CORRECT:**
 ```swift
-@available(iOS 16.0, macOS 13.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 struct MyView: View {
     // implementation
 }
@@ -322,13 +493,44 @@ struct FeedCollectionViewWrapper: View {
 # Use Swift Testing filter parameter
 ```
 
+### iOS 26 Testing Considerations
+
+#### Liquid Glass Testing
+- **Accessibility testing**: Enable "Reduce Transparency" and "Reduce Motion" in Settings
+- **Visual regression testing**: Compare glass effects across light/dark modes
+- **Performance profiling**: Test glass-heavy UIs on older device models
+- **Cross-platform consistency**: Verify glass appearance matches between iOS and macOS
+
+#### Build Configuration for iOS 26
+```bash
+# Build with iOS 26 SDK for full Liquid Glass support
+# Use MCP: build_sim with simulatorName: "iPhone 16 Pro"
+
+# Test backward compatibility with iOS 18+ deployment target
+# Verify graceful fallback behavior on pre-iOS 26 systems
+```
+
+#### Testing Commands for iOS 26 Features
+```bash
+# Test on iOS 26 simulator with glass effects enabled
+# Use MCP: test_sim with simulatorName: "iPhone 16 Pro" scheme: "Catbird"
+
+# Test with accessibility settings enabled
+# 1. Enable Settings > Accessibility > Display > Reduce Transparency
+# 2. Enable Settings > Accessibility > Motion > Reduce Motion
+# 3. Re-run tests to verify fallback behavior
+
+# Profile glass effect performance
+# Use Instruments to analyze rendering performance of glass effects
+```
+
 ## Common Development Tasks
 
 ### Adding a New Feature
 1. Create feature folder in `/Features`
 2. Add Observable ViewModel if needed
 3. Implement SwiftUI views with cross-platform support
-4. Use proper `@available(iOS 16.0, macOS 13.0, *)` annotations
+4. Use proper `@available(iOS 26.0, macOS 26.0, *)` annotations
 5. Handle platform differences with ViewModifier protocols
 6. Wire up navigation in AppNavigationManager
 7. Add unit tests using Swift Testing for both platforms
@@ -343,6 +545,11 @@ When adding features that work across platforms:
 3. **Handle input differences**: Touch vs. mouse interactions
 4. **Respect platform conventions**: iOS navigation vs. macOS window management
 5. **Test thoroughly**: Verify behavior on both platforms
+6. **iOS 26 Liquid Glass considerations**:
+   - Glass effects work automatically across iOS 26 and macOS Tahoe 26
+   - Use `@available(iOS 26.0, macOS 26.0, *)` for glass-specific features
+   - Provide fallback experiences for iOS 18+ and macOS 13+ compatibility
+   - Test glass effects with platform-specific accessibility settings
 
 ### Working with AT Protocol
 - AT Protocol models are in `Petrel/Sources/Petrel/Generated/`

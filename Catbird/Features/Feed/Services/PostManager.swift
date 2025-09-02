@@ -440,6 +440,7 @@ final class PostManager {
       author: author,
       record: ATProtocolValueContainer.knownType(postRecord),
       embed: postViewEmbed,
+      bookmarkCount: nil,
       replyCount: 0,
       repostCount: 0,
       likeCount: 0,
@@ -448,6 +449,7 @@ final class PostManager {
       viewer: AppBskyFeedDefs.ViewerState(
         repost: nil,
         like: nil,
+        bookmarked: nil,
         threadMuted: false,
         replyDisabled: false,
         embeddingDisabled: false,

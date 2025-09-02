@@ -31,10 +31,10 @@
     {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/beatt83/CryptoSwift.git",
+      "location" : "https://github.com/krzyzanowskim/CryptoSwift.git",
       "state" : {
-        "revision" : "15fc223bca9a81491193de82c33308879c5f34e6",
-        "version" : "1.8.7"
+        "revision" : "e45a26384239e028ec87fbcc788f513b67e10d8f",
+        "version" : "1.9.0"
       }
     },
     {
@@ -58,10 +58,10 @@
     {
       "identity" : "jose-swift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/joshlacal/jose-swift.git",
+      "location" : "https://github.com/beatt83/jose-swift.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "f5f2670f33830857c7f7cdf9f28c527b88581ff7"
+        "revision" : "8d087c7d8333310449aff4c9eb2431fbb4f1eb9f",
+        "version" : "6.0.0"
       }
     },
     {

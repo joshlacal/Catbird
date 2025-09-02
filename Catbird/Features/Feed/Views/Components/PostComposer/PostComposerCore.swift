@@ -564,7 +564,9 @@ extension PostComposerViewModel {
     }
     
     var isPostButtonDisabled: Bool {
-        return !canSubmitPost || isPosting
+        let videoBlocked = (videoUploadBlockedReason != nil)
+        let videoPreparing = (videoItem?.isLoading ?? false)
+        return !canSubmitPost || isPosting || videoBlocked || videoPreparing
     }
     
     func hasClipboardMedia() -> Bool {

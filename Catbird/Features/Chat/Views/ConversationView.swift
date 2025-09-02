@@ -270,7 +270,8 @@ struct ConversationView: View {
                 cid: postCid,
                 author: author,
                 record: ATProtocolValueContainer.knownType(post),
-                embed: nil,  // Post embeds need to be converted to PostViewEmbedUnion
+                embed: nil,   // Post embeds need to be converted to PostViewEmbedUnion
+                bookmarkCount: nil,
                 replyCount: 0,
                 repostCount: 0,
                 likeCount: 0,

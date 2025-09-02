@@ -91,6 +91,34 @@ struct PostComposerViewUIKit: View {
 
   var body: some View {
     NavigationStack { configured }
+      .safeAreaInset(edge: .top) {
+        if let reason = viewModel.videoUploadBlockedReason {
+          HStack {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+            Text("Video upload unavailable: \(reason)")
+              .appFont(AppTextRole.caption)
+              .foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            Button("Check Again") {
+              Task { await viewModel.checkVideoUploadEligibility(force: true) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+            if viewModel.videoUploadBlockedCode == "unconfirmed_email" {
+              Button("Resend Email") {
+                Task { await viewModel.resendVerificationEmail() }
+              }
+              .buttonStyle(.borderedProminent)
+              .controlSize(.mini)
+            }
+          }
+          .padding(10)
+          .background(.thinMaterial)
+          .clipShape(RoundedRectangle(cornerRadius: 10))
+          .padding(.horizontal)
+          .transition(.move(edge: .top).combined(with: .opacity))
+        }
+      }
       .ignoresSafeArea(.keyboard, edges: .bottom)
   }
 
@@ -179,7 +207,7 @@ struct PostComposerViewUIKit: View {
         isPresented: $videoPickerVisible,
         selection: $videoPickerItems,
         maxSelectionCount: 1,
-        matching: .any(of: [.videos, .images])
+        matching: .any(of: [.videos])
       )
       .onChange(of: videoPickerItems) { _, _ in
         Task {

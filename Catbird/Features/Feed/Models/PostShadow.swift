@@ -239,7 +239,7 @@ actor PostShadowManager {
         // Create a new viewer state with the shadow information
         let viewerState = AppBskyFeedDefs.ViewerState(
             repost: shadow.repostUri,
-            like: shadow.likeUri,
+            like: shadow.likeUri, bookmarked: post.viewer?.bookmarked,
             threadMuted: post.viewer?.threadMuted,
             replyDisabled: post.viewer?.replyDisabled,
             embeddingDisabled: post.viewer?.embeddingDisabled,
@@ -267,6 +267,7 @@ actor PostShadowManager {
             author: post.author,
             record: post.record,
             embed: finalEmbed,
+            bookmarkCount: post.bookmarkCount,
             replyCount: post.replyCount,
             repostCount: repostCount,
             likeCount: likeCount,

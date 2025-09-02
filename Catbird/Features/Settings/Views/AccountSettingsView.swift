@@ -348,8 +348,8 @@ struct AccountSettingsView: View {
             }
             
             do {
-                // Use the AT Protocol email confirmation API
-                let (responseCode, response) = try await client.com.atproto.server.requestEmailUpdate()
+                // Use the AT Protocol email confirmation API to (re)send verification email
+                let (responseCode) = try await client.com.atproto.server.requestEmailConfirmation()
                 
                 if responseCode == 200 {
                     Task { @MainActor in
@@ -384,10 +384,11 @@ struct AccountSettingsView: View {
             
             pollCount += 1
             
+            let pollCount = pollCount
+
             Task {
                 await self.checkEmailVerificationStatus()
-                
-                if self.isEmailVerified || pollCount >= maxPolls {
+                if await self.isEmailVerified || pollCount >= maxPolls {
                     Task { @MainActor in
                         timer.invalidate()
                         self.verificationPollingTimer = nil

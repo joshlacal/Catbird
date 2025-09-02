@@ -371,23 +371,27 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
                 y: currentOffset.y + anchor.offsetFromTop
             )
             
-            // Ensure we don't scroll beyond bounds
-            let maxOffsetY = max(0, collectionView.contentSize.height - collectionView.bounds.height)
-            let clampedOffset = CGPoint(
-                x: adjustedOffset.x,
-                y: max(0, min(adjustedOffset.y, maxOffsetY))
+            // Ensure we don't scroll beyond bounds. Respect adjusted content insets
+            let minOffsetY = -collectionView.adjustedContentInset.top
+            let maxOffsetY = max(
+                minOffsetY,
+                collectionView.contentSize.height + collectionView.adjustedContentInset.bottom - collectionView.bounds.height
             )
+            let clampedY = min(max(adjustedOffset.y, minOffsetY), maxOffsetY)
+            let clampedOffset = CGPoint(x: adjustedOffset.x, y: clampedY)
             
             collectionView.setContentOffset(clampedOffset, animated: false)
             self.controllerLogger.debug("📍 Restored scroll position for post: \(anchor.postID), offset: \(anchor.offsetFromTop)")
         }
     }
     
-    /// Resets scroll position to the top
+    /// Resets scroll position to the top (aligned to large title scroll edge)
     private func resetScrollToTop() {
         guard let collectionView = collectionView else { return }
-        collectionView.setContentOffset(.zero, animated: false)
-        controllerLogger.debug("🔝 Reset scroll position to top")
+        let minOffsetY = -collectionView.adjustedContentInset.top
+        let minOffsetX = -collectionView.adjustedContentInset.left
+        collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: false)
+        controllerLogger.debug("🔝 Reset scroll position to top (respecting adjustedContentInset)")
     }
     
     // MARK: - App Lifecycle

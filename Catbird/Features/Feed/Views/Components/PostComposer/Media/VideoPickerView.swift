@@ -23,8 +23,14 @@ struct VideoPickerView: View {
                 ZStack(alignment: .topTrailing) {
                     // Video thumbnail
                     if videoItem.isLoading {
-                        ProgressView()
-                            .frame(maxHeight: 200)
+                        VStack(spacing: 8) {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                            Text("Preparing video…")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxHeight: 200)
                     } else if let image = videoItem.image {
                         VStack {
                             ZStack {

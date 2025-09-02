@@ -26,6 +26,17 @@ final class MediaUploadManager {
   private let videoBaseURL = "https://video.bsky.app/xrpc"
   private let logger = Logger(subsystem: "blue.catbird", category: "MediaUploadManager")
 
+  // Cache for service-auth tokens per LXM
+  private struct ServiceAuthCacheEntry {
+    let token: String
+    let expiresAt: Date
+  }
+  private var serviceAuthCache: [String: ServiceAuthCacheEntry] = [:]
+
+  // Throttle preflight checks
+  private var lastPreflight: (timestamp: Date, result: (allowed: Bool, message: String?, code: String?))?
+  private var isCheckingLimits = false
+
   // Video upload state
   var isVideoUploading = false
   var videoUploadProgress: Double = 0
@@ -124,38 +135,70 @@ final class MediaUploadManager {
       return serviceAuth.token
     }
 
-  /// Get authentication token for video operations
-  private func getVideoAuthToken() async throws -> String {
-    logger.debug("DEBUG: Requesting service auth token")
-    let didValue = try await client.getDid()
-    logger.debug("DEBUG: Using DID: \(didValue)")
-    
+  /// Get authentication token for a specific video service method
+  private func getVideoServiceAuthToken(lxm: String) async throws -> String {
+    // Return cached token if still valid with a small safety margin (30s)
+    if let cached = serviceAuthCache[lxm], cached.expiresAt.timeIntervalSinceNow > 30 {
+      return cached.token
+    }
+
+    logger.debug("DEBUG: Requesting service auth token for lxm=\(lxm)")
+    _ = try await client.getDid() // ensure session
+    // Request a short-lived token to reduce risk; cache will avoid re-minting unnecessarily
+    let now = Int(Date().timeIntervalSince1970)
+    let expUnix = now + 5 * 60 // 5 minutes
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-        aud: try DID(didString: "did:web:\(await client.baseURL.host ?? "bsky.social")"),
-      exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
-        lxm: try NSID(nsidString: "com.atproto.repo.uploadBlob")
+      aud: try DID(didString: "did:web:video.bsky.app"),
+      exp: expUnix,
+      lxm: try NSID(nsidString: lxm)
     )
-    
-    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
-      input: serviceParams)
+    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(input: serviceParams)
     logger.debug("DEBUG: Service auth response code: \(authCode)")
-    
-    if authCode != 200 {
-      logger.error("ERROR: Service auth request failed with code \(authCode)")
+    guard authCode == 200, let serviceAuth = authData else {
+      logger.error("ERROR: Service auth request failed for lxm=\(lxm) code=\(authCode)")
       throw VideoUploadError.authenticationFailed
     }
-    
-    guard let serviceAuth = authData else {
-      logger.error("ERROR: Missing service auth data")
+    let expiry = Date(timeIntervalSince1970: TimeInterval(expUnix))
+    serviceAuthCache[lxm] = ServiceAuthCacheEntry(token: serviceAuth.token, expiresAt: expiry)
+    return serviceAuth.token
+  }
+
+  /// Mint a service-auth token for repo upload operations against the user's PDS (aud = PDS DID).
+  /// The video service expects an upload token scoped to `com.atproto.repo.uploadBlob` with audience set
+  /// to the PDS DID (did:web:<pds-host>), not the video service DID.
+  private func getPdsRepoUploadAuthToken() async throws -> String {
+    // Cache key by LXM since audience is deterministic per client
+    let lxm = "com.atproto.repo.uploadBlob"
+    if let cached = serviceAuthCache[lxm], cached.expiresAt.timeIntervalSinceNow > 30 {
+      return cached.token
+    }
+
+    logger.debug("DEBUG: Requesting PDS repo-upload service auth token (lxm=\(lxm))")
+    _ = try await client.getDid() // ensure session
+      let host = await client.baseURL.host ?? "bsky.social"
+    let aud = try DID(didString: "did:web:\(host)")
+    let now = Int(Date().timeIntervalSince1970)
+    let expUnix = now + 5 * 60 // 5 minutes
+    let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
+      aud: aud,
+      exp: expUnix,
+      lxm: try NSID(nsidString: lxm)
+    )
+    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(input: serviceParams)
+    logger.debug("DEBUG: PDS service auth response code: \(authCode)")
+    guard authCode == 200, let serviceAuth = authData else {
+      logger.error("ERROR: PDS service auth request failed for lxm=\(lxm) code=\(authCode)")
       throw VideoUploadError.authenticationFailed
     }
-    
-    logger.debug("DEBUG: Authentication successful, token obtained")
+    let expiry = Date(timeIntervalSince1970: TimeInterval(expUnix))
+    serviceAuthCache[lxm] = ServiceAuthCacheEntry(token: serviceAuth.token, expiresAt: expiry)
     return serviceAuth.token
   }
   
   /// Check upload limits from video server directly
-  private func checkVideoUploadLimits(token: String) async throws -> (canUpload: Bool, error: String?) {
+  /// Always attempts to decode the response body to surface server-provided reasons,
+  /// even on non-200 (e.g., 401 with { canUpload:false, error:"unconfirmed_email", message:"..." }).
+  private func checkVideoUploadLimits(token: String) async throws -> (canUpload: Bool, message: String?, code: String?) {
     logger.debug("DEBUG: Checking upload limits from server")
     
     let limitsURL = URL(string: "\(videoBaseURL)/app.bsky.video.getUploadLimits")!
@@ -174,24 +217,78 @@ final class MediaUploadManager {
     
     logger.debug("DEBUG: Upload limits response code: \(httpResponse.statusCode)")
     
-    if httpResponse.statusCode != 200 {
-      logger.error("ERROR: Failed to get upload limits, server responded with code \(httpResponse.statusCode)")
-      throw VideoUploadError.processingFailed("Server error when checking upload limits (HTTP \(httpResponse.statusCode))")
-    }
-    
+    // Try to decode body regardless of status to extract message/error
     let decoder = JSONDecoder()
-    do {
-      let limits = try decoder.decode(UploadLimitsResponse.self, from: data)
-      return (limits.canUpload, limits.error)
-    } catch {
-      logger.error("ERROR: Failed to decode upload limits response: \(error)")
-      throw VideoUploadError.processingFailed("Could not parse upload limits response")
+    if httpResponse.statusCode == 200 {
+      do {
+        let limits = try decoder.decode(UploadLimitsResponse.self, from: data)
+        // Prefer message when available; fall back to error code
+        let reason = limits.message ?? limits.error
+        return (limits.canUpload, reason, limits.error)
+      } catch {
+        logger.error("ERROR: Failed to decode upload limits response: \(error)")
+        throw VideoUploadError.processingFailed("Could not parse upload limits response")
+      }
+    } else {
+      let bodyText = String(data: data, encoding: .utf8) ?? "<binary>"
+      logger.error("ERROR: Failed to get upload limits, HTTP \(httpResponse.statusCode) body=\(bodyText)")
+      // Attempt to decode structured reason from non-200 body
+      if let limits = try? decoder.decode(UploadLimitsResponse.self, from: data) {
+        var combined: String?
+        if let message = limits.message, let code = limits.error, !message.isEmpty {
+          if message.contains(code) {
+            combined = message
+          } else {
+            combined = "\(message) (\(code))"
+          }
+        } else {
+          combined = limits.message ?? limits.error
+        }
+        return (false, combined, limits.error)
+      }
+      // Could not decode; return generic
+      return (false, "Server error when checking upload limits (HTTP \(httpResponse.statusCode))", nil)
     }
+  }
+
+  // MARK: - Public preflight check
+  /// Quickly check if the server currently allows video uploads for this account.
+  func preflightUploadPermission(force: Bool = false) async -> (allowed: Bool, message: String?, code: String?) {
+    // If a recent result exists (<= 5 min) and not forced, return it to avoid spamming
+    if !force, let last = lastPreflight, Date().timeIntervalSince(last.timestamp) <= 300 {
+      return last.result
+    }
+    // If a check is already in flight, return the last known result (if any)
+    if isCheckingLimits {
+      return lastPreflight?.result ?? (false, "Checking upload eligibility…", nil)
+    }
+    isCheckingLimits = true
+    defer { isCheckingLimits = false }
+    do {
+      let token = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getUploadLimits")
+      let result = try await checkVideoUploadLimits(token: token)
+      let packaged = (result.canUpload, result.message, result.code)
+      lastPreflight = (Date(), packaged)
+      return packaged
+    } catch {
+      let packaged: (allowed: Bool, message: String?, code: String?) = (false, error.localizedDescription, nil)
+      lastPreflight = (Date(), packaged)
+      return packaged
+    }
+  }
+
+  // MARK: - Email Confirmation
+  /// Request the server to (re)send a verification email for the current account.
+  func requestEmailConfirmation() async throws {
+    _ = try await client.com.atproto.server.requestEmailConfirmation()
   }
   
   /// Structure for decoding upload limits response
   private struct UploadLimitsResponse: Decodable {
     let canUpload: Bool
+    let remainingDailyVideos: Int?
+    let remainingDailyBytes: Int?
+    let message: String?
     let error: String?
   }
     
@@ -260,13 +357,13 @@ final class MediaUploadManager {
     }
 
     // Get authentication token
-    let authToken = try await getVideoAuthTokenForUploadLimits()
+    let authToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getUploadLimits")
     
-//     Check upload limits from server using direct URLSession
-    let (canUpload, limitError) = try await checkVideoUploadLimits(token: authToken)
+    // Check upload limits from server using direct URLSession
+    let (canUpload, limitMessage, _) = try await checkVideoUploadLimits(token: authToken)
     
     guard canUpload else {
-      let errorMessage = limitError ?? "Cannot upload videos at this time"
+      let errorMessage = limitMessage ?? "Cannot upload videos at this time"
       logger.error("ERROR: Server does not allow video uploads: \(errorMessage)")
       throw VideoUploadError.processingFailed(errorMessage)
     }
@@ -305,14 +402,27 @@ final class MediaUploadManager {
       throw VideoUploadError.processingFailed("Could not load video data: \(error.localizedDescription)")
     }
     
-      let token = try await getVideoAuthToken()
+    // IMPORTANT: Upload requires a token scoped to repo upload with aud set to the PDS DID
+    // (see Bluesky reference app). Using video service DID will be rejected with 401.
+    let token = try await getPdsRepoUploadAuthToken()
       
     // Set up HTTP request
     logger.debug("DEBUG: Setting up HTTP request for video upload")
     var request = URLRequest(url: uploadURL)
     request.httpMethod = "POST"
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    request.setValue("video/mp4", forHTTPHeaderField: "Content-Type")
+    // Derive MIME type from file extension when possible
+    let ext = url.pathExtension.lowercased()
+    let mime: String
+    switch ext {
+    case "mp4": mime = "video/mp4"
+    case "mov": mime = "video/quicktime"
+    case "webm": mime = "video/webm"
+    case "mpeg", "mpg": mime = "video/mpeg"
+    case "gif": mime = "image/gif"
+    default: mime = "video/mp4"
+    }
+    request.setValue(mime, forHTTPHeaderField: "Content-Type")
     request.setValue("\(videoData.count)", forHTTPHeaderField: "Content-Length")
 
     let config = URLSessionConfiguration.default
@@ -337,6 +447,9 @@ final class MediaUploadManager {
         delegate: progressDelegate
       )
       logger.debug("DEBUG: Upload request completed with response status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+      if let bodyString = String(data: responseData, encoding: .utf8) {
+        logger.debug("DEBUG: Server response body: \(bodyString)")
+      }
     } catch {
       logger.error("ERROR: Video upload network request failed: \(error)")
       isVideoUploading = false
@@ -362,7 +475,9 @@ final class MediaUploadManager {
               let jobStatus = try decoder.decode(AppBskyVideoDefs.JobStatus.self, from: responseData)
               logger.debug("DEBUG: Job ID: \(jobStatus.jobId)")
               videoJobId = jobStatus.jobId
-              return try await pollVideoJobStatus(jobId: jobStatus.jobId, token: authToken)
+              // Use a token scoped for job status against the video service
+              let statusToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getJobStatus")
+              return try await pollVideoJobStatus(jobId: jobStatus.jobId, token: statusToken)
           } catch {
               logger.error("ERROR: Failed to decode job status from response: \(error)")
               isVideoUploading = false
@@ -374,7 +489,8 @@ final class MediaUploadManager {
             let jobId = errorJson["jobId"] as? String {
              logger.debug("DEBUG: Video was already processed, reusing job ID: \(jobId)")
              videoJobId = jobId
-             return try await pollVideoJobStatus(jobId: jobId, token: token)
+             let statusToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getJobStatus")
+             return try await pollVideoJobStatus(jobId: jobId, token: statusToken)
     } else {
       // Try to extract error message from response body
       let errorMessage: String
@@ -704,6 +820,7 @@ final class MediaUploadManager {
       return nil
     }
   }
+
 }
 
 /// Custom URLSession delegate to track upload progress

@@ -194,6 +194,34 @@ struct PostComposerView: View {
     
     private var configuredWithModifiers: some View {
         baseMainView
+            .safeAreaInset(edge: .top) {
+                if let reason = viewModel.videoUploadBlockedReason {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                        Text("Video upload unavailable: \(reason)")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 8)
+                        Button("Check Again") {
+                            Task { await viewModel.checkVideoUploadEligibility(force: true) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        if viewModel.videoUploadBlockedCode == "unconfirmed_email" {
+                            Button("Resend Email") {
+                                Task { await viewModel.resendVerificationEmail() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.mini)
+                        }
+                    }
+                    .padding(10)
+                    .background(.thinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .modifier(DiscardConfirmationModifier(showingDismissAlert: $showingDismissAlert, dismiss: dismiss))
             // Media pickers
             .photosPicker(
@@ -214,7 +242,7 @@ struct PostComposerView: View {
                 isPresented: $videoPickerVisible,
                 selection: $videoPickerItems,
                 maxSelectionCount: 1,
-                matching: .any(of: [.videos, .images])
+                matching: .any(of: [.videos])
             )
             .onChange(of: videoPickerItems) {
                 Task {

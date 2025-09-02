@@ -249,17 +249,26 @@ extension PostComposerViewModel {
             if let pickerItem = videoItem.pickerItem {
                 // Load from PhotosPickerItem
                 if let movieData = try await pickerItem.loadTransferable(type: Data.self) {
-                    // Write to temporary file
-                    let tempURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent(UUID().uuidString)
-                        .appendingPathExtension("mov")
-                    
-                    try movieData.write(to: tempURL)
-                    asset = AVAsset(url: tempURL)
-                    
-                    // Store raw data and URL
-                    self.videoItem?.rawVideoURL = tempURL
-                    self.videoItem?.videoData = movieData
+                    // Persist to App Group so it's accessible and survives tmp cleanup
+                    let dir = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared")?
+                        .appendingPathComponent("SharedDrafts", isDirectory: true)
+                    if let dir {
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        let destURL = dir.appendingPathComponent(UUID().uuidString).appendingPathExtension("mov")
+                        try movieData.write(to: destURL)
+                        asset = AVAsset(url: destURL)
+                        self.videoItem?.rawVideoURL = destURL
+                        self.videoItem?.videoData = movieData
+                    } else {
+                        // Fallback to temporary directory
+                        let tempURL = FileManager.default.temporaryDirectory
+                            .appendingPathComponent(UUID().uuidString)
+                            .appendingPathExtension("mov")
+                        try movieData.write(to: tempURL)
+                        asset = AVAsset(url: tempURL)
+                        self.videoItem?.rawVideoURL = tempURL
+                        self.videoItem?.videoData = movieData
+                    }
                 }
             } else if let videoURL = videoItem.rawVideoURL {
                 // Load from URL (for GIF conversions)
@@ -301,6 +310,8 @@ extension PostComposerViewModel {
             self.videoItem?.aspectRatio = CGSize(width: imageSize.width, height: imageSize.height)
             
             logger.debug("DEBUG: Video thumbnail loaded successfully")
+            // After thumbnail, preflight eligibility (single-shot)
+            await checkVideoUploadEligibility()
             
         } catch {
             logger.error("ERROR: Failed to load video thumbnail: \(error)")

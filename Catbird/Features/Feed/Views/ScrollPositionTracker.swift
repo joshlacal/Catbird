@@ -165,18 +165,23 @@ final class ScrollPositionTracker {
 
     // Apply corrected offset with enhanced bounds checking
     let newOffsetY = anchor.offsetY + heightDelta
-    let maxContentOffset = max(0, contentHeight - viewHeight)
-    let correctedOffset = max(0, min(newOffsetY, maxContentOffset))
+    let minContentOffset = -collectionView.adjustedContentInset.top
+    let maxContentOffset = max(
+      minContentOffset,
+      contentHeight + collectionView.adjustedContentInset.bottom - viewHeight
+    )
+    let correctedOffset = min(max(newOffsetY, minContentOffset), maxContentOffset)
     
     // Validate the calculated offset is reasonable
-    guard correctedOffset >= 0 && correctedOffset <= maxContentOffset else {
+    guard correctedOffset >= minContentOffset && correctedOffset <= maxContentOffset else {
       logger.warning("Calculated offset out of bounds: \(correctedOffset), max: \(maxContentOffset)")
       restoreScrollPositionFallback(collectionView: collectionView, anchor: anchor)
       return
     }
 
     // Apply the scroll position
-    collectionView.setContentOffset(CGPoint(x: 0, y: correctedOffset), animated: false)
+    let targetX = -collectionView.adjustedContentInset.left
+    collectionView.setContentOffset(CGPoint(x: targetX, y: correctedOffset), animated: false)
 
     // Verify the restoration was successful
     let actualOffset = collectionView.contentOffset.y
@@ -231,15 +236,20 @@ final class ScrollPositionTracker {
         // Enhanced fallback positioning with bounds checking
         let contentHeight = collectionView.contentSize.height
         let viewHeight = collectionView.bounds.height
+        let minOffsetY = -collectionView.adjustedContentInset.top
+        let maxOffsetY = max(
+          minOffsetY,
+          contentHeight + collectionView.adjustedContentInset.bottom - viewHeight
+        )
         
         // Position the fallback item similarly to where the anchor was
         let baseOffset = fallbackAttributes.frame.origin.y - anchor.offsetY + anchor.itemFrameY
-        let maxOffset = max(0, contentHeight - viewHeight)
-        let fallbackOffset = max(0, min(baseOffset, maxOffset))
+        let fallbackOffset = min(max(baseOffset, minOffsetY), maxOffsetY)
         
         // Validate offset is reasonable
-        if fallbackOffset >= 0 && fallbackOffset <= maxOffset {
-          collectionView.setContentOffset(CGPoint(x: 0, y: fallbackOffset), animated: false)
+        if fallbackOffset >= minOffsetY && fallbackOffset <= maxOffsetY {
+          let targetX = -collectionView.adjustedContentInset.left
+          collectionView.setContentOffset(CGPoint(x: targetX, y: fallbackOffset), animated: false)
           
           logger.info(
             "🛡️ Fallback successful: restored to relative position \(relativePosition) at item \(targetItem), offset \(fallbackOffset)"
@@ -252,15 +262,20 @@ final class ScrollPositionTracker {
     // Strategy 2: If relative position failed, try to scroll to a safe middle position
     let contentHeight = collectionView.contentSize.height
     let viewHeight = collectionView.bounds.height
+    let minOffsetY = -collectionView.adjustedContentInset.top
     
     if contentHeight > viewHeight {
-      let middleOffset = min((contentHeight - viewHeight) * 0.3, contentHeight * FeedConstants.fallbackScrollPositionPercent)
-      collectionView.setContentOffset(CGPoint(x: 0, y: middleOffset), animated: false)
+      let availableScroll = contentHeight + collectionView.adjustedContentInset.bottom - viewHeight - minOffsetY
+      let middleOffset = minOffsetY + min(availableScroll * 0.3, contentHeight * FeedConstants.fallbackScrollPositionPercent)
+      let targetX = -collectionView.adjustedContentInset.left
+      collectionView.setContentOffset(CGPoint(x: targetX, y: middleOffset), animated: false)
       
       logger.info("🛡️ Fallback: restored to middle position with offset \(middleOffset)")
     } else {
       // Strategy 3: Content is shorter than view, just go to top
-      collectionView.setContentOffset(.zero, animated: false)
+      let targetX = -collectionView.adjustedContentInset.left
+      let targetY = -collectionView.adjustedContentInset.top
+      collectionView.setContentOffset(CGPoint(x: targetX, y: targetY), animated: false)
       logger.info("🛡️ Fallback: restored to top (content shorter than view)")
     }
   }
