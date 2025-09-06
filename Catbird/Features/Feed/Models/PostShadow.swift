@@ -13,6 +13,7 @@ import Petrel
 struct PostShadow: Equatable, Sendable {
     var likeUri: ATProtocolURI?
     var repostUri: ATProtocolURI?
+    var bookmarked: Bool?  // Changed from bookmarkUri to bookmarked since AT Protocol uses Bool
     var isDeleted: Bool = false
     var pinned: Bool = false
     var embed: AppBskyFeedDefs.PostViewEmbedUnion?
@@ -60,7 +61,13 @@ actor PostShadowManager {
     /// - Parameter uri: The post URI
     /// - Returns: The shadow state, if any
     func getShadow(forUri uri: String) -> PostShadow? {
-        shadows[uri]
+        guard !uri.isEmpty else {
+            #if DEBUG
+            logger.debug("PostShadowManager: Warning - empty URI provided to getShadow")
+            #endif
+            return nil
+        }
+        return shadows[uri]
     }
     
     /// Removes shadow state for a post
@@ -195,6 +202,29 @@ actor PostShadowManager {
         }
     }
     
+    /// Checks if a post is bookmarked in the shadow state
+    /// - Parameter postUri: The post URI
+    /// - Returns: True if the post is bookmarked
+    func isBookmarked(postUri: String) -> Bool {
+        guard !postUri.isEmpty else {
+            #if DEBUG
+            logger.debug("PostShadowManager: Warning - empty postUri provided to isBookmarked")
+            #endif
+            return false
+        }
+        return getShadow(forUri: postUri)?.bookmarked == true
+    }
+    
+    /// Sets the bookmarked state for a post
+    /// - Parameters:
+    ///   - postUri: The post URI
+    ///   - isBookmarked: Whether the post is bookmarked
+    func setBookmarked(postUri: String, isBookmarked: Bool) {
+        updateShadow(forUri: postUri) { shadow in
+            shadow.bookmarked = isBookmarked
+        }
+    }
+    
     // MARK: - Shadow Application
     
     /// Merges shadow state with a post to create an updated post view
@@ -239,7 +269,8 @@ actor PostShadowManager {
         // Create a new viewer state with the shadow information
         let viewerState = AppBskyFeedDefs.ViewerState(
             repost: shadow.repostUri,
-            like: shadow.likeUri, bookmarked: post.viewer?.bookmarked,
+            like: shadow.likeUri,
+            bookmarked: shadow.bookmarked ?? post.viewer?.bookmarked,
             threadMuted: post.viewer?.threadMuted,
             replyDisabled: post.viewer?.replyDisabled,
             embeddingDisabled: post.viewer?.embeddingDisabled,

@@ -261,6 +261,18 @@ var id: String {
         Divider()
       }
       
+      // Bookmark button - available for all posts
+      Button(action: {
+        contextMenuViewModel.toggleBookmark()
+      }) {
+        Label(
+          viewModel.isBookmarked ? "Remove Bookmark" : "Bookmark",
+          systemImage: viewModel.isBookmarked ? "bookmark.fill" : "bookmark"
+        )
+      }
+      
+      Divider()
+      
       Button(action: {
         Task { await contextMenuViewModel.muteUser() }
       }) {
@@ -367,6 +379,18 @@ var id: String {
     // Set up add to list callback
     contextMenuViewModel.onAddAuthorToList = {
       postState.showingAddToListSheet = true  // Use consolidated state
+    }
+    
+    // Set up bookmark callback
+    contextMenuViewModel.onToggleBookmark = {
+      Task {
+        do {
+          try await viewModel.toggleBookmark()
+        } catch {
+          // Handle bookmark error if needed
+          logger.error("Failed to toggle bookmark: \(error)")
+        }
+      }
     }
 
     // Fetch user data

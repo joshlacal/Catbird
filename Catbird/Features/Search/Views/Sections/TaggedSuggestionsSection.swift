@@ -26,6 +26,7 @@ struct TaggedSuggestionsSection: View {
     let suggestions: [TaggedSuggestion]
     let onSelectProfile: (String) -> Void
     let onRefresh: (() -> Void)? // Optional refresh callback
+    @Binding var path: NavigationPath
     
     @State private var isRefreshing = false
     @State private var errorMessage: String?
@@ -140,7 +141,7 @@ struct TaggedSuggestionsSection: View {
                 
                 Spacer()
                 
-                NavigationLink(destination: AllTaggedProfilesView(tag: suggestion.tag, profiles: suggestion.profiles, onSelectProfile: onSelectProfile)) {
+                NavigationLink(destination: AllTaggedProfilesView(tag: suggestion.tag, profiles: suggestion.profiles, onSelectProfile: onSelectProfile, path: $path)) {
                     Text("See All")
                         .appFont(AppTextRole.subheadline)
                         .foregroundColor(.accentColor)
@@ -177,7 +178,10 @@ struct TaggedSuggestionsSection: View {
 //                        profile: profile,
 //                        onSelect: { onSelectProfile(profile.did) }
 //                    )
-                    ProfileRowView(profile: profile)
+                    ProfileRowView(profile: profile, path: $path)
+                        .onTapGesture {
+                            onSelectProfile(profile.did.didString())
+                        }
                 }
             }
             .padding(.horizontal)
@@ -372,6 +376,7 @@ struct AllTaggedProfilesView: View {
     let tag: String
     let profiles: [AppBskyActorDefs.ProfileViewDetailed]
     let onSelectProfile: (String) -> Void
+    @Binding var path: NavigationPath
     
     var body: some View {
         ScrollView {
@@ -383,8 +388,11 @@ struct AllTaggedProfilesView: View {
 //                        profile: profile,
 //                        onSelect: { onSelectProfile(profile.did) }
 //                    )
-ProfileRowView(profile: profile)
+                    ProfileRowView(profile: profile, path: $path)
                         .frame(height: 160)
+                        .onTapGesture {
+                            onSelectProfile(profile.did.didString())
+                        }
                 }
             }
             .padding()

@@ -59,6 +59,9 @@ final class AppState {
   /// Post shadow manager for handling interaction state (likes, reposts)
   @ObservationIgnored let postShadowManager = PostShadowManager.shared
 
+  /// Bookmarks manager for handling bookmark operations
+  @ObservationIgnored let bookmarksManager = BookmarksManager.shared
+
   /// Post manager for handling post creation and management
   @ObservationIgnored let postManager: PostManager
 

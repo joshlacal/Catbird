@@ -336,7 +336,8 @@ final class FeedPostViewModel {
     /// Toggles the bookmark state of the post
     @MainActor
     func toggleBookmark() async {
-        guard !isBookmarkInProgress else { return }
+        guard let appState = appState,
+              !isBookmarkInProgress else { return }
         
         isBookmarkInProgress = true
         defer { isBookmarkInProgress = false }
@@ -344,17 +345,39 @@ final class FeedPostViewModel {
         trackInteraction()
         
         // Perform actual bookmark operation
-        let newBookmarkState = !isBookmarked
+        let postUri = post.feedViewPost.post.uri
+        let postCid = post.feedViewPost.post.cid
+        let currentlyBookmarked = isBookmarked
+        let newBookmarkState = !currentlyBookmarked
         
         // Update local state optimistically
         isBookmarked = newBookmarkState
         
+        // Update shadow state optimistically
+        await appState.postShadowManager.setBookmarked(postUri: postUri.uriString(), isBookmarked: newBookmarkState)
+        
         // Perform server operation
         do {
-            try await saveBookmarkState(isBookmarked: newBookmarkState)
+            guard let client = appState.atProtoClient else {
+                throw PostInteractionError.clientUnavailable
+            }
+            
+            if newBookmarkState {
+                _ = try await appState.bookmarksManager.createBookmark(
+                    postUri: postUri,
+                    postCid: postCid,
+                    client: client
+                )
+            } else {
+                try await appState.bookmarksManager.deleteBookmark(
+                    postUri: postUri,
+                    client: client
+                )
+            }
         } catch {
             // Rollback on error
-            isBookmarked = !newBookmarkState
+            isBookmarked = currentlyBookmarked
+            await appState.postShadowManager.setBookmarked(postUri: postUri.uriString(), isBookmarked: currentlyBookmarked)
             logger.error("Bookmark operation failed: \(error.localizedDescription)")
         }
         
@@ -450,14 +473,15 @@ final class FeedPostViewModel {
         return ""
     }
     
-    /// Checks the current bookmark state from local storage
+    /// Checks the current bookmark state from viewer state and shadow manager
     private func checkBookmarkState() -> Bool {
-        guard let appState = appState else { return false }
+        // Check viewer state first (server state)
+        if let bookmarked = post.feedViewPost.post.viewer?.bookmarked {
+            return bookmarked
+        }
         
-        // For now, check UserDefaults for bookmarked posts
-        let postURI = post.feedViewPost.post.uri.uriString()
-        let bookmarkedPosts = UserDefaults.standard.stringArray(forKey: "bookmarked_posts") ?? []
-        return bookmarkedPosts.contains(postURI)
+        // No shadow state fallback needed since we use optimistic updates elsewhere
+        return false
     }
     
     /// Detects if the post has content warnings based on labels
@@ -499,22 +523,6 @@ final class FeedPostViewModel {
         return false
     }
     
-    /// Saves bookmark state to local storage
-    private func saveBookmarkState(isBookmarked: Bool) async throws {
-        let postURI = post.feedViewPost.post.uri.uriString()
-        var bookmarkedPosts = UserDefaults.standard.stringArray(forKey: "bookmarked_posts") ?? []
-        
-        if isBookmarked {
-            if !bookmarkedPosts.contains(postURI) {
-                bookmarkedPosts.append(postURI)
-            }
-        } else {
-            bookmarkedPosts.removeAll { $0 == postURI }
-        }
-        
-        UserDefaults.standard.set(bookmarkedPosts, forKey: "bookmarked_posts")
-        logger.debug("Bookmark state saved for post: \(postURI)")
-    }
     
     /// Formats date as time ago string
     private func formatTimeAgo(from iso8601String: String) -> String {

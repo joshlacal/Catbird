@@ -41,6 +41,9 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
             logger.debug("🔄 Updating controller with new state manager")
             controller.updateStateManager(stateManager)
         }
+        
+        // Theme updates are handled by the UIKitStateObserver<ThemeManager> in the controller
+        // No need to force theme updates here - they happen automatically when theme properties change
     }
 }
 
@@ -68,11 +71,13 @@ struct FeedCollectionViewIntegrated: View {
 
 /// Configuration for feed controller features
 struct FeedControllerConfiguration {
-    /// Whether UIUpdateLink optimizations are available (iOS 18+)
+    /// Whether UIUpdateLink optimizations are available (iOS 18+ native, not Mac Catalyst)
     static var hasUIUpdateLinkSupport: Bool {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             return true
         }
+        #endif
         return false
     }
 }

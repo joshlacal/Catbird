@@ -15,6 +15,10 @@ enum NavigationDestination: Hashable {
     case listFeed(ATProtocolURI)
     case listMembers(ATProtocolURI)
     case starterPack(ATProtocolURI)
+    case postLikes(String) // postUri
+    case postReposts(String) // postUri
+    case postQuotes(String) // postUri
+    case bookmarks
     #if os(iOS)
     case conversation(String) // convoId
     case chatTab
@@ -57,6 +61,17 @@ enum NavigationDestination: Hashable {
         case .starterPack(let uri):
             hasher.combine("starterPack")
             hasher.combine(uri.uriString())
+        case .postLikes(let postUri):
+            hasher.combine("postLikes")
+            hasher.combine(postUri)
+        case .postReposts(let postUri):
+            hasher.combine("postReposts")
+            hasher.combine(postUri)
+        case .postQuotes(let postUri):
+            hasher.combine("postQuotes")
+            hasher.combine(postUri)
+        case .bookmarks:
+            hasher.combine("bookmarks")
         #if os(iOS)
         case .conversation(let convoId):
             hasher.combine("conversation")
@@ -93,6 +108,14 @@ enum NavigationDestination: Hashable {
             return lhsUri.uriString() == rhsUri.uriString()
         case (.starterPack(let lhsUri), .starterPack(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()
+        case (.postLikes(let lhsUri), .postLikes(let rhsUri)):
+            return lhsUri == rhsUri
+        case (.postReposts(let lhsUri), .postReposts(let rhsUri)):
+            return lhsUri == rhsUri
+        case (.postQuotes(let lhsUri), .postQuotes(let rhsUri)):
+            return lhsUri == rhsUri
+        case (.bookmarks, .bookmarks):
+            return true
         #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):
             return lhsId == rhsId

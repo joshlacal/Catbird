@@ -263,6 +263,13 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Already loading conversations, skipping.")
       return
     }
+    
+    // Skip if user is currently authenticating to reduce noise during login flow
+    let authState = AppState.shared.authManager.state
+    if case .authenticating = authState {
+      logger.debug("Skipping conversation loading while user is authenticating")
+      return
+    }
 
     // If refreshing, cancel any ongoing load? (Consider Task management if needed)
 

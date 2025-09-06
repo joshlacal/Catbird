@@ -371,8 +371,8 @@ final class VideoCoordinator {
       // Update players based on visibility
       for (id, (model, player, lastPlaybackTime)) in activeVideos {
         // CRITICALLY IMPORTANT: Always ensure videos are muted during auto-playback
-        player.isMuted = true
-        player.volume = 0
+        if player.isMuted == false { player.isMuted = true }
+        if player.volume != 0 { player.volume = 0 }
 
         if id == topVideoId {
           // For GIFs, always autoplay regardless of autoplay setting since they're silent
@@ -659,17 +659,24 @@ final class VideoCoordinator {
 
     logger.debug("🎬 [PiP Debug] SetUnmuted called for \(id), unmuted: \(unmuted)")
 
+    // Idempotency: avoid redundant property churn that can trigger KVO storms
     if unmuted {
+      if model.isMuted == false && player.isMuted == false && player.volume > 0 {
+        return
+      }
       // User explicitly wants sound - now we configure audio session
       AudioSessionManager.shared.handleVideoUnmute()
-      player.isMuted = false
-      player.volume = 1.0
+      if player.isMuted { player.isMuted = false }
+      if player.volume == 0 { player.volume = 1.0 }
       model.isMuted = false
       model.volume = 1.0
     } else {
+      if model.isMuted == true && player.isMuted == true && player.volume == 0 {
+        return
+      }
       // User wants to mute - check if we can restore music
-      player.isMuted = true
-      player.volume = 0
+      if player.isMuted == false { player.isMuted = true }
+      if player.volume != 0 { player.volume = 0 }
       model.isMuted = true
       model.volume = 0
 

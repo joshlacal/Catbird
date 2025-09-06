@@ -93,6 +93,7 @@ struct AccountSwitcherView: View {
       }
       .sheet(isPresented: $isAddingAccount) {
         LoginView()
+              .environment(appState)
       }
       .alert(
         "Remove Account",

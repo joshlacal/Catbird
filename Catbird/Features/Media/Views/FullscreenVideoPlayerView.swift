@@ -8,6 +8,7 @@
 // Simplified version that uses the built-in Done button
 import SwiftUI
 import AVKit
+import AVFoundation
 import Petrel
 #if os(iOS)
 import UIKit
@@ -29,10 +30,16 @@ struct FullscreenVideoPlayerView: View {
         })
         .platformIgnoresSafeArea()
         .onAppear {
-            // Unmute for fullscreen viewing
-            AudioSessionManager.shared.handleVideoUnmute()
-            originalPlayer.isMuted = false
-            originalPlayer.volume = 1.0
+            // Respect prior mute state to avoid interrupting external audio
+            if !model.isMuted {
+                AudioSessionManager.shared.handleVideoUnmute()
+                originalPlayer.isMuted = false
+                originalPlayer.volume = 1.0
+            } else {
+                // Keep muted and do not escalate audio session
+                originalPlayer.isMuted = true
+                originalPlayer.volume = 0
+            }
         }
         .onDisappear {
             // Restore muted state for feed if needed
@@ -43,16 +50,22 @@ struct FullscreenVideoPlayerView: View {
         }
         // Enable swipe to dismiss
         #elseif os(iOS)
-        AVPlayerViewControllerWrapper(player: originalPlayer, onDismiss: {
+        AVPlayerViewControllerWrapper(player: originalPlayer, model: model, onDismiss: {
             dismiss()
         })
         .platformIgnoresSafeArea()
         .statusBar(hidden: true)
         .onAppear {
-            // Unmute for fullscreen viewing
-            AudioSessionManager.shared.handleVideoUnmute()
-            originalPlayer.isMuted = false
-            originalPlayer.volume = 1.0
+            // Respect prior mute state to avoid interrupting external audio
+            if !model.isMuted {
+                AudioSessionManager.shared.handleVideoUnmute()
+                originalPlayer.isMuted = false
+                originalPlayer.volume = 1.0
+            } else {
+                // Keep muted and do not escalate audio session
+                originalPlayer.isMuted = true
+                originalPlayer.volume = 0
+            }
         }
         .onDisappear {
             // Restore muted state for feed if needed
@@ -69,6 +82,7 @@ struct FullscreenVideoPlayerView: View {
 #if os(iOS)
 struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
     let player: AVPlayer
+    let model: VideoModel
     let onDismiss: () -> Void
     
     func makeUIViewController(context: Context) -> AVPlayerViewController {
@@ -82,6 +96,8 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         controller.entersFullScreenWhenPlaybackBegins = true
         controller.updatesNowPlayingInfoCenter = true
         
+        // Start observing system-driven volume/mute changes
+        context.coordinator.startObserving(player: player)
         return controller
     }
     
@@ -95,13 +111,73 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
     
     class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         let parent: AVPlayerViewControllerWrapper
+        private var isAdjustingProgrammatically = false
+        private var isMutedObservation: NSKeyValueObservation?
+        private var outputVolumeObservation: NSKeyValueObservation?
         
         init(_ parent: AVPlayerViewControllerWrapper) {
             self.parent = parent
         }
         
+        deinit {
+            stopObserving()
+        }
+
+        func startObserving(player: AVPlayer) {
+            // Observe player.isMuted changes (e.g., if system UI toggles it)
+            isMutedObservation = player.observe(\.isMuted, options: [.new]
+            ) { [weak self] player, change in
+                guard let self = self, let newValue = change.newValue else { return }
+                // Bridge to MainActor; KVO can arrive on a non-main queue
+                Task { @MainActor in
+                    self.handleMuteStateChange(player: player, isMuted: newValue)
+                }
+            }
+
+            // Observe system output volume; if user raises volume while we muted, treat as intent to unmute
+            let session = AVAudioSession.sharedInstance()
+            outputVolumeObservation = session.observe(\.outputVolume, options: [.new]
+            ) { [weak self] _, change in
+                guard let self = self, let vol = change.newValue else { return }
+                // Only react when user increases volume to audible level and we are muted
+                Task { @MainActor in
+                    if vol > 0.01 && (self.parent.model.isMuted || self.parent.player.isMuted) {
+                        self.userRequestedUnmute()
+                    }
+                }
+            }
+        }
+
+        func stopObserving() {
+            isMutedObservation?.invalidate()
+            isMutedObservation = nil
+            outputVolumeObservation?.invalidate()
+            outputVolumeObservation = nil
+        }
+
+        @MainActor private func handleMuteStateChange(player: AVPlayer, isMuted: Bool) {
+            // Avoid recursion if we are the ones changing it
+            if isAdjustingProgrammatically { return }
+
+            if isMuted == false {
+                userRequestedUnmute()
+            } else {
+                // User muted via system UI; reflect in coordinator model
+                VideoCoordinator.shared.setUnmuted(parent.model.id, unmuted: false)
+            }
+        }
+
+        @MainActor private func userRequestedUnmute() {
+            guard !isAdjustingProgrammatically else { return }
+            isAdjustingProgrammatically = true
+            defer { isAdjustingProgrammatically = false }
+            // Route through VideoCoordinator so audio session and model state are handled uniformly
+            VideoCoordinator.shared.setUnmuted(parent.model.id, unmuted: true)
+        }
+
         // This is called when the user taps the built-in "Done" button
         func playerViewControllerDidEndFullScreenPresentation(_ playerViewController: AVPlayerViewController) {
+            stopObserving()
             parent.onDismiss()
         }
     }

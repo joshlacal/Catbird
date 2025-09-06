@@ -53,6 +53,9 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     /// State observation with proper @Observable integration
     var stateObserver: UIKitStateObserver<FeedStateManager>?
     
+    /// Theme manager observation
+    var themeObserver: UIKitStateObserver<ThemeManager>?
+    
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
     
@@ -88,26 +91,56 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     // MARK: - Theme Support
     
     private func setupThemeObserver() {
+        // Observe ThemeManager's @Observable properties directly
+        themeObserver = UIKitStateObserver(observing: stateManager.appState.themeManager) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleThemeChange()
+            }
+        }
+        themeObserver?.startObserving()
+        
+        // Keep the notification observer as a fallback for explicit theme changes
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleThemeChange),
+            selector: #selector(handleThemeChangeNotification),
             name: NSNotification.Name("ThemeChanged"),
             object: nil
         )
     }
     
-    @objc private func handleThemeChange() {
+    @objc private func handleThemeChangeNotification() {
         DispatchQueue.main.async { [weak self] in
-            self?.updateThemeColors()
+            self?.handleThemeChange()
         }
     }
     
-    private func updateThemeColors() {
-        let currentScheme = getCurrentColorScheme()
+    private func handleThemeChange() {
+        updateThemeColors()
+        forceCellReconfiguration()
+    }
+    
+    func updateThemeColors() {
+        let currentScheme = getEffectiveColorScheme()
         let dynamicBackgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: currentScheme))
         
         collectionView?.backgroundColor = dynamicBackgroundColor
         view.backgroundColor = dynamicBackgroundColor
+        
+        // Update collection view layout configuration background as well
+        if let layout = collectionView?.collectionViewLayout as? UICollectionViewCompositionalLayout,
+           let listLayout = layout as? UICollectionViewCompositionalLayout {
+            // Recreate the layout with new theme colors
+            let newLayout = createLayout()
+            collectionView?.setCollectionViewLayout(newLayout, animated: false)
+        }
+    }
+    
+    private func forceCellReconfiguration() {
+        guard let dataSource = dataSource else { return }
+        
+        // Get current snapshot and reapply it to force cell reconfiguration
+        let currentSnapshot = dataSource.snapshot()
+        dataSource.apply(currentSnapshot, animatingDifferences: false)
     }
     
     // MARK: - Lifecycle
@@ -148,6 +181,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     
     deinit {
         stateObserver?.stopObserving()
+        themeObserver?.stopObserving()
         loadMoreTask?.cancel()
         
         if let backgroundObserver = backgroundObserver {
@@ -168,7 +202,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getCurrentColorScheme()))
+        collectionView.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getEffectiveColorScheme()))
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
         
@@ -201,7 +235,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         
         // Match legacy controller's configuration exactly
-        configuration.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getCurrentColorScheme()))
+        configuration.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getEffectiveColorScheme()))
         configuration.showsSeparators = false // Disable UIKit separators - let SwiftUI handle them
         
         // Configure header/footer
@@ -440,6 +474,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         // Cancel ongoing operations
         loadMoreTask?.cancel()
         stateObserver?.stopObserving()
+        themeObserver?.stopObserving()
         
         // Update the state manager
         stateManager = newStateManager
@@ -447,6 +482,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         // Restart observations
         setupObservers()
         setupScrollToTopCallback()
+        setupThemeObserver()
         
         // Load fresh data for new feed
         Task { @MainActor in

@@ -91,9 +91,10 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     textView.linkCreationDelegate = context.coordinator
     textView.requestFocusOnAttach = focusOnAppear
     textView.font = getAppropriateFont()
-    // Ensure newly typed text uses the desired font
+    // Ensure newly typed text uses the desired font and text color
     if let font = textView.font {
       textView.typingAttributes[.font] = font
+      textView.typingAttributes[.foregroundColor] = UIColor.label
     }
     textView.backgroundColor = .clear
     textView.isScrollEnabled = true
@@ -125,6 +126,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     if uiView.font != newFont {
       uiView.font = newFont
       uiView.typingAttributes[.font] = newFont
+      uiView.typingAttributes[.foregroundColor] = UIColor.label
       context.coordinator.updateFontRelatedSettings(in: uiView)
     }
     
@@ -337,21 +339,34 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       placeholderLabel?.font = typingFont
       if let font = textView.font {
         textView.typingAttributes[.font] = font
+        textView.typingAttributes[.foregroundColor] = UIColor.label
       }
     }
 
-    // Apply a default font to any ranges that lack an explicit font attribute.
+    // Apply a default font and text color to any ranges that lack these attributes.
     func applyingDefaultFontIfMissing(_ source: NSAttributedString, defaultFont: UIFont) -> NSAttributedString {
       let mutable = NSMutableAttributedString(attributedString: source)
       var location = 0
       while location < mutable.length {
         var range = NSRange(location: 0, length: 0)
         let attrs = mutable.attributes(at: location, effectiveRange: &range)
+        var needsUpdate = false
+        var newAttrs = attrs
+        
         if attrs[.font] == nil {
-          var newAttrs = attrs
           newAttrs[.font] = defaultFont
+          needsUpdate = true
+        }
+        
+        if attrs[.foregroundColor] == nil {
+          newAttrs[.foregroundColor] = UIColor.label
+          needsUpdate = true
+        }
+        
+        if needsUpdate {
           mutable.setAttributes(newAttrs, range: range)
         }
+        
         location = range.location + range.length
       }
       return mutable
@@ -384,19 +399,32 @@ struct EnhancedRichTextEditor: View {
 // MARK: - NSAttributedString Sanitizer (links-only)
 
 private extension NSAttributedString {
-  /// Returns a copy of the receiver where only the `.link` attribute is preserved
-  /// for each attributed run. All other attributes are stripped.
+  /// Returns a copy of the receiver where only essential attributes are preserved:
+  /// `.link`, `.font`, and `.foregroundColor`. All other attributes are stripped.
   func ctb_keepOnlyLinkAttribute() -> NSAttributedString {
     let mutable = NSMutableAttributedString(attributedString: self)
     var location = 0
     while location < mutable.length {
       var range = NSRange(location: 0, length: 0)
       let attrs = mutable.attributes(at: location, effectiveRange: &range)
+      var preservedAttrs: [NSAttributedString.Key: Any] = [:]
+      
+      // Preserve link attribute
       if let link = attrs[.link] {
-        mutable.setAttributes([.link: link], range: range)
-      } else {
-        mutable.setAttributes([:], range: range)
+        preservedAttrs[.link] = link
       }
+      
+      // Preserve font attribute
+      if let font = attrs[.font] {
+        preservedAttrs[.font] = font
+      }
+      
+      // Preserve text color attribute
+      if let color = attrs[.foregroundColor] {
+        preservedAttrs[.foregroundColor] = color
+      }
+      
+      mutable.setAttributes(preservedAttrs, range: range)
       location = range.location + range.length
     }
     return mutable

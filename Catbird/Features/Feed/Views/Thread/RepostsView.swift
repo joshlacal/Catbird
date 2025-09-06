@@ -11,6 +11,7 @@ import NukeUI
 
 struct RepostsView: View {
     let postUri: String
+    @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     @State private var reposts: [AppBskyActorDefs.ProfileView] = []
     @State private var loading: Bool = true
@@ -32,7 +33,7 @@ struct RepostsView: View {
             } else {
                 List {
                     ForEach(reposts, id: \.did) { profile in
-                        ProfileRowView(profile: profile)
+                        ProfileRowView(profile: profile, path: $path)
                     }
                     
                     if let cursor = cursor {

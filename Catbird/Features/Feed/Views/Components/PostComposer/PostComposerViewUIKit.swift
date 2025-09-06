@@ -38,8 +38,8 @@ extension LabelStyle where Self == ToolbarLabelStyle {
 }
 
 struct PostComposerViewUIKit: View {
-  @Environment(AppState.self) private var appState
-  @Environment(\.dismiss) private var dismiss
+    let appState = AppState.shared
+    @Environment(\.dismiss) private var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
 
   @State private var viewModel: PostComposerViewModel
@@ -347,6 +347,22 @@ struct PostComposerViewUIKit: View {
           handleDrop(providers)
         }
 
+        // @-mention suggestions below the editor (parity with SwiftUI composer)
+        if !viewModel.mentionSuggestions.isEmpty {
+          UserMentionSuggestionViewResolver(
+            suggestions: viewModel.mentionSuggestions.map { MentionSuggestion(profile: $0) },
+            onSuggestionSelected: { suggestion in
+              viewModel.insertMention(suggestion.profile)
+            },
+            onDismiss: {
+              // Clear suggestions if needed; viewModel clears on insert/update already
+              viewModel.mentionSuggestions = []
+            }
+          )
+          .padding(.horizontal, 16)
+          .padding(.top, 8)
+        }
+
         // Thread list shown inline only on compact width - now in scrollable area
         if hSize != .regular {
           if viewModel.isThreadMode {
@@ -469,8 +485,7 @@ struct PostComposerViewUIKit: View {
 
     return ScrollView {
       LazyVStack(spacing: 0) {
-        ForEach(viewModel.threadEntries.indices, id: \.self) { index in
-          let entry = viewModel.threadEntries[index]
+        ForEach(Array(viewModel.threadEntries.enumerated()), id: \.offset) { index, entry in
           VStack(spacing: 6) {
             // Row: avatar + text editor or preview
             HStack(alignment: .top, spacing: 12) {
@@ -742,9 +757,9 @@ struct PostComposerViewUIKit: View {
 
   // MARK: - Outline Tags
   private var outlineTagsSection: some View {
-    OutlineTagsView(tags: $viewModel.outlineTags)
+    OutlineTagsView(tags: $viewModel.outlineTags, compact: true)
       .padding(.horizontal)
-      .padding(.top, 4)
+      .padding(.top, 2)
   }
 
   // MARK: - Selected GIF View
@@ -1145,8 +1160,7 @@ struct PostComposerViewUIKit: View {
     // Stack avatar + text box rows; tap to activate; inactive rows dimmed
     ScrollView {
       LazyVStack(spacing: 0) {
-        ForEach(viewModel.threadEntries.indices, id: \.self) { index in
-          let entry = viewModel.threadEntries[index]
+        ForEach(Array(viewModel.threadEntries.enumerated()), id: \.offset) { index, entry in
           ThreadPostEditorView(
             entry: entry,
             entryIndex: index,

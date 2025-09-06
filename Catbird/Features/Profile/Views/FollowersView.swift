@@ -32,11 +32,8 @@ struct FollowersView: View {
                 .listRowInsets(EdgeInsets())
             } else if !viewModel.followers.isEmpty {
                 ForEach(viewModel.followers, id: \.did) { follower in
-                        ProfileRowView(profile: follower)
-                        .padding(12)
-                            .onTapGesture {
-                                path.append(NavigationDestination.profile(follower.did.didString()))
-                            }
+                        ProfileRowView(profile: follower, path: $path)
+                            .padding(12)
                             .buttonStyle(.plain)
                     .onAppear {
                         // Load more when reaching the end

@@ -14,14 +14,15 @@ import UIKit
 extension AVPlayer {
     /// Safely plays video without activating the audio session
     func safePlay() {
-        // Ensure muted to prevent audio interruption
-        self.isMuted = true
+        // Ensure muted to prevent audio interruption (avoid redundant sets)
+        if self.isMuted == false { self.isMuted = true }
         
         // Prevent automatic audio session activation
         self.preventsDisplaySleepDuringVideoPlayback = false
+        self.automaticallyWaitsToMinimizeStalling = true
         
         // Now play
-        self.play()
+        if self.rate == 0 { self.play() }
     }
     
     /// Prepares the player for Picture-in-Picture mode

@@ -78,7 +78,30 @@ struct QuotesView: View {
     }
     
     private func loadMoreQuotes() async {
-        // Similar implementation to loadMoreLikes
-        // ...
+        guard let client = appState.atProtoClient,
+              let currentCursor = cursor,
+              !loading else { return }
+        
+        loading = true
+        
+        do {
+            let uri = try ATProtocolURI(uriString: postUri)
+            let input = AppBskyFeedGetQuotes.Parameters(
+                uri: uri,
+                limit: 25,
+                cursor: currentCursor
+            )
+            
+            let (_, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            
+            if let result = result {
+                quotes.append(contentsOf: result.posts)
+                cursor = result.cursor
+            }
+        } catch {
+            self.error = error
+        }
+        
+        loading = false
     }
 }

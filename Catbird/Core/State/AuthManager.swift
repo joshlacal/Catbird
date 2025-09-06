@@ -8,7 +8,7 @@ import SwiftUI
 enum AuthState: Equatable {
   case initializing
   case unauthenticated
-  case authenticating
+  case authenticating(progress: AuthProgress)
   case authenticated(userDID: String)
   case error(message: String)
 
@@ -35,14 +35,93 @@ enum AuthState: Equatable {
     }
     return nil
   }
+  
+  /// Get the current authentication progress if authenticating
+  var authProgress: AuthProgress? {
+    if case .authenticating(let progress) = self {
+      return progress
+    }
+    return nil
+  }
+}
+
+/// Detailed authentication progress states
+enum AuthProgress: Equatable, Sendable {
+  case initializingClient
+  case resolvingHandle(handle: String)
+  case fetchingMetadata(url: String)
+  case generatingAuthURL
+  case openingBrowser
+  case waitingForCallback
+  case exchangingTokens
+  case creatingSession
+  case finalizing
+  case retrying(step: String, attempt: Int, maxAttempts: Int)
+  
+  /// User-friendly description of the current progress
+  var userDescription: String {
+    switch self {
+    case .initializingClient:
+      return "Initializing authentication client"
+    case .resolvingHandle(let handle):
+      return "Resolving handle \(handle)"
+    case .fetchingMetadata(let url):
+      let domain = URL(string: url)?.host ?? url
+      return "Connecting to \(domain)"
+    case .generatingAuthURL:
+      return "Preparing authentication"
+    case .openingBrowser:
+      return "Opening browser for secure login"
+    case .waitingForCallback:
+      return "Waiting for authentication"
+    case .exchangingTokens:
+      return "Processing authentication"
+    case .creatingSession:
+      return "Creating secure session"
+    case .finalizing:
+      return "Finalizing login"
+    case .retrying(let step, let attempt, let maxAttempts):
+      return "Retrying \(step) (attempt \(attempt)/\(maxAttempts))"
+    }
+  }
+  
+  /// Technical description for debugging
+  var technicalDescription: String {
+    switch self {
+    case .initializingClient:
+      return "Creating ATProtoClient instance"
+    case .resolvingHandle(let handle):
+      return "Resolving \(handle) to DID via .well-known/atproto_did"
+    case .fetchingMetadata(let url):
+      return "Fetching OAuth metadata from \(url)"
+    case .generatingAuthURL:
+      return "Generating PKCE parameters and authorization URL"
+    case .openingBrowser:
+      return "Launching ASWebAuthenticationSession"
+    case .waitingForCallback:
+      return "Waiting for OAuth callback with authorization code"
+    case .exchangingTokens:
+      return "Exchanging authorization code for access tokens"
+    case .creatingSession:
+      return "Creating authenticated session and storing tokens"
+    case .finalizing:
+      return "Completing authentication setup"
+    case .retrying(let step, let attempt, let maxAttempts):
+      return "Retrying failed step: \(step) (attempt \(attempt) of \(maxAttempts))"
+    }
+  }
 }
 
 /// Handles all authentication-related operations with a clean state machine approach
 @Observable
-final class AuthenticationManager {
+final class AuthenticationManager: AuthProgressDelegate {
   // MARK: - Properties
 
   private let logger = Logger(subsystem: "blue.catbird", category: "Authentication")
+  
+  // Authentication timeout configuration
+  private let authenticationTimeout: TimeInterval = 60.0 // 60 seconds
+  private let networkTimeout: TimeInterval = 30.0 // 30 seconds for individual network calls
 
   // Current authentication state - the source of truth
   private(set) var state: AuthState = .initializing
@@ -56,6 +135,14 @@ final class AuthenticationManager {
 
   // The ATProtoClient used for authentication and API calls
   private(set) var client: ATProtoClient?
+
+  // Track current authentication task for cancellation
+  @ObservationIgnored
+  private var currentAuthTask: Task<Void, Never>?
+  
+  // Flag to indicate if authentication was cancelled by user
+  @ObservationIgnored
+  private var isAuthenticationCancelled = false
 
   // User information
   private(set) var handle: String?
@@ -75,6 +162,31 @@ final class AuthenticationManager {
     redirectUri: "https://catbird.blue/oauth/callback",
     scope: "atproto transition:generic transition:chat.bsky"
   )
+  
+  // MARK: - Timeout Utility
+  
+  /// Executes an async operation with a timeout, throwing TimeoutError if exceeded
+  private func withTimeout<T>(
+    timeout: TimeInterval,
+    operation: @escaping @Sendable () async throws -> T
+  ) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+      // Add the main operation
+      group.addTask {
+        try await operation()
+      }
+      
+      // Add the timeout task
+      group.addTask {
+        try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+        throw AuthError.timeout
+      }
+      
+      // Return the first result (either success or timeout)
+      defer { group.cancelAll() }
+      return try await group.next()!
+    }
+  }
 
   // MARK: - Initialization
 
@@ -124,10 +236,16 @@ final class AuthenticationManager {
   @MainActor
   func initialize() async {
     logger.info("Initializing authentication system")
+    
+    // Clear cancellation flag on initialize
+    isAuthenticationCancelled = false
+    
     updateState(.initializing)
 
     if client == nil {
       logger.info("ATTEMPTING to create ATProtoClient...")  // More specific log
+      updateState(.authenticating(progress: .initializingClient))
+      
       // Add log immediately before
       logger.debug(">>> Calling await ATProtoClient(...)")
 
@@ -149,6 +267,9 @@ final class AuthenticationManager {
       } else {
           // Add log immediately after *successful* creation
           logger.info("✅✅✅ ATProtoClient CREATED SUCCESSFULLY ✅✅✅")  // Make it stand out
+          
+          // Set up progress delegate
+          await client?.setAuthProgressDelegate(self)
       }
 
     } else {
@@ -164,6 +285,12 @@ final class AuthenticationManager {
   /// Check the current authentication state with enhanced token refresh
   @MainActor
   func checkAuthenticationState() async {
+    // Don't update state if authentication was cancelled by user
+    guard !isAuthenticationCancelled else {
+      logger.debug("Skipping auth state check - authentication was cancelled by user")
+      return
+    }
+    
     guard let client = client else {
       updateState(.unauthenticated)
       return
@@ -178,7 +305,10 @@ final class AuthenticationManager {
           updateState(.authenticated(userDID: AppState.shared.currentUserDID ?? ""))
         logger.info("✅ Using existing valid session for FaultOrdering")
       } else {
-        updateState(.unauthenticated)
+        // Don't update state if authentication was cancelled
+        if !isAuthenticationCancelled {
+          updateState(.unauthenticated)
+        }
         logger.info("❌ No valid session found for FaultOrdering")
       }
       return
@@ -218,11 +348,17 @@ final class AuthenticationManager {
         }
       } catch {
         logger.error("Error fetching user identity: \(error.localizedDescription)")
-        updateState(.unauthenticated)
+        // Don't update state if authentication was cancelled
+        if !isAuthenticationCancelled {
+          updateState(.unauthenticated)
+        }
       }
     } else {
       logger.info("No valid session found")
-      updateState(.unauthenticated)
+      // Don't update state if authentication was cancelled
+      if !isAuthenticationCancelled {
+        updateState(.unauthenticated)
+      }
     }
   }
 
@@ -291,71 +427,121 @@ final class AuthenticationManager {
   func login(handle: String) async throws -> URL {
     logger.info("Starting OAuth flow for handle: \(handle)")
 
-    // Update state
-    updateState(.authenticating)
+    // Cancel any existing authentication task
+    currentAuthTask?.cancel()
+    currentAuthTask = nil
 
-    // Ensure client exists
+    // Clear cancellation flag for new attempt
+    isAuthenticationCancelled = false
+
+    // Update state
+    updateState(.authenticating(progress: .resolvingHandle(handle: handle)))
+
+    // Ensure client exists, create if needed
+    if client == nil {
+      logger.info("Client not found, initializing for login")
+      client = await ATProtoClient(
+        oauthConfig: oauthConfig,
+        namespace: "blue.catbird",
+        userAgent: "Catbird/1.0"
+      )
+      await client?.applicationDidBecomeActive()
+      await client?.setAuthProgressDelegate(self)
+    }
+    
     guard let client = client else {
       let error = AuthError.clientNotInitialized
       updateState(.error(message: error.localizedDescription))
       throw error
     }
 
-    // Start OAuth flow with retry logic
-    var lastError: Error?
-    let maxRetries = 3
-    
-    for attempt in 1...maxRetries {
-      do {
-        logger.debug("OAuth flow attempt \(attempt) of \(maxRetries)")
-        let authURL = try await client.startOAuthFlow(identifier: handle)
-        logger.debug("OAuth URL generated successfully: \(authURL)")
-        return authURL
-      } catch {
-        lastError = error
-        logger.warning("OAuth flow attempt \(attempt) failed: \(error.localizedDescription)")
+    // Start OAuth flow with retry logic (no timeout wrapper)
+    do {
+      var lastError: Error?
+      let maxRetries = 3
+      
+      for attempt in 1...maxRetries {
+        // Check for task cancellation before each attempt
+        try Task.checkCancellation()
         
-        // Don't retry certain types of errors
-        if let nsError = error as NSError? {
-          // Network timeout or connection errors - worth retrying
-          if nsError.domain == NSURLErrorDomain && [
-            NSURLErrorTimedOut,
-            NSURLErrorCannotConnectToHost,
-            NSURLErrorNetworkConnectionLost
-          ].contains(nsError.code) {
-            if attempt < maxRetries {
-              logger.info("Retrying OAuth flow after network error in \(attempt) seconds...")
-              try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000)) // Exponential backoff
-              continue
+        do {
+          self.logger.debug("OAuth flow attempt \(attempt) of \(maxRetries)")
+          
+          if attempt > 1 {
+            await self.updateState(.authenticating(progress: .retrying(step: "OAuth setup", attempt: attempt, maxAttempts: maxRetries)))
+          } else {
+            await self.updateState(.authenticating(progress: .generatingAuthURL))
+          }
+          
+          // Apply timeout only to the network operation
+          let authURL = try await withTimeout(timeout: networkTimeout) {
+            try await client.startOAuthFlow(identifier: handle)
+          }
+          self.logger.debug("OAuth URL generated successfully: \(authURL)")
+          
+          await self.updateState(.authenticating(progress: .openingBrowser))
+          return authURL
+        } catch {
+          lastError = error
+          self.logger.warning("OAuth flow attempt \(attempt) failed: \(error.localizedDescription)")
+          
+          // Don't retry certain types of errors
+          if let nsError = error as NSError? {
+            // Network timeout or connection errors - worth retrying
+            if nsError.domain == NSURLErrorDomain && [
+              NSURLErrorTimedOut,
+              NSURLErrorCannotConnectToHost,
+              NSURLErrorNetworkConnectionLost
+            ].contains(nsError.code) {
+              if attempt < maxRetries {
+                self.logger.info("Retrying OAuth flow after network error in \(attempt) seconds...")
+                try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000)) // Exponential backoff
+                continue
+              }
+            }
+            // Authentication errors - don't retry
+            else if nsError.code == 401 || nsError.code == 403 {
+              break
             }
           }
-          // Authentication errors - don't retry
-          else if nsError.code == 401 || nsError.code == 403 {
+          
+          // If this was the last attempt, break
+          if attempt == maxRetries {
             break
           }
+          
+          // Wait before retrying with exponential backoff
+          try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
         }
-        
-        // If this was the last attempt, break
-        if attempt == maxRetries {
-          break
-        }
-        
-        // Wait before retrying with exponential backoff
-        try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
       }
+      
+      // All retries failed
+      let finalError = lastError ?? AuthError.unknown(NSError(domain: "OAuth", code: -1))
+      throw finalError
+    } catch {
+      // Handle specific error types
+      let finalError: AuthError
+      if error is CancellationError {
+        finalError = AuthError.cancelled
+      } else if case AuthError.timeout = error {
+        finalError = AuthError.timeout
+      } else if let authError = error as? AuthError {
+        finalError = authError
+      } else {
+        finalError = AuthError.unknown(error)
+      }
+      
+      logger.error("OAuth flow failed: \(finalError.localizedDescription)")
+      updateState(.error(message: finalError.localizedDescription))
+      throw finalError
     }
-    
-    // All retries failed
-    let finalError = lastError ?? AuthError.unknown(NSError(domain: "OAuth", code: -1))
-    logger.error("Failed to start OAuth flow after \(maxRetries) attempts: \(finalError.localizedDescription)")
-    updateState(.error(message: "Failed to start login: \(finalError.localizedDescription)"))
-    throw finalError
   }
 
-  /// Handle the OAuth callback after web authentication
+  /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
   func handleCallback(_ url: URL) async throws {
     logger.info("Processing OAuth callback")
+    updateState(.authenticating(progress: .exchangingTokens))
 
     // Ensure we're in the right state
     if case .authenticating = state {
@@ -372,39 +558,70 @@ final class AuthenticationManager {
       throw error
     }
 
-    // Handle callback - Propagating errors via function signature
-    // Process callback with client
-    try await client.handleOAuthCallback(url: url)
-    logger.info("OAuth callback processed successfully")
+    // Wrap callback processing with timeout
+    do {
+      try await withTimeout(timeout: networkTimeout) {
+        // Check for task cancellation
+        try Task.checkCancellation()
+        
+        // Handle callback - Propagating errors via function signature
+        try await client.handleOAuthCallback(url: url)
+        self.logger.info("OAuth callback processed successfully")
+        
+        await self.updateState(.authenticating(progress: .creatingSession))
 
-    // Verify session is valid after OAuth callback (skip unnecessary refresh of fresh token)
-    let hasValidSession = await client.hasValidSession()
-    if !hasValidSession {
-      logger.error("Session invalid after OAuth callback processing")
-      let error = AuthError.invalidSession
-      updateState(.error(message: error.localizedDescription))
-      throw error // Propagate critical error
+        // Verify session is valid after OAuth callback (skip unnecessary refresh of fresh token)
+        let hasValidSession = await client.hasValidSession()
+        if !hasValidSession {
+          self.logger.error("Session invalid after OAuth callback processing")
+          throw AuthError.invalidSession
+        }
+
+        await self.updateState(.authenticating(progress: .finalizing))
+
+        // Get user info
+        let did = try await client.getDid() // Propagate error if this fails
+        self.handle = try await client.getHandle() // Propagate error if this fails
+
+        // Store handle for multi-account support
+        if let handle = self.handle {
+          self.storeHandle(handle, for: did)
+        }
+
+        // Update state
+          await MainActor.run {
+              // Clear cancellation flag on successful authentication
+              self.isAuthenticationCancelled = false
+              self.updateState(.authenticated(userDID: did))
+          }
+        self.logger.info("Authentication successful for user \(self.handle ?? "unknown")")
+      }
+    } catch {
+      // Handle specific error types
+      let finalError: AuthError
+      if error is CancellationError {
+        finalError = AuthError.cancelled
+      } else if case AuthError.timeout = error {
+        finalError = AuthError.timeout
+      } else if let authError = error as? AuthError {
+        finalError = authError
+      } else {
+        finalError = AuthError.unknown(error)
+      }
+      
+      logger.error("OAuth callback processing failed: \(finalError.localizedDescription)")
+      updateState(.error(message: finalError.localizedDescription))
+      throw finalError
     }
-
-    // Get user info
-    let did = try await client.getDid() // Propagate error if this fails
-    self.handle = try await client.getHandle() // Propagate error if this fails
-
-    // Store handle for multi-account support
-    if let handle = self.handle {
-      storeHandle(handle, for: did)
-    }
-
-    // Update state
-    updateState(.authenticated(userDID: did))
-    logger.info("Authentication successful for user \(self.handle ?? "unknown")")
-
   }
 
   /// Logout the current user
   @MainActor
   func logout() async {
     logger.info("Logging out user")
+
+    // Clear cancellation flag - this is a deliberate logout
+    isAuthenticationCancelled = false
 
     // Update state first to ensure UI updates immediately
     updateState(.unauthenticated)
@@ -430,6 +647,20 @@ final class AuthenticationManager {
   /// Reset after an error or cancellation
   @MainActor
   func resetError() {
+    // Cancel any ongoing authentication task
+    currentAuthTask?.cancel()
+    currentAuthTask = nil
+    
+    // Cancel OAuth flow in Petrel
+    if let client = client {
+      Task {
+        await client.cancelOAuthFlow()
+      }
+    }
+    
+    // Set cancellation flag to prevent spurious logout from background tasks
+    isAuthenticationCancelled = true
+    
     if case .error = state {
       updateState(.unauthenticated)
     } else if case .authenticating = state {
@@ -611,19 +842,37 @@ final class AuthenticationManager {
       throw error
     }
 
+    // Generate OAuth URL without timeout wrapper
     do {
-      // Use client's addAccount method which handles preserving the current account
-      let authURL = try await client.startOAuthFlow(identifier: handle)
-      logger.debug("OAuth URL generated for new account: \(authURL)")
+      // Check for task cancellation
+      try Task.checkCancellation()
+      
+      // Apply timeout only to the network operation
+      let authURL = try await withTimeout(timeout: networkTimeout) {
+        try await client.startOAuthFlow(identifier: handle)
+      }
+      self.logger.debug("OAuth URL generated for new account: \(authURL)")
 
       // Update state
-      updateState(.authenticating)
+      updateState(.authenticating(progress: .openingBrowser))
 
       return authURL
     } catch {
-      logger.error("Failed to start OAuth flow for new account: \(error.localizedDescription)")
-      updateState(.error(message: "Failed to add account: \(error.localizedDescription)"))
-      throw error
+      // Handle specific error types
+      let finalError: AuthError
+      if error is CancellationError {
+        finalError = AuthError.cancelled
+      } else if case AuthError.timeout = error {
+        finalError = AuthError.timeout
+      } else if let authError = error as? AuthError {
+        finalError = authError
+      } else {
+        finalError = AuthError.unknown(error)
+      }
+      
+      logger.error("Failed to start OAuth flow for new account: \(finalError.localizedDescription)")
+      updateState(.error(message: "Failed to add account: \(finalError.localizedDescription)"))
+      throw finalError
     }
   }
 
@@ -758,6 +1007,34 @@ final class AuthenticationManager {
   private func saveBiometricAuthPreference(enabled: Bool) async {
     UserDefaults.standard.set(enabled, forKey: "biometric_auth_enabled")
   }
+  
+  // MARK: - AuthProgressDelegate
+  
+  /// Handles authentication progress events from Petrel
+  /// - Parameter event: The progress event that occurred
+  func authenticationProgress(_ event: AuthProgressEvent) async {
+    // Map Petrel's progress events to our AuthProgress enum
+    let progress: AuthProgress
+    switch event {
+    case .resolvingHandle(let handle):
+      progress = .resolvingHandle(handle: handle)
+    case .fetchingMetadata(let url):
+      progress = .fetchingMetadata(url: url)
+    case .generatingParameters:
+      progress = .generatingAuthURL
+    case .exchangingTokens:
+      progress = .exchangingTokens
+    case .creatingSession:
+      progress = .creatingSession
+    case .retrying(let operation, let attempt, let maxAttempts):
+      progress = .retrying(step: operation, attempt: attempt, maxAttempts: maxAttempts)
+    }
+    
+    // Update state on main actor
+    await MainActor.run {
+      self.updateState(.authenticating(progress: progress))
+    }
+  }
 }
 
 // MARK: - Error Types
@@ -768,6 +1045,8 @@ enum AuthError: Error, LocalizedError {
   case invalidCredentials
   case networkError(Error)
   case badResponse(Int)
+  case timeout
+  case cancelled
   case unknown(Error)
 
   var errorDescription: String? {
@@ -782,8 +1061,66 @@ enum AuthError: Error, LocalizedError {
       return "Network error: \(error.localizedDescription)"
     case .badResponse(let code):
       return "Bad response code: \(code)"
+    case .timeout:
+      return "Authentication timed out. Please try again."
+    case .cancelled:
+      return "Authentication was cancelled"
     case .unknown(let error):
       return "Unknown error: \(error.localizedDescription)"
+    }
+  }
+  
+  var failureReason: String? {
+    switch self {
+    case .clientNotInitialized:
+      return "The authentication system has not been properly set up."
+    case .invalidSession:
+      return "Your authentication session is no longer valid or has been corrupted."
+    case .invalidCredentials:
+      return "The provided username, password, or authentication token is incorrect."
+    case .networkError:
+      return "Unable to connect to the authentication server."
+    case .badResponse(let code) where code >= 500:
+      return "The authentication server is experiencing technical difficulties."
+    case .badResponse(let code) where code == 429:
+      return "Too many authentication attempts. Rate limit exceeded."
+    case .badResponse(let code) where code >= 400:
+      return "The authentication request was rejected by the server."
+    case .timeout:
+      return "The authentication process took too long to complete."
+    case .cancelled:
+      return "Authentication was cancelled by the user."
+    case .unknown:
+      return "An unexpected error occurred during authentication."
+    default:
+      return nil
+    }
+  }
+  
+  var recoverySuggestion: String? {
+    switch self {
+    case .clientNotInitialized:
+      return "Please restart the app. If the problem persists, contact support."
+    case .invalidSession:
+      return "Please log out and log back in to refresh your session."
+    case .invalidCredentials:
+      return "Please check your username and password, then try again."
+    case .networkError:
+      return "Check your internet connection and try again."
+    case .badResponse(let code) where code >= 500:
+      return "Please wait a moment and try again. If the problem persists, contact support."
+    case .badResponse(let code) where code == 429:
+      return "Please wait a few minutes before trying to authenticate again."
+    case .badResponse(let code) where code >= 400:
+      return "Check your login credentials and try again."
+    case .timeout:
+      return "Please try again with a stable internet connection."
+    case .cancelled:
+      return "You can try logging in again when ready."
+    case .unknown:
+      return "Please try again or contact support if the problem persists."
+    default:
+      return "Please try again or contact support if the problem persists."
     }
   }
 }

@@ -4,64 +4,72 @@ import Petrel
 /// Enhanced row view for displaying profile information in search results
 struct ProfileRowView: View {
     let profile: ProfileDisplayable
+    @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     @State private var currentUserDid: String?
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Profile avatar
-            AsyncProfileImage(url: profile.finalAvatarURL(), size: 44)
-            
-            // Profile info
-            VStack(alignment: .leading, spacing: 4) {
-                    if profile.displayName?.isEmpty ?? true {
-                        // Display handle if no display name
-                        Text("@\(profile.handle)")
-                            .appFont(AppTextRole.headline)
-                            .lineLimit(1)
-                    } else {
-                        // Display display name if available
-                        Text(profile.displayName ?? profile.handle.description)
-                            .appFont(AppTextRole.headline)
-                    }
-                                        
-                HStack {
+        Button(action: {
+            path.append(NavigationDestination.profile(profile.did.didString()))
+        }) {
+            HStack(alignment: .top, spacing: 12) {
+                // Profile avatar
+                AsyncProfileImage(url: profile.finalAvatarURL(), size: 44)
+                
+                // Profile info
+                VStack(alignment: .leading, spacing: 4) {
+                        if profile.displayName?.isEmpty ?? true {
+                            // Display handle if no display name
+                            Text("@\(profile.handle)")
+                                .appFont(AppTextRole.headline)
+                                .lineLimit(1)
+                        } else {
+                            // Display display name if available
+                            Text(profile.displayName ?? profile.handle.description)
+                                .appFont(AppTextRole.headline)
+                        }
+                                            
+                    HStack {
 
-                Text("@\(profile.handle)")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.secondary)
-                    
-                    // Handle "Follows you" badge if available
-                    if let profileView = profile as? AppBskyActorDefs.ProfileView,
-                       let viewer = profileView.viewer, viewer.followedBy != nil {
-                        FollowsBadgeView()
-                    } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic,
-                              let viewer = profileViewBasic.viewer, viewer.followedBy != nil {
-                        FollowsBadgeView()
-                    }
-
-                }
-
-                // Description (only available in ProfileView)
-                if let profileView = profile as? AppBskyActorDefs.ProfileView,
-                   let description = profileView.description, !description.isEmpty {
-                    Text(description)
-                        .multilineTextAlignment(.leading)
-                        .appFont(AppTextRole.caption)
+                    Text("@\(profile.handle)")
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
-                        .padding(.top, 2)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                        
+                        // Handle "Follows you" badge if available
+                        if let profileView = profile as? AppBskyActorDefs.ProfileView,
+                           let viewer = profileView.viewer, viewer.followedBy != nil {
+                            FollowsBadgeView()
+                        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic,
+                                  let viewer = profileViewBasic.viewer, viewer.followedBy != nil {
+                            FollowsBadgeView()
+                        }
+
+                    }
+
+                    // Description (only available in ProfileView)
+                    if let profileView = profile as? AppBskyActorDefs.ProfileView,
+                       let description = profileView.description, !description.isEmpty {
+                        Text(description)
+                            .multilineTextAlignment(.leading)
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 2)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                
+                Spacer()
+                
+                // Follow button if logged in and not self
+                if let did = currentUserDid, did != profile.did.didString() {
+                    followButton()
                 }
             }
-            
-            Spacer()
-            
-            // Follow button if logged in and not self
-            if let did = currentUserDid, did != profile.did.didString() {
-                followButton()
-            }
+            .foregroundColor(.primary)
+            .padding(.horizontal, 16)
         }
+        .buttonStyle(.plain)
         .padding(.vertical, 8)
         .task {
             // Fetch the DID asynchronously

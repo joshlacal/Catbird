@@ -84,6 +84,43 @@ struct NavigationHandler {
         //                .themedNavigationBar(appState.themeManager)
         .id(uri.uriString())
 
+    case .postLikes(let postUri):
+      LikesView(postUri: postUri, path: path)
+        .navigationTitle("Likes")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .id(postUri)
+
+    case .postReposts(let postUri):
+      RepostsView(postUri: postUri, path: path)
+        .navigationTitle("Reposts")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .id(postUri)
+
+    case .postQuotes(let postUri):
+      QuotesView(postUri: postUri, path: path)
+        .navigationTitle("Quotes")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .id(postUri)
+
+    case .bookmarks:
+      if #available(iOS 26.0, macOS 26.0, *) {
+        BookmarksView(path: path)
+          .navigationTitle("Bookmarks")
+          #if os(iOS)
+          .toolbarTitleDisplayMode(.large)
+          #endif
+          .id("bookmarks")
+      } else {
+        Text("Bookmarks require iOS 26.0 or macOS 26.0")
+          .navigationTitle("Bookmarks")
+      }
+
     #if os(iOS)
     case .conversation(let convoId):
       ConversationView(convoId: convoId)
@@ -168,6 +205,14 @@ struct NavigationHandler {
       return "List"
     case .starterPack:
       return "Starter Pack"
+    case .postLikes:
+      return "Likes"
+    case .postReposts:
+      return "Reposts"
+    case .postQuotes:
+      return "Quotes"
+    case .bookmarks:
+      return "Bookmarks"
     #if os(iOS)
     case .conversation:
       // Title might be dynamic based on convo, but NavigationHandler provides a static one
@@ -215,6 +260,14 @@ struct NavigationHandler {
       return "list.bullet.rectangle"
     case .starterPack:
       return "person.3"
+    case .postLikes:
+      return "heart"
+    case .postReposts:
+      return "arrow.2.squarepath"
+    case .postQuotes:
+      return "quote.bubble"
+    case .bookmarks:
+      return "bookmark"
     #if os(iOS)
     case .conversation:
       return "bubble.left.and.bubble.right.fill"  // Or just "bubble.left.fill"

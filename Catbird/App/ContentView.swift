@@ -6,7 +6,7 @@ import ExyteChat
 #endif
 
 struct ContentView: View {
-  private let appState = AppState.shared
+  @Environment(AppState.self) private var appState
   @State private var selectedTab = 0
   @State private var lastTappedTab: Int?
   @State private var authRetryAttempted = false
@@ -34,8 +34,16 @@ struct ContentView: View {
               lastTappedTab: $lastTappedTab
             )
           }
-      } else if case .authenticating = currentAuthState {
-        ContentViewLoadingView(message: "Authenticating...")
+      } else if case .authenticating(let progress) = currentAuthState {
+        ContentViewLoadingView(
+          message: progress.userDescription,
+          progress: progress,
+          onCancel: {
+            Task {
+              appState.authManager.resetError()
+            }
+          }
+        )
       } else if case .initializing = currentAuthState {
         ContentViewLoadingView(message: "Initializing...")
           .onAppear {
@@ -93,22 +101,67 @@ struct ContentView: View {
 // MARK: - Loading View
 
 struct ContentViewLoadingView: View {
-  private let appState = AppState.shared
+  @Environment(AppState.self) private var appState
   let message: String
+  let progress: AuthProgress?
+  let onCancel: (() -> Void)?
+
+  init(message: String, progress: AuthProgress? = nil, onCancel: (() -> Void)? = nil) {
+    self.message = message
+    self.progress = progress
+    self.onCancel = onCancel
+  }
 
   var body: some View {
-    VStack(spacing: 20) {
-      ProgressView()
-        .scaleEffect(1.5)
+    VStack(spacing: 24) {
+      VStack(spacing: 20) {
+        ProgressView()
+          .scaleEffect(1.5)
 
-      Text(message)
-        .appFont(AppTextRole.headline)
-        .textCase(.uppercase)
-        .foregroundStyle(.secondary)
-        .textScale(.secondary)
+        VStack(spacing: 8) {
+          Text(message)
+            .appFont(AppTextRole.headline)
+            .textCase(.uppercase)
+            .foregroundStyle(.secondary)
+            .textScale(.secondary)
+          
+          if let progress = progress {
+            switch progress {
+            case .resolvingHandle(let handle):
+              Text("Handle: \(handle)")
+                .appFont(AppTextRole.body)
+                .foregroundStyle(.tertiary)
+                .textScale(.secondary)
+            case .retrying(let step, let attempt, let maxAttempts):
+              Text("Step: \(step)")
+                .appFont(AppTextRole.body)
+                .foregroundStyle(.tertiary)
+                .textScale(.secondary)
+            case .fetchingMetadata(let url):
+              if let domain = URL(string: url)?.host {
+                Text("Server: \(domain)")
+                  .appFont(AppTextRole.body)
+                  .foregroundStyle(.tertiary)
+                  .textScale(.secondary)
+              }
+            default:
+              EmptyView()
+            }
+          }
+        }
+      }
+      
+      if let onCancel = onCancel {
+        Button("Cancel") {
+          onCancel()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(.background)
+    .padding()
   }
 }
 
@@ -216,7 +269,7 @@ private struct ComposeSourceModifier: ViewModifier {
 
 @available(iOS 18.0, *)
 struct MainContentView18: View {
-  private let appState = AppState.shared
+  @Environment(AppState.self) private var appState
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
@@ -431,7 +484,7 @@ struct MainContentView18: View {
                 )
               }
             }
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.fraction(1/8), .medium, .large])
             .presentationDragIndicator(.visible)
             // Link the sheet to the FAB for Liquid Glass morph
             .navigationTransition(.zoom(sourceID: "compose", in: composeTransitionNamespace))
@@ -455,6 +508,7 @@ struct MainContentView18: View {
         }
         .sheet(isPresented: $showingNewMessageSheet) {
           NewMessageView()
+            .environment(appState)
             .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
             .presentationDragIndicator(.visible)
             .presentationBackground(.thinMaterial)
@@ -477,12 +531,29 @@ struct MainContentView18: View {
           saveDrawerState()
         }
       } drawer: {
-        FeedsStartPage(
-          appState: appState,
-          selectedFeed: $selectedFeed,
-          currentFeedName: $currentFeedName,
-          isDrawerOpen: $isDrawerOpen
-        )
+          NavigationStack {
+              FeedsStartPage(
+                appState: appState,
+                selectedFeed: $selectedFeed,
+                currentFeedName: $currentFeedName,
+                isDrawerOpen: $isDrawerOpen
+              )
+              .toolbar { // Native toolbar items shown while drawer is open (iOS)
+                  if isDrawerOpen && selectedTab == 0 {
+                      ToolbarItem(placement: .topBarTrailing) {
+                          Button { isDrawerOpen = false } label: { Image(systemName: "xmark") }
+                              .accessibilityLabel("Close Feeds Menu")
+                      }
+                      ToolbarItem(placement: .bottomBar) {
+                          Button {
+                              appState.navigationManager.navigate(to: .bookmarks)
+                              isDrawerOpen = false
+                          } label: { Label("Bookmarks", systemImage: "bookmark") }
+                              .accessibilityLabel("Bookmarks")
+                      }
+                  }
+              }
+          }
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
@@ -688,7 +759,7 @@ struct MainContentView18: View {
 
 @available(iOS 17.0, *)
 struct MainContentView17: View {
-  private let appState = AppState.shared
+  @Environment(AppState.self) private var appState
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
@@ -903,6 +974,7 @@ struct MainContentView17: View {
       }
       .sheet(isPresented: $showingNewMessageSheet) {
         NewMessageView()
+          .environment(appState)
           .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
           .presentationDragIndicator(.visible)
           .presentationBackground(.thinMaterial)
@@ -934,6 +1006,21 @@ struct MainContentView17: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
+      .toolbar { // Native toolbar items shown while drawer is open (iOS)
+        if isDrawerOpen && selectedTab == 0 {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button { isDrawerOpen = false } label: { Image(systemName: "xmark") }
+              .accessibilityLabel("Close Feeds Menu")
+          }
+          ToolbarItem(placement: .bottomBar) {
+            Button {
+              appState.navigationManager.navigate(to: .bookmarks)
+              isDrawerOpen = false
+            } label: { Label("Bookmarks", systemImage: "bookmark") }
+              .accessibilityLabel("Bookmarks")
+          }
+        }
+      }
       
       #elseif os(macOS)
       // macOS content goes here - similar to iOS but without SideDrawer

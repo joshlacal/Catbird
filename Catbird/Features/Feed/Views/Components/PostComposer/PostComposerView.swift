@@ -794,6 +794,8 @@ struct PostComposerView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
                 )
+                // Ensure the content actually clips to rounded shape
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .padding(.top, 8)
             }
         }

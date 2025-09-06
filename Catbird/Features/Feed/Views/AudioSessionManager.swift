@@ -105,10 +105,12 @@ class AudioSessionManager {
       wasAudioPlayingBeforeInterruption = audioSession.isOtherAudioPlaying
 
       // Configure for playback that ducks but doesn't stop background audio
-      // Use allowBluetooth and allowAirPlay for better PiP support
+      // Use allowBluetooth and allowAirPlay for better PiP support.
+      // IMPORTANT: Do not use .duckOthers to avoid attenuating/interrupting other audio apps.
       try audioSession.setCategory(
         .playback, mode: .moviePlayback,
-        options: [.mixWithOthers, .duckOthers, .allowBluetooth, .allowAirPlay])
+        options: [.mixWithOthers, .allowBluetooth, .allowAirPlay]
+      )
       try audioSession.setActive(true)
       isActive = true
       logger.debug("Audio session activated for video with sound")

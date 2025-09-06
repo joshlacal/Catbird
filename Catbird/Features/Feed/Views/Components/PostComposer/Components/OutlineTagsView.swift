@@ -7,11 +7,14 @@ struct OutlineTagsView: View {
   @State private var showDuplicateWarning: Bool = false
   @FocusState private var isTextFieldFocused: Bool
   
+  // Compact layout option for tighter UI in constrained spaces
+  var compact: Bool = false
+  
   private let maxTagLength = 25
   private let maxTags = 10
   
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: compact ? 10 : 16) {
       headerSection
       
       if !tags.isEmpty {
@@ -24,13 +27,13 @@ struct OutlineTagsView: View {
         emptyStateSection
       }
     }
-    .padding(16)
+    .padding(compact ? 12 : 16)
     .background(Color.systemBackground)
     .overlay(
-      RoundedRectangle(cornerRadius: 12)
+      RoundedRectangle(cornerRadius: compact ? 10 : 12)
         .stroke(Color.systemGray5, lineWidth: 1)
     )
-    .cornerRadius(12)
+    .cornerRadius(compact ? 10 : 12)
     .animation(.easeInOut(duration: 0.3), value: tags.count)
     .animation(.easeInOut(duration: 0.2), value: isAddingTag)
   }
@@ -38,54 +41,88 @@ struct OutlineTagsView: View {
   // MARK: - Header Section
   
   private var headerSection: some View {
-    HStack(alignment: .center, spacing: 8) {
-        VStack (alignment: .leading, spacing: 8){
+    Group {
+      if compact {
+        // Compact header: single line with optional count, no description
+        HStack(alignment: .center, spacing: 8) {
+          Image(systemName: "number")
+            .appFont(size: 14)
+            .foregroundColor(.accentColor)
+          
+          HStack(spacing: 6) {
+            Text("Outline Hashtags")
+              .appFont(AppTextRole.caption)
+              .fontWeight(.semibold)
+              .foregroundColor(.primary)
+            if !tags.isEmpty {
+              Text("\(tags.count)/\(maxTags)")
+                .appFont(AppTextRole.caption2)
+                .foregroundColor(.secondary)
+            }
+          }
+          Spacer()
+          Button(action: {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { toggleAddingTag() }
+          }) {
+            Image(systemName: isAddingTag ? "xmark.circle.fill" : "plus.circle.fill")
+              .appFont(size: 18)
+              .foregroundColor(.accentColor)
+          }
+          .disabled(tags.count >= maxTags && !isAddingTag)
+          .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
+        }
+      } else {
+        // Default header: title + description + optional count stacked
+        HStack(alignment: .center, spacing: 8) {
+          VStack (alignment: .leading, spacing: 8){
             HStack (alignment:.top, spacing: 8){
-                Image(systemName: "number")
-                    .appFont(size: 16)
-                    .foregroundColor(.accentColor)
-                
-                Text("Outline Hashtags")
-                    .appFont(AppTextRole.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
+              Image(systemName: "number")
+                .appFont(size: 16)
+                .foregroundColor(.accentColor)
+              
+              Text("Outline Hashtags")
+                .appFont(AppTextRole.subheadline)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
             }
             
             Text("These won't be visible on the Bluesky app but will be indexed by feeds.")
-                .appFont(AppTextRole.caption)
-                .fontWeight(.regular)
-                .foregroundColor(.secondary)
-            
+              .appFont(AppTextRole.caption)
+              .fontWeight(.regular)
+              .foregroundColor(.secondary)
             
             if !tags.isEmpty {
-                Text("\(tags.count)/\(maxTags)")
-                    .appFont(AppTextRole.caption)
-                    .foregroundColor(.secondary)
+              Text("\(tags.count)/\(maxTags)")
+                .appFont(AppTextRole.caption)
+                .foregroundColor(.secondary)
             }
+          }
+          Spacer()
+          
+          Button(action: {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+              toggleAddingTag()
+            }
+          }) {
+            Image(systemName: isAddingTag ? "xmark.circle.fill" : "plus.circle.fill")
+              .appFont(size: 20)
+              .foregroundColor(.accentColor)
+          }
+          .disabled(tags.count >= maxTags && !isAddingTag)
+          .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
         }
-      Spacer()
-      
-      Button(action: {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-          toggleAddingTag()
-        }
-      }) {
-        Image(systemName: isAddingTag ? "xmark.circle.fill" : "plus.circle.fill")
-          .appFont(size: 20)
-          .foregroundColor(.accentColor)
       }
-      .disabled(tags.count >= maxTags && !isAddingTag)
-      .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
     }
   }
   
   // MARK: - Tags Display Section
   
   private var tagsDisplaySection: some View {
-    FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
+    FlowLayout(horizontalSpacing: compact ? 6 : 8, verticalSpacing: compact ? 4 : 8) {
       ForEach(tags, id: \.self) { tag in
         EnhancedTagChip(
           tag: tag,
+          compact: compact,
           onRemove: {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
               removeTag(tag)
@@ -101,15 +138,15 @@ struct OutlineTagsView: View {
   private var addTagSection: some View {
     Group {
       if isAddingTag {
-        VStack(alignment: .leading, spacing: 12) {
-          HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
+          HStack(spacing: compact ? 8 : 12) {
             TextField("Add hashtag", text: $newTag)
               .focused($isTextFieldFocused)
-              .appFont(AppTextRole.body)
-              .padding(.horizontal, 16)
-              .padding(.vertical, 12)
+              .appFont(compact ? AppTextRole.caption : AppTextRole.body)
+              .padding(.horizontal, compact ? 12 : 16)
+              .padding(.vertical, compact ? 8 : 12)
               .background(Color.systemGray6)
-              .cornerRadius(10)
+              .cornerRadius(compact ? 8 : 10)
               .onSubmit {
                 addTag()
               }
@@ -121,13 +158,13 @@ struct OutlineTagsView: View {
             
             Button(action: addTag) {
               Text("Add")
-                .appFont(AppTextRole.subheadline)
+                .appFont(compact ? AppTextRole.caption : AppTextRole.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, compact ? 14 : 20)
+                .padding(.vertical, compact ? 8 : 12)
                 .background(
-                  RoundedRectangle(cornerRadius: 10)
+                  RoundedRectangle(cornerRadius: compact ? 8 : 10)
                     .fill(canAddTag ? Color.accentColor : Color.systemGray4)
                 )
             }
@@ -135,7 +172,7 @@ struct OutlineTagsView: View {
           }
           
           // Helper text and warnings
-          VStack(alignment: .leading, spacing: 4) {
+          VStack(alignment: .leading, spacing: compact ? 2 : 4) {
             if showDuplicateWarning {
               Label("This hashtag already exists", systemImage: "exclamationmark.triangle.fill")
                 .appFont(AppTextRole.caption)
@@ -144,7 +181,7 @@ struct OutlineTagsView: View {
               Label("Maximum \(maxTagLength) characters", systemImage: "exclamationmark.circle.fill")
                 .appFont(AppTextRole.caption)
                 .foregroundColor(.red)
-            } else {
+            } else if !compact {
               Text("Enter a hashtag without the # symbol")
                 .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
@@ -169,24 +206,26 @@ struct OutlineTagsView: View {
   // MARK: - Empty State Section
   
   private var emptyStateSection: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: compact ? 8 : 12) {
       Image(systemName: "number.circle")
-        .appFont(size: 24)
+        .appFont(size: compact ? 20 : 24)
         .foregroundColor(.systemGray4)
       
       VStack(alignment: .leading, spacing: 2) {
         Text("No hashtags added")
-          .appFont(AppTextRole.subheadline)
+          .appFont(compact ? AppTextRole.caption : AppTextRole.subheadline)
           .foregroundColor(.secondary)
         
-        Text("Tap + to add hashtags to categorize your post")
-          .appFont(AppTextRole.caption)
-          .foregroundColor(.systemGray)
+        if !compact {
+          Text("Tap + to add hashtags to categorize your post")
+            .appFont(AppTextRole.caption)
+            .foregroundColor(.systemGray)
+        }
       }
       
       Spacer()
     }
-    .padding(.vertical, 8)
+    .padding(.vertical, compact ? 4 : 8)
   }
   
   // MARK: - Helper Properties
@@ -256,31 +295,32 @@ struct OutlineTagsView: View {
 
 struct EnhancedTagChip: View {
   let tag: String
+  var compact: Bool = false
   let onRemove: () -> Void
   @State private var isPressed: Bool = false
   
   var body: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: compact ? 6 : 8) {
       Text("#\(tag)")
-        .appFont(AppTextRole.subheadline)
+        .appFont(compact ? AppTextRole.caption : AppTextRole.subheadline)
         .fontWeight(.medium)
         .foregroundColor(.accentColor)
         .lineLimit(1)
       
       Button(action: onRemove) {
         Image(systemName: "xmark.circle.fill")
-          .appFont(size: 16)
+          .appFont(size: compact ? 14 : 16)
           .foregroundColor(.systemGray2)
       }
       .buttonStyle(PlainButtonStyle())
     }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 8)
+    .padding(.horizontal, compact ? 10 : 14)
+    .padding(.vertical, compact ? 6 : 8)
     .background(
-      RoundedRectangle(cornerRadius: 18)
+      RoundedRectangle(cornerRadius: compact ? 14 : 18)
         .fill(Color.accentColor.opacity(isPressed ? 0.2 : 0.1))
         .overlay(
-          RoundedRectangle(cornerRadius: 18)
+          RoundedRectangle(cornerRadius: compact ? 14 : 18)
             .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
         )
     )

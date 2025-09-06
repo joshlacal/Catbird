@@ -30,12 +30,15 @@ final class PostViewModel {
     /// Whether the post is reposted by the current user
     private(set) var isReposted: Bool = false
     
+    /// Whether the post is bookmarked by the current user
+    private(set) var isBookmarked: Bool = false
+    
     /// Current counts (updated via shadow state)
     @MainActor private(set) var likeCount: Int = 0
     @MainActor private(set) var repostCount: Int = 0
     @MainActor private(set) var replyCount: Int = 0
     
-    // Store the actual like and repost URIs
+    // Store the actual like, repost, and bookmark URIs
     private var likeUri: ATProtocolURI?
     private var repostUri: ATProtocolURI?
     
@@ -94,6 +97,7 @@ final class PostViewModel {
         // First update the local state
         isLiked = post.viewer?.like != nil
         isReposted = post.viewer?.repost != nil
+        isBookmarked = post.viewer?.bookmarked == true
         likeCount = post.likeCount ?? 0
         repostCount = post.repostCount ?? 0
         replyCount = post.replyCount ?? 0
@@ -101,6 +105,7 @@ final class PostViewModel {
         // Store URIs directly in view model for backup
         likeUri = post.viewer?.like
         repostUri = post.viewer?.repost
+        // bookmarkUri will be set separately from the shadow since bookmarked is Bool, not URI
         
         // Check if shadow already exists to avoid redundant initialization
         let existingShadow = await appState.postShadowManager.getShadow(forUri: post.uri.uriString())
@@ -119,6 +124,9 @@ final class PostViewModel {
             repostUriToSet = repostUri
             needsShadowUpdate = true
         }
+        
+        // For bookmarks, we only track the boolean state in the post, not the URI
+        // The URI is managed by BookmarksManager
         
         if needsShadowUpdate {
             await appState.postShadowManager.updateShadow(forUri: post.uri.uriString()) { shadow in
@@ -140,6 +148,7 @@ final class PostViewModel {
         if let shadow = await appState.postShadowManager.getShadow(forUri: postId) {
             isLiked = shadow.likeUri != nil
             isReposted = shadow.repostUri != nil
+            isBookmarked = shadow.bookmarked == true
             
             // Update our backup copy of URIs
             if isLiked && likeUri == nil {
@@ -193,6 +202,19 @@ final class PostViewModel {
             group.addTask {
                 await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: wasReposted)
                 await self.appState.postShadowManager.setRepostCount(postUri: self.postId, count: originalCount)
+            }
+        }
+    }
+    
+    /// Reverts the bookmark state optimistically
+    private func revertBookmarkState(wasBookmarked: Bool) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                self.isBookmarked = wasBookmarked
+            }
+            
+            group.addTask {
+                await self.appState.postShadowManager.setBookmarked(postUri: self.postId, isBookmarked: wasBookmarked)
             }
         }
     }
@@ -428,6 +450,58 @@ final class PostViewModel {
             await revertRepostState(wasReposted: wasReposted, originalCount: currentRepostCount)
             #if DEBUG
             logger.error("Error toggling repost: \(error)")
+            #endif
+            // Re-throw the error
+            throw error
+        }
+    }
+    
+    /// Toggle the bookmark status of the post
+    @discardableResult
+    func toggleBookmark() async throws -> Bool {
+        guard let client = appState.atProtoClient else {
+            throw PostViewModelError.missingClient
+        }
+        
+        // Local copy for reverting if needed
+        let wasBookmarked = isBookmarked
+        
+        // Use task groups for optimistic updates
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                self.isBookmarked.toggle()
+            }
+            
+            group.addTask {
+                await self.appState.postShadowManager.setBookmarked(postUri: self.postId, isBookmarked: !wasBookmarked)
+            }
+        }
+        
+        do {
+            let postUri = try ATProtocolURI(uriString: postId)
+            
+            if !wasBookmarked { // Creating a new bookmark
+                _ = try await appState.bookmarksManager.createBookmark(
+                    postUri: postUri,
+                    postCid: postCid,
+                    client: client
+                )
+                
+                return true
+                
+            } else { // Deleting an existing bookmark
+                try await appState.bookmarksManager.deleteBookmark(
+                    postUri: postUri,
+                    client: client
+                )
+                
+                return true
+            }
+        } catch {
+            // Revert optimistic update on any error
+            await revertBookmarkState(wasBookmarked: wasBookmarked)
+            #if DEBUG
+            logger.error("Error toggling bookmark: \(error)")
             #endif
             // Re-throw the error
             throw error

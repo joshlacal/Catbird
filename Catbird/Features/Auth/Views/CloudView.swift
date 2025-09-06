@@ -38,7 +38,6 @@ struct CloudView: UIViewRepresentable {
         renderer.shaderMode = shaderMode
         renderer.updateColorScheme(isDark: colorScheme == .dark)
         
-        Logger(subsystem: "blue.catbird", category: "CloudView").debug("CloudView: MTKView configured with device: \(String(describing: mtkView.device))")
         
         return mtkView
     }
@@ -56,7 +55,6 @@ struct CloudView: UIViewRepresentable {
     }
     
     class Coordinator: NSObject, MTKViewDelegate {
-        private let coordinatorLogger = Logger(subsystem: "blue.catbird", category: "CloudView")
 
         let renderer: CloudRenderer
         private var lastTime: CFTimeInterval = 0
@@ -83,7 +81,6 @@ struct CloudView: UIViewRepresentable {
             
             guard let commandQueue = renderer.commandQueue,
                   let commandBuffer = commandQueue.makeCommandBuffer() else { 
-                coordinatorLogger.debug("CloudView: Failed to create command buffer")
                 return 
             }
             
@@ -123,7 +120,6 @@ struct CloudView: NSViewRepresentable {
         renderer.shaderMode = shaderMode
         renderer.updateColorScheme(isDark: colorScheme == .dark)
         
-        Logger(subsystem: "blue.catbird", category: "CloudView").debug("CloudView (macOS): MTKView configured with device: \(String(describing: mtkView.device))")
         
         return mtkView
     }
@@ -141,7 +137,6 @@ struct CloudView: NSViewRepresentable {
     }
     
     class Coordinator: NSObject, MTKViewDelegate {
-        private let coordinatorLogger = Logger(subsystem: "blue.catbird", category: "CloudView")
 
         let renderer: CloudRenderer
         private var lastTime: CFTimeInterval = 0
@@ -168,7 +163,6 @@ struct CloudView: NSViewRepresentable {
             
             guard let commandQueue = renderer.commandQueue,
                   let commandBuffer = commandQueue.makeCommandBuffer() else { 
-                coordinatorLogger.debug("CloudView (macOS): Failed to create command buffer")
                 return 
             }
             

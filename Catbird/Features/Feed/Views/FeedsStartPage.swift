@@ -861,6 +861,8 @@ struct FeedsStartPage: View {
     }
   }
 
+  // (Drawer-level close/search/bookmarks moved to ContentView native toolbar)
+
   @ViewBuilder
   private func bannerHeaderView() -> some View {
     ZStack(alignment: .bottomLeading) {
@@ -1112,6 +1114,8 @@ struct FeedsStartPage: View {
     }
     .clipped()
   }
+
+  // (Drawer bottom toolbar removed in favor of native toolbar in ContentView)
   
   @ViewBuilder
   private var fallbackGradientBanner: some View {
@@ -1207,6 +1211,7 @@ extension View {
         self
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
             .configuredToolbar(
+                appState: appState,
                 isDrawerOpen: isDrawerOpen,
                 showErrorAlert: showErrorAlert,
                 errorAlertMessage: errorAlertMessage,
@@ -1229,34 +1234,23 @@ extension View {
 
 private extension View {
     func configuredToolbar(
+        appState: AppState,
         isDrawerOpen: Binding<Bool>,
         showErrorAlert: Binding<Bool>,
         errorAlertMessage: Binding<String>,
         onAppear: @escaping () -> Void,
         onDisappear: @escaping () -> Void
     ) -> some View {
-        self.toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        isDrawerOpen.wrappedValue = false
-                    } label: {
-                        Image(systemName: "xmark")
-                            .foregroundColor(.primary)
-                    }
-                }
-        }
-        #if os(iOS)
-        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
-        #else
-        .toolbarBackgroundVisibility(.hidden, for: .automatic)
-        #endif
-        .onAppear(perform: onAppear)
-        .onDisappear(perform: onDisappear)
-        .alert("Error", isPresented: showErrorAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorAlertMessage.wrappedValue)
-        }
+        // Remove global SwiftUI .toolbar usage to keep actions confined to the drawer.
+        // Lifecycle and alerts remain here; UI buttons are rendered inside the drawer view itself.
+        self
+            .onAppear(perform: onAppear)
+            .onDisappear(perform: onDisappear)
+            .alert("Error", isPresented: showErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorAlertMessage.wrappedValue)
+            }
     }
     
     func configuredSheets(

@@ -16,68 +16,247 @@ struct ResultsView: View {
     @Binding var selectedContentType: ContentType
     @Environment(AppState.self) private var appState
     @State private var subscriptionStatus: [String: Bool] = [:]
+    private let baseUnit: CGFloat = 3 // Match EnhancedFeedPost spacing units
     
     var body: some View {
-        ScrollView {
-            content
-                .padding(.top, 8) // Small spacing from the segmented control
+        List {
+            if let error = viewModel.searchError {
+                Section {
+                    ErrorStateView(
+                        error: error,
+                        context: "Search failed",
+                        retryAction: {
+                            Task { await retrySearch() }
+                        }
+                    )
+                    .listRowInsets(EdgeInsets())
+                }
+            } else {
+                switch selectedContentType {
+                case .all:
+                    allResultsSections
+                case .profiles:
+                    profileResultsSection
+                case .posts:
+                    postResultsSection
+                case .feeds:
+                    feedResultsSection
+                }
+            }
         }
+        .listStyle(.plain)
         .refreshable {
-            // if client is nil, the user is not logged in
             if let client = appState.atProtoClient {
-                
                 await viewModel.refreshSearch(client: client)
             }
         }
     }
     
     @ViewBuilder
-    private var content: some View {
-        if let error = viewModel.searchError {
-            ErrorStateView(
-                error: error,
-                context: "Search failed",
-                retryAction: {
-                    Task {
-                        await retrySearch()
-                    }
-                }
-            )
-            .padding()
+    private var allResultsSections: some View {
+        if viewModel.hasNoResults {
+            Section {
+                NoResultsView(
+                    query: viewModel.searchQuery,
+                    type: "results",
+                    icon: "magnifyingglass",
+                    message: "Try a different search term or check your spelling",
+                    actionLabel: "Explore Trending Content",
+                    action: { viewModel.resetSearch() }
+                )
+                .mainContentFrame()
+                .listRowInsets(EdgeInsets())
+            }
         } else {
-            switch selectedContentType {
-            case .all:
-                allResultsView
-                
-            case .profiles:
-                if viewModel.profileResults.isEmpty {
-                    emptyResultsView(for: .profiles)
-                } else {
-                    profileResultsView
-                }
-                
-            case .posts:
-                if viewModel.postResults.isEmpty {
-                    emptyResultsView(for: .posts)
-                } else {
-                    postResultsView
-                }
-                
-            case .feeds:
-                if viewModel.feedResults.isEmpty {
-                    emptyResultsView(for: .feeds)
-                } else {
-                    feedResultsView
-                }
-                
-                //        case .starterPacks:
-                //            if viewModel.starterPackResults.isEmpty {
-                //                emptyResultsView(for: .starterPacks)
-                //            } else {
-                //                starterPackResultsView
-                //            }
+            // All view shows preview sections only (no infinite scrolling)
+            if !viewModel.profileResults.isEmpty { profileSection(limit: 3, showSeeAll: true) }
+            if !viewModel.postResults.isEmpty { postSection(limit: 3, showSeeAll: true) }
+            if !viewModel.feedResults.isEmpty { feedSection(limit: 3, showSeeAll: true) }
+        }
+    }
+
+    private var profileResultsSection: some View {
+        Group {
+            if viewModel.profileResults.isEmpty {
+                Section { emptyResultsView(for: .profiles) }
+            } else {
+                profileSection(limit: nil, showSeeAll: false)
+                loadMoreSectionIfNeeded(cursor: viewModel.profileCursor)
             }
         }
+    }
+
+    private var postResultsSection: some View {
+        Group {
+            if viewModel.postResults.isEmpty {
+                Section { emptyResultsView(for: .posts) }
+            } else {
+                postSection(limit: nil, showSeeAll: false)
+                loadMoreSectionIfNeeded(cursor: viewModel.postCursor)
+            }
+        }
+    }
+
+    private var feedResultsSection: some View {
+        Group {
+            if viewModel.feedResults.isEmpty {
+                Section { emptyResultsView(for: .feeds) }
+            } else {
+                feedSection(limit: nil, showSeeAll: false)
+            }
+        }
+    }
+
+    private func profileSection(limit: Int?, showSeeAll: Bool) -> some View {
+        Section(header: Text("Profiles")) {
+            let items = limit.map { Array(viewModel.profileResults.prefix($0)) } ?? viewModel.profileResults
+            ForEach(items, id: \.did) { profile in
+                Button { path.append(NavigationDestination.profile(profile.did.didString())) } label: {
+                    VStack(spacing: 0) {
+                        ProfileRowView(profile: profile, path: $path)
+                            .mainContentFrame()
+                            .padding(.horizontal, baseUnit * 1.5)
+                            .padding(.top, baseUnit * 3)
+
+                        if profile != items.last {
+                            Rectangle()
+                                .fill(Color.separator)
+                                .frame(height: 0.5)
+                                .platformIgnoresSafeArea(.container, edges: .horizontal)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+            }
+            if showSeeAll, viewModel.profileResults.count > (limit ?? 0) {
+                Button { selectedContentType = .profiles } label: {
+                    Text("See all \(viewModel.profileResults.count) profiles")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
+            }
+        }
+    }
+
+    private func postSection(limit: Int?, showSeeAll: Bool) -> some View {
+        Section(header: Text("Posts")) {
+            let items = limit.map { Array(viewModel.postResults.prefix($0)) } ?? viewModel.postResults
+            ForEach(items, id: \.uri) { post in
+                Button { path.append(NavigationDestination.post(post.uri)) } label: {
+                    VStack(spacing: 0) {
+                        // Match EnhancedFeedPost outer sizing and padding via PostView + mainContentFrame
+                        PostView(
+                            post: post,
+                            grandparentAuthor: nil,
+                            isParentPost: false,
+                            isSelectable: false,
+                            path: $path,
+                            appState: appState
+                        )
+                        .mainContentFrame()
+                        .padding(.horizontal, baseUnit * 1.5)
+                        .padding(.top, baseUnit * 3)
+
+                        // Full-width divider beyond 600pt constraint
+                        if post != items.last {
+                            Rectangle()
+                                .fill(Color.separator)
+                                .frame(height: 0.5)
+                                .platformIgnoresSafeArea(.container, edges: .horizontal)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .onAppear {
+                    if limit == nil && post == items.last { triggerLoadMoreIfNeeded() }
+                }
+            }
+            if showSeeAll, viewModel.postResults.count > (limit ?? 0) {
+                Button { selectedContentType = .posts } label: {
+                    Text("See all \(viewModel.postResults.count) posts")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
+            }
+        }
+    }
+
+    private func feedSection(limit: Int?, showSeeAll: Bool) -> some View {
+        Section(header: Text("Feeds")) {
+            let items = limit.map { Array(viewModel.feedResults.prefix($0)) } ?? viewModel.feedResults
+            ForEach(items, id: \.uri) { feed in
+                VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FeedDiscoveryHeaderView(
+                            feed: feed,
+                            isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                            onSubscriptionToggle: {
+                                await toggleFeedSubscription(feed)
+                                await updateSubscriptionStatus(for: feed.uri)
+                            }
+                        )
+                        .task { await updateSubscriptionStatus(for: feed.uri) }
+
+                        Button { path.append(NavigationDestination.feed(feed.uri)) } label: {
+                            HStack {
+                                Text("Preview Feed")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundColor(.accentColor)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .appFont(AppTextRole.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .mainContentFrame()
+                    .padding(.horizontal, baseUnit * 1.5)
+                    .padding(.top, baseUnit * 3)
+
+                    if feed != items.last {
+                        Rectangle()
+                            .fill(Color.separator)
+                            .frame(height: 0.5)
+                            .platformIgnoresSafeArea(.container, edges: .horizontal)
+                    }
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+            }
+            if showSeeAll, viewModel.feedResults.count > (limit ?? 0) {
+                Button { selectedContentType = .feeds } label: {
+                    Text("See all \(viewModel.feedResults.count) feeds")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func loadMoreSectionIfNeeded(cursor: String?) -> some View {
+        if cursor != nil {
+            Section {
+                HStack { Spacer(); ProgressView().padding(.vertical, 8); Spacer() }
+                    .onAppear { triggerLoadMoreIfNeeded() }
+            }
+        }
+    }
+
+    private func triggerLoadMoreIfNeeded() {
+        guard !viewModel.isLoadingMoreResults, let client = appState.atProtoClient else { return }
+        Task { await viewModel.loadMoreResults(client: client) }
     }
     // Combined results view showing a mix of all content types
     private var allResultsView: some View {
@@ -107,7 +286,7 @@ struct ResultsView: View {
                                 Button {
                                     path.append(NavigationDestination.profile(profile.did.didString()))
                                 } label: {
-                                    ProfileRowView(profile: profile)
+                                    ProfileRowView(profile: profile, path: $path)
                                         .padding(.vertical, 8)
                                         .padding(.horizontal, 16)
                                 }
@@ -282,7 +461,7 @@ struct ResultsView: View {
                 Button {
                     path.append(NavigationDestination.profile(profile.did.didString()))
                 } label: {
-                    ProfileRowView(profile: profile)
+                    ProfileRowView(profile: profile, path: $path)
                         .padding(.vertical, 8)
                         .padding(.horizontal, 16)
                 }

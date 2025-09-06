@@ -11,9 +11,6 @@ import Petrel
 struct PostStatsView: View {
     let post: AppBskyFeedDefs.PostView
     @Binding var path: NavigationPath
-    @State private var showingLikes: Bool = false
-    @State private var showingReposts: Bool = false
-    @State private var showingQuotes: Bool = false
     
     private static let baseUnit: CGFloat = 3
     
@@ -55,7 +52,7 @@ struct PostStatsView: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            showingReposts = true
+                            path.append(NavigationDestination.postReposts(post.uri.uriString()))
                         }
                     }
                     
@@ -69,7 +66,7 @@ struct PostStatsView: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            showingLikes = true
+                            path.append(NavigationDestination.postLikes(post.uri.uriString()))
                         }
                     }
                     
@@ -83,7 +80,7 @@ struct PostStatsView: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            showingQuotes = true
+                            path.append(NavigationDestination.postQuotes(post.uri.uriString()))
                         }
                     }
                 }
@@ -91,23 +88,6 @@ struct PostStatsView: View {
                 .padding(.horizontal, Self.baseUnit * 2)
                 .padding(.vertical, Self.baseUnit * 3)
                 .appFont(AppTextRole.headline)
-                
-                // Keep existing sheet modifiers
-                .sheet(isPresented: $showingLikes) {
-                    NavigationStack {
-                        LikesView(postUri: post.uri.uriString())
-                    }
-                }
-                .sheet(isPresented: $showingReposts) {
-                    NavigationStack {
-                        RepostsView(postUri: post.uri.uriString())
-                    }
-                }
-                .sheet(isPresented: $showingQuotes) {
-                    NavigationStack {
-                        QuotesView(postUri: post.uri.uriString(), path: $path)
-                    }
-                }
                 
                 Divider()
                     .padding(.horizontal, Self.baseUnit * 2)

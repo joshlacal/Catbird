@@ -10,6 +10,7 @@ import Petrel
 
 struct LikesView: View {
     let postUri: String
+    @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     @State private var likes: [AppBskyFeedGetLikes.Like] = []
     @State private var loading: Bool = true
@@ -31,7 +32,7 @@ struct LikesView: View {
             } else {
                 List {
                     ForEach(likes, id: \.actor.did) { like in
-                        ProfileRowView(profile: like.actor)
+                        ProfileRowView(profile: like.actor, path: $path)
                     }
                     
                     if let cursor = cursor {

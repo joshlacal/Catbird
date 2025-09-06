@@ -29,6 +29,8 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+      // BGTask registration moved to CatbirdApp.init() to ensure it happens before SwiftUI rendering
+      
       // FaultOrdering debugging and setup for physical devices
       logger.debug("🔍 App launched with environment:")
       for (key, value) in ProcessInfo.processInfo.environment {
@@ -91,6 +93,11 @@ struct CatbirdApp: App {
       
       // Tell UIKit that state restoration setup is complete
       application.completeStateRestoration()
+
+      // Schedule BGTask now that registration happened at the beginning
+      if #available(iOS 13.0, *) {
+        BGTaskSchedulerManager.schedule()
+      }
       
       return true
     }
@@ -172,6 +179,13 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     logger.info("🚀 CatbirdApp initializing")
+
+    // Register BGTask IMMEDIATELY - must be before any SwiftUI rendering
+    #if os(iOS)
+    if #available(iOS 13.0, *) {
+      BGTaskSchedulerManager.registerIfNeeded()
+    }
+    #endif
 
     // Fast path for FaultOrdering tests - skip expensive initialization
     let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
@@ -346,11 +360,6 @@ struct CatbirdApp: App {
         #if os(iOS)
         // Setup background notification observer
         setupBackgroundNotification()
-        // Register BGTask scheduler for outbox retries (once)
-        if #available(iOS 13.0, *) {
-          BGTaskSchedulerManager.registerIfNeeded()
-          BGTaskSchedulerManager.schedule()
-        }
         #endif
         
         // Initialize FeedStateStore with model context for persistence

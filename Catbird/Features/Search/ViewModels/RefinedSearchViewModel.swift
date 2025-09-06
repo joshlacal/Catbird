@@ -19,6 +19,7 @@ enum SearchState {
 }
 
 /// ViewModel for the refined search experience
+@MainActor
 @Observable class RefinedSearchViewModel: StateInvalidationSubscriber {
     // MARK: - Search State
     var searchState: SearchState = .idle
@@ -52,7 +53,6 @@ enum SearchState {
     
     // MARK: - Typeahead Results
     var typeaheadProfiles: [AppBskyActorDefs.ProfileViewBasic] = []
-    var typeaheadFeeds: [AppBskyFeedDefs.GeneratorView] = []
     var typeaheadSuggestions: [String] = []
     
     // MARK: - Pagination
@@ -97,7 +97,7 @@ enum SearchState {
     
     /// All typeahead results count combined
     var typeaheadResultsCount: Int {
-        return typeaheadProfiles.count + typeaheadFeeds.count + typeaheadSuggestions.count
+        return typeaheadProfiles.count + typeaheadSuggestions.count
     }
     
     // MARK: - Initialization
@@ -132,12 +132,7 @@ enum SearchState {
         logger.debug("RefinedSearchViewModel unsubscribed from state invalidation bus")
     }
     
-    deinit {
-        // Ensure we unsubscribe on deallocation
-        if isSubscribed {
-            appState.stateInvalidationBus.unsubscribe(self)
-        }
-    }
+    // Note: We intentionally avoid doing work in deinit due to actor isolation.
     
     // MARK: - Public Methods
     
@@ -159,7 +154,6 @@ enum SearchState {
             // Reset to idle state when query is empty
             searchState = .idle
             typeaheadProfiles = []
-            typeaheadFeeds = []
             typeaheadSuggestions = []
             isCommittedSearch = false
             return
@@ -234,7 +228,6 @@ enum SearchState {
         
         // Reset typeahead
         typeaheadProfiles = []
-        typeaheadFeeds = []
         typeaheadSuggestions = []
         
         // Reset cursors
@@ -265,12 +258,13 @@ enum SearchState {
             // Execute search to get new results
             do {
                 // Create a task group with a manual task cancelation check
+                let currentQuery = self.searchQuery
                 try await withThrowingTaskGroup(of: Void.self) { group in
                     // Search profiles
                     group.addTask {
                         do {
                             let input = AppBskyActorSearchActors.Parameters(
-                                term: self.searchQuery, limit: 25
+                                term: currentQuery, limit: 25
                             )
                             
                             let (_, response) = try await client.app.bsky.actor.searchActors(input: input)
@@ -281,7 +275,9 @@ enum SearchState {
                             }
                         } catch {
                             // Log but don't rethrow so other tasks can continue
-                            self.logger.error("Profile search error: \(error.localizedDescription)")
+                            Task { @MainActor in
+                                self.logger.error("Profile search error: \(error.localizedDescription)")
+                            }
                         }
                     }
                     
@@ -289,7 +285,7 @@ enum SearchState {
                     group.addTask {
                         do {
                             let input = AppBskyFeedSearchPosts.Parameters(
-                                q: self.searchQuery, limit: 25
+                                q: currentQuery, limit: 25
                             )
                             
                             let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
@@ -299,7 +295,9 @@ enum SearchState {
                                 // Don't update cursor yet
                             }
                         } catch {
-                            self.logger.error("Post search error: \(error.localizedDescription)")
+                            Task { @MainActor in
+                                self.logger.error("Post search error: \(error.localizedDescription)")
+                            }
                         }
                     }
                     
@@ -308,7 +306,7 @@ enum SearchState {
                         do {
                             let input = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(
                                 limit: 25,
-                                query: self.searchQuery
+                                query: currentQuery
                             )
                             
                             let (_, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(input: input)
@@ -317,7 +315,9 @@ enum SearchState {
                                 newFeedResults = feedsResponse.feeds
                             }
                         } catch {
-                            self.logger.error("Feed search error: \(error.localizedDescription)")
+                            Task { @MainActor in
+                                self.logger.error("Feed search error: \(error.localizedDescription)")
+                            }
                         }
                     }
                     
@@ -627,7 +627,7 @@ enum SearchState {
                 typeaheadProfiles = profiles
             }
             
-            // Generate feed suggestions later
+            // No feed typeahead; keep profiles-only
             
         } catch {
             logger.error("Error fetching typeahead: \(error.localizedDescription)")
@@ -885,7 +885,10 @@ enum SearchState {
             let (_, response) = try await client.app.bsky.actor.searchActors(input: input)
             
             if let actorsResponse = response {
-                profileResults.append(contentsOf: actorsResponse.actors)
+                // Deduplicate by DID when appending
+                let existing = Set(profileResults.map { $0.did.didString() })
+                let newOnes = actorsResponse.actors.filter { !existing.contains($0.did.didString()) }
+                profileResults.append(contentsOf: newOnes)
                 profileCursor = actorsResponse.cursor
             }
         } catch {
@@ -906,7 +909,10 @@ enum SearchState {
             let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
             
             if let postsResponse = response {
-                postResults.append(contentsOf: postsResponse.posts)
+                // Deduplicate by URI when appending
+                let existing = Set(postResults.map { $0.uri.uriString() })
+                let newOnes = postsResponse.posts.filter { !existing.contains($0.uri.uriString()) }
+                postResults.append(contentsOf: newOnes)
                 postCursor = postsResponse.cursor
             }
         } catch {

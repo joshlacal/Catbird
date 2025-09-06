@@ -9,6 +9,7 @@ import SwiftUI
 import Petrel
 import OSLog
 import TipKit
+import Observation
 
 /// A modernized search view that leverages iOS 18 features for a better search experience
 struct RefinedSearchView: View {
@@ -52,6 +53,7 @@ struct RefinedSearchView: View {
         .onChange(of: searchText) { _, newText in
             updateSearchWithText(newText)
         }
+        // selectedContentType handler moved next to the scope binding
         .onAppear {
             initializeOnAppear()
         }
@@ -78,18 +80,17 @@ struct RefinedSearchView: View {
         appState.navigationManager.pathBinding(for: 1)
     }
     
+    @ViewBuilder
     private var mainContentContainer: some View {
+        @Bindable var bindableViewModel = viewModel
         ZStack {
             // Full-width background layer
             Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme)
                 .ignoresSafeArea()
             
-            // Content with responsive constraints
-            ResponsiveContentView {
-                VStack(spacing: 0) {
-                    contentTypeSegment
-                    mainContentArea
-                }
+            // Edge-to-edge content; individual rows constrain via .mainContentFrame()
+            VStack(spacing: 0) {
+                mainContentArea
             }
         }
         .navigationTitle("Search")
@@ -98,13 +99,43 @@ struct RefinedSearchView: View {
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Users, keywords, hashtags, or feeds"
+            prompt: "Profiles, posts, or feeds"
         )
+        .searchScopes($bindableViewModel.selectedContentType) {
+            ForEach(ContentType.allCases, id: \.self) { scope in
+                Text(scope.title).tag(scope)
+            }
+        }
+        .onChange(of: bindableViewModel.selectedContentType) { _, _ in
+            // Ensure scope changes while typing commit a search and dismiss typeahead
+            guard let client = appState.atProtoClient else { return }
+            if !searchText.isEmpty {
+                viewModel.searchQuery = searchText
+                viewModel.commitSearch(client: client)
+            } else if viewModel.isCommittedSearch {
+                Task { await viewModel.refreshSearch(client: client) }
+            }
+        }
         #else
         .searchable(
             text: $searchText,
-            prompt: "Users, keywords, hashtags, or feeds"
+            prompt: "Profiles, posts, or feeds"
         )
+        .searchScopes($bindableViewModel.selectedContentType) {
+            ForEach(ContentType.allCases, id: \.self) { scope in
+                Text(scope.title).tag(scope)
+            }
+        }
+        .onChange(of: bindableViewModel.selectedContentType) { _, _ in
+            // Ensure scope changes while typing commit a search and dismiss typeahead
+            guard let client = appState.atProtoClient else { return }
+            if !searchText.isEmpty {
+                viewModel.searchQuery = searchText
+                viewModel.commitSearch(client: client)
+            } else if viewModel.isCommittedSearch {
+                Task { await viewModel.refreshSearch(client: client) }
+            }
+        }
         #endif
         .searchSuggestions {
             searchSuggestionsContent
@@ -122,25 +153,7 @@ struct RefinedSearchView: View {
         }
     }
     
-    private var contentTypeSegment: some View {
-        Group {
-            if viewModel.searchState == .results, viewModel.hasMultipleResultTypes {
-                VStack(spacing: 8) {
-                    // Sort selector
-                    SearchSortSelector(selectedSort: $viewModel.searchSort)
-                        .padding(.horizontal, 16)
-                    
-                    // Content type selector
-                    ContentTypeSegmentControl(selectedContentType: $viewModel.selectedContentType)
-                        .padding(.horizontal, 16)
-                }
-                .padding(.vertical, 12)
-                .background(Material.bar)
-                .animation(.smooth, value: viewModel.hasMultipleResultTypes)
-                .zIndex(1) // Ensure control stays on top
-            }
-        }
-    }
+    // Custom contentTypeSegment removed in favor of native .searchScopes
     
     private var mainContentArea: some View {
         Group {
@@ -183,10 +196,11 @@ struct RefinedSearchView: View {
      }
     
     private var resultsView: some View {
-        ResultsView(
+        @Bindable var bindableViewModel = viewModel
+        return ResultsView(
             viewModel: viewModel,
             path: navigationPath,
-            selectedContentType: $viewModel.selectedContentType
+            selectedContentType: $bindableViewModel.selectedContentType
         )
     }
     
@@ -198,6 +212,20 @@ struct RefinedSearchView: View {
     
     private var searchMenuButton: some View {
         Menu {
+            // Sort options
+            Menu("Sort") {
+                ForEach(SearchSort.allCases, id: \.self) { option in
+                    Button {
+                        viewModel.searchSort = option
+                        if viewModel.isCommittedSearch, let client = appState.atProtoClient {
+                            Task { await viewModel.refreshSearch(client: client) }
+                        }
+                    } label: {
+                        Label(option.displayName, systemImage: option.icon)
+                    }
+                }
+            }
+            
             Button {
                 isShowingFilters = true
             } label: {
@@ -251,28 +279,7 @@ struct RefinedSearchView: View {
                     .padding(.bottom, 12)
                 }
                 
-                // Feed suggestions
-                if !viewModel.typeaheadFeeds.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Feeds")
-                            .appHeadline()
-                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .padding(.horizontal, 16)
-                            .padding(.top, 12)
-                        
-                        ForEach(viewModel.typeaheadFeeds, id: \.uri) { feed in
-                            Button {
-                                handleFeedSelection(feed)
-                            } label: {
-                                feedSuggestionRow(feed)
-                                    .padding(.vertical, 8)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.bottom, 12)
-                }
+                // Feeds typeahead removed (profiles only)
                 
                 // Term suggestions
 //                if !viewModel.typeaheadSuggestions.isEmpty {
@@ -282,7 +289,7 @@ struct RefinedSearchView: View {
 //                            .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
 //                            .padding(.horizontal)
 //                            .padding(.top, 8)
-//                        
+//
 //                        ForEach(viewModel.typeaheadSuggestions, id: \.self) { suggestion in
 //                            Button {
 //                                handleSuggestionSelection(suggestion)
@@ -306,7 +313,7 @@ struct RefinedSearchView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.accentColor)
                             .frame(width: 44, height: 44)
-                        Text("Search for \"\(searchText)\"")
+                        Text(verbatim: "Search for \"\(searchText)\"")
                             .foregroundColor(.accentColor)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -363,15 +370,7 @@ struct RefinedSearchView: View {
         .padding(.horizontal, 16)
     }
     
-    private func feedSuggestionRow(_ feed: AppBskyFeedDefs.GeneratorView) -> some View {
-        HStack(spacing: 12) {
-            AsyncProfileImage(url: URL(string: feed.avatar?.uriString() ?? ""), size: 36)
-            Text(feed.displayName)
-                .appHeadline()
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-    }
+    // Feeds typeahead row removed
     
     // MARK: - Navigation Handling
     
@@ -438,9 +437,7 @@ struct RefinedSearchView: View {
         navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
     }
     
-    private func handleFeedSelection(_ feed: AppBskyFeedDefs.GeneratorView) {
-        navigationPath.wrappedValue.append(NavigationDestination.feed(feed.uri))
-    }
+    // Feeds typeahead selection removed
     
     private func handleSuggestionSelection(_ suggestion: String) {
         if let client = appState.atProtoClient {

@@ -34,6 +34,10 @@ final class UIKitStateObserver<T: Observable> {
                     _ = stateManager.loadingState
                     _ = stateManager.hasReachedEnd
                     _ = stateManager.isEmpty
+                } else if let themeManager = self.observedObject as? ThemeManager {
+                    // For ThemeManager, observe theme-related properties
+                    _ = themeManager.colorSchemeOverride
+                    _ = themeManager.darkThemeMode
                 } else {
                     // For other observable objects, just read the object
                     _ = self.observedObject

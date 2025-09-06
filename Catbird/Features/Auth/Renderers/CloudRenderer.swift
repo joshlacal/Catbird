@@ -55,7 +55,7 @@ class CloudRenderer: NSObject {
     private func setupMetal() {
         // Get the default Metal device
         guard let device = MTLCreateSystemDefaultDevice() else {
-            rendererLogger.debug("CloudRenderer: Metal is not supported on this device")
+            rendererLogger.error("CloudRenderer: Metal is not supported on this device")
             return
         }
         
@@ -64,21 +64,21 @@ class CloudRenderer: NSObject {
         
         // Load the shader functions
         guard let library = device.makeDefaultLibrary() else {
-            rendererLogger.debug("CloudRenderer: Could not create default library")
+            rendererLogger.error("CloudRenderer: Could not create default library")
             return
         }
         
         // Load basic shader functions
         guard let vertexFunction = library.makeFunction(name: "cloud_vertex"),
               let fragmentFunction = library.makeFunction(name: "cloud_fragment") else {
-            rendererLogger.debug("CloudRenderer: Could not load basic shader functions")
+            rendererLogger.error("CloudRenderer: Could not load basic shader functions")
             return
         }
         
         // Load advanced shader functions
         guard let advancedVertexFunction = library.makeFunction(name: "cloud_vertex_advanced"),
               let advancedFragmentFunction = library.makeFunction(name: "cloud_fragment_advanced") else {
-            rendererLogger.debug("CloudRenderer: Could not load advanced shader functions")
+            rendererLogger.error("CloudRenderer: Could not load advanced shader functions")
             return
         }
         
@@ -94,7 +94,7 @@ class CloudRenderer: NSObject {
         do {
             pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
-            rendererLogger.debug("CloudRenderer: Could not create basic pipeline state: \(error)")
+            rendererLogger.error("CloudRenderer: Could not create basic pipeline state: \(error)")
             return
         }
         
@@ -110,7 +110,7 @@ class CloudRenderer: NSObject {
         do {
             advancedPipelineState = try device.makeRenderPipelineState(descriptor: advancedPipelineDescriptor)
         } catch {
-            rendererLogger.debug("CloudRenderer: Could not create advanced pipeline state: \(error)")
+            rendererLogger.error("CloudRenderer: Could not create advanced pipeline state: \(error)")
             return
         }
         
@@ -119,7 +119,7 @@ class CloudRenderer: NSObject {
         // Load improved shader functions
         guard let improvedVertexFunction = library.makeFunction(name: "cloud_vertex_improved"),
               let improvedFragmentFunction = library.makeFunction(name: "cloud_fragment_improved") else {
-            rendererLogger.debug("CloudRenderer: Could not load improved shader functions")
+            rendererLogger.error("CloudRenderer: Could not load improved shader functions")
             return
         }
         
@@ -135,14 +135,14 @@ class CloudRenderer: NSObject {
         do {
             improvedPipelineState = try device.makeRenderPipelineState(descriptor: improvedPipelineDescriptor)
         } catch {
-            rendererLogger.debug("CloudRenderer: Could not create improved pipeline state: \(error)")
+            rendererLogger.error("CloudRenderer: Could not create improved pipeline state: \(error)")
             return
         }
         
         // Load ultra shader functions
         guard let ultraVertexFunction = library.makeFunction(name: "cloud_vertex_ultra"),
               let ultraFragmentFunction = library.makeFunction(name: "cloud_fragment_ultra") else {
-            rendererLogger.debug("CloudRenderer: Could not load ultra shader functions")
+            rendererLogger.error("CloudRenderer: Could not load ultra shader functions")
             return
         }
         
@@ -158,24 +158,21 @@ class CloudRenderer: NSObject {
         do {
             ultraPipelineState = try device.makeRenderPipelineState(descriptor: ultraPipelineDescriptor)
         } catch {
-            rendererLogger.debug("CloudRenderer: Could not create ultra pipeline state: \(error)")
+            rendererLogger.error("CloudRenderer: Could not create ultra pipeline state: \(error)")
             return
         }
         
         // Create uniform buffer
         uniformBuffer = device.makeBuffer(length: MemoryLayout<CloudUniforms>.stride, options: [])
         
-        rendererLogger.debug("CloudRenderer: Metal setup complete")
     }
     
     func render(in view: MTKView, commandBuffer: MTLCommandBuffer) {
         guard let renderPassDescriptor = view.currentRenderPassDescriptor else {
-            rendererLogger.debug("CloudRenderer: No render pass descriptor")
             return
         }
         
         guard let drawable = view.currentDrawable else {
-            rendererLogger.debug("CloudRenderer: No drawable")
             return
         }
         
@@ -191,12 +188,10 @@ class CloudRenderer: NSObject {
         }
         
         guard let selectedPipelineState = selectedPipelineState else {
-            rendererLogger.debug("CloudRenderer: No pipeline state")
             return
         }
         
         guard let uniformBuffer = uniformBuffer else {
-            rendererLogger.debug("CloudRenderer: No uniform buffer")
             return
         }
         
@@ -211,7 +206,6 @@ class CloudRenderer: NSObject {
         
         // Create render encoder
         guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else { 
-            rendererLogger.debug("CloudRenderer: Could not create render encoder")
             return 
         }
         
@@ -228,11 +222,6 @@ class CloudRenderer: NSObject {
         renderEncoder.endEncoding()
         
         commandBuffer.present(drawable)
-        
-        // Debug log every 30 frames
-        if Int(time * 30) % 30 == 0 {
-            rendererLogger.debug("CloudRenderer: Rendering - time: \(self.time), resolution: \(resolution), opacity: \(self.opacity), scale: \(self.cloudScale), shader: \(String(describing: self.shaderMode))")
-        }
     }
     
     private func updateUniforms(resolution: simd_float2) {

@@ -21,7 +21,13 @@ struct LoginView: View {
     @State private var showAdvancedOptions = false
     @State private var authMode: AuthMode = .selection
     @State private var loginProgress: LoginProgress = .idle
+    @State private var showDebugInfo = false
     @State private var biometricAuthAvailable = false
+    
+    // Task cancellation support
+    @State private var authenticationTask: Task<Void, Never>?
+    @State private var timeoutCountdown: Int = 60
+    @State private var showTimeoutCountdown = false
     
     enum LoginProgress {
         case idle
@@ -285,11 +291,55 @@ struct LoginView: View {
                 error = message
                 isLoggingIn = false
                 loginProgress = .idle
+                showTimeoutCountdown = false
+                // Cancel authentication task on error
+                authenticationTask?.cancel()
+                authenticationTask = nil
             } else if case .authenticated = newValue {
                 // Successfully authenticated
                 isLoggingIn = false
                 loginProgress = .idle
+                showTimeoutCountdown = false
+                // Cancel authentication task on success
+                authenticationTask?.cancel()
+                authenticationTask = nil
+            } else if case .authenticating(let progress) = newValue {
+                // Update local progress based on detailed auth progress
+                isLoggingIn = true
+                showTimeoutCountdown = true
+                
+                // Map detailed progress to our local progress enum if needed
+                switch progress {
+                case .initializingClient, .resolvingHandle, .fetchingMetadata, .generatingAuthURL:
+                    loginProgress = .startingAuth
+                case .openingBrowser:
+                    loginProgress = .authenticating
+                case .waitingForCallback:
+                    loginProgress = .authenticating
+                case .exchangingTokens, .creatingSession:
+                    loginProgress = .processingCallback
+                case .finalizing:
+                    loginProgress = .completing
+                case .retrying:
+                    // Keep current progress state during retries
+                    break
+                }
             }
+        }
+        .onDisappear {
+            // Clean up authentication task when view disappears, but only if not actively authenticating
+            // to avoid cancelling the task when ASWebAuthenticationSession opens a browser
+            if !isLoggingIn {
+                authenticationTask?.cancel()
+                authenticationTask = nil
+            }
+            showTimeoutCountdown = false
+        }
+        .onTapGesture(count: 5) {
+            // Hidden gesture: tap 5 times to enable debug mode
+            showDebugInfo.toggle()
+            let feedback = UINotificationFeedbackGenerator()
+            feedback.notificationOccurred(.success)
         }
         .task {
             // Check biometric authentication availability
@@ -531,18 +581,59 @@ struct LoginView: View {
     }
     
     private func loadingButtonView(geometry: GeometryProxy) -> some View {
-        HStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.small)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(authModeActionText())
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundStyle(.primary)
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.small)
                 
-                Text(loginProgressDescription())
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(authModeActionText())
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundStyle(.primary)
+                    
+                    Text(loginProgressDescription())
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    // Show technical details in debug mode if available
+                    if showDebugInfo, let technicalDescription = loginTechnicalDescription() {
+                        Text(technicalDescription)
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 2)
+                    }
+                }
+                
+                Spacer()
+                
+                // Cancel button
+                Button {
+                    cancelAuthentication()
+                } label: {
+                    Text("Cancel")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
+            
+            // Timeout countdown
+            if showTimeoutCountdown {
+                HStack {
+                    Image(systemName: "clock")
+                        .foregroundStyle(.orange)
+                        .imageScale(.small)
+                    
+                    Text("Timeout in \(timeoutCountdown)s")
+                        .appFont(AppTextRole.caption2)
+                        .foregroundStyle(.secondary)
+                    
+                    Spacer()
+                }
             }
         }
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
@@ -607,6 +698,43 @@ struct LoginView: View {
     
     // MARK: - Helper Methods
     
+    /// Cancels the current authentication task
+    private func cancelAuthentication() {
+        logger.warning("User cancelled authentication")
+        
+        // Cancel the authentication task
+        authenticationTask?.cancel()
+        authenticationTask = nil
+        
+        // Reset state
+        isLoggingIn = false
+        loginProgress = .idle
+        showTimeoutCountdown = false
+        authenticationCancelled = true
+        
+        // Reset the auth manager error state
+        appState.authManager.resetError()
+    }
+    
+    /// Starts the timeout countdown
+    private func startTimeoutCountdown() {
+        showTimeoutCountdown = true
+        timeoutCountdown = 60
+        
+        // Create a countdown timer
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] timer in
+            
+            DispatchQueue.main.async {
+                if self.timeoutCountdown > 0 && self.isLoggingIn {
+                    self.timeoutCountdown -= 1
+                } else {
+                    timer.invalidate()
+                    self.showTimeoutCountdown = false
+                }
+            }
+        }
+    }
+    
     private func authModeActionText() -> String {
         switch authMode {
         case .login:
@@ -621,6 +749,12 @@ struct LoginView: View {
     }
     
     private func loginProgressDescription() -> String {
+        // Check if we have detailed progress from auth manager
+        if let authProgress = appState.authState.authProgress {
+            return authProgress.userDescription
+        }
+        
+        // Fallback to old progress descriptions
         switch loginProgress {
         case .idle:
             return ""
@@ -633,6 +767,11 @@ struct LoginView: View {
         case .completing:
             return "Finalizing login"
         }
+    }
+    
+    private func loginTechnicalDescription() -> String? {
+        // Return technical description if available for debugging
+        return appState.authState.authProgress?.technicalDescription
     }
     
     private func authModeActionButtonText() -> String {
@@ -739,128 +878,210 @@ struct LoginView: View {
     private func startLogin() async {
         logger.info("Starting login for handle: \(handle)")
         
+        // Cancel any existing authentication task
+        authenticationTask?.cancel()
+        
         // Update state
         isLoggingIn = true
         loginProgress = .startingAuth
         error = nil
         
+        // Start timeout countdown
+        startTimeoutCountdown()
+        
         // Clean up handle - remove @ prefix and whitespace
         let cleanHandle = handle.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "@", with: "")
         
-        do {
-            // Get auth URL
-            let authURL = try await appState.authManager.login(handle: cleanHandle)
-            
-            // Update progress
-            loginProgress = .authenticating
-            
-            // Open web authentication session
+        // Create and store the authentication task
+        authenticationTask = Task { @MainActor in
             do {
-                let callbackURL: URL
-                if #available(iOS 17.4, *) {
-                    callbackURL = try await webAuthenticationSession.authenticate(
-                      using: authURL,
-                      callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                      preferredBrowserSession: .shared,
-                      additionalHeaderFields: [:]
-                    )
-                } else {
-                    // Fallback on earlier versions
-                    callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
-                      )
-                }
-
-                logger.info("Authentication session completed successfully")
+                // Get auth URL
+                let authURL = try await appState.authManager.login(handle: cleanHandle)
+                
+                // Check for cancellation after getting auth URL
+                try Task.checkCancellation()
                 
                 // Update progress
-                loginProgress = .processingCallback
+                loginProgress = .authenticating
                 
-                // Process callback
-                try await appState.authManager.handleCallback(callbackURL)
+                // Open web authentication session
+                do {
+                    let callbackURL: URL
+                    if #available(iOS 17.4, *) {
+                        callbackURL = try await webAuthenticationSession.authenticate(
+                          using: authURL,
+                          callback: .https(host: "catbird.blue", path: "/oauth/callback"),
+                          preferredBrowserSession: .shared,
+                          additionalHeaderFields: [:]
+                        )
+                    } else {
+                        // Fallback on earlier versions
+                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
+                          )
+                    }
+
+                    // Check for cancellation after web authentication
+                    try Task.checkCancellation()
+                    
+                    logger.info("Authentication session completed successfully")
+                    
+                    // Update progress
+                    loginProgress = .processingCallback
+                    
+                    // Process callback
+                    try await appState.authManager.handleCallback(callbackURL)
+                    
+                    // Check for cancellation after callback processing
+                    try Task.checkCancellation()
+                    
+                    // Update progress  
+                    loginProgress = .completing
+                    
+                    // Success is handled via onChange of authState
+                    
+                } catch let authSessionError as ASWebAuthenticationSessionError {
+                    // User cancelled authentication
+                    logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
+                    authenticationCancelled = true
+                    isLoggingIn = false
+                    loginProgress = .idle
+                    showTimeoutCountdown = false
+                    // Reset auth state to prevent getting stuck
+                    appState.authManager.resetError()
+                } catch {
+                    // Other authentication errors (including timeout and cancellation)
+                    logger.error("Authentication error: \(error.localizedDescription)")
+                    self.error = error.localizedDescription
+                    isLoggingIn = false
+                    loginProgress = .idle
+                    showTimeoutCountdown = false
+                }
                 
-                // Update progress  
-                loginProgress = .completing
-                
-                // Success is handled via onChange of authState
-                
-            } catch let authSessionError as ASWebAuthenticationSessionError {
-                // User cancelled authentication
-                logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
-                authenticationCancelled = true
-                isLoggingIn = false
-                loginProgress = .idle
-                // Reset auth state to prevent getting stuck
-                appState.authManager.resetError()
             } catch {
-                // Other authentication errors
-                logger.error("Authentication error: \(error.localizedDescription)")
-                self.error = error.localizedDescription
+                // Error starting login flow (including timeout and cancellation)
+                logger.error("Error starting login: \(error.localizedDescription)")
+                
+                // Check for specific cancellation errors
+                let isCancellationError = error is CancellationError ||
+                    (error as NSError).code == NSURLErrorCancelled ||
+                    error.localizedDescription.contains("cancelled") ||
+                    error.localizedDescription.contains("canceled")
+                
+                // Don't show cancellation errors as user-facing errors
+                if !isCancellationError {
+                    self.error = error.localizedDescription
+                }
+                
                 isLoggingIn = false
                 loginProgress = .idle
+                showTimeoutCountdown = false
             }
             
-        } catch {
-            // Error starting login flow
-            logger.error("Error starting login: \(error.localizedDescription)")
-            self.error = error.localizedDescription
-            isLoggingIn = false
-            loginProgress = .idle
+            // Clean up the task reference
+            authenticationTask = nil
         }
     }
     
     private func startSignup(pdsURL: URL) async {
         logger.info("Starting signup with PDS URL: \(pdsURL.absoluteString)")
         
+        // Cancel any existing authentication task
+        authenticationTask?.cancel()
+        
         // Update state
         isLoggingIn = true
         error = nil
         
-        do {
-            // Get auth URL for signup
-            let authURL = try await appState.authManager.client?.startSignUpFlow(pdsURL: pdsURL)
-            
-            guard let authURL else {
-                logger.error("Failed to get auth URL for signup")
-                error = "Failed to get authentication URL"
-                isLoggingIn = false
-                return
-            }
-            
-            // Open web authentication session
+        // Start timeout countdown
+        startTimeoutCountdown()
+        
+        // Create and store the authentication task
+        authenticationTask = Task { @MainActor in
             do {
-                let callbackURL = try await webAuthenticationSession.authenticate(
-                    using: authURL,
-                    callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                    preferredBrowserSession: .shared, additionalHeaderFields: [:]
-                )
+                // Get auth URL for signup
+                let authURL = try await appState.authManager.client?.startSignUpFlow(pdsURL: pdsURL)
                 
-                logger.info("Signup authentication session completed successfully")
+                // Check for cancellation after getting auth URL
+                try Task.checkCancellation()
                 
-                // Process callback
-                try await appState.authManager.handleCallback(callbackURL)
+                guard let authURL else {
+                    logger.error("Failed to get auth URL for signup")
+                    error = "Failed to get authentication URL"
+                    isLoggingIn = false
+                    showTimeoutCountdown = false
+                    return
+                }
                 
-                // Success is handled via onChange of authState
+                // Open web authentication session
+                do {
+                    let callbackURL = try await webAuthenticationSession.authenticate(
+                        using: authURL,
+                        callback: .https(host: "catbird.blue", path: "/oauth/callback"),
+                        preferredBrowserSession: .shared, additionalHeaderFields: [:]
+                    )
+                    
+                    // Check for cancellation after web authentication
+                    try Task.checkCancellation()
+                    
+                    logger.info("Signup authentication session completed successfully")
+                    
+                    // Process callback
+                    try await appState.authManager.handleCallback(callbackURL)
+                    
+                    // Check for cancellation after callback processing
+                    try Task.checkCancellation()
+                    
+                    // Success is handled via onChange of authState
+                    
+                } catch let authSessionError as ASWebAuthenticationSessionError {
+                    // User cancelled authentication
+                    logger.notice("Signup was cancelled by user: \(authSessionError._nsError.localizedDescription)")
+                    authenticationCancelled = true
+                    isLoggingIn = false
+                    showTimeoutCountdown = false
+                    // Reset auth state to prevent getting stuck
+                    appState.authManager.resetError()
+                } catch {
+                    // Other authentication errors (including timeout and cancellation)
+                    logger.error("Signup authentication error: \(error.localizedDescription)")
+                    
+                    // Check for specific cancellation errors
+                    let isCancellationError = error is CancellationError ||
+                        (error as NSError).code == NSURLErrorCancelled ||
+                        error.localizedDescription.contains("cancelled") ||
+                        error.localizedDescription.contains("canceled")
+                    
+                    // Don't show cancellation errors as user-facing errors
+                    if !isCancellationError {
+                        self.error = error.localizedDescription
+                    }
+                    
+                    isLoggingIn = false
+                    showTimeoutCountdown = false
+                }
                 
-            } catch let authSessionError as ASWebAuthenticationSessionError {
-                // User cancelled authentication
-                logger.notice("Signup was cancelled by user: \(authSessionError._nsError.localizedDescription)")
-                authenticationCancelled = true
-                isLoggingIn = false
-                // Reset auth state to prevent getting stuck
-                appState.authManager.resetError()
             } catch {
-                // Other authentication errors
-                logger.error("Signup authentication error: \(error.localizedDescription)")
-                self.error = error.localizedDescription
+                // Error starting signup flow (including timeout and cancellation)
+                logger.error("Error starting signup: \(error.localizedDescription)")
+                
+                // Check for specific cancellation errors
+                let isCancellationError = error is CancellationError ||
+                    (error as NSError).code == NSURLErrorCancelled ||
+                    error.localizedDescription.contains("cancelled") ||
+                    error.localizedDescription.contains("canceled")
+                
+                // Don't show cancellation errors as user-facing errors
+                if !isCancellationError {
+                    self.error = error.localizedDescription
+                }
+                
                 isLoggingIn = false
+                showTimeoutCountdown = false
             }
             
-        } catch {
-            // Error starting signup flow
-            logger.error("Error starting signup: \(error.localizedDescription)")
-            self.error = error.localizedDescription
-            isLoggingIn = false
+            // Clean up the task reference
+            authenticationTask = nil
         }
     }
     

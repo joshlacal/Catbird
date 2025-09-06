@@ -343,6 +343,28 @@ enum AuthenticationError: LocalizedError {
       return "Your account has been suspended"
     }
   }
+  
+  var failureReason: String? {
+    switch self {
+    case .sessionExpired:
+      return "Your authentication session has timed out for security reasons."
+    case .invalidCredentials:
+      return "The username or password you entered is incorrect."
+    case .accountSuspended:
+      return "Your account access has been restricted due to policy violations."
+    }
+  }
+  
+  var recoverySuggestion: String? {
+    switch self {
+    case .sessionExpired:
+      return "Please log out and log back in to continue."
+    case .invalidCredentials:
+      return "Please check your username and password and try again."
+    case .accountSuspended:
+      return "Please contact support for assistance with your account."
+    }
+  }
 }
 
 // MARK: - Preview

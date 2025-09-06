@@ -16,23 +16,28 @@ struct TypeaheadView: View {
     @Binding var searchText: String
     let committed: Bool
     @Environment(AppState.self) private var appState
+    private let baseUnit: CGFloat = 3
     
     private let logger = Logger(subsystem: "blue.catbird", category: "TypeaheadView")
     
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if committed {
-                // Show loading indicators when a search is committed but still loading
-                LoadingRowsView(count: 5)
+                // While a committed search is loading, show a lightweight skeleton list
+                List {
+                    Section {
+                        LoadingRowsView(count: 5)
+                            .redacted(reason: .placeholder)
+                            .mainContentFrame()
+                            .listRowInsets(EdgeInsets())
+                    }
+                }
+                .listStyle(.plain)
             } else if searchText.isEmpty {
-                // Show empty state if no search text
                 emptyStateView
             } else {
-                // Show typeahead suggestions
                 suggestionsList
             }
-            
-            Spacer(minLength: 50)
         }
         .animation(.smooth(duration: 0.2), value: viewModel.typeaheadResultsCount)
     }
@@ -58,58 +63,58 @@ struct TypeaheadView: View {
     }
     
     private var suggestionsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0, pinnedViews: []) {
-                // Profiles Section
-                if !viewModel.typeaheadProfiles.isEmpty {
-                    ForEach(viewModel.typeaheadProfiles, id: \.did) { profile in
-                        Button {
-                            // Save to recent profiles and navigate
-                            viewModel.addRecentProfileSearchBasic(profile: profile)
-                            path.append(NavigationDestination.profile(profile.did.didString()))
-                        } label: {
-                            ProfileRowView(profile: profile)
-                                .padding(.horizontal)
+        List {
+            // Profiles Section
+            if !viewModel.typeaheadProfiles.isEmpty {
+                Section("Profiles") {
+                    let items = viewModel.typeaheadProfiles
+                    ForEach(items, id: \.did) { profile in
+                        VStack(spacing: 0) {
+                            ProfileRowView(profile: profile, path: $path)
+                                .padding(.top, baseUnit * 3)
+                                .onTapGesture {
+                                    viewModel.addRecentProfileSearchBasic(profile: profile)
+                                }
+
+                            if profile != items.last {
+                                Rectangle()
+                                    .fill(Color.separator)
+                                    .frame(height: 0.5)
+                                    .platformIgnoresSafeArea(.container, edges: .horizontal)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        
-                        if profile != viewModel.typeaheadProfiles.last {
-                            Divider()
-                                .padding(.leading, 68) // Align with profile content
-                        }
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
                     }
                 }
-                
-                // Search directly button - always show
+            }
+
+            // Direct search row
+            Section {
                 Button {
-                    // Commit search with current text
                     guard let client = appState.atProtoClient else {
                         logger.error("Empty client")
                         return
                     }
-
                     viewModel.commitSearch(client: client)
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.accentColor)
-                            .frame(width: 44, height: 44)
-                        
+                            .frame(width: 20, height: 20)
                         Text("Search for \"\(searchText)\"")
                             .foregroundColor(.accentColor)
                             .fontWeight(.medium)
                             .appFont(AppTextRole.body)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
                 }
                 .buttonStyle(.plain)
-                .padding(.top, viewModel.typeaheadProfiles.isEmpty ? 0 : 8)
+                .listRowInsets(EdgeInsets())
             }
-            .background(Color.systemBackground)
         }
+        .listStyle(.plain)
     }
     
 }

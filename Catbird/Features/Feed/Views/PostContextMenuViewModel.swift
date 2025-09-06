@@ -8,17 +8,23 @@
 import SwiftUI
 import Petrel
 import Observation
+import OSLog
 
 @Observable
 final class PostContextMenuViewModel {
     let appState: AppState
     let post: AppBskyFeedDefs.PostView
     
+    private let logger = Logger(subsystem: "blue.catbird", category: "PostContextMenu")
+    
     // Reporting callback - will be set by PostView
     var onReportPost: (() -> Void)?
     
     // Add to list callback - will be set by PostView
     var onAddAuthorToList: (() -> Void)?
+    
+    // Bookmark callback - will be set by PostView
+    var onToggleBookmark: (() -> Void)?
 
     init(appState: AppState, post: AppBskyFeedDefs.PostView) {
         self.appState = appState
@@ -98,6 +104,11 @@ final class PostContextMenuViewModel {
     func addAuthorToList() {
         // Trigger the add to list callback
         onAddAuthorToList?()
+    }
+    
+    func toggleBookmark() {
+        // Trigger the bookmark callback
+        onToggleBookmark?()
     }
     
     /// Creates a report subject for this post

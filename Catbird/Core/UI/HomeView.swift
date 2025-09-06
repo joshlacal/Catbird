@@ -28,6 +28,7 @@ struct HomeView: View {
     mainNavigationView(navigationPath: navigationPath)
       .sheet(isPresented: $showingSettings) {
         SettingsView()
+              .environment(appState)
       }
       .onAppear {
         appState.navigationManager.updateCurrentTab(0)
