@@ -106,14 +106,35 @@ struct RefinedSearchView: View {
                 Text(scope.title).tag(scope)
             }
         }
-        .onChange(of: bindableViewModel.selectedContentType) { _, _ in
+        .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
+            logger.debug("Search scope changed from \(oldValue.title) to \(newValue.title)")
+            logger.debug("Current search state: \(String(describing: viewModel.searchState)), searchText: '\(searchText)', isCommittedSearch: \(viewModel.isCommittedSearch)")
+            
             // Ensure scope changes while typing commit a search and dismiss typeahead
-            guard let client = appState.atProtoClient else { return }
+            guard let client = appState.atProtoClient else { 
+                logger.error("No AT Proto client available for search scope change")
+                return 
+            }
+            
             if !searchText.isEmpty {
-                viewModel.searchQuery = searchText
-                viewModel.commitSearch(client: client)
+                logger.debug("Committing search with query: '\(searchText)' for scope: \(newValue.title), dismissing keyboard")
+                
+                // Forcefully dismiss keyboard and search field focus
+                isSearchFieldFocused = false
+                #if os(iOS)
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                #endif
+                
+                // Delay to ensure keyboard dismissal takes effect
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    viewModel.searchQuery = searchText
+                    viewModel.commitSearch(client: client)
+                }
             } else if viewModel.isCommittedSearch {
+                logger.debug("Refreshing existing committed search for new scope: \(newValue.title)")
                 Task { await viewModel.refreshSearch(client: client) }
+            } else {
+                logger.debug("No action taken - empty search text and no committed search")
             }
         }
         #else
@@ -126,14 +147,35 @@ struct RefinedSearchView: View {
                 Text(scope.title).tag(scope)
             }
         }
-        .onChange(of: bindableViewModel.selectedContentType) { _, _ in
+        .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
+            logger.debug("Search scope changed from \(oldValue.title) to \(newValue.title)")
+            logger.debug("Current search state: \(String(describing: viewModel.searchState)), searchText: '\(searchText)', isCommittedSearch: \(viewModel.isCommittedSearch)")
+            
             // Ensure scope changes while typing commit a search and dismiss typeahead
-            guard let client = appState.atProtoClient else { return }
+            guard let client = appState.atProtoClient else { 
+                logger.error("No AT Proto client available for search scope change")
+                return 
+            }
+            
             if !searchText.isEmpty {
-                viewModel.searchQuery = searchText
-                viewModel.commitSearch(client: client)
+                logger.debug("Committing search with query: '\(searchText)' for scope: \(newValue.title), dismissing keyboard")
+                
+                // Forcefully dismiss keyboard and search field focus
+                isSearchFieldFocused = false
+                #if os(iOS)
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                #endif
+                
+                // Delay to ensure keyboard dismissal takes effect
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    viewModel.searchQuery = searchText
+                    viewModel.commitSearch(client: client)
+                }
             } else if viewModel.isCommittedSearch {
+                logger.debug("Refreshing existing committed search for new scope: \(newValue.title)")
                 Task { await viewModel.refreshSearch(client: client) }
+            } else {
+                logger.debug("No action taken - empty search text and no committed search")
             }
         }
         #endif
@@ -161,21 +203,28 @@ struct RefinedSearchView: View {
             case .idle:
                 discoveryView
                     .transition(.opacity)
+                    .onAppear { logger.debug("Showing discoveryView") }
                 
             case .searching:
                  typeaheadView
                     .transition(.opacity)
+                    .onAppear { logger.debug("Showing typeaheadView") }
                 
             case .results:
                 resultsView
                     .transition(.opacity)
+                    .onAppear { logger.debug("Showing resultsView") }
                 
             case .loading:
                 loadingView
                     .transition(.opacity)
+                    .onAppear { logger.debug("Showing loadingView") }
             }
         }
         .animation(.smooth(duration: 0.25), value: viewModel.searchState)
+        .onChange(of: viewModel.searchState) { oldState, newState in
+            logger.debug("Search state changed from \(String(describing: oldState)) to \(String(describing: newState))")
+        }
     }
     
     private var discoveryView: some View {
@@ -190,8 +239,7 @@ struct RefinedSearchView: View {
          TypeaheadView(
              viewModel: viewModel,
              path: navigationPath,
-             searchText: $searchText,
-             committed: viewModel.isCommittedSearch
+             searchText: $searchText
          )
      }
     
@@ -270,6 +318,7 @@ struct RefinedSearchView: View {
                                 handleProfileSelection(profile)
                             } label: {
                                 profileSuggestionRow(profile)
+                                    .mainContentFrame()
                                     .padding(.vertical, 8)
                                     .contentShape(Rectangle())
                             }
@@ -317,6 +366,7 @@ struct RefinedSearchView: View {
                             .foregroundColor(.accentColor)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .mainContentFrame()
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                         .contentShape(Rectangle())
@@ -427,6 +477,14 @@ struct RefinedSearchView: View {
     }
     
     private func commitSearch() {
+        logger.debug("commitSearch() called, dismissing keyboard")
+        
+        // Forcefully dismiss keyboard and search field focus
+        isSearchFieldFocused = false
+        #if os(iOS)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
+        
         if let client = appState.atProtoClient {
             viewModel.commitSearch(client: client)
         }

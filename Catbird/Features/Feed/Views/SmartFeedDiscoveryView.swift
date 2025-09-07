@@ -997,7 +997,8 @@ struct EnhancedRecommendationCard: View {
                 showingFullFeed = true
             }
             .buttonStyle(.bordered)
-            .controlSize(.mini)
+            .controlSize(.regular)
+            .tint(.accentColor)
         }
     }
     

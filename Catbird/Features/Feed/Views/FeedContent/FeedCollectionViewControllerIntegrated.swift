@@ -19,26 +19,13 @@ import os
 final class FeedCollectionViewControllerIntegrated: UIViewController {
     // MARK: - Types
     
-    private enum Section: Int, CaseIterable {
-        case main = 0
-    }
-    
-    private struct PostItem: Hashable {
-        let id: String
-        
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(id)
-        }
-        
-        static func == (lhs: PostItem, rhs: PostItem) -> Bool {
-            lhs.id == rhs.id
-        }
-    }
+    private enum Section: Int, CaseIterable { case main }
+    private enum Item: Hashable { case header; case post(String) }
     
     // MARK: - Properties
     
     var collectionView: UICollectionView!
-    private var dataSource: UICollectionViewDiffableDataSource<Section, PostItem>!
+    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
     private var refreshControl: UIRefreshControl!
     
     /// State management
@@ -69,6 +56,11 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     
     /// Logging
     let controllerLogger = Logger(subsystem: "blue.catbird", category: "FeedCollectionIntegrated")
+    
+    /// Optional SwiftUI header that should scroll with the feed
+    private var headerView: AnyView?
+    /// Track header presence to avoid rebuilding during scroll updates
+    private var headerPresent: Bool = false
     
     // MARK: - Initialization
     
@@ -126,13 +118,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         collectionView?.backgroundColor = dynamicBackgroundColor
         view.backgroundColor = dynamicBackgroundColor
         
-        // Update collection view layout configuration background as well
-        if let layout = collectionView?.collectionViewLayout as? UICollectionViewCompositionalLayout,
-           let listLayout = layout as? UICollectionViewCompositionalLayout {
-            // Recreate the layout with new theme colors
-            let newLayout = createLayout()
-            collectionView?.setCollectionViewLayout(newLayout, animated: false)
-        }
+        // Avoid resetting the layout here to prevent supplementary assertions during transitions
     }
     
     private func forceCellReconfiguration() {
@@ -152,6 +138,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         setupCollectionView()
         setupDataSource()
         setupRefreshControl()
+        // Apply header if it was set before the view loaded
+        setHeaderView(self.headerView)
         setupObservers()
         setupScrollToTopCallback()
         setupAppLifecycleObservers()
@@ -193,6 +181,17 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         
         NotificationCenter.default.removeObserver(self)
         controllerLogger.debug("🧹 FeedCollectionViewControllerIntegrated deinitialized")
+    }
+    
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        #if os(iOS)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            // System appearance changed; update dynamic backgrounds to reflect dim/black correctly
+            updateThemeColors()
+            forceCellReconfiguration()
+        }
+        #endif
     }
     
     // MARK: - Collection View Setup
@@ -238,7 +237,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         configuration.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getEffectiveColorScheme()))
         configuration.showsSeparators = false // Disable UIKit separators - let SwiftUI handle them
         
-        // Configure header/footer
+        // We render header as a first cell (not supplementary) to avoid provider assertions
         configuration.headerMode = .none
         configuration.footerMode = .none
         
@@ -252,9 +251,10 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     }
     
     private func setupDataSource() {
-        let cellRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, PostItem> { [weak self] cell, indexPath, item in
+        // Registration for post cells
+        let postRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> { [weak self] cell, indexPath, postId in
             guard let self = self,
-                  let post = self.stateManager.posts.first(where: { $0.id == item.id }) else {
+                  let post = self.stateManager.posts.first(where: { $0.id == postId }) else {
                 cell.contentConfiguration = nil
                 return
             }
@@ -285,15 +285,44 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             // Remove cell state handler to reduce memory overhead
             cell.configurationUpdateHandler = nil
         }
-        
-        dataSource = UICollectionViewDiffableDataSource<Section, PostItem>(
+        // Registration for header cell
+        let headerRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> { [weak self] cell, indexPath, _ in
+            guard let self = self, let header = self.headerView else {
+                cell.contentConfiguration = nil
+                return
+            }
+            cell.contentConfiguration = UIHostingConfiguration { header }
+                .margins(.all, 0)
+        }
+
+        dataSource = UICollectionViewDiffableDataSource<Section, Item>(
             collectionView: collectionView
         ) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(
-                using: cellRegistration,
-                for: indexPath,
-                item: item
-            )
+            switch item {
+            case .header:
+                return collectionView.dequeueConfiguredReusableCell(using: headerRegistration, for: indexPath, item: ())
+            case .post(let id):
+                return collectionView.dequeueConfiguredReusableCell(using: postRegistration, for: indexPath, item: id)
+            }
+        }
+
+        // Defensive: provide a no-op supplementary provider to satisfy any unexpected requests
+        let emptyHeaderReg = UICollectionView.SupplementaryRegistration<UICollectionReusableView>(
+            elementKind: UICollectionView.elementKindSectionHeader
+        ) { _, _, _ in }
+        let emptyFooterReg = UICollectionView.SupplementaryRegistration<UICollectionReusableView>(
+            elementKind: UICollectionView.elementKindSectionFooter
+        ) { _, _, _ in }
+        dataSource.supplementaryViewProvider = { [weak collectionView] _, kind, indexPath in
+            guard let collectionView = collectionView else { return nil }
+            switch kind {
+            case UICollectionView.elementKindSectionHeader:
+                return collectionView.dequeueConfiguredReusableSupplementary(using: emptyHeaderReg, for: indexPath)
+            case UICollectionView.elementKindSectionFooter:
+                return collectionView.dequeueConfiguredReusableSupplementary(using: emptyFooterReg, for: indexPath)
+            default:
+                return nil
+            }
         }
     }
     
@@ -324,10 +353,13 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         
         controllerLogger.debug("🔄 Fast update: Creating snapshot")
         
-        var snapshot = NSDiffableDataSourceSnapshot<Section, PostItem>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         snapshot.appendSections([.main])
-        
-        let items = stateManager.posts.map { PostItem(id: $0.id) }
+        // Prepend header cell when available
+        if headerView != nil {
+            snapshot.appendItems([.header], toSection: .main)
+        }
+        let items = stateManager.posts.map { Item.post($0.id) }
         snapshot.appendItems(items, toSection: .main)
         
         await dataSource.apply(snapshot, animatingDifferences: false)
@@ -345,6 +377,20 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         controllerLogger.debug("📥 Loading initial data")
         await stateManager.loadInitialData()
         await performUpdate()
+    }
+
+    // MARK: - Header API
+    func setHeaderView(_ view: AnyView?) {
+        let newPresent = (view != nil)
+        // If presence didn't change, do nothing to avoid thrashing during scroll
+        if newPresent == headerPresent {
+            self.headerView = view
+            return
+        }
+        self.headerView = view
+        self.headerPresent = newPresent
+        guard dataSource != nil else { return }
+        Task { @MainActor in await performUpdate() }
     }
     
     // MARK: - Observers

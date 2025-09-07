@@ -140,6 +140,9 @@ struct UnifiedProfileView: View {
                         
                         // Posts content with full-width dividers
                         currentTabContentSection
+                        
+                        // Spacer
+                        Spacer(minLength: 200)
                     }
                 }
                 // Clamp scroll content to viewport width to avoid horizontal expansion

@@ -72,6 +72,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var hasReachedTopOfThread = false
   private var pendingLoadTask: Task<Void, Never>?
   
+  // Theme observation
+  private var themeObserver: UIKitStateObserver<ThemeManager>?
+  
   // MARK: - UIUpdateLink for coordinated UI updates
   #if os(iOS) && !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
@@ -238,6 +241,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     registerCells()
     collectionView.delegate = self
     
+    // Apply initial themed colors and start observing theme changes
+    updateThemeColors()
+    setupThemeObserver()
+    
     // Prevent VoiceOver from auto-scrolling
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
@@ -250,6 +257,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Apply theme directly to this view controller's navigation and toolbar
     configureNavigationAndToolbarTheme()
+    updateThemeColors()
     
     // Apply width=120 fonts to this navigation bar
     if let navigationBar = navigationController?.navigationBar {
@@ -270,6 +278,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Ensure theming is applied after view appears (helps with material effects)
     DispatchQueue.main.async {
       self.configureNavigationAndToolbarTheme()
+      self.updateThemeColors()
     }
   }
   
@@ -280,11 +289,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
       // Apply theme directly to this view controller
       configureNavigationAndToolbarTheme()
-      
-      // Update collection view background
-        collectionView.backgroundColor = .systemBackground
-        view.backgroundColor = .systemBackground
-        loadingView.backgroundColor = .systemBackground
+      // Update themed colors
+      updateThemeColors()
     }
   }
   
@@ -327,33 +333,23 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     guard let tabBarController = self.tabBarController else { return }
     
     let tabBarAppearance = UITabBarAppearance()
-    
-//    if isDarkMode && isBlackMode {
-//        // True black mode - solid black background
-//        tabBarAppearance.configureWithOpaqueBackground()
-//        tabBarAppearance.backgroundColor = UIColor.black
-//        tabBarAppearance.shadowColor = .clear
-//
-//        // Set blue tint color for better visibility on black
-//        tabBarController.tabBar.tintColor = UIColor.systemBlue
-//    } else if isDarkMode {
-//        // Dim mode - use dim background color
-//        tabBarAppearance.configureWithOpaqueBackground()
-//        tabBarAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
-//        tabBarAppearance.shadowColor = .clear
-//
-//        // Reset tint color to system default (not black)
-//        tabBarController.tabBar.tintColor = nil
-//    } else {
-//        // Light mode - use system background
-//        tabBarAppearance.configureWithDefaultBackground()
-//        tabBarAppearance.backgroundColor = UIColor.systemBackground
-//
-//        // Explicitly set blue tint color to ensure visibility
-//        tabBarController.tabBar.tintColor = UIColor.systemBlue
-//    }
-      
-      tabBarAppearance.configureWithTransparentBackground()
+    if isDarkMode && isBlackMode {
+      tabBarAppearance.configureWithOpaqueBackground()
+      tabBarAppearance.backgroundColor = .black
+      tabBarAppearance.shadowColor = .clear
+      tabBarController.tabBar.tintColor = UIColor.systemBlue
+    } else if isDarkMode {
+      tabBarAppearance.configureWithOpaqueBackground()
+      tabBarAppearance.backgroundColor = UIColor(
+        Color.dynamicBackground(appState.themeManager, currentScheme: .dark)
+      )
+      tabBarAppearance.shadowColor = .clear
+      tabBarController.tabBar.tintColor = nil
+    } else {
+      tabBarAppearance.configureWithDefaultBackground()
+      tabBarAppearance.backgroundColor = UIColor.systemBackground
+      tabBarController.tabBar.tintColor = UIColor.systemBlue
+    }
     
     // Apply the tab bar appearance
     tabBarController.tabBar.standardAppearance = tabBarAppearance
@@ -362,6 +358,51 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Ensure proper color scheme for tab bar icons and text
     if #available(iOS 13.0, *) {
         tabBarController.tabBar.overrideUserInterfaceStyle = currentScheme == .dark ? .dark : .light
+    }
+  }
+
+  // MARK: - Theme Observation and Updates
+  private func setupThemeObserver() {
+    // Observe ThemeManager changes via @Observable and fallback notification
+    themeObserver = UIKitStateObserver(observing: appState.themeManager) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.handleThemeChange()
+      }
+    }
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleThemeChangeNotification),
+      name: NSNotification.Name("ThemeChanged"),
+      object: nil
+    )
+  }
+
+  @objc private func handleThemeChangeNotification() {
+    handleThemeChange()
+  }
+
+  private func handleThemeChange() {
+    configureNavigationAndToolbarTheme()
+    updateThemeColors()
+    // Force cells to re-read backgrounds where needed
+    let snapshot = dataSource.snapshot()
+    dataSource.apply(snapshot, animatingDifferences: false)
+  }
+
+  private func updateThemeColors() {
+    let currentScheme = getCurrentColorScheme()
+    let bgColor = UIColor(Color.dynamicBackground(appState.themeManager, currentScheme: currentScheme))
+    let secondaryBG = UIColor(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: currentScheme))
+    let textSecondary = UIColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: currentScheme))
+    
+    view.backgroundColor = bgColor
+    collectionView.backgroundColor = bgColor
+    loadingView.backgroundColor = bgColor
+    
+    // Update loading label color if present
+    if let stack = loadingView.subviews.first(where: { $0 is UIStackView }) as? UIStackView,
+       let lbl = stack.arrangedSubviews.compactMap({ $0 as? UILabel }).first {
+      lbl.textColor = textSecondary
     }
   }
   
@@ -2166,7 +2207,9 @@ final class ParentPostCell: UICollectionViewCell {
 
   func configure(parentPost: ParentPost, appState: AppState, path: Binding<NavigationPath>) {
     // Set themed background color
-      contentView.backgroundColor = .systemBackground
+      contentView.backgroundColor = UIColor(
+        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
+      )
     
     let content = AnyView(
       WidthLimitedContainer(maxWidth: 600) {
@@ -2232,7 +2275,9 @@ final class MainPostCell: UICollectionViewCell {
 
   func configure(post: AppBskyFeedDefs.PostView, appState: AppState, path: Binding<NavigationPath>) {
     // Set themed background color
-      contentView.backgroundColor = .systemBackground
+      contentView.backgroundColor = UIColor(
+        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
+      )
     
     // Avoid removing/readding subviews if configuration hasn't changed
     let content = AnyView(
@@ -2302,7 +2347,9 @@ final class ReplyCell: UICollectionViewCell {
     path: Binding<NavigationPath>
   ) {
     // Set themed background color
-      contentView.backgroundColor = .systemBackground
+      contentView.backgroundColor = UIColor(
+        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
+      )
     
     let content = AnyView(
       VStack(spacing: 0) {

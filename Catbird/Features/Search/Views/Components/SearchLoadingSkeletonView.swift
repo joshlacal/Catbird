@@ -39,6 +39,7 @@ struct SearchLoadingSkeletonView: View {
                     itemType: .feed
                 )
             }
+            .mainContentFrame()
             .padding(.horizontal, 16)
             .padding(.top, 8)
         }

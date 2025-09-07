@@ -14,7 +14,6 @@ struct TypeaheadView: View {
     var viewModel: RefinedSearchViewModel
     @Binding var path: NavigationPath
     @Binding var searchText: String
-    let committed: Bool
     @Environment(AppState.self) private var appState
     private let baseUnit: CGFloat = 3
     
@@ -22,7 +21,7 @@ struct TypeaheadView: View {
     
     var body: some View {
         Group {
-            if committed {
+            if viewModel.isCommittedSearch {
                 // While a committed search is loading, show a lightweight skeleton list
                 List {
                     Section {
@@ -71,6 +70,7 @@ struct TypeaheadView: View {
                     ForEach(items, id: \.did) { profile in
                         VStack(spacing: 0) {
                             ProfileRowView(profile: profile, path: $path)
+                                .mainContentFrame()
                                 .padding(.top, baseUnit * 3)
                                 .onTapGesture {
                                     viewModel.addRecentProfileSearchBasic(profile: profile)
@@ -107,6 +107,7 @@ struct TypeaheadView: View {
                             .fontWeight(.medium)
                             .appFont(AppTextRole.body)
                     }
+                    .mainContentFrame()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                 }

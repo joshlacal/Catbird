@@ -267,8 +267,11 @@ struct OutlineTagsView: View {
     // Add the tag
     tags.append(cleanTag.lowercased())
     
-    // Reset state
-    cancelAddingTag()
+    // Keep adding flow active and keyboard open
+    newTag = ""
+    showDuplicateWarning = false
+    isAddingTag = true
+    isTextFieldFocused = true
   }
   
   private func removeTag(_ tag: String) {

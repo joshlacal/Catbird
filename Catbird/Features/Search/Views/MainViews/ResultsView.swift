@@ -513,7 +513,7 @@ struct ResultsView: View {
     private var feedResultsView: some View {
         LazyVStack(spacing: 12) {
             ForEach(viewModel.feedResults, id: \.uri) { feed in
-                VStack(spacing: 0) {
+                VStack(spacing: 8) {
                     // Show discovery header for feeds that might not be subscribed
                     FeedDiscoveryHeaderView(
                         feed: feed,
@@ -527,22 +527,25 @@ struct ResultsView: View {
                         await updateSubscriptionStatus(for: feed.uri)
                     }
                     
-                    Button {
-                        path.append(NavigationDestination.feed(feed.uri))
-                    } label: {
-                        HStack {
-                            Text("Preview Feed")
-                                .appFont(AppTextRole.subheadline)
-                                .foregroundColor(.accentColor)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .appFont(AppTextRole.caption)
-                                .foregroundColor(.secondary)
+                    HStack {
+                        Button {
+                            path.append(NavigationDestination.feed(feed.uri))
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "eye")
+                                Text("Preview Feed")
+                                    .fontWeight(.semibold)
+                            }
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                            .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
                         }
-                        .padding()
-                        .background(Color(PlatformColor.platformTertiarySystemBackground))
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 2)
                 }
                 
                 if feed != viewModel.feedResults.last {

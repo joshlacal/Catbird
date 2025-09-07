@@ -20,6 +20,7 @@ struct NotificationSettingsView: View {
     
     var body: some View {
         List {
+            // MARK: - Master Toggle Section
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Label {
@@ -35,6 +36,35 @@ struct NotificationSettingsView: View {
                         .appFont(AppTextRole.subheadline)
                 }
                 .padding(.vertical, 4)
+                
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable All Notifications")
+                            .appFont(AppTextRole.body)
+                        Text("Master control for all push notifications")
+                            .foregroundStyle(.secondary)
+                            .appFont(AppTextRole.caption)
+                    }
+                    
+                    Spacer()
+                    
+                    Toggle("", isOn: Binding(
+                        get: { notificationManager.notificationsEnabled },
+                        set: { newValue in
+                            Task {
+                                isRequestingPermission = true
+                                if newValue {
+                                    await enableAllNotifications()
+                                } else {
+                                    await disableAllNotifications()
+                                }
+                                isRequestingPermission = false
+                            }
+                        }
+                    ))
+                    .disabled(isRequestingPermission || notificationManager.status == .waitingForPermission)
+                }
+                .opacity(notificationManager.status == .permissionDenied ? 0.6 : 1.0)
                 
                 if notificationManager.status == .permissionDenied {
                     HStack {
@@ -76,8 +106,18 @@ struct NotificationSettingsView: View {
                 }
             }
             
-            if notificationManager.status == .registered {
+            if notificationManager.status == .registered && notificationManager.notificationsEnabled {
                 notificationPreferencesSection
+            } else if notificationManager.notificationsEnabled {
+                Section("Notification Types") {
+                    HStack {
+                        Text("Setting up notifications...")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
             }
         }
         .navigationTitle("Notifications")
@@ -118,6 +158,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Replies", isOn: Binding(
                     get: { notificationManager.preferences.replies },
@@ -129,6 +170,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Likes", isOn: Binding(
                     get: { notificationManager.preferences.likes },
@@ -140,6 +182,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Follows", isOn: Binding(
                     get: { notificationManager.preferences.follows },
@@ -151,6 +194,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Reposts", isOn: Binding(
                     get: { notificationManager.preferences.reposts },
@@ -162,6 +206,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Quotes", isOn: Binding(
                     get: { notificationManager.preferences.quotes },
@@ -173,6 +218,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Likes on Reposts", isOn: Binding(
                     get: { notificationManager.preferences.likeViaRepost },
@@ -184,6 +230,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
                 
                 Toggle("Reposts of Reposts", isOn: Binding(
                     get: { notificationManager.preferences.repostViaRepost },
@@ -195,6 +242,7 @@ struct NotificationSettingsView: View {
                         }
                     }
                 ))
+                .disabled(!notificationManager.notificationsEnabled)
             }
         }
     }
@@ -202,5 +250,18 @@ struct NotificationSettingsView: View {
     // Request notification permission
     private func requestNotificationPermission() async {
         await notificationManager.requestNotificationPermission()
+    }
+    
+    // Enable all notifications
+    @MainActor
+    private func enableAllNotifications() async {
+        logger.info("User enabling all notifications via master toggle")
+        await notificationManager.requestNotificationPermission()
+    }
+    
+    // Disable all notifications and unregister device
+    private func disableAllNotifications() async {
+        logger.info("User disabling all notifications via master toggle")
+        await notificationManager.cleanupNotifications()
     }
 }

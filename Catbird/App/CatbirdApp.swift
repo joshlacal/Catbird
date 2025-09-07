@@ -200,18 +200,20 @@ struct CatbirdApp: App {
       // MARK: - Navigation Bar Configuration
       // Navigation bar theme is handled completely by ThemeManager during AppState.initialize()
       // to avoid conflicts between initial setup and dynamic theme changes
-
-      // Configure audio session at app launch (iOS only)
-      #if os(iOS)
-      do {
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-        logger.debug("✅ Audio session configured at app launch")
-      } catch {
-        logger.error("❌ Failed to configure audio session: \(error)")
-      }
-      #endif
     }
+
+    // Configure audio session at app launch (iOS only)
+    // Always set to .ambient with .mixWithOthers so inline, muted videos
+    // never interrupt other apps' audio (e.g., Music/Podcasts), regardless of mode.
+    #if os(iOS)
+    do {
+      let audioSession = AVAudioSession.sharedInstance()
+      try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+      logger.debug("✅ Audio session configured at app launch (.ambient + mixWithOthers)")
+    } catch {
+      logger.error("❌ Failed to configure audio session: \(error)")
+    }
+    #endif
 
     // Initialize model container with error recovery (simplified for FaultOrdering)
     do {

@@ -65,14 +65,9 @@ struct NavigationHandler {
       #endif
 
     case .feed(let uri):
-      FeedCollectionView.create(
-        for: .feed(uri),
-        appState: appState,
-        navigationPath: path
-      )
-      .ignoresSafeArea()
-
-      .id(uri.uriString())
+        FeedScreen(path: path, uri: uri)
+        .ignoresSafeArea()
+        .id(uri.uriString())
 
     case .list(let uri):
       ListView(listURI: uri, path: path)

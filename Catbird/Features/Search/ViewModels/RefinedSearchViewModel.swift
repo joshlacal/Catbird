@@ -187,7 +187,14 @@ enum SearchState {
     
     /// Commit search with current query
     func commitSearch(client: ATProtoClient) {
-        guard !searchQuery.isEmpty else { return }
+        logger.debug("commitSearch called with query: '\(self.searchQuery)', selectedContentType: \(self.selectedContentType.title)")
+        
+        guard !searchQuery.isEmpty else { 
+            logger.warning("commitSearch aborted - empty search query")
+            return 
+        }
+        
+        logger.debug("commitSearch proceeding - setting state to loading")
         
         // Save to recent searches
         saveRecentSearch(searchQuery)
@@ -195,6 +202,8 @@ enum SearchState {
         // Update state
         searchState = .loading
         isCommittedSearch = true
+        
+        logger.debug("Search state updated to: \(String(describing: self.searchState)), isCommittedSearch: \(self.isCommittedSearch)")
         
         // Clear existing results
         profileResults = []
@@ -207,6 +216,8 @@ enum SearchState {
         postCursor = nil
         feedCursor = nil
         starterPackCursor = nil
+        
+        logger.debug("Results cleared, executing search task for content type: \(self.selectedContentType.title)")
         
         // Run search
         Task {
@@ -636,14 +647,19 @@ enum SearchState {
     
     /// Execute search with current query and filters
     private func executeSearch(client: ATProtoClient) async {
+        logger.debug("executeSearch started with query: '\(self.searchQuery)', selectedContentType: \(self.selectedContentType.title)")
+        
         // If query is empty, reset to idle state
         guard !searchQuery.isEmpty else {
+            logger.warning("executeSearch aborted - empty search query")
             searchState = .idle
             return
         }
         
         // Clear previous error
         searchError = nil
+        
+        logger.debug("executeSearch proceeding with parallel task group")
         
         do {
             // Create task group to run searches in parallel
@@ -673,6 +689,7 @@ enum SearchState {
             }
             
             // Update state
+            logger.debug("executeSearch completed successfully, setting state to results")
             searchState = .results
             
         } catch {
@@ -680,6 +697,8 @@ enum SearchState {
             searchError = error
             searchState = .results // Still move to results state to show error
         }
+        
+        logger.debug("executeSearch finished with state: \(String(describing: self.searchState))")
     }
     
     /// Search for profiles matching the query

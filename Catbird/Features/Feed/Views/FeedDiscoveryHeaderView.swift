@@ -7,7 +7,6 @@ import UIKit
 import AppKit
 #endif
 
-
 struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
   let feed: AppBskyFeedDefs.GeneratorView
@@ -15,35 +14,49 @@ struct FeedDiscoveryHeaderView: View {
   let onSubscriptionToggle: () async -> Void
   
   @State private var isTogglingSubscription = false
-  @State private var showingDescription = false
+  @State private var isLiking = false
+  @State private var liked = false
+  @State private var likeUri: ATProtocolURI?
+  @State private var didSeedViewerState = false
+  @State private var showingFullDescription = false
+  @State private var isDescriptionExpanded = false
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryHeaderView")
   
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      headerRow
-      descriptionSection
-      actionButtons
-    }
-    .padding(20)
-    .background(
-      // Simplified background for debugging - removed shadow that might block touches
-      Rectangle()
-        .fill(Color(platformColor: .platformSystemBackground))
-    )
-    .overlay(
-      Rectangle()
-        .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.1), lineWidth: 0.5)
-    )
-    // Removed explicit hit testing configurations - let SwiftUI handle naturally
+  private var displayedLikeCount: Int? {
+    let base = feed.likeCount ?? 0
+    let total = base + (liked ? 1 : 0)
+    return total > 0 ? total : nil
   }
   
-  private var headerRow: some View {
+  var body: some View {
+    VStack(alignment: .leading, spacing: 20) {
+      headerSection
+      descriptionSection
+      statsSection
+      actionSection
+    }
+    .padding(24)
+    .background(Color(platformColor: .platformSystemBackground))
+    .clipShape(RoundedRectangle(cornerRadius: 16))
+    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+    .task(id: feed.uri.uriString()) {
+      seedFromFeedViewer()
+    }
+  }
+  
+  // MARK: - Header Section
+  
+  private var headerSection: some View {
     HStack(alignment: .top, spacing: 16) {
       feedAvatar
-      feedInfo
+      
+      VStack(alignment: .leading, spacing: 8) {
+        feedTitleInfo
+        creatorInfo
+      }
+      
       Spacer()
-      subscribeButton
     }
   }
   
@@ -55,50 +68,113 @@ struct FeedDiscoveryHeaderView: View {
     } placeholder: {
       feedPlaceholder
     }
-    .frame(width: 56, height: 56)
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .frame(width: 64, height: 64)
+    .clipShape(RoundedRectangle(cornerRadius: 16))
     .overlay(
-      RoundedRectangle(cornerRadius: 12)
-        .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.2), lineWidth: 0.5)
+      RoundedRectangle(cornerRadius: 16)
+        .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.15), lineWidth: 1)
     )
   }
   
   private var feedPlaceholder: some View {
     ZStack {
       LinearGradient(
-        colors: [Color.accentColor.opacity(0.7), Color.accentColor.opacity(0.5)],
+        colors: [Color.accentColor.opacity(0.8), Color.accentColor.opacity(0.6)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
       
       Text(feed.displayName.prefix(1).uppercased())
-        .appFont(AppTextRole.title2)
-        .fontWeight(.bold)
+        .font(.system(size: 24, weight: .bold, design: .rounded))
         .foregroundColor(.white)
     }
   }
   
-  private var feedInfo: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(feed.displayName)
-        .appFont(AppTextRole.headline)
-        .fontWeight(.semibold)
-        .lineLimit(2)
-      
-      Text("by @\(feed.creator.handle.description)")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.secondary)
-      
-      if let likeCount = feed.likeCount {
-        HStack(spacing: 4) {
-          Image(systemName: "heart.fill")
-            .foregroundColor(.pink)
-            .appFont(AppTextRole.caption)
-          Text(formatCount(likeCount))
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
+  private var feedTitleInfo: some View {
+    Text(feed.displayName)
+      .font(.system(size: 20, weight: .bold, design: .default))
+      .foregroundColor(.primary)
+      .multilineTextAlignment(.leading)
+  }
+  
+  private var creatorInfo: some View {
+    Text("by @\(feed.creator.handle.description)")
+      .font(.system(size: 16, weight: .medium, design: .default))
+      .foregroundColor(.secondary)
+      .multilineTextAlignment(.leading)
+  }
+  
+  // MARK: - Description Section
+  
+  private var descriptionSection: some View {
+    Group {
+      if let description = feed.description, !description.isEmpty {
+        VStack(alignment: .leading, spacing: 12) {
+          descriptionText(description)
         }
       }
+    }
+  }
+  
+  private func descriptionText(_ description: String) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      let shouldTruncate = description.count > 200
+      let displayText = (shouldTruncate && !isDescriptionExpanded) ? 
+        String(description.prefix(200)) + "..." : description
+      
+      Text(displayText)
+        .font(.system(size: 16, weight: .regular, design: .default))
+        .foregroundColor(.primary)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+      
+      if shouldTruncate {
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.3)) {
+            isDescriptionExpanded.toggle()
+          }
+        }) {
+          Text(isDescriptionExpanded ? "Show Less" : "Show More")
+            .font(.system(size: 15, weight: .medium, design: .default))
+            .foregroundColor(.accentColor)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+  }
+  
+  // MARK: - Stats Section
+  
+  private var statsSection: some View {
+    Group {
+      if let likeCount = displayedLikeCount {
+        HStack(spacing: 6) {
+          Image(systemName: "heart.fill")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(.pink)
+          
+          Text(formatCount(likeCount))
+            .font(.system(size: 16, weight: .semibold, design: .default))
+            .foregroundColor(.primary)
+          
+          Text("likes")
+            .font(.system(size: 14, weight: .regular, design: .default))
+            .foregroundColor(.secondary)
+            
+          Spacer()
+        }
+        .padding(.vertical, 8)
+      }
+    }
+  }
+  
+  // MARK: - Action Section
+  
+  private var actionSection: some View {
+    VStack(spacing: 16) {
+      subscribeButton
+      
+      secondaryActionsMenu
     }
   }
   
@@ -106,116 +182,71 @@ struct FeedDiscoveryHeaderView: View {
     Button {
       Task { await toggleSubscription() }
     } label: {
-      HStack(spacing: 6) {
+      HStack(spacing: 8) {
         if isTogglingSubscription {
           ProgressView()
-            .scaleEffect(0.8)
+            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            .scaleEffect(0.9)
         } else {
+          if !isSubscribed {
+            Image(systemName: "plus")
+              .font(.system(size: 16, weight: .semibold))
+          }
           Text(isSubscribed ? "Subscribed" : "Subscribe")
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.semibold)
+            .font(.system(size: 17, weight: .semibold, design: .default))
         }
       }
-      .foregroundColor(isSubscribed ? .green : .white)
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
+      .foregroundColor(isSubscribed ? .accentColor : .white)
+      .frame(maxWidth: .infinity)
+      .frame(height: 50)
       .background(
-        RoundedRectangle(cornerRadius: 20)
-          .fill(isSubscribed ? 
-                Color.green.opacity(0.15) : 
-                Color.accentColor)
+        RoundedRectangle(cornerRadius: 12)
+          .fill(isSubscribed ? Color.accentColor.opacity(0.1) : Color.accentColor)
       )
       .overlay(
-        RoundedRectangle(cornerRadius: 20)
-          .stroke(isSubscribed ? Color.green.opacity(0.3) : Color.clear, lineWidth: 1)
+        RoundedRectangle(cornerRadius: 12)
+          .stroke(isSubscribed ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1.5)
       )
     }
     .disabled(isTogglingSubscription)
     .buttonStyle(.plain)
   }
   
-  private var descriptionSection: some View {
-    Group {
-      if let description = feed.description, !description.isEmpty {
-        VStack(alignment: .leading, spacing: 8) {
-          Text(description)
-            .appFont(AppTextRole.body)
-            .lineLimit(showingDescription ? nil : 3)
-            .animation(.easeInOut(duration: 0.2), value: showingDescription)
-          
-          if description.count > 120 {
-            Button(showingDescription ? "Show less" : "Show more") {
-              withAnimation(.easeInOut(duration: 0.2)) {
-                showingDescription.toggle()
-              }
-            }
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.accentColor)
-            .buttonStyle(.plain)
-          }
-        }
+  private var secondaryActionsMenu: some View {
+    Menu {
+      Button(action: {
+        if liked { unlikeFeed() } else { likeFeed() }
+      }) {
+        Label(liked ? "Unlike" : "Like", 
+              systemImage: liked ? "heart.fill" : "heart")
       }
+      .disabled(isLiking)
+      
+      Button(action: { shareFeed() }) {
+        Label("Share", systemImage: "square.and.arrow.up")
+      }
+      
+      Button(role: .destructive, action: { reportFeed() }) {
+        Label("Report", systemImage: "exclamationmark.circle")
+      }
+    } label: {
+      HStack(spacing: 8) {
+        Image(systemName: "ellipsis")
+          .font(.system(size: 16, weight: .semibold))
+        Text("More")
+          .font(.system(size: 17, weight: .medium, design: .default))
+      }
+      .foregroundColor(.secondary)
+      .frame(maxWidth: .infinity)
+      .frame(height: 44)
+      .background(
+        RoundedRectangle(cornerRadius: 12)
+          .fill(Color(platformColor: .platformSecondarySystemBackground))
+      )
     }
+    .buttonStyle(.plain)
   }
-  
-  private var actionButtons: some View {
-    HStack(spacing: 24) {
-      // Like button
-      Button {
-        likeFeed()
-      } label: {
-        HStack(spacing: 4) {
-          Image(systemName: "heart")
-          Text("Like")
-        }
-        .appFont(AppTextRole.caption)
-        .foregroundColor(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-      }
-      .buttonStyle(.plain)
-      .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle())
-      
-      // Share button
-      Button {
-        shareFeed()
-      } label: {
-        HStack(spacing: 4) {
-          Image(systemName: "square.and.arrow.up")
-          Text("Share")
-        }
-        .appFont(AppTextRole.caption)
-        .foregroundColor(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-      }
-      .buttonStyle(.plain)
-      .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle())
-      
-      // Report button
-      Button {
-        reportFeed()
-      } label: {
-        HStack(spacing: 4) {
-          Image(systemName: "exclamationmark.circle")
-          Text("Report")
-        }
-        .appFont(AppTextRole.caption)
-        .foregroundColor(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-      }
-      .buttonStyle(.plain)
-      .frame(minWidth: 44, minHeight: 44)
-      .contentShape(Rectangle())
-      
-      Spacer()
-    }
-  }
-  
-  // MARK: - Actions
+
   
   private func toggleSubscription() async {
     guard !isTogglingSubscription else { return }
@@ -229,141 +260,163 @@ struct FeedDiscoveryHeaderView: View {
     await appState.stateInvalidationBus.notify(.feedListChanged)
   }
   
+  // MARK: - Share / Report
+  
   private func likeFeed() {
-    logger.info("Like button tapped for feed: \(feed.uri)")
-    
-    // Provide haptic feedback
+    guard !isLiking, !liked else { return }
     #if os(iOS)
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
-    #elseif os(macOS)
-    NSSound.beep()
     #endif
     
     Task {
       do {
-        guard let client = appState.atProtoClient else { 
-          logger.warning("No AT Protocol client available for like action")
-          return 
-        }
-        
-        logger.info("Like feed: \(feed.uri)")
-        
+        await MainActor.run { isLiking = true }
+        guard let client = appState.atProtoClient else { return }
         let postRef = ComAtprotoRepoStrongRef(
           uri: feed.uri,
           cid: feed.cid
         )
-        
         let likeRecord = AppBskyFeedLike(
           subject: postRef,
           createdAt: ATProtocolDate(date: Date()),
           via: nil
         )
-        
         let did = try await client.getDid()
         let input = ComAtprotoRepoCreateRecord.Input(
           repo: try ATIdentifier(string: did),
           collection: try NSID(nsidString: "app.bsky.feed.like"),
           record: .knownType(likeRecord)
         )
-        
-        let (responseCode, _) = try await client.com.atproto.repo.createRecord(input: input)
-        
-        if responseCode == 200 {
-          logger.info("Successfully liked feed: \(feed.uri)")
-        } else {
-          logger.error("Failed to like feed: HTTP \(responseCode)")
+        let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
+        logger.info("Like feed result: \(code)")
+        if code == 200 {
+          await MainActor.run {
+            liked = true
+            if let data {
+              likeUri = data.uri
+            }
+          }
         }
       } catch {
-        logger.error("Error liking feed: \(error)")
+        logger.error("Like feed failed: \(error.localizedDescription)")
       }
+      await MainActor.run {
+        isLiking = false
+      }
+    }
+  }
+
+  private func unlikeFeed() {
+    guard !isLiking, liked else { return }
+    #if os(iOS)
+    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+    impactFeedback.impactOccurred()
+    #endif
+    Task {
+      do {
+        await MainActor.run { isLiking = true }
+        guard let client = appState.atProtoClient else { return }
+        guard let likeUri = likeUri, let rkey = likeUri.recordKey else {
+          await MainActor.run { isLiking = false }
+          return
+        }
+        let did = try await client.getDid()
+        let input = ComAtprotoRepoDeleteRecord.Input(
+          repo: try ATIdentifier(string: did),
+          collection: try NSID(nsidString: "app.bsky.feed.like"),
+          rkey: try RecordKey(keyString: rkey)
+        )
+        _ = try await client.com.atproto.repo.deleteRecord(input: input)
+        await MainActor.run {
+          liked = false
+          self.likeUri = nil
+        }
+      } catch {
+        logger.error("Unlike feed failed: \(error.localizedDescription)")
+      }
+      await MainActor.run { isLiking = false }
     }
   }
   
   private func shareFeed() {
-    logger.info("Share button tapped for feed: \(feed.uri)")
-    
-    // Provide haptic feedback
     #if os(iOS)
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
-    #elseif os(macOS)
-    NSSound.beep()
     #endif
     
-    guard let url = URL(string: feed.uri.uriString()) else { 
-      logger.error("Failed to create URL from feed URI: \(feed.uri.uriString())")
-      return 
-    }
+    guard let url = URL(string: feed.uri.uriString()) else { return }
     
-    // Use platform-specific sharing
     #if os(iOS)
     guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
           let rootViewController = windowScene.windows.first?.rootViewController else {
-      logger.error("Could not find root view controller for sharing")
       return
     }
-    
-    let activityViewController = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    
-    // Handle iPad presentation
-    if let popover = activityViewController.popoverPresentationController {
-      popover.sourceView = rootViewController.view
-      popover.sourceRect = CGRect(x: rootViewController.view.bounds.midX, 
-                                  y: rootViewController.view.bounds.midY, 
-                                  width: 0, height: 0)
-      popover.permittedArrowDirections = []
+    let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    if let pop = vc.popoverPresentationController {
+      pop.sourceView = rootViewController.view
+      pop.sourceRect = CGRect(x: rootViewController.view.bounds.midX, y: rootViewController.view.bounds.midY, width: 0, height: 0)
+      pop.permittedArrowDirections = []
     }
-    
-    rootViewController.present(activityViewController, animated: true) {
-      self.logger.info("Share sheet presented for feed")
-    }
+    rootViewController.present(vc, animated: true)
     #elseif os(macOS)
-    let sharingService = NSSharingService.sharingServices(forItems: [url]).first
-    sharingService?.perform(withItems: [url])
-    self.logger.info("Share sheet presented for feed")
+    NSSharingService.sharingServices(forItems: [url]).first?.perform(withItems: [url])
     #endif
   }
   
   private func reportFeed() {
-    logger.info("Report button tapped for feed: \(feed.uri)")
-    
-    // Provide haptic feedback
     #if os(iOS)
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
-    #elseif os(macOS)
-    NSSound.beep()
     #endif
     
     Task {
       do {
-        guard let client = appState.atProtoClient else { 
-          logger.warning("No AT Protocol client available for report action")
-          return 
-        }
-        
+        guard let client = appState.atProtoClient else { return }
         let reportInput = ComAtprotoModerationCreateReport.Input(
           reasonType: .comatprotomoderationdefsreasonspam,
-          reason: "User reported inappropriate feed content",
+          reason: "Feed reported from header",
           subject: .comAtprotoAdminDefsRepoRef(.init(
             did: try DID(didString: feed.creator.did.didString())
           ))
         )
-        
-        let (responseCode, _) = try await client.com.atproto.moderation.createReport(input: reportInput)
-        
-        if responseCode == 200 {
-          logger.info("Successfully reported feed: \(feed.uri)")
-        } else {
-          logger.error("Failed to report feed: HTTP \(responseCode)")
-        }
+        let (code, _) = try await client.com.atproto.moderation.createReport(input: reportInput)
+        logger.info("Report result: \(code)")
       } catch {
-        logger.error("Error reporting feed: \(error)")
+        logger.error("Report failed: \(error.localizedDescription)")
       }
     }
   }
   
+  /// Seed from inline viewer state exposed by Petrel's GeneratorView
+  private func seedFromFeedViewer() {
+    guard !didSeedViewerState, !liked else { return }
+    if let uri = feed.viewer?.like {
+      liked = true
+      likeUri = uri
+    }
+    didSeedViewerState = true
+  }
+  
+  // MARK: - Seed initial like state from server (if available)
+  private func seedViewerLikeState() async {
+    guard !didSeedViewerState, !liked else { return }
+    do {
+      guard let client = appState.atProtoClient else { return }
+      let response = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: feed.uri)).data
+      if let view = response?.view, let viewer = view.viewer, let uri = viewer.like {
+        await MainActor.run {
+          self.liked = true
+          self.likeUri = uri
+          self.didSeedViewerState = true
+        }
+      } else {
+        await MainActor.run { self.didSeedViewerState = true }
+      }
+    } catch {
+      // Non-fatal; leave as not seeded to try again on future reloads
+    }
+  }
   private func formatCount(_ count: Int) -> String {
     if count >= 1000000 {
       return String(format: "%.1fM", Double(count) / 1000000)

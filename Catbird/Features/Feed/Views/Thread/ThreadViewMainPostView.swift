@@ -114,14 +114,19 @@ struct ThreadViewMainPostView: View {
             .padding(.bottom, 3)
               
               if !feedPost.text.isEmpty {
-                #if os(iOS)
-                SelectableTextView(
-                  attributedString: feedPost.facetsAsAttributedString,
+                // Reuse Post component to unify selectable text + translation
+                Post(
+                  post: feedPost,
+                  isSelectable: true,
+                  path: $path,
                   textSize: 28,
-                  textStyle: Font.TextStyle.title3,
-                  textDesign: Font.Design.default,
-                  textWeight: Font.Weight.regular,
-                  fontWidth: 100
+                  textStyle: .title3,
+                  textDesign: .default,
+                  textWeight: .regular,
+                  fontWidth: 100,
+                  lineSpacing: 1.2,
+                  letterSpacing: 0.2,
+                  useUIKitSelectableText: true
                 )
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
@@ -130,21 +135,6 @@ struct ThreadViewMainPostView: View {
                 .padding(.trailing, 6)
                 .transaction { txn in txn.animation = nil }
                 .contentTransition(.identity)
-                #else
-                TappableTextView(
-                  attributedString: feedPost.facetsAsAttributedString,
-                  textSize: 28,
-                  textStyle: Font.TextStyle.title3,
-                  textDesign: Font.Design.default,
-                  textWeight: Font.Weight.regular,
-                  fontWidth: 100
-                )
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.vertical, 6)
-                .padding(.leading, 6)
-                .padding(.trailing, 6)
-                #endif
               }
 
 //              if feedPost.text != "" {

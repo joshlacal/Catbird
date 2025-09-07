@@ -55,6 +55,7 @@ struct DiscoveryView: View {
                 // Spacer for bottom safe area
                 Spacer(minLength: 32)
             }
+            .mainContentFrame()
             .padding(.top, 16)
             .padding(.bottom, 32)
         }

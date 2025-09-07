@@ -29,17 +29,22 @@ struct FeedCollectionView: View {
     
     /// Optional callback for scroll offset changes
     let onScrollOffsetChanged: ((CGFloat) -> Void)?
+    let headerView: AnyView?
+
+    @Environment(\.feedHeaderView) private var injectedHeaderView
     
     // MARK: - Initialization
     
     init(
         stateManager: FeedStateManager,
         navigationPath: Binding<NavigationPath>,
-        onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
+        onScrollOffsetChanged: ((CGFloat) -> Void)? = nil,
+        headerView: AnyView? = nil
     ) {
         self.stateManager = stateManager
         self._navigationPath = navigationPath
         self.onScrollOffsetChanged = onScrollOffsetChanged
+        self.headerView = headerView
     }
     
     // MARK: - Body
@@ -49,8 +54,11 @@ struct FeedCollectionView: View {
         FeedCollectionViewWrapper(
             stateManager: stateManager,
             navigationPath: $navigationPath,
-            onScrollOffsetChanged: onScrollOffsetChanged
+            onScrollOffsetChanged: onScrollOffsetChanged,
+            headerView: headerView ?? injectedHeaderView
         )
+        // Recreate controller on theme change to ensure UIKit reflects dim/black updates
+        .id(stateManager.appState.themeDidChange)
         .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
     }
 }
@@ -62,12 +70,14 @@ extension FeedCollectionView {
     /// Creates a feed collection view with just the essential parameters
     init(
         stateManager: FeedStateManager,
-        navigationPath: Binding<NavigationPath>
+        navigationPath: Binding<NavigationPath>,
+        headerView: AnyView? = nil
     ) {
         self.init(
             stateManager: stateManager,
             navigationPath: navigationPath,
-            onScrollOffsetChanged: nil
+            onScrollOffsetChanged: nil,
+            headerView: headerView
         )
     }
 }
@@ -83,7 +93,8 @@ extension FeedCollectionView {
         FeedCollectionView(
             stateManager: stateManager,
             navigationPath: $navigationPath,
-            onScrollOffsetChanged: handler
+            onScrollOffsetChanged: handler,
+            headerView: headerView
         )
     }
 }

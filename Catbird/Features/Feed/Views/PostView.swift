@@ -337,7 +337,7 @@ var id: String {
                   .offset(y: -1)
                   .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
           } else if let grandparentAuthor = grandparentAuthor {
-              Text("@\(grandparentAuthor.handle)")
+              Text(verbatim: "@\(grandparentAuthor.handle)")
                   .appBody()
                   .offset(y: -1)
                   .foregroundStyle(Color.accentColor)

@@ -20,6 +20,13 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
+    var headerView: AnyView?
+    
+    final class Coordinator {
+        var lastHeaderPresent: Bool = false
+    }
+    
+    func makeCoordinator() -> Coordinator { Coordinator() }
     
     private let logger = Logger(subsystem: "blue.catbird", category: "FeedCollectionBridge")
     
@@ -31,6 +38,7 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged
         )
+        // Initial header presence will be applied in viewDidLoad
         
         return controller
     }
@@ -40,6 +48,12 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
         if controller.stateManager !== stateManager {
             logger.debug("🔄 Updating controller with new state manager")
             controller.updateStateManager(stateManager)
+        }
+        // Update header only when presence changes
+        let present = (headerView != nil)
+        if present != context.coordinator.lastHeaderPresent {
+            controller.setHeaderView(headerView)
+            context.coordinator.lastHeaderPresent = present
         }
         
         // Theme updates are handled by the UIKitStateObserver<ThemeManager> in the controller
@@ -93,12 +107,14 @@ struct FeedCollectionViewWrapper: View {
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
+    var headerView: AnyView? = nil
     
     var body: some View {
         FeedCollectionViewIntegrated(
             stateManager: stateManager,
             navigationPath: $navigationPath,
-            onScrollOffsetChanged: onScrollOffsetChanged
+            onScrollOffsetChanged: onScrollOffsetChanged,
+            headerView: headerView
         )
     }
 }

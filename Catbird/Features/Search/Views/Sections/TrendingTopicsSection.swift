@@ -61,6 +61,10 @@ struct TrendingTopicsSection: View {
                 topicsListView
             }
         }
+        // Prefetch summaries for visible topics (maxItems)
+        .task(id: topics.prefix(maxItems).map { $0.link }.joined(separator: ",")) {
+            await TopicSummaryService.shared.primeSummaries(for: Array(topics.prefix(maxItems)), appState: appState, max: maxItems)
+        }
     }
     
     private var emptyStateView: some View {
@@ -126,7 +130,7 @@ struct TrendingTopicsSection: View {
             // Uncomment to use onSelect instead of direct URL handling
             // onSelect(topic.displayName ?? topic.topic)
         } label: {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 categoryIcon(for: topic.category)
                     .appFont(AppTextRole.title3)
                     .foregroundColor(categoryColor(for: topic.category))
@@ -175,6 +179,9 @@ struct TrendingTopicsSection: View {
                                 .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                     }
                     .padding(.top, 2)
+
+                    // Topic summary (iOS 26+ via Foundation Models). Hidden if unavailable.
+                    TrendingTopicSummaryLine(topic: topic)
                 }
                 
                 Spacer()
@@ -293,5 +300,51 @@ struct TrendingTopicsSection: View {
         let words = category.components(separatedBy: "-")
         let capitalizedWords = words.map { $0.capitalized }
         return capitalizedWords.joined(separator: " ")
+    }
+}
+
+// MARK: - Summary Line Subview
+
+private struct TrendingTopicSummaryLine: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+
+    let topic: AppBskyUnspeccedDefs.TrendView
+
+    @State private var summary: String?
+    @State private var isLoading: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let summary {
+                Text(summary)
+                    .appFont(AppTextRole.footnote)
+                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                    .lineLimit(5)
+                    .transition(.opacity)
+                    .accessibilityLabel("Topic summary")
+            } else if isLoading {
+                // Lightweight loading shimmer
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
+                    .frame(height: 12)
+                    .redacted(reason: .placeholder)
+            }
+        }
+        .task(id: topic.link) {
+            // Avoid re-entrancy
+            guard !isLoading, summary == nil else { return }
+            isLoading = true
+            defer { isLoading = false }
+
+            // Attempt to produce a brief description using TopicSummaryService.
+            os_log("[SummaryUI] Row task start for %{public}@", topic.displayName)
+            let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
+            await MainActor.run {
+                summary = text
+            }
+            os_log("[SummaryUI] Row task end for %{public}@ -> %{public}@", topic.displayName, text ?? "<nil>")
+        }
+        .padding(.top, 6)
     }
 }

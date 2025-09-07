@@ -23,12 +23,14 @@ struct Post: View, Equatable {
     
     let post: AppBskyFeedPost
     let isSelectable: Bool
+    let useUIKitSelectableText: Bool
     @Binding var path: NavigationPath
     @State private var showTranslation = false
     @State private var translatedText: String?
     @State private var translationConfig: Any? // Use Any instead of specific type for cross-platform compatibility
     @State private var translationError: String?
     @State private var isTranslating = false
+    @State private var showTranslationPopover = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showLanguageSelection = false
@@ -56,11 +58,13 @@ struct Post: View, Equatable {
                 textWeight: Font.Weight = .regular,
                 fontWidth: CGFloat? = nil,
                 lineSpacing: CGFloat = 1.2,
-                letterSpacing: CGFloat = 0.2
+                letterSpacing: CGFloat = 0.2,
+                useUIKitSelectableText: Bool = false
 
     ) {
         self.post = post
         self.isSelectable = isSelectable
+        self.useUIKitSelectableText = useUIKitSelectableText
         self._path = path
         self.textSize = textSize
         self.textStyle = textStyle
@@ -100,11 +104,54 @@ struct Post: View, Equatable {
             
             // Main post content with enhanced typography
             if !post.text.isEmpty {
-                TappableTextView(attributedString: post.facetsAsAttributedString, textSize: textSize, textStyle: textStyle, textDesign: textDesign, textWeight: textWeight, fontWidth: fontWidth, lineSpacing: lineSpacing, letterSpacing: letterSpacing)
+                #if os(iOS)
+                if useUIKitSelectableText && isSelectable {
+                    SelectableTextView(
+                        attributedString: post.facetsAsAttributedString,
+                        textSize: textSize,
+                        textStyle: textStyle,
+                        textDesign: textDesign,
+                        textWeight: textWeight,
+                        fontWidth: fontWidth,
+                        lineSpacing: lineSpacing,
+                        letterSpacing: letterSpacing
+                    )
+                    .padding(3)
+                    .transition(.opacity)
+                    .layoutPriority(1)
+                } else {
+                    TappableTextView(
+                        attributedString: post.facetsAsAttributedString,
+                        textSize: textSize,
+                        textStyle: textStyle,
+                        textDesign: textDesign,
+                        textWeight: textWeight,
+                        fontWidth: fontWidth,
+                        lineSpacing: lineSpacing,
+                        letterSpacing: letterSpacing
+                    )
                     .modifier(SelectableModifier(isSelectable: isSelectable))
                     .padding(3)
                     .transition(.opacity)
                     .layoutPriority(1)
+                    .modifier(TranslationPresentationIfAvailable(isPresented: $showTranslationPopover, text: post.text))
+                }
+                #else
+                TappableTextView(
+                    attributedString: post.facetsAsAttributedString,
+                    textSize: textSize,
+                    textStyle: textStyle,
+                    textDesign: textDesign,
+                    textWeight: textWeight,
+                    fontWidth: fontWidth,
+                    lineSpacing: lineSpacing,
+                    letterSpacing: letterSpacing
+                )
+                .modifier(SelectableModifier(isSelectable: isSelectable))
+                .padding(3)
+                .transition(.opacity)
+                .layoutPriority(1)
+                #endif
             }
             
             // Translated text with improved styling
@@ -158,7 +205,7 @@ struct Post: View, Equatable {
         }
         .animation(.easeInOut(duration: 0.2), value: showTranslation && translatedText != nil && translationError == nil)
         .modifier(TranslationTaskModifier(config: translationConfig) { session in
-            if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *),
+            if #available(iOS 18.0, macCatalyst 26.0, *),
                let translationSession = session as? TranslationSession {
                 await performTranslation(session: translationSession)
             }
@@ -229,6 +276,17 @@ struct Post: View, Equatable {
         hapticFeedback.impactOccurred()
 #endif
         
+#if targetEnvironment(simulator)
+        // Translation models and downloads are not available in Simulator.
+        withAnimation {
+            translationError = NSLocalizedString("Translation isn’t available in the iOS Simulator. Please test on a physical device.", comment: "")
+            showTranslation = false
+            translatedText = nil
+            translationConfig = nil
+        }
+        return
+#endif
+        
         if showTranslation {
             // Hide translation and reset state
             withAnimation {
@@ -274,7 +332,7 @@ struct Post: View, Equatable {
     }
 
     private func setupTranslation(sourceLanguage: Locale.Language) async {
-        if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
+        if #available(iOS 18.0, macCatalyst 26.0, *) {
             let availability = LanguageAvailability()
             let status = await availability.status(from: sourceLanguage, to: targetLanguage)
             
@@ -283,8 +341,8 @@ struct Post: View, Equatable {
             await MainActor.run {
                 switch status {
                 case .installed, .supported:
-                    // Proceed with translation
-                    if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
+                    // Proceed with translation - the translationTask modifier will handle model downloads
+                    if #available(iOS 18.0, macCatalyst 26.0, *) {
                         let config = TranslationSession.Configuration(source: sourceLanguage, target: targetLanguage)
                         translationConfig = config
                         logger.debug("Translation configuration set")
@@ -300,39 +358,77 @@ struct Post: View, Equatable {
             }
         } else {
             await MainActor.run {
-                translationError = NSLocalizedString("Translation requires iOS 17.4 or later.", comment: "")
+                translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
                 logger.debug("Translation not available - iOS version too old")
             }
         }
     }
     
-    @available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *)
+    @MainActor @available(iOS 18.0, macCatalyst 26.0, *)
     private func performTranslation(session: TranslationSession) async {
         logger.debug("Starting translation...")
+        isTranslating = true
+        translationError = nil
+
+        // Try to ensure languages are authorized for download/install first.
         do {
-            await MainActor.run {
-                isTranslating = true
-                translationError = nil
-            }
-            
+            try await session.prepareTranslation()
+        } catch {
+            logger.debug("prepareTranslation failed: \(error.localizedDescription)")
+            // Continue — we’ll handle errors from translate and retry if appropriate.
+        }
+
+        func attemptTranslate() async throws -> String {
             let response = try await session.translate(post.text)
-            logger.debug("Translation completed successfully")
-            
-            await MainActor.run {
-                withAnimation {
-                    translatedText = response.targetText
-                    showTranslation = true
-                    translationError = nil
-                    isTranslating = false
-                }
+            return response.targetText
+        }
+
+        do {
+            let target = try await attemptTranslate()
+            withAnimation {
+                translatedText = target
+                showTranslation = true
+                translationError = nil
+                isTranslating = false
             }
         } catch {
-            logger.debug("Translation error: \(error.localizedDescription)")
-            await MainActor.run {
-                withAnimation {
-                    translationError = NSLocalizedString("Failed to translate. Please try again later.", comment: "")
-                    isTranslating = false
+            // If models aren’t installed, prompt and retry once.
+            if #available(iOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
+                logger.debug("Translate threw notInstalled; retrying after prepareTranslation prompt…")
+                do {
+                    try await session.prepareTranslation()
+                    let target = try await attemptTranslate()
+                    withAnimation {
+                        translatedText = target
+                        showTranslation = true
+                        translationError = nil
+                        isTranslating = false
+                    }
+                    return
+                } catch {
+                    // Fall through to unified error handling
                 }
+            }
+
+            logger.debug("Translation error: \(error.localizedDescription)")
+            withAnimation {
+                if #available(iOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
+                    translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
+                } else {
+                    let errorMessage = error.localizedDescription
+                    let nsError = error as NSError
+                    let failureReason = nsError.localizedFailureReason ?? ""
+                    let fullErrorText = "\(errorMessage) \(failureReason)"
+
+                    if fullErrorText.contains("Offline models not available") || fullErrorText.localizedCaseInsensitiveContains("models not available") {
+                        translationError = NSLocalizedString("On‑device translation languages aren’t installed. Approve the download when prompted, then retry.", comment: "")
+                    } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
+                        translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
+                    } else {
+                        translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                    }
+                }
+                isTranslating = false
             }
         }
     }
@@ -357,7 +453,7 @@ struct TranslationTaskModifier: ViewModifier {
     let action: (Any) async -> Void
     
     func body(content: Content) -> some View {
-        if #available(iOS 17.4, macOS 14.4, macCatalyst 26.0, *) {
+        if #available(iOS 18.0, macCatalyst 26.0, *) {
             if let config = config as? TranslationSession.Configuration {
                 content.translationTask(config) { session in
                     await action(session)
@@ -368,6 +464,24 @@ struct TranslationTaskModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+// Presents the system translation popover as a fallback when downloads can’t be prompted programmatically (e.g., policy or transient issues).
+private struct TranslationPresentationIfAvailable: ViewModifier {
+    @Binding var isPresented: Bool
+    let text: String
+
+    func body(content: Content) -> some View {
+        #if targetEnvironment(macCatalyst)
+        content
+        #else
+        if #available(iOS 17.4, *) {
+            content.translationPresentation(isPresented: $isPresented, text: text)
+        } else {
+            content
+        }
+        #endif
     }
 }
 
