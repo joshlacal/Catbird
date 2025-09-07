@@ -34,7 +34,9 @@ struct FeedFilter: Identifiable, Hashable {
     var id: String { rawValue }
   }
   
-  var sortMode: FeedSortMode = .latest
+  var sortMode: FeedSortMode = .latest {
+    didSet { saveSettings() }
+  }
 
   // Tracking of active filters
   private(set) var activeFilterIds: Set<String> = []

@@ -1,4 +1,5 @@
 import Observation
+import Accelerate
 import OSLog
 import Petrel
 import SwiftData
@@ -153,9 +154,25 @@ final class FeedModel: StateInvalidationSubscriber {
 
         if uniqueNewPostCount > posts.count / 10 || forceRefresh {
           self.posts = newPosts
+          // Kick off background embedding precompute for newly loaded posts
+          Task.detached(priority: .utility) {
+            await self.feedManager.precomputeEmbeddings(for: newPosts)
+          }
+          // Apply relevant re-ranking if enabled
+          Task.detached(priority: .utility) {
+            await self.applyRelevantSortingIfEnabled()
+          }
         }
       } else {
         self.posts = newPosts
+        // Kick off background embedding precompute for loaded posts
+        Task.detached(priority: .utility) {
+          await self.feedManager.precomputeEmbeddings(for: newPosts)
+        }
+        // Apply relevant re-ranking if enabled
+        Task.detached(priority: .utility) {
+          await self.applyRelevantSortingIfEnabled()
+        }
       }
 
       self.cursor = newCursor
@@ -238,6 +255,14 @@ final class FeedModel: StateInvalidationSubscriber {
       self.posts.append(contentsOf: uniqueNewPosts)
       self.cursor = newCursor
       self.hasMore = newCursor != nil
+      // Precompute embeddings for newly added posts in the background
+      Task.detached(priority: .utility) {
+        await self.feedManager.precomputeEmbeddings(for: uniqueNewPosts)
+      }
+      // If in relevant mode, re-apply sorting to include the new items
+      Task.detached(priority: .utility) {
+        await self.applyRelevantSortingIfEnabled()
+      }
       
       logger.debug("🔍 loadMore completed - added \(uniqueNewPosts.count) posts, newCursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
@@ -253,6 +278,100 @@ final class FeedModel: StateInvalidationSubscriber {
     }
 
     isLoadingMore = false
+  }
+
+  // MARK: - Embedding-powered features
+
+  /// Semantic search over the current feed posts.
+  func semanticSearch(_ query: String, topK: Int = 20) async -> [CachedFeedViewPost] {
+    let snapshot = await MainActor.run { posts }
+    return await feedManager.semanticSearch(query, in: snapshot, topK: topK)
+  }
+
+  /// If the user selected Relevant sort mode, compute an interest vector from
+  /// liked posts (in current feed), and re-rank posts of the same language by cosine.
+  private func applyRelevantSortingIfEnabled() async {
+    // Check mode early
+    let mode = appState.feedFilterSettings.sortMode
+    guard mode == .relevant else { return }
+
+    // Snapshot posts
+    let snapshot = await MainActor.run { posts }
+    guard !snapshot.isEmpty else { return }
+
+    // Collect liked posts
+    let liked = snapshot.filter { $0.feedViewPost.post.viewer?.like != nil }
+    guard !liked.isEmpty else { return }
+
+    // Ensure embeddings for liked posts
+    await feedManager.precomputeEmbeddings(for: liked)
+
+    // Group by language and pick the dominant language among liked items
+    var langCounts: [String: Int] = [:]
+    var vectorsByPostID: [String: ([Float], String)] = [:]
+    for lp in liked {
+      if let (v, lang) = await FeedEmbeddings.shared.vector(for: lp.id) {
+        vectorsByPostID[lp.id] = (v, lang.rawValue)
+        langCounts[lang.rawValue, default: 0] += 1
+      }
+    }
+    guard let dominantLang = langCounts.max(by: { $0.value < $1.value })?.key else { return }
+
+    // Build interest centroid for dominant language
+    var centroid: [Float] = []
+    var count: Int = 0
+    for (pid, (vec, langCode)) in vectorsByPostID where langCode == dominantLang {
+      if centroid.isEmpty { centroid = vec; count = 1; continue }
+      vDSP_vadd(centroid, 1, vec, 1, &centroid, 1, vDSP_Length(vec.count))
+      count += 1
+    }
+    guard count > 0 else { return }
+    // Normalize centroid
+    var cnt = Float(count)
+    vDSP_vsdiv(centroid, 1, &cnt, &centroid, 1, vDSP_Length(centroid.count))
+    var dotSelf: Float = 0
+    vDSP_dotpr(centroid, 1, centroid, 1, &dotSelf, vDSP_Length(centroid.count))
+    let len = sqrtf(max(dotSelf, 0))
+    if len > 0 {
+      var l = len
+      vDSP_vsdiv(centroid, 1, &l, &centroid, 1, vDSP_Length(centroid.count))
+    }
+
+    // Ensure embeddings for candidate posts of the same language
+    let candidates = snapshot
+    await feedManager.precomputeEmbeddings(for: candidates)
+
+    // Score and sort relevant-language posts by cosine(sim, centroid)
+    var relevant: [(CachedFeedViewPost, Float)] = []
+    var others: [CachedFeedViewPost] = []
+    for p in snapshot {
+      if let (v, lang) = await FeedEmbeddings.shared.vector(for: p.id), lang.rawValue == dominantLang {
+        var score: Float = 0
+        v.withUnsafeBufferPointer { vb in
+          centroid.withUnsafeBufferPointer { cb in
+            vDSP_dotpr(vb.baseAddress!, 1, cb.baseAddress!, 1, &score, vDSP_Length(v.count))
+          }
+        }
+        relevant.append((p, score))
+      } else {
+        others.append(p)
+      }
+    }
+
+    // Sort relevant by similarity desc, then by createdAt desc
+    let sortedRelevant = relevant.sorted { a, b in
+      if a.1 == b.1 { return a.0.createdAt > b.0.createdAt }
+      return a.1 > b.1
+    }.map { $0.0 }
+
+    let newOrder = sortedRelevant + others
+    await MainActor.run { self.posts = newOrder }
+  }
+
+  /// Find related posts to a given post within current feed posts.
+  func relatedPosts(for post: CachedFeedViewPost, topK: Int = 5, minCos: Float = 0.3) async -> [CachedFeedViewPost] {
+    let snapshot = await MainActor.run { posts }
+    return await feedManager.relatedPosts(for: post, in: snapshot, topK: topK, minCos: minCos)
   }
 
   func prefetchNextPage() async {
