@@ -2,6 +2,7 @@ import Foundation
 import SwiftData
 import Petrel
 import OSLog
+import NaturalLanguage
 
 private let cachedPostLogger = Logger(subsystem: "blue.catbird.Catbird", category: "CachedFeedViewPost")
 
@@ -290,4 +291,55 @@ final class CachedFeedViewPost: Identifiable {
         )
     }
     
+}
+
+// MARK: - Embedding helpers
+
+extension CachedFeedViewPost {
+    /// Extract the primary AppBskyFeedPost contained in this cached item (the main visible post/reply).
+    var mainFeedPost: AppBskyFeedPost? {
+        let fvp = self.feedViewPost
+        if case let .knownType(record) = fvp.post.record, let post = record as? AppBskyFeedPost {
+            return post
+        }
+        return nil
+    }
+
+    /// Extract ancillary AppBskyFeedPost objects referenced by this feed row (parent/root/quoted if available).
+    func ancillaryFeedPosts() -> [AppBskyFeedPost] {
+        var results: [AppBskyFeedPost] = []
+        let fvp = self.feedViewPost
+
+        // Parent
+        if let reply = fvp.reply {
+            if case .appBskyFeedDefsPostView(let parent) = reply.parent,
+               case let .knownType(rec) = parent.record,
+               let p = rec as? AppBskyFeedPost {
+                results.append(p)
+            }
+            // Root
+            if case .appBskyFeedDefsPostView(let root) = reply.root,
+               case let .knownType(rec) = root.record,
+               let r = rec as? AppBskyFeedPost {
+                results.append(r)
+            }
+        }
+
+        // Quoted record (if any)
+        if let embed = fvp.post.embed {
+            switch embed {
+            case .appBskyEmbedRecordView(let recordView):
+                if case .appBskyEmbedRecordViewRecord(let vr) = recordView.record,
+                   case let .knownType(rec) = vr.value,
+                   let qp = rec as? AppBskyFeedPost { results.append(qp) }
+            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+                if case .appBskyEmbedRecordViewRecord(let vr) = recordWithMedia.record.record,
+                   case let .knownType(rec) = vr.value,
+                   let qp = rec as? AppBskyFeedPost { results.append(qp) }
+            default: break
+            }
+        }
+
+        return results
+    }
 }

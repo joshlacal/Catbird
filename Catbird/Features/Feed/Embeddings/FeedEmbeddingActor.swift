@@ -28,6 +28,11 @@ actor FeedEmbeddingActor {
 
     func embedPostIfNeeded(_ post: CachedFeedViewPost) async {
         if cache.object(forKey: post.id as NSString) != nil { return }
+        // Try to hydrate from disk cache first
+        if let disk = await AppState.shared.loadEmbedding(postID: post.id) {
+            cache.setObject(VectorWrapper(vector: disk.vector, language: disk.language), forKey: post.id as NSString)
+            return
+        }
         guard let text = EmbeddingTextExtractor.text(for: post) else { return }
 
         // Language detection (reuse existing detector)
@@ -39,11 +44,20 @@ actor FeedEmbeddingActor {
         var v: [Float] = vectorD.map(Float.init)
         normalize(&v)
         cache.setObject(VectorWrapper(vector: v, language: lang), forKey: post.id as NSString)
+        // Persist to SwiftData sidecar (on main actor)
+        await AppState.shared.saveEmbedding(postID: post.id, language: lang, vector: v)
     }
 
     func vector(for postID: String) -> (vector: [Float], language: NLLanguage)? {
-        guard let w = cache.object(forKey: postID as NSString) else { return nil }
-        return (w.vector, w.language)
+        if let w = cache.object(forKey: postID as NSString) {
+            return (w.vector, w.language)
+        }
+        // Attempt lazy load from disk if memory cache missed
+        if let disk = await AppState.shared.loadEmbedding(postID: postID) {
+            cache.setObject(VectorWrapper(vector: disk.vector, language: disk.language), forKey: postID as NSString)
+            return (disk.vector, disk.language)
+        }
+        return nil
     }
 
     /// Semantic search over provided posts using cosine similarity.
@@ -141,4 +155,3 @@ private final class VectorWrapper: NSObject {
 enum FeedEmbeddings {
     static let shared = FeedEmbeddingActor()
 }
-
