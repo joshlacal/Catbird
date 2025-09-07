@@ -25,6 +25,16 @@ struct FeedFilter: Identifiable, Hashable {
 /// Manages filter settings and persists user preferences
 @Observable final class FeedFilterSettings {
   var filters: [FeedFilter] = []
+  
+  // Feed sorting mode (Latest by default). When set to .relevant,
+  // callers may re-rank using on-device embeddings.
+  enum FeedSortMode: String, CaseIterable, Identifiable {
+    case latest
+    case relevant
+    var id: String { rawValue }
+  }
+  
+  var sortMode: FeedSortMode = .latest
 
   // Tracking of active filters
   private(set) var activeFilterIds: Set<String> = []
@@ -38,6 +48,7 @@ struct FeedFilter: Identifiable, Hashable {
     // Initialize with standard filters but disabled by default
     setupDefaultFilters()
     loadSavedSettings()
+    loadSortMode()
     loadMuteWords()
     loadLanguageFilter()
   }
@@ -244,6 +255,7 @@ struct FeedFilter: Identifiable, Hashable {
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
       
       defaults?.set(Array(activeFilterIds), forKey: "FeedFilterActiveFilters")
+    defaults?.set(sortMode.rawValue, forKey: "FeedSortMode")
   }
 
   // Update the mute word processor
@@ -283,6 +295,15 @@ struct FeedFilter: Identifiable, Hashable {
     }
 
     return allFilters
+  }
+  
+  // Load persisted sort mode
+  func loadSortMode() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+    if let raw = defaults?.string(forKey: "FeedSortMode"),
+       let mode = FeedSortMode(rawValue: raw) {
+      sortMode = mode
+    }
   }
 }
 
