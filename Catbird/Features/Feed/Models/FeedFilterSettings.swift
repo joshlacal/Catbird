@@ -38,6 +38,7 @@ struct FeedFilter: Identifiable, Hashable {
     didSet { saveSettings() }
   }
 
+
   // Tracking of active filters
   private(set) var activeFilterIds: Set<String> = []
 
@@ -213,6 +214,10 @@ struct FeedFilter: Identifiable, Hashable {
           )
         }
       }
+    }
+    // Load additional settings
+    if let raw = defaults?.string(forKey: "FeedSortMode"), let mode = FeedSortMode(rawValue: raw) {
+      sortMode = mode
     }
   }
 

@@ -5,7 +5,7 @@ import Petrel
 enum EmbeddingTextExtractor {
     /// Returns the primary text to embed for a cached feed item.
     /// For MVP, this is the post's own text (not the thread or parent).
-    static func text(for cached: CachedFeedViewPost, includeQuoted: Bool = false) -> String? {
+    static func text(for cached: CachedFeedViewPost, includeQuoted: Bool = true) -> String? {
         let fvp = cached.feedViewPost
         guard case .knownType(let record) = fvp.post.record,
               let post = record as? AppBskyFeedPost else {

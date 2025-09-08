@@ -33,7 +33,8 @@ actor FeedEmbeddingActor {
             cache.setObject(VectorWrapper(vector: disk.vector, language: disk.language), forKey: post.id as NSString)
             return
         }
-        guard let text = EmbeddingTextExtractor.text(for: post) else { return }
+        // Always include quoted text content by default for better semantics
+        guard let text = EmbeddingTextExtractor.text(for: post, includeQuoted: true) else { return }
 
         // Language detection (reuse existing detector)
         let langCode = LanguageDetector.shared.detectLanguage(for: text)
