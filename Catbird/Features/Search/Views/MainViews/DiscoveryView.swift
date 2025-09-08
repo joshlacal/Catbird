@@ -251,7 +251,7 @@ struct AllTrendingTopicsView: View {
         } label: {
             VStack(alignment: .leading, spacing: 16) {
                 // Main topic info
-                HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: 24) {
                     // Category icon
                     categoryIcon(for: topic.category)
                         .appFont(AppTextRole.title2)

@@ -36,10 +36,8 @@ actor FeedEmbeddingActor {
         // Always include quoted text content by default for better semantics
         guard let text = EmbeddingTextExtractor.text(for: post, includeQuoted: true) else { return }
 
-        // Language detection (reuse existing detector)
-        let langCode = LanguageDetector.shared.detectLanguage(for: text)
-        guard let langCode, let lang = NLLanguage(rawValue: langCode) else { return }
-
+        // Language detection with fallback for short texts
+        let lang = NLLanguageRecognizer.dominantLanguage(for: text) ?? .english
         guard let model = await embeddingModel(for: lang) else { return }
         guard let vectorD = model.vector(for: text) else { return }
         var v: [Float] = vectorD.map(Float.init)
@@ -49,7 +47,7 @@ actor FeedEmbeddingActor {
         await AppState.shared.saveEmbedding(postID: post.id, language: lang, vector: v)
     }
 
-    func vector(for postID: String) -> (vector: [Float], language: NLLanguage)? {
+    func vector(for postID: String) async -> (vector: [Float], language: NLLanguage)? {
         if let w = cache.object(forKey: postID as NSString) {
             return (w.vector, w.language)
         }
@@ -67,9 +65,8 @@ actor FeedEmbeddingActor {
         let cleaned = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return [] }
 
-        // Detect language for query
-        let langCode = LanguageDetector.shared.detectLanguage(for: cleaned)
-        guard let langCode, let lang = NLLanguage(rawValue: langCode) else { return [] }
+        // Detect language for query (fallback to English)
+        let lang = NLLanguageRecognizer.dominantLanguage(for: cleaned) ?? .english
         guard let model = await embeddingModel(for: lang), let qD = model.vector(for: cleaned) else { return [] }
         var q = qD.map(Float.init)
         normalize(&q)
@@ -78,7 +75,7 @@ actor FeedEmbeddingActor {
         var scored: [(CachedFeedViewPost, Float)] = []
         for post in posts {
             await embedPostIfNeeded(post)
-            guard let (v, plang) = vector(for: post.id), plang == lang else { continue }
+            guard let (v, plang) = await vector(for: post.id), plang == lang else { continue }
             let s = dot(q, v)
             scored.append((post, s))
         }
@@ -91,13 +88,13 @@ actor FeedEmbeddingActor {
     /// ranked by cosine similarity.
     func relatedPosts(for post: CachedFeedViewPost, in posts: [CachedFeedViewPost], topK: Int = 5, minCos: Float = 0.3) async -> [CachedFeedViewPost] {
         await embedPostIfNeeded(post)
-        guard let (pvec, plang) = vector(for: post.id) else { return [] }
+        guard let (pvec, plang) = await vector(for: post.id) else { return [] }
 
         var scored: [(CachedFeedViewPost, Float)] = []
         for other in posts {
             if other.id == post.id { continue }
             await embedPostIfNeeded(other)
-            guard let (ovec, olang) = vector(for: other.id), olang == plang else { continue }
+            guard let (ovec, olang) = await vector(for: other.id), olang == plang else { continue }
             let s = dot(pvec, ovec)
             if s >= minCos { scored.append((other, s)) }
         }
@@ -119,11 +116,11 @@ actor FeedEmbeddingActor {
     }
 
     private func normalize(_ v: inout [Float]) {
-        var sum: Float = 0
+        var ss: Float = 0
         v.withUnsafeBufferPointer { buf in
-            vDSP_dotpr(buf.baseAddress!, 1, buf.baseAddress!, 1, &sum, vDSP_Length(v.count))
+            vDSP_dotpr(buf.baseAddress!, 1, buf.baseAddress!, 1, &ss, vDSP_Length(v.count))
         }
-        let len = sqrtf(max(sum, 0))
+        let len = sqrtf(max(ss, 0))
         guard len > 0 else { return }
         var l = len
         v.withUnsafeMutableBufferPointer { buf in

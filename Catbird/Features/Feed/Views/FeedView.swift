@@ -46,11 +46,12 @@ struct FeedView: View {
   var body: some View {
     Group {
       if let stateManager = stateManager {
-        FeedCollectionView(
-          stateManager: stateManager,
-          navigationPath: $path
-        )
-        .overlay(alignment: .top) {
+        ZStack(alignment: .top) {
+          FeedCollectionView(
+            stateManager: stateManager,
+            navigationPath: $path
+          )
+
           if showingResults {
             SemanticResultsList(
               results: searchResults,
@@ -63,6 +64,7 @@ struct FeedView: View {
                 showingResults = false
               }
             )
+            .zIndex(1)
             .transition(.move(edge: .top))
           }
         }
@@ -82,7 +84,7 @@ struct FeedView: View {
         guard !q.isEmpty else { showingResults = false; return }
         let hits = await sm.semanticSearch(q, topK: 30)
         searchResults = hits
-        showingResults = true
+        showingResults = !hits.isEmpty
       }
     }
     .onChange(of: searchText) { _, newValue in

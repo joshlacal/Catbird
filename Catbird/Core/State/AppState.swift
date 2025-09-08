@@ -6,6 +6,7 @@ import SwiftData
 import SwiftUI
 import UserNotifications
 import AVKit
+import NaturalLanguage
 
 /// Central state container for the Catbird app
 @Observable

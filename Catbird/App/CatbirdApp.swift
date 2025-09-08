@@ -367,6 +367,8 @@ struct CatbirdApp: App {
         // Initialize FeedStateStore with model context for persistence
         Task { @MainActor in
           FeedStateStore.shared.setModelContext(modelContext)
+          // Register embeddings store (SwiftData-backed) for on-device persistence
+          appState.registerEmbeddingStore(container: modelContainer)
         }
 
         // Import shared drafts from the Share Extension, if any
@@ -776,7 +778,3 @@ struct BiometricAuthenticationOverlay: View {
     }
   }
 }
-        // Register embeddings store (SwiftData-backed) for on-device persistence
-        Task { @MainActor in
-          appState.registerEmbeddingStore(container: modelContainer)
-        }
