@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import OSLog
 import Petrel
 
@@ -57,6 +58,7 @@ actor TopicSummaryService {
         if #available(iOS 26.0, macOS 15.0, *) {
             // Check availability of the model first.
             let model = SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations)
+            
             switch model.availability {
             case .available:
                 break
@@ -72,13 +74,18 @@ actor TopicSummaryService {
                         ""
                     }
                 })
-                    .prewarm(promptPrefix: nil)
+                .prewarm(promptPrefix: nil)
 
                 let instructions = """
-                You are a concise, neutral social feed summarizer.
-                Summarize what people are discussing about the topic using one sentence (max 22 words).
-                Avoid hashtags, usernames, links, and quotes. Focus on the main subject and sentiment.
-                If posts are unclear or off-topic, return a short generic description.
+                Role: You are a concise, neutral social feed summarizer for trending topics.
+                Style: Respond as briefly as possible.
+                Safety: If posts are unclear or off-topic, return a short generic description.
+                Output rules:
+                - Return exactly one sentence (max 22 words).
+                - Output only the sentence, nothing else. No preamble, no explanation, no filler words.
+                - Never include filler phrases such as "Sure!" or "Here is..." in your answers.
+                - Wrap the sentence inside <output></output> tags and include nothing outside the tags.
+                - Avoid hashtags, usernames, links, quotes, or emojis.
                 """
 
                 // Construct a compact prompt from sampled posts.
@@ -91,7 +98,7 @@ actor TopicSummaryService {
 
                 \(joined)
 
-                Provide exactly one sentence only, no emojis. Return only the sentence, no other text.
+                Answer using the exact format: <output>Your single sentence here.</output>
                 """
 
                 let session = LanguageModelSession(model: model, instructions: {
@@ -100,10 +107,14 @@ actor TopicSummaryService {
                     }
                 })
 
-                let response = try await session.respond(to: Prompt(prompt))
-                let text = response.content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                // Keep the response short and deterministic.
+                let options = GenerationOptions(temperature: 0.2, maximumResponseTokens: 64)
 
-                if !text.isEmpty {
+                let response = try await session.respond(to: Prompt(prompt), options: options)
+                let raw = response.content
+                let text = Self.extractOneSentence(from: raw)
+
+                if let text, !text.isEmpty {
                     cache[key] = text
                     logger.info("[Summary] Completed for topic: \(topic.displayName, privacy: .public)")
                     return text
@@ -218,5 +229,113 @@ extension TopicSummaryService {
             logger.info("[Summary] Prime result for \(topic.displayName, privacy: .public): \(result ?? "<nil>", privacy: .public)")
         }
         logger.info("[Summary] Prime done")
+    }
+}
+
+// MARK: - Post-processing helpers
+
+extension TopicSummaryService {
+    /// Extract exactly one sentence from model output, applying delimiter parsing and fallback cleanup.
+    /// - The model is asked to wrap the sentence in <output>...</output> tags. Prefer that when present.
+    /// - If tags are missing, trims known filler and returns the first sentence-like chunk.
+    static func extractOneSentence(from raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return nil }
+
+        // Prefer extracting between <output>...</output>
+        if let tagged = extractBetweenTags("output", in: trimmed), !tagged.isEmpty {
+            return clampToSingleSentence(tagged)
+        }
+
+        // Fallback: remove common filler preambles then clamp to one sentence.
+        let defillered = stripFiller(from: trimmed)
+        return clampToSingleSentence(defillered)
+    }
+
+    /// Extracts content between <tag>...</tag> (case-sensitive); returns nil if not found.
+    private static func extractBetweenTags(_ tag: String, in text: String) -> String? {
+        let pattern = "<" + tag + ">([\\s\\S]*?)</" + tag + ">"
+        if let range = text.range(of: pattern, options: [.regularExpression]) {
+            let inner = text[range]
+            // Use NSRegularExpression to pick capture group 1 for safety.
+            do {
+                let regex = try NSRegularExpression(pattern: pattern)
+                let ns = NSString(string: String(inner))
+                let full = NSRange(location: 0, length: ns.length)
+                if let match = regex.firstMatch(in: String(inner), range: full), match.numberOfRanges > 1 {
+                    let r1 = match.range(at: 1)
+                    if let swiftRange = Range(r1, in: String(inner)) {
+                        return String(String(inner)[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+            } catch {
+                return nil
+            }
+        }
+        return nil
+    }
+
+    /// Removes typical helper phrases the model might add.
+    private static func stripFiller(from text: String) -> String {
+        // Common openings like "Sure!", "Here is/are", "Here’s", "Okay," etc.
+        let pattern = #"^(?:Sure!?|Okay[,!]?|Here(?:'s| is| are)[^:]*:?)\s+"#
+        return text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+    }
+
+    /// Returns a single-sentence string by extracting the first sentence robustly.
+    private static func clampToSingleSentence(_ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return t }
+
+        // 1) Prefer linguistic sentence segmentation to avoid cutting after initials like "E.".
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = t
+        var firstSentence: String?
+        tokenizer.enumerateTokens(in: t.startIndex..<t.endIndex) { range, _ in
+            firstSentence = String(t[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return false // stop after first
+        }
+        if let s = firstSentence, !s.isEmpty {
+            return s
+        }
+
+        // 2) Fallback: find first real sentence-ending punctuation, ignoring initials and common abbreviations.
+        let abbreviations: Set<String> = ["mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt", "vs", "etc", "e.g", "i.e", "u.s", "u.k"]
+        var idxOpt: String.Index? = nil
+        var i = t.startIndex
+        while i < t.endIndex {
+            let ch = t[i]
+            if ch == "." || ch == "!" || ch == "?" {
+                if ch == "." {
+                    // Check for abbreviation or single-letter initial before the period.
+                    let tokenStart = t[..<i].lastIndex(where: { $0 == " " || $0 == "\n" || $0 == "\t" })
+                    let start = tokenStart.map { t.index(after: $0) } ?? t.startIndex
+                    let token = t[start..<i]
+                    let tokenStr = token.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    // If single-letter like "E" or in known abbreviations, skip and continue.
+                    if tokenStr.count == 1 {
+                        i = t.index(after: i)
+                        continue
+                    }
+                    if abbreviations.contains(tokenStr.lowercased()) {
+                        i = t.index(after: i)
+                        continue
+                    }
+                }
+                idxOpt = i
+                break
+            }
+            i = t.index(after: i)
+        }
+        if let idx = idxOpt {
+            let end = t.index(after: idx)
+            return String(t[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // 3) No terminal punctuation; cap to ~22 words as a safeguard.
+        let words = t.split(separator: " ")
+        if words.count <= 22 { return t }
+        return words.prefix(22).joined(separator: " ")
     }
 }

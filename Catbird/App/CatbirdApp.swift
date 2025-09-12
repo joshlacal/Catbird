@@ -225,14 +225,14 @@ struct CatbirdApp: App {
       if isFaultOrderingMode {
         // Minimal model container for FaultOrdering - only essential models
         self.modelContainer = try ModelContainer(
-          for: Preferences.self, AppSettingsModel.self, CachedPostEmbedding.self,
+          for: Preferences.self, AppSettingsModel.self,
           configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
         )
         logger.debug("✅ Minimal model container initialized for FaultOrdering")
       } else {
         // Full model container for normal use
         self.modelContainer = try ModelContainer(
-          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, CachedPostEmbedding.self,               configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
+          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,               configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
         )
         logger.debug("✅ Model container initialized successfully")
       }
@@ -242,7 +242,7 @@ struct CatbirdApp: App {
       if isFaultOrderingMode {
         // For FaultOrdering, use in-memory store if file fails
         self.modelContainer = try! ModelContainer(
-          for: Preferences.self, AppSettingsModel.self, CachedPostEmbedding.self,
+          for: Preferences.self, AppSettingsModel.self,
           configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
         )
         logger.debug("✅ In-memory model container created for FaultOrdering")
@@ -268,7 +268,7 @@ struct CatbirdApp: App {
             
             // Retry initialization
             self.modelContainer = try ModelContainer(
-              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, CachedPostEmbedding.self,
+              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
               configurations: ModelConfiguration("Catbird", schema: nil, url: dbURL)
             )
             logger.debug("✅ Model container recreated successfully after recovery")
@@ -277,7 +277,7 @@ struct CatbirdApp: App {
             // Fallback to in-memory storage instead of crashing
             logger.warning("⚠️ Using in-memory storage as final fallback")
             self.modelContainer = try! ModelContainer(
-              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, CachedPostEmbedding.self,
+              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
               configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
             )
           }
@@ -285,7 +285,7 @@ struct CatbirdApp: App {
           // Fallback to in-memory storage instead of crashing
           logger.warning("⚠️ Using in-memory storage as fallback")
           self.modelContainer = try! ModelContainer(
-            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, CachedPostEmbedding.self,
+            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
             configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
           )
         }
@@ -367,8 +367,7 @@ struct CatbirdApp: App {
         // Initialize FeedStateStore with model context for persistence
         Task { @MainActor in
           FeedStateStore.shared.setModelContext(modelContext)
-          // Register embeddings store (SwiftData-backed) for on-device persistence
-          appState.registerEmbeddingStore(container: modelContainer)
+          
         }
 
         // Import shared drafts from the Share Extension, if any
@@ -384,6 +383,7 @@ struct CatbirdApp: App {
           // Save app state when backgrounding
           if newPhase == .background {
             saveApplicationState()
+            
           }
         }
       }

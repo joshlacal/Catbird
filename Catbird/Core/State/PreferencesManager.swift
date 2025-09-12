@@ -3,6 +3,7 @@ import OSLog
 import Petrel
 import SwiftData
 import SwiftUI
+import OrderedCollections
 
 /// Manages user preferences with proper state management and persistence
 @Observable
@@ -103,6 +104,10 @@ final class PreferencesManager {
 
       logger.info("All preferences data successfully cleared")
       state = .ready
+      // Also clear accept-labelers header since there are no preferences
+      if let client = client {
+        await client.setAcceptLabelers(dids: [])
+      }
     } catch {
       logger.error("Failed to clear preferences: \(error.localizedDescription)")
       state = .error("Failed to clear preferences: \(error.localizedDescription)")
@@ -330,6 +335,9 @@ final class PreferencesManager {
       cachedServerPreferences = currentPrefs
       logger.debug("Updated cachedServerPreferences after processing server data.")
 
+      // Apply accept-labelers header based on preferences
+      await applyAcceptLabelersHeader(from: currentPrefs)
+
       // Update state
       state = .ready
 
@@ -475,6 +483,9 @@ final class PreferencesManager {
     cachedServerPreferences = preferences
 
     logger.debug("Preferences saved and synced to server")
+
+    // Apply accept-labelers header based on latest preferences
+    await applyAcceptLabelersHeader(from: preferences)
   }
 
   /// Syncs current preferences to the Bluesky API
@@ -507,7 +518,9 @@ final class PreferencesManager {
       case .feedViewPref:
         return preferences.feedViewPref != nil  // Only remove if we have a new value
       case .personalDetailsPref:
-        return preferences.birthDate != nil  // Only remove if we have a birth date
+        // Do not attempt to remove or set personal details via app.bsky.actor.putPreferences.
+        // Birth date must be managed via server personal-details API; leave as-is on server.
+        return false
       case .mutedWordsPref:
         return !preferences.mutedWords.isEmpty  // Only remove if we have muted words
       case .hiddenPostsPref:
@@ -597,19 +610,8 @@ final class PreferencesManager {
           enabled: prefsToSync.adultContentEnabled
         )))
 
-    // 4. Add birth date if present
-    if let birthDate = prefsToSync.birthDate {
-      let dateFormatter = ISO8601DateFormatter()
-      let dateString = dateFormatter.string(from: birthDate)
-
-      let atpDate = ATProtocolDate(iso8601String: dateString)
-
-      allPrefItems.append(
-        .personalDetailsPref(
-          AppBskyActorDefs.PersonalDetailsPref(
-            birthDate: atpDate
-          )))
-    }
+    // 4. Birth date: skip sending via putPreferences (server rejects personalDetailsPref here).
+    // Personal details must be set via a dedicated server endpoint; we keep local copy only.
 
     // 5. Add thread view preferences if present
     if let threadPref = prefsToSync.threadViewPref {
@@ -750,7 +752,7 @@ final class PreferencesManager {
   }
 
   @MainActor
-  func setBirthDate(_ date: Date) async throws {
+  func setBirthDate(_ date: Date?) async throws {
     let preferences = try await getPreferences()
     preferences.birthDate = date
     try await saveAndSyncPreferences(preferences)
@@ -854,6 +856,11 @@ final class PreferencesManager {
   @MainActor
   func addLabeler(_ did: DID) async throws {
     let preferences = try await getPreferences()
+    // Enforce limit: 1 reserved for default Bluesky moderation, up to 19 custom
+    if preferences.labelers.count >= 19 && !preferences.labelers.contains(where: { $0.did == did }) {
+      logger.warning("Attempted to add labeler beyond limit; current count=\(preferences.labelers.count)")
+      throw PreferencesManagerError.labelerLimitExceeded
+    }
     preferences.addLabeler(did)
     try await saveAndSyncPreferences(preferences)
   }
@@ -1408,6 +1415,30 @@ final class PreferencesManager {
     preferences.contentLabelPrefs = contentLabels
     try await saveAndSyncPreferences(preferences)
   }
+
+  // MARK: - Accept-Labelers Header Application
+  /// Updates the network header `atproto-accept-labelers` based on current preferences
+  @MainActor
+  private func applyAcceptLabelersHeader(from preferences: Preferences) async {
+    // Include the default Bluesky moderation service (always-on) and user-selected labelers
+    let defaultModDID = "did:plc:ar7c4by46qjdydhdevvrndac"
+
+    var uniqueDIDs = OrderedSet<String>()
+    uniqueDIDs.append(defaultModDID)
+    for item in preferences.labelers {
+      uniqueDIDs.append(item.did.didString())
+    }
+
+    // Cap at 20 total (1 default + up to 19 user labelers)
+    let dids = Array(uniqueDIDs.prefix(20))
+
+    if let client = client {
+      await client.setAcceptLabelers(dids: dids)
+      logger.info("Applied atproto-accept-labelers header for \(dids.count) labeler(s) including default moderation service")
+    } else {
+      logger.debug("Client not available; deferring accept-labelers header update")
+    }
+  }
   
   /// Updates language preferences and syncs with server
   @MainActor
@@ -1485,6 +1516,7 @@ enum PreferencesManagerError: Error, LocalizedError {
   case modelContextNotInitialized
   case backupFailed
   case restoreFailed
+  case labelerLimitExceeded
 
   var errorDescription: String? {
     switch self {
@@ -1498,6 +1530,8 @@ enum PreferencesManagerError: Error, LocalizedError {
       return "Failed to backup preferences"
     case .restoreFailed:
       return "Failed to restore preferences from backup"
+    case .labelerLimitExceeded:
+      return "You can add up to 19 custom labelers in addition to the default moderation service"
     }
   }
 }

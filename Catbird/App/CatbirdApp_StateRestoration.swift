@@ -64,24 +64,6 @@ extension CatbirdApp {
   
   @MainActor
   func restoreNavigationState() async {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    
-    // Restore last selected tab
-    let lastTab = defaults.integer(forKey: "last_selected_tab")
-    if lastTab >= 0 && lastTab <= 4 {
-      // Update navigation manager with restored tab
-      appState.navigationManager.updateCurrentTab(lastTab)
-      logger.debug("Restored last selected tab: \(lastTab)")
-    }
-    
-    // Restore drawer state for home tab
-    let wasDrawerOpen = defaults.bool(forKey: "drawer_was_open")
-    if wasDrawerOpen && lastTab == 0 {
-      // Store drawer open state for restoration in ContentView
-      defaults.set(true, forKey: "should_restore_drawer_open")
-      logger.debug("Marked drawer for restoration")
-    }
-    
     logger.debug("Navigation state restoration prepared")
   }
   
@@ -98,16 +80,12 @@ extension CatbirdApp {
   func saveApplicationState() {
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
     
-    // Save current navigation state
-    let currentTab = appState.navigationManager.currentTabIndex
-    defaults.set(currentTab, forKey: "last_selected_tab")
-    
     // Save biometric settings
     defaults.set(appState.authManager.biometricAuthEnabled, forKey: "biometric_auth_enabled")
     
     // Save adult content setting
     defaults.set(appState.isAdultContentEnabled, forKey: "isAdultContentEnabled")
     
-    logger.debug("Application state saved - tab: \(currentTab)")
+    logger.debug("Application state saved")
   }
 }

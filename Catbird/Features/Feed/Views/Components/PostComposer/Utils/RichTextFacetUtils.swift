@@ -236,7 +236,7 @@ struct RichTextFacetUtils {
 
 struct LinkCreationDialog: View {
   let selectedText: String
-  let onComplete: (URL) -> Void
+  let onComplete: (URL, String?) -> Void
   let onCancel: () -> Void
   
   @State private var urlText: String = ""
@@ -292,9 +292,7 @@ struct LinkCreationDialog: View {
         }
         
         ToolbarItem(placement: .confirmationAction) {
-          Button("Add Link") {
-            createLink()
-          }
+          Button("Add Link") { createLink() }
           .disabled(!isValidURL)
           #if os(iOS)
           .adaptiveGlassEffect(
@@ -607,7 +605,7 @@ struct LinkCreationDialog: View {
       errorMessage = "Please enter a valid URL"
       return
     }
-    
-    onComplete(url)
+    // Pass the chosen display text (may be empty). The caller can decide how to use it.
+    onComplete(url, finalDisplayText)
   }
 }

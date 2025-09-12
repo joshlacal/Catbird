@@ -84,6 +84,18 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   // When this value changes, we explicitly request first responder again
   var focusActivationID: UUID? = nil
   
+  // Keyboard toolbar actions
+  var onPhotosAction: (() -> Void)?
+  var onVideoAction: (() -> Void)?
+  var onAudioAction: (() -> Void)?
+  var onGifAction: (() -> Void)?
+  var onLabelsAction: (() -> Void)?
+  var onThreadgateAction: (() -> Void)?
+  var onLanguageAction: (() -> Void)?
+  var onThreadAction: (() -> Void)?
+  var onLinkAction: (() -> Void)?
+  var allowTenor: Bool = false
+  
   
   func makeUIView(context: Context) -> UITextView {
     let textView = LinkEditableTextView()
@@ -108,6 +120,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       .foregroundColor: UIColor.systemBlue,
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
+    
+    // Set up custom keyboard accessory view with Liquid Glass toolbar
+    textView.inputAccessoryView = context.coordinator.createKeyboardAccessoryView()
     
     // Debug: Creation log removed to avoid noisy repeated logs during re-render cycles
     // Set focus request flag - the textView will handle this in didMoveToWindow
@@ -173,6 +188,34 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     init(_ parent: EnhancedRichTextEditor) {
       self.parent = parent
       super.init()
+    }
+    
+    func createKeyboardAccessoryView() -> UIView? {
+      let toolbarView = KeyboardToolbarView(
+        onPhotos: parent.onPhotosAction,
+        onVideo: parent.onVideoAction,
+        onAudio: parent.onAudioAction,
+        onGif: parent.onGifAction,
+        onLabels: parent.onLabelsAction,
+        onThreadgate: parent.onThreadgateAction,
+        onLanguage: parent.onLanguageAction,
+        onThread: parent.onThreadAction,
+        onLink: parent.onLinkAction,
+        allowTenor: parent.allowTenor
+      )
+      
+      let hostingController = UIHostingController(rootView: toolbarView)
+      hostingController.view.backgroundColor = .clear
+      
+      // Set intrinsic content size for the accessory view
+      let targetSize = hostingController.view.systemLayoutSizeFitting(
+        CGSize(width: UIScreen.main.bounds.width, height: UIView.layoutFittingCompressedSize.height),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .defaultLow
+      )
+      
+      hostingController.view.frame = CGRect(origin: .zero, size: targetSize)
+      return hostingController.view
     }
     
     func textViewDidChange(_ textView: UITextView) {
@@ -374,6 +417,173 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   }
 }
 
+
+// MARK: - Keyboard Toolbar View with Liquid Glass
+
+struct KeyboardToolbarView: View {
+  let onPhotos: (() -> Void)?
+  let onVideo: (() -> Void)?
+  let onAudio: (() -> Void)?
+  let onGif: (() -> Void)?
+  let onLabels: (() -> Void)?
+  let onThreadgate: (() -> Void)?
+  let onLanguage: (() -> Void)?
+  let onThread: (() -> Void)?
+  let onLink: (() -> Void)?
+  let allowTenor: Bool
+  
+  var body: some View {
+          if #available(iOS 26.0, *) {
+                  
+                  HStack(spacing: 3) {
+                      // Photos
+                      Button(action: { onPhotos?() }) {
+                          Image(systemName: "photo")
+                              .font(.system(size: 22))
+                      }
+                      .glassEffect(.regular)
+                      
+                      // Video
+                      Button(action: { onVideo?() }) {
+                          Image(systemName: "video")
+                              .font(.system(size: 22))
+                      }
+                      .glassEffect(.regular)
+                      
+                      // Audio
+                      Button(action: { onAudio?() }) {
+                          Image(systemName: "mic")
+                              .font(.system(size: 22))
+                      }
+                      .glassEffect(.regular)
+                      
+                      // GIF
+                      if allowTenor {
+                          Button(action: { onGif?() }) {
+                              Text("GIF")
+                                  .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                  .padding(.horizontal, 8)
+                                  .padding(.vertical, 4)
+                          }
+                          .glassEffect(.regular)
+                      }
+                      
+                      // Labels selector
+                      Button(action: { onLabels?() }) {
+                          Image(systemName: "tag")
+                              .font(.system(size: 20))
+                      }
+                      .glassEffect(.regular)
+                      
+                      // Threadgate options
+                      Button(action: { onThreadgate?() }) {
+                          Image(systemName: "lock")
+                              .font(.system(size: 20))
+                      }
+                      .glassEffect(.regular)
+                      
+                      // Languages add
+                      Button(action: { onLanguage?() }) {
+                          Image(systemName: "globe")
+                              .font(.system(size: 20))
+                      }
+                      .glassEffect(.regular)
+                      
+                      // Thread mode / Add thread entry
+                      Button(action: { onThread?() }) {
+                          Image(systemName: "text.badge.plus")
+                              .font(.system(size: 20))
+                      }
+                      .glassEffect(.regular)
+                      
+                      Spacer()
+                      
+                      // Link creation shortcut
+                      Button(action: { onLink?() }) {
+                          Image(systemName: "link")
+                              .font(.system(size: 20))
+                      }
+                      .glassEffect(.regular)
+                  }
+                  .buttonStyle(.glass)
+              
+          } else {
+              HStack(spacing: 3) {
+                  // Photos
+                  Button(action: { onPhotos?() }) {
+                      Image(systemName: "photo")
+                          .font(.system(size: 22))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  // Video
+                  Button(action: { onVideo?() }) {
+                      Image(systemName: "video")
+                          .font(.system(size: 22))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  // Audio
+                  Button(action: { onAudio?() }) {
+                      Image(systemName: "mic")
+                          .font(.system(size: 22))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  // GIF
+                  if allowTenor {
+                      Button(action: { onGif?() }) {
+                          Text("GIF")
+                              .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                              .foregroundStyle(Color.accentColor)
+                              .padding(.horizontal, 8)
+                              .padding(.vertical, 4)
+                      }
+                  }
+                  
+                  // Labels selector
+                  Button(action: { onLabels?() }) {
+                      Image(systemName: "tag")
+                          .font(.system(size: 20))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  // Threadgate options
+                  Button(action: { onThreadgate?() }) {
+                      Image(systemName: "lock")
+                          .font(.system(size: 20))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  // Languages add
+                  Button(action: { onLanguage?() }) {
+                      Image(systemName: "globe")
+                          .font(.system(size: 20))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  // Thread mode / Add thread entry
+                  Button(action: { onThread?() }) {
+                      Image(systemName: "text.badge.plus")
+                          .font(.system(size: 20))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  
+                  Spacer()
+                  
+                  // Link creation shortcut
+                  Button(action: { onLink?() }) {
+                      Image(systemName: "link")
+                          .font(.system(size: 20))
+                          .foregroundStyle(Color.accentColor)
+                  }
+              }
+              .padding(.horizontal, 16)
+              .padding(.vertical, 12)
+              
+          }
+      }
+}
 
 #else
 

@@ -76,16 +76,19 @@ struct ContentLabelView: View {
     
     var body: some View {
         if let labels = labels, !labels.isEmpty {
-            HStack(spacing: 6) {
-                // Always show labels directly - no hiding under caret
-                ForEach(labels, id: \.val) { label in
-                    ContentLabelBadge(label: label)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    // Always show labels directly - no hiding under caret
+                    ForEach(labels, id: \.val) { label in
+                        ContentLabelBadge(label: label)
+                    }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(6)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -182,7 +185,7 @@ struct ContentLabelManager<Content: View>: View {
                 hiddenContentPlaceholder
                 
             case .warn:
-                VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
                     // Always show labels at the top - direct visibility
                     if let labels = labels, !labels.isEmpty {
                         ContentLabelView(labels: labels)
@@ -227,7 +230,7 @@ struct ContentLabelManager<Content: View>: View {
                 
             case .show:
                 // Show content normally with labels always visible at top
-                VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
                     if let labels = labels, !labels.isEmpty {
                         ContentLabelView(labels: labels)
                             .padding(.bottom, 6)
@@ -283,7 +286,7 @@ struct ContentLabelManager<Content: View>: View {
                 .foregroundStyle(.secondary)
             
             // Use a @State variable to track if user is minor for UI updates
-            MinorAccountText(contentType: contentType, appState: appState)
+            SettingsHiddenText(contentType: contentType)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 140)
@@ -306,8 +309,7 @@ struct ContentLabelManager<Content: View>: View {
         var mostRestrictive: ContentVisibility = .show
         
         for label in labels {
-            let labelValue = label.val.lowercased()
-            let visibility = await getVisibilityForLabel(labelValue)
+            let visibility = await getVisibilityForLabel(label)
             
             // Hide is most restrictive, then warn, then show
             switch (mostRestrictive, visibility) {
@@ -323,31 +325,23 @@ struct ContentLabelManager<Content: View>: View {
         return mostRestrictive
     }
     
-    private func getVisibilityForLabel(_ labelValue: String) async -> ContentVisibility {
-        // For minor accounts (under 18), always hide adult content completely
-        if await isMinorAccount() {
-            let adultLabels = ["nsfw", "porn", "sexual", "nudity", "suggestive"]
-            if adultLabels.contains(labelValue) {
-                return .hide
-            }
-        }
-        
+    private func getVisibilityForLabel(_ label: ComAtprotoLabelDefs.Label) async -> ContentVisibility {
         do {
             let preferences = try await appState.preferencesManager.getPreferences()
             
             // Map label values to preference keys
             let preferenceKey: String
-            switch labelValue {
+            switch label.val.lowercased() {
             case "nsfw", "porn", "sexual":
                 preferenceKey = "nsfw"
             case "nudity":
                 preferenceKey = "nudity"
-            case "gore", "violence", "graphic":
+            case "gore", "violence", "graphic", "graphic-media":
                 preferenceKey = "graphic"
             case "suggestive":
                 preferenceKey = "suggestive"
             default:
-                preferenceKey = labelValue
+                preferenceKey = label.val.lowercased()
             }
             
             // If adult content is disabled, force hide NSFW content
@@ -355,16 +349,16 @@ struct ContentLabelManager<Content: View>: View {
                 return .hide
             }
             
-            // Get the specific preference for this label
+            // Get specific preference, preferring labeler-scoped when available
             let visibility = ContentFilterManager.getVisibilityForLabel(
-                label: preferenceKey, 
-                preferences: preferences.contentLabelPrefs
-            )
+                label: preferenceKey,
+                labelerDid: label.src,
+                preferences: preferences.contentLabelPrefs)
             
             return visibility
         } catch {
             // If we can't get preferences, use safe defaults
-            if !appState.isAdultContentEnabled && ["nsfw", "porn", "sexual"].contains(labelValue) {
+            if !appState.isAdultContentEnabled && ["nsfw", "porn", "sexual"].contains(label.val.lowercased()) {
                 return .hide
             }
             return .warn
@@ -372,47 +366,14 @@ struct ContentLabelManager<Content: View>: View {
     }
 }
 
-/// Helper view to show appropriate text based on whether user is a minor
-struct MinorAccountText: View {
+// Helper text when content is hidden by settings
+struct SettingsHiddenText: View {
     let contentType: String
-    let appState: AppState
-    @State private var isMinor = false
-    
     var body: some View {
-        Text(isMinor ? "This \(contentType) was hidden for safety" : "This \(contentType) was hidden based on your content preferences")
+        Text("This \(contentType) was hidden based on your content settings")
             .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal)
-            .task {
-                await checkIfMinor()
-            }
-    }
-    
-    private func checkIfMinor() async {
-        do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            guard let birthDate = preferences.birthDate else {
-                isMinor = false
-                return
-            }
-            
-            let calendar = Calendar.current
-            let now = Date()
-            let ageComponents = calendar.dateComponents([.year], from: birthDate, to: now)
-            
-            guard let age = ageComponents.year else {
-                isMinor = false
-                return
-            }
-            
-            await MainActor.run {
-                isMinor = age < 18
-            }
-        } catch {
-            await MainActor.run {
-                isMinor = false
-            }
-        }
     }
 }

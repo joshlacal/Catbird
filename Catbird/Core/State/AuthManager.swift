@@ -588,6 +588,9 @@ final class AuthenticationManager: AuthProgressDelegate {
           self.storeHandle(handle, for: did)
         }
 
+        // Clear temporary account storage now that authentication is complete
+        await client.clearTemporaryAccountStorage()
+        
         // Update state
           await MainActor.run {
               // Clear cancellation flag on successful authentication

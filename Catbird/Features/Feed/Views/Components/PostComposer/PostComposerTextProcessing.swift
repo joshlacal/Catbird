@@ -26,11 +26,19 @@ extension PostComposerViewModel {
         suggestedLanguage = detectLanguage()
 
         // Parse the text content to get URLs and update mentions
-        let (_, _, facets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
-        logger.debug("RT: parser facets=\(facets.count) urls=\(urls.count)")
+        let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+        logger.debug("RT: parser facets=\(parsedFacets.count) urls=\(urls.count)")
+
+        // Merge in any manually created link facets (from the UIKit editor) so that:
+        // - inline links with custom display text stay visually highlighted
+        // - multiple created links are preserved across text updates
+        var displayFacets = parsedFacets
+        if !manualLinkFacets.isEmpty {
+            displayFacets.append(contentsOf: manualLinkFacets)
+        }
 
         // Update attributed text with highlighting using existing RichText implementation
-        updateAttributedText(facets: facets)
+        updateAttributedText(facets: displayFacets)
         
         // Handle URLs with debouncing
         handleDetectedURLsOptimized(urls)

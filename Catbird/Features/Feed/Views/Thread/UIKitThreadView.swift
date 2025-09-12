@@ -1267,6 +1267,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       _ = heightCalculator.calculateParentPostHeight(for: parent)
     }
     
+    // Capture precise anchor BEFORE mutating data/applying snapshot to avoid anchoring to load-more
+    var preUpdatePreciseAnchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor?
+    if #available(iOS 18.0, *) {
+      preUpdatePreciseAnchor = captureThreadPreciseAnchor(from: collectionView)
+    }
+    
     // Update model data
     let oldParentCount = parentPosts.count
     parentPosts = newParents
@@ -1317,7 +1323,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         await applyParentPostsWithPrecisePreservation(
           newParentsCount: newParentsCount,
           oldParentCount: oldParentCount,
-          scrollAnchor: scrollAnchor
+          preciseAnchor: preUpdatePreciseAnchor,
+          coarseAnchor: scrollAnchor
         )
         
       // Clean up loading state after positioning
@@ -1342,23 +1349,31 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func applyParentPostsWithPrecisePreservation(
     newParentsCount: Int,
     oldParentCount: Int,
-    scrollAnchor: ThreadScrollPositionTracker.ScrollAnchor?
+    preciseAnchor: OptimizedScrollPreservationSystem.PreciseScrollAnchor?,
+    coarseAnchor: ThreadScrollPositionTracker.ScrollAnchor?
   ) async {
-    // Capture precise scroll anchor before any changes (thread-specific approach)
-    let preciseAnchor = captureThreadPreciseAnchor(from: collectionView)
+    // Use provided pre-update anchor if available, otherwise attempt a fresh capture
+    let anchorToUse = preciseAnchor ?? captureThreadPreciseAnchor(from: collectionView)
     
-    guard let anchor = preciseAnchor else {
-      // Fallback to simple preservation if anchor capture fails
-      await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
+    guard let anchor = anchorToUse else {
+      // If precise anchor capture fails, try coarse restoration using pre-captured thread anchor
+      if let coarseAnchor {
+        controllerLogger.debug("⚠️ Precise anchor unavailable, using coarse restoration with retry")
+        await restoreScrollPositionWithRetry(anchor: coarseAnchor, newParentsCount: newParentsCount, oldParentCount: oldParentCount)
+      } else {
+        // As a last resort, apply simple height-based preservation
+        controllerLogger.debug("⚠️ No anchors available, falling back to simple preservation")
+        await applyParentPostsWithSimplePreservation(newParentsCount: newParentsCount)
+      }
       return
     }
     
     // Store current post URIs to track content changes (include all thread content)
     let currentPostIds = (
-      parentPosts.map { $0.post.uri.uriString() } +
+      parentPosts.compactMap { $0.uri?.uriString() } +
       [mainPost?.uri.uriString()].compactMap { $0 } +
       replyWrappers.map { $0.post.uri.uriString() }
-    )
+    ).filter { $0.hasPrefix("at://unknown") == false }
     
     // Apply atomic update with position preservation (like feed view does)
     await applyAtomicParentUpdateWithPreservation(
@@ -1366,6 +1381,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       newParentsCount: newParentsCount,
       currentPostIds: currentPostIds
     )
+    
+    // If we unexpectedly ended at the very top without having reached the true root,
+    // use coarse restoration to keep the viewport stable.
+    if hasReachedTopOfThread == false {
+      let safeTop = collectionView.adjustedContentInset.top
+      if abs(collectionView.contentOffset.y - (-safeTop)) < 1.0, let coarseAnchor {
+        controllerLogger.debug("⚠️ Ended at top unexpectedly; applying coarse restoration retry")
+        await restoreScrollPositionWithRetry(anchor: coarseAnchor, newParentsCount: newParentsCount, oldParentCount: oldParentCount)
+      }
+    }
     
     controllerLogger.debug("✅ Applied precise position preservation for \(newParentsCount) parent posts")
   }
@@ -1382,8 +1407,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Find where the anchor post will be after parent posts are added
     if let anchorIndex = currentPostIds.firstIndex(of: anchor.postId) {
-      // Account for the new parents that will be inserted above
-      let newAnchorIndex = anchorIndex + newParentsCount
+      // Anchor index is already in the updated list; no extra shift needed
+      let newAnchorIndex = anchorIndex
       
       // Estimate the new position based on current layout
       if let currentFirstVisible = collectionView.indexPathsForVisibleItems.sorted().first,
@@ -1428,19 +1453,82 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     collectionView.layoutIfNeeded()
     
     // Step 5: Fine-tune position with actual layout data using thread-specific calculation
-    if let finalTargetOffset = calculateThreadTargetOffset(
+    var appliedFineTune = false
+    let anchorIsUnknown = anchor.postId.hasPrefix("at://unknown")
+    if !anchorIsUnknown, let finalTargetOffset = calculateThreadTargetOffset(
       for: anchor,
       newPostIds: currentPostIds,
       in: collectionView
     ) {
       collectionView.setContentOffset(finalTargetOffset, animated: false)
       controllerLogger.debug("🎯 Applied fine-tuned thread position: \(finalTargetOffset.y)")
-    } else {
+      appliedFineTune = true
+    }
+
+    // Index-path fallback for parent section when we can't key by URI (pending/unexpected parents)
+    if !appliedFineTune {
+      if anchor.indexPath.section == Section.parentPosts.rawValue {
+        let safeTop = collectionView.adjustedContentInset.top
+        let totalItems = collectionView.numberOfItems(inSection: Section.parentPosts.rawValue)
+        let shiftedIndex = min(anchor.indexPath.item + newParentsCount, max(0, totalItems - 1))
+        let newIndexPath = IndexPath(item: shiftedIndex, section: Section.parentPosts.rawValue)
+        if let attrs = collectionView.layoutAttributesForItem(at: newIndexPath) {
+          let targetY = attrs.frame.origin.y - safeTop - anchor.viewportRelativeY
+          let minOffset = -safeTop
+          let maxOffset = max(minOffset, collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom)
+          let clampedY = max(minOffset, min(targetY, maxOffset))
+          collectionView.setContentOffset(CGPoint(x: 0, y: clampedY), animated: false)
+          controllerLogger.debug("🎯 Applied index-based fallback position: \(clampedY) for shifted index: \(shiftedIndex)")
+          appliedFineTune = true
+        }
+      }
+    }
+
+    if !appliedFineTune {
       controllerLogger.debug("⚠️ Thread fine-tuning failed - using estimated position")
     }
     
     CATransaction.commit()
     
+    // Delayed verification pass to correct any drift from late layout (e.g., TextKit/image sizing)
+    let verificationDelay: DispatchTimeInterval = .milliseconds(100)
+    DispatchQueue.main.asyncAfter(deadline: .now() + verificationDelay) { [weak self] in
+      guard let self = self else { return }
+      self.collectionView.layoutIfNeeded()
+      let safeTop = self.collectionView.adjustedContentInset.top
+      let currentY = self.collectionView.contentOffset.y
+
+      var correctedOffset: CGPoint?
+      if !anchorIsUnknown, let verifyOffset = self.calculateThreadTargetOffset(
+        for: anchor,
+        newPostIds: currentPostIds,
+        in: self.collectionView
+      ) {
+        correctedOffset = verifyOffset
+      } else if anchor.indexPath.section == Section.parentPosts.rawValue {
+        let totalItems = self.collectionView.numberOfItems(inSection: Section.parentPosts.rawValue)
+        let shiftedIndex = min(anchor.indexPath.item + newParentsCount, max(0, totalItems - 1))
+        let newIndexPath = IndexPath(item: shiftedIndex, section: Section.parentPosts.rawValue)
+        if let attrs = self.collectionView.layoutAttributesForItem(at: newIndexPath) {
+          let targetY = attrs.frame.origin.y - safeTop - anchor.viewportRelativeY
+          let minOffset = -safeTop
+          let maxOffset = max(minOffset, self.collectionView.contentSize.height - self.collectionView.bounds.height + self.collectionView.adjustedContentInset.bottom)
+          let clampedY = max(minOffset, min(targetY, maxOffset))
+          correctedOffset = CGPoint(x: 0, y: clampedY)
+        }
+      }
+
+      if let corrected = correctedOffset {
+        let delta = abs(corrected.y - currentY)
+        if delta > 1.5 {
+          self.collectionView.setContentOffset(corrected, animated: false)
+          self.controllerLogger.debug("🩺 Delayed verification corrected position by \(delta)pt to: \(corrected.y)")
+        } else {
+          self.controllerLogger.debug("🩺 Delayed verification within tolerance (\(delta)pt)")
+        }
+      }
+    }
+
     controllerLogger.debug("✅ Applied atomic parent update with precise position preservation")
   }
   
@@ -1462,8 +1550,33 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   @available(iOS 18.0, *)
   @MainActor
   private func captureThreadPreciseAnchor(from collectionView: UICollectionView) -> OptimizedScrollPreservationSystem.PreciseScrollAnchor? {
-    // Get the first visible item to use as anchor
-    guard let firstVisibleIndexPath = collectionView.indexPathsForVisibleItems.sorted().first,
+    // Prefer the first visible CONTENT item (skip load-more trigger)
+    let sortedVisible = collectionView.indexPathsForVisibleItems.sorted()
+    var candidateIndexPath = sortedVisible.first(where: { $0.section != Section.loadMoreParents.rawValue }) ?? sortedVisible.first
+    
+    // If the only visible item is the load-more trigger, try anchoring to the first parent or main post
+    if let idx = candidateIndexPath, idx.section == Section.loadMoreParents.rawValue {
+      candidateIndexPath = nil
+    }
+    
+    if candidateIndexPath == nil {
+      // Try first parent item if any
+      if !parentPosts.isEmpty {
+        let parentIdx = IndexPath(item: 0, section: Section.parentPosts.rawValue)
+        if collectionView.layoutAttributesForItem(at: parentIdx) != nil {
+          candidateIndexPath = parentIdx
+        }
+      }
+      // Else try main post
+      if candidateIndexPath == nil {
+        let mainIdx = IndexPath(item: 0, section: Section.mainPost.rawValue)
+        if collectionView.layoutAttributesForItem(at: mainIdx) != nil {
+          candidateIndexPath = mainIdx
+        }
+      }
+    }
+    
+    guard let firstVisibleIndexPath = candidateIndexPath,
           let attributes = collectionView.layoutAttributesForItem(at: firstVisibleIndexPath) else {
       controllerLogger.debug("⚠️ No visible items for anchor capture")
       return nil
@@ -1474,6 +1587,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let postId: String
     switch firstVisibleIndexPath.section {
     case Section.loadMoreParents.rawValue: // Section 0 - Load more trigger
+      // We already tried to skip this above; if we land here, bail out
       controllerLogger.debug("⚠️ Cannot anchor to load more trigger, skipping")
       return nil
       
@@ -1484,7 +1598,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
       // parentPosts are displayed in reverse order, so map the index correctly
       let reversedIndex = parentPosts.count - 1 - firstVisibleIndexPath.item
-      postId = parentPosts[reversedIndex].post.uri.uriString()
+      if let pid = parentPosts[reversedIndex].uri?.uriString() {
+        postId = pid
+      } else {
+        controllerLogger.debug("⚠️ Parent post at index has no stable URI (pending/unexpected)")
+        return nil
+      }
       
     case Section.mainPost.rawValue: // Section 2 - Main post
       guard let mainPostUri = mainPost?.uri.uriString() else {
@@ -1543,17 +1662,24 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       // Parent posts section (Section.parentPosts.rawValue = 1)
       // Parents are displayed in reverse order, so map accordingly
       for (displayIndex, parentPost) in parentPosts.reversed().enumerated() {
-        mapping[parentPost.post.uri.uriString()] = IndexPath(item: displayIndex, section: Section.parentPosts.rawValue)
+        let key = parentPost.post.uri.uriString()
+        // Skip placeholder/unknown URIs to avoid mapping the wrong item
+        if key.hasPrefix("at://unknown") == false {
+          mapping[key] = IndexPath(item: displayIndex, section: Section.parentPosts.rawValue)
+        }
       }
       
       // Main post section (Section.mainPost.rawValue = 2, item 0)
-      if let mainPostUri = mainPost?.uri.uriString() {
+      if let mainPostUri = mainPost?.uri.uriString(), mainPostUri.hasPrefix("at://unknown") == false {
         mapping[mainPostUri] = IndexPath(item: 0, section: Section.mainPost.rawValue)
       }
       
       // Replies section (Section.replies.rawValue = 3)
       for (index, replyWrapper) in replyWrappers.enumerated() {
-        mapping[replyWrapper.post.uri.uriString()] = IndexPath(item: index, section: Section.replies.rawValue)
+        let key = replyWrapper.post.uri.uriString()
+        if key.hasPrefix("at://unknown") == false {
+          mapping[key] = IndexPath(item: index, section: Section.replies.rawValue)
+        }
       }
       
       return mapping

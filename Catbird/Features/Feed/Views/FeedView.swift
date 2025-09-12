@@ -21,15 +21,13 @@ struct FeedView: View {
   
   let fetch: FetchType
   
-  // Use the singleton FeedStateStore
-  private var feedStateStore = FeedStateStore.shared
+  // Use the singleton FeedStateStore (computed property to avoid retain cycles)
+  private var feedStateStore: FeedStateStore { FeedStateStore.shared }
   
   // State
   @State private var isInitialized = false
   @State private var stateManager: FeedStateManager?
-  @State private var searchText: String = ""
-  @State private var searchResults: [CachedFeedViewPost] = []
-  @State private var showingResults: Bool = false
+  // Search UI removed
   
   // Performance
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedView")
@@ -46,50 +44,22 @@ struct FeedView: View {
   var body: some View {
     Group {
       if let stateManager = stateManager {
-        ZStack(alignment: .top) {
-          FeedCollectionView(
-            stateManager: stateManager,
-            navigationPath: $path
-          )
-
-          if showingResults {
-            SemanticResultsList(
-              results: searchResults,
-              onSelect: { fvp in
-                showingResults = false
-                searchText = ""
-                path.append(NavigationDestination.post(fvp.feedViewPost.post.uri))
-              },
-              onDismiss: {
-                showingResults = false
-              }
-            )
-            .zIndex(1)
-            .transition(.move(edge: .top))
-          }
-        }
+        FeedCollectionView(
+          stateManager: stateManager,
+          navigationPath: $path
+        )
       } else {
         ProgressView()
-          .onAppear {
-            // Initialize state manager once
-            self.stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
+          .task {
+            // Initialize state manager once (defensive check)
+            if stateManager == nil {
+              stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
+            }
           }
       }
     }
-    .searchable(text: $searchText, placement: .toolbar, prompt: "Search this feed")
-    .onSubmit(of: .search) {
-      Task { @MainActor in
-        guard let sm = stateManager else { return }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { showingResults = false; return }
-        let hits = await sm.semanticSearch(q, topK: 30)
-        searchResults = hits
-        showingResults = !hits.isEmpty
-      }
-    }
-    .onChange(of: searchText) { _, newValue in
-      if newValue.isEmpty { showingResults = false }
-    }
+    // Search UI removed
+    .environment(\.currentFeedType, fetch)
     .task(id: fetch.identifier) {
       guard let stateManager = stateManager else { return }
       
@@ -126,59 +96,6 @@ struct FeedView: View {
         }
       }
     }
-}
-
-// MARK: - Semantic search results overlay
-
-private struct SemanticResultsList: View {
-  let results: [CachedFeedViewPost]
-  let onSelect: (CachedFeedViewPost) -> Void
-  let onDismiss: () -> Void
-
-  var body: some View {
-    VStack(spacing: 0) {
-      HStack {
-        Text("Semantic results")
-          .appFont(AppTextRole.subheadline)
-          .foregroundStyle(.secondary)
-        Spacer()
-        Button("Close") { onDismiss() }
-          .buttonStyle(.borderless)
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
-      .background(.ultraThinMaterial)
-
-      Divider()
-
-      List(results, id: \.id) { item in
-        Button {
-          onSelect(item)
-        } label: {
-          VStack(alignment: .leading, spacing: 4) {
-            if let text = item.mainFeedPost?.text, !text.isEmpty {
-              Text(text)
-                .appFont(AppTextRole.body)
-                .lineLimit(3)
-            } else {
-              Text("(no text)")
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-            }
-            Text(item.feedViewPost.post.author.handle.description)
-              .appFont(AppTextRole.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-      }
-      .listStyle(.plain)
-      .frame(maxHeight: 360)
-      .background(.ultraThinMaterial)
-    }
-    .clipShape(RoundedRectangle(cornerRadius: 12))
-    .shadow(radius: 8)
-    .padding()
-  }
 }
 
 // MARK: - Preview

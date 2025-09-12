@@ -81,6 +81,10 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                
+                NavigationLink(destination: OpenSourceLicensesView()) {
+                    Text("Open Source Licenses")
+                }
             }
             
             Section("Support") {

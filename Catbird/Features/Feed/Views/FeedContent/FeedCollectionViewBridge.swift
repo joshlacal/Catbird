@@ -132,29 +132,26 @@ struct FeedCollectionViewWrapper: View {
         VStack {
             if stateManager.posts.isEmpty && stateManager.isLoading {
                 // Initial loading state
-                VStack(spacing: 16) {
-                    ProgressView()
-                    Text("Loading feed...")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                LoadingStateView(
+                    message: stateManager.currentFeedType == .timeline ?
+                        "Loading your timeline..." :
+                        "Loading \(stateManager.currentFeedType.displayName.lowercased())..."
+                )
             } else if stateManager.posts.isEmpty && !stateManager.isLoading {
                 // Empty state
-                VStack(spacing: 16) {
-                    Image(systemName: "tray")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.secondary)
-                    Text("No posts yet")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                    Button("Refresh") {
-                        Task {
-                            await stateManager.refresh()
-                        }
+                if stateManager.currentFeedType == .timeline {
+                    ContentUnavailableStateView.emptyFollowingFeed {
+                        // Switch to the Search tab to discover people
+                        stateManager.appState.navigationManager.tabSelection?(1)
                     }
-                    .buttonStyle(.borderedProminent)
+                } else {
+                    ContentUnavailableStateView.emptyFeed(
+                        feedName: stateManager.currentFeedType.displayName
+                    ) {
+                        // Refresh action for non-timeline feeds
+                        Task { await stateManager.refresh() }
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Content list - use explicit ForEach to avoid generic confusion
                 List {

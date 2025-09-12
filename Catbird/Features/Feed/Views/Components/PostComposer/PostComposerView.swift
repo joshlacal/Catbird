@@ -322,9 +322,9 @@ struct PostComposerView: View {
             }) {
                 LinkCreationDialog(
                     selectedText: selectedTextForLink,
-                    onComplete: { url in
-                        // Backward-compatible call; prefer new overload with display text
-                        addLinkFacet(url: url, displayText: selectedTextForLink, range: selectedRangeForLink)
+                    onComplete: { url, display in
+                        // Use dialog's chosen display text when provided
+                        addLinkFacet(url: url, displayText: display, range: selectedRangeForLink)
                         showingLinkCreation = false
                     },
                     onCancel: {

@@ -150,13 +150,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("FeedStateManager initialized for feed type: \(feedType.identifier)")
     }
 
-    // MARK: - Semantic features
 
-    /// Perform on-device semantic search within the current feed posts.
-    func semanticSearch(_ query: String, topK: Int = 20) async -> [CachedFeedViewPost] {
-        await feedModel.semanticSearch(query, topK: topK)
-    }
-    
     // MARK: - Setup
     
     private func setupObservers() {

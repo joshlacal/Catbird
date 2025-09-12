@@ -61,6 +61,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     private var headerView: AnyView?
     /// Track header presence to avoid rebuilding during scroll updates
     private var headerPresent: Bool = false
+    /// Background hosting controller for loading/empty states
+    private var backgroundHostingController: UIHostingController<AnyView>?
     
     // MARK: - Initialization
     
@@ -109,6 +111,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     private func handleThemeChange() {
         updateThemeColors()
         forceCellReconfiguration()
+        updateBackgroundState()
     }
     
     func updateThemeColors() {
@@ -144,10 +147,14 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         setupScrollToTopCallback()
         setupAppLifecycleObservers()
         setupThemeObserver()
+        updateBackgroundState()
     }
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        
+        // Update theme colors when view appears to catch any missed theme changes
+        updateThemeColors()
         
         Task { @MainActor in
             if stateManager.posts.isEmpty {
@@ -370,6 +377,7 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         }
         
         controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
+        updateBackgroundState()
     }
     
     @MainActor
@@ -594,6 +602,83 @@ extension FeedCollectionViewControllerIntegrated {
         #else
         return .light
         #endif
+    }
+}
+
+// MARK: - Background State (Loading / Empty)
+
+@available(iOS 16.0, *)
+extension FeedCollectionViewControllerIntegrated {
+    private func updateBackgroundState() {
+        guard let collectionView = collectionView else { return }
+
+        // Determine which background (if any) to show
+        var backgroundView: AnyView? = nil
+
+        if stateManager.posts.isEmpty && stateManager.isLoading {
+            // Initial loading
+            let message: String
+            switch stateManager.currentFeedType {
+            case .timeline:
+                message = "Loading your timeline..."
+            default:
+                message = "Loading \(stateManager.currentFeedType.displayName.lowercased())..."
+            }
+            backgroundView = AnyView(
+                LoadingStateView(message: message)
+                    .background(Color.clear)
+            )
+        } else if stateManager.posts.isEmpty && !stateManager.isLoading {
+            // Empty state
+            switch stateManager.currentFeedType {
+            case .timeline:
+                backgroundView = AnyView(
+                    ContentUnavailableStateView.emptyFollowingFeed { [weak self] in
+                        // Switch to Search tab for discovery
+                        self?.stateManager.appState.navigationManager.tabSelection?(1)
+                    }
+                    .background(Color.clear)
+                )
+            default:
+                backgroundView = AnyView(
+                    ContentUnavailableStateView.emptyFeed(
+                        feedName: stateManager.currentFeedType.displayName
+                    ) { [weak self] in
+                        guard let self else { return }
+                        Task { @MainActor in
+                            await self.stateManager.refresh()
+                        }
+                    }
+                    .background(Color.clear)
+                )
+            }
+        }
+
+        if let backgroundView {
+            // Create or update hosting controller
+            if let host = backgroundHostingController {
+                host.rootView = backgroundView
+                host.view.frame = collectionView.bounds
+            } else {
+                let host = UIHostingController(rootView: backgroundView)
+                host.view.backgroundColor = .clear
+                host.view.frame = collectionView.bounds
+                host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                collectionView.backgroundView = host.view
+                backgroundHostingController = host
+            }
+        } else {
+            // Remove background
+            collectionView.backgroundView = nil
+            backgroundHostingController = nil
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if let collectionView = collectionView, let bgView = collectionView.backgroundView {
+            bgView.frame = collectionView.bounds
+        }
     }
 }
 

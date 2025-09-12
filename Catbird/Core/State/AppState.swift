@@ -68,6 +68,10 @@ final class AppState {
 
   /// Preferences manager for handling user preferences
   @ObservationIgnored let preferencesManager = PreferencesManager()
+  
+  /// Age verification manager (deprecated; retained for source compatibility, no UI)
+  @ObservationIgnored let ageVerificationManager = AgeVerificationManager()
+  
 
   /// App-specific settings that aren't synced with the server
   @ObservationIgnored let appSettings = AppSettings()
@@ -98,8 +102,7 @@ final class AppState {
   /// Feed filter settings manager
   @ObservationIgnored let feedFilterSettings = FeedFilterSettings()
 
-  /// Embedding store (SwiftData-backed) for on-device vector persistence
-  @ObservationIgnored var embeddingStore: EmbeddingStore?
+  
 
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
@@ -300,27 +303,7 @@ final class AppState {
     logger.debug("AppState initialization complete")
   }
 
-  // MARK: - Embeddings persistence registration
-
-  @MainActor
-  func registerEmbeddingStore(container: ModelContainer) {
-    self.embeddingStore = EmbeddingStore(container: container)
-  }
-
-  @MainActor
-  func saveEmbedding(postID: String, language: NLLanguage, vector: [Float]) {
-    embeddingStore?.save(postID: postID, language: language, vector: vector)
-  }
-
-  @MainActor
-  func loadEmbedding(postID: String) -> (vector: [Float], language: NLLanguage)? {
-    return embeddingStore?.load(postID: postID)
-  }
-
-  @MainActor
-  func pruneEmbeddings(capacity: Int = 2500, ttlDays: Int = 2) {
-    embeddingStore?.prune(capacity: capacity, ttlDays: ttlDays)
-  }
+  
   
   deinit {
     logger.debug("AppState deinitializing (instance #\(AppState.initializationCount))")

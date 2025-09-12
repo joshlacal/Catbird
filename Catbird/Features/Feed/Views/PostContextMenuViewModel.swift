@@ -25,6 +25,9 @@ final class PostContextMenuViewModel {
     
     // Bookmark callback - will be set by PostView
     var onToggleBookmark: (() -> Void)?
+    
+    // Related posts callback - will be set by PostView
+    var onShowRelatedPosts: (() -> Void)?
 
     init(appState: AppState, post: AppBskyFeedDefs.PostView) {
         self.appState = appState
@@ -109,6 +112,11 @@ final class PostContextMenuViewModel {
     func toggleBookmark() {
         // Trigger the bookmark callback
         onToggleBookmark?()
+    }
+    
+    func showRelatedPosts() {
+        // Trigger the related posts callback
+        onShowRelatedPosts?()
     }
     
     /// Creates a report subject for this post

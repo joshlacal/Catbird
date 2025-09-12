@@ -58,6 +58,33 @@ class ContentFilterManager {
         // Default to warn if no specific preference
         return .warn
     }
+    
+    /// Get visibility for a label considering only user preferences (no age gating in this client)
+    @MainActor
+    static func getPolicyVisibility(
+        label: String,
+        preferences: [ContentLabelPreference]
+    ) -> ContentVisibility {
+        return getVisibilityForLabel(label: label, preferences: preferences)
+    }
+
+    /// Resolve visibility for a label with an optional labeler scope.
+    /// If a labeler-specific preference exists, it takes precedence; otherwise fall back to global.
+    static func getVisibilityForLabel(label: String, labelerDid: DID?, preferences: [ContentLabelPreference]) -> ContentVisibility {
+        // Prefer labeler-scoped preference when available
+        if let did = labelerDid?.didString(),
+           let scoped = preferences.first(where: { $0.label == label && $0.labelerDid?.didString() == did }) {
+            return ContentVisibility(rawValue: scoped.visibility) ?? .warn
+        }
+
+        // Fall back to global (no labeler) preference
+        if let global = preferences.first(where: { $0.label == label && $0.labelerDid == nil }) {
+            return ContentVisibility(rawValue: global.visibility) ?? .warn
+        }
+
+        // Last fallback: any match for this label
+        return getVisibilityForLabel(label: label, preferences: preferences)
+    }
 
     /// Convert our display model to the server model format
     static func createPreferenceForLabel(label: String, visibility: ContentVisibility) -> ContentLabelPreference {
@@ -82,7 +109,7 @@ class ContentFilterManager {
         try await appState.preferencesManager.updateContentLabelPreferences(contentLabels)
     }
 
-    /// Get the effective content visibility for a label type, considering all preferences
+    /// Get the effective content visibility for a label type, considering age restrictions and preferences
     static func getEffectiveVisibility(
         label: String,
         appState: AppState
@@ -90,18 +117,25 @@ class ContentFilterManager {
         do {
             // Get the server preferences
             let preferences = try await appState.preferencesManager.getPreferences()
-            let visibility = getVisibilityForLabel(label: label, preferences: preferences.contentLabelPrefs)
+            
+            // Use user preference visibility only
+            let visibility = await getPolicyVisibility(
+                label: label,
+                preferences: preferences.contentLabelPrefs
+            )
 
-            // If adult content is disabled, force hide nsfw content
+            // Additional check: if adult content is globally disabled, force hide nsfw content
             if label == "nsfw" && !appState.isAdultContentEnabled {
                 return .hide
             }
 
             return visibility
         } catch {
-            // If we can't get server preferences, use defaults
-            if label == "nsfw" && !appState.isAdultContentEnabled {
-                return .hide
+            // If we can't get server preferences, use safe defaults
+            if label == "nsfw" {
+                if !appState.isAdultContentEnabled {
+                    return .hide
+                }
             }
             return .warn
         }

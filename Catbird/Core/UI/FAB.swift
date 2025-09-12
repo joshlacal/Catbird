@@ -14,7 +14,6 @@ struct FAB: View {
     let hasMinimizedComposer: Bool
     let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
-    @Namespace private var glassNamespace
 
     private let circleSize: CGFloat = 62
     
@@ -33,8 +32,8 @@ struct FAB: View {
                 if showFeedsButton {
                     if #available(iOS 26.0, *) {
                         feedsButton
-                            .glassEffect()
                             .clipShape(Circle())
+                            .glassEffect()
                     } else {
                         feedsButton
                     }
@@ -42,8 +41,8 @@ struct FAB: View {
                 Spacer()
                 if #available(iOS 26.0, *) {
                     composeButton
-                        .glassEffect()
                         .clipShape(Circle())
+                        .glassEffect(.regular.tint(.accentColor).interactive())
                 } else {
                     composeButton
                 }
@@ -60,7 +59,10 @@ struct FAB: View {
         }
     }
     
+    @ViewBuilder
     private var feedsButton: some View {
+        if #available(iOS 26.0, *) {
+
         Button(action: feedsAction) {
             Image(systemName: "square.grid.3x3.square")
                 .resizable()
@@ -70,30 +72,53 @@ struct FAB: View {
                 .frame(width: circleSize, height: circleSize)
                 .contentShape(Circle())
         }
+        .buttonStyle(.glassProminent)
+        } else {
+            Button(action: feedsAction) {
+                Image(systemName: "square.grid.3x3.square")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 30, height: 30)
+                    .foregroundStyle(.primary)
+                    .frame(width: circleSize, height: circleSize)
+                    .contentShape(Circle())
+            }
+        }
     }
     
     private var composeButton: some View {
         Button(action: composeAction) {
+            if #available(iOS 26.0, *) {
+
             // Center the SF Symbol at 30x30, then place the badge
             // relative to the symbol's bounds (not the full 62pt circle).
             ZStack {
-                if #available(iOS 26.0, *) {
-                    // iOS 26: Use Liquid Glass styling for the FAB surface
-                    symbolWithBadge
-                        .foregroundStyle(.white)
-                } else {
-                    // Pre‑iOS 26: Classic filled circle appearance
                     symbolWithBadge
                         .foregroundStyle(.white)
                 }
-            }
             .frame(width: circleSize, height: circleSize)
-            .background(
-                   
-                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
-                    
-            )
+
+//            .background(
+//                   
+//                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
+//                    
+//            )
             .contentShape(Circle())
+            .buttonStyle(.glassProminent)
+            } else {
+                ZStack {
+                    symbolWithBadge
+                        .foregroundStyle(.white)
+                }
+                .frame(width: circleSize, height: circleSize)
+                
+                //            .background(
+                //
+                //                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
+                //
+                //            )
+                .contentShape(Circle())
+            }
         }
         .contextMenu {
             if hasMinimizedComposer && clearDraftAction != nil {

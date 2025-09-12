@@ -250,7 +250,7 @@ struct ActionButtonsView: View {
         )
         #if os(iOS)
         .presentationDetents({
-          if #available(iOS 26.0, *) { return [.medium, .large] } else { return [PresentationDetent.large] }
+          if #available(iOS 26.0, *) { return [.large] } else { return [PresentationDetent.large] }
         }())
         .presentationDragIndicator({
           if #available(iOS 26.0, *) { return .visible } else { return .hidden }

@@ -154,8 +154,9 @@ struct PostComposerViewUIKit: View {
       .sheet(isPresented: $showingLinkCreation) {
         LinkCreationDialog(
           selectedText: selectedTextForLink,
-          onComplete: { url in
-            addLinkFacet(url: url, displayText: selectedTextForLink, range: selectedRangeForLink)
+          onComplete: { url, display in
+            // Use the dialog's chosen display text when provided
+            addLinkFacet(url: url, displayText: display, range: selectedRangeForLink)
             showingLinkCreation = false
           },
           onCancel: { showingLinkCreation = false }
@@ -336,7 +337,34 @@ struct PostComposerViewUIKit: View {
             onTextChanged: onTextChanged,
             onLinkCreationRequested: onLinkCreationRequested,
             focusOnAppear: true,
-            focusActivationID: activeEditorFocusID
+            focusActivationID: activeEditorFocusID,
+            onPhotosAction: { photoPickerVisible = true },
+            onVideoAction: { videoPickerVisible = true },
+            onAudioAction: { showingAudioRecorder = true },
+            onGifAction: { viewModel.showingGifPicker = true },
+            onLabelsAction: { viewModel.showLabelSelector = true },
+            onThreadgateAction: { viewModel.showThreadgateOptions = true },
+            onLanguageAction: { showingLanguagePicker = true },
+            onThreadAction: {
+              if viewModel.isThreadMode {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                  viewModel.addNewThreadEntry()
+                  activeEditorFocusID = UUID()
+                }
+              } else {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                  viewModel.enterThreadMode()
+                  viewModel.addNewThreadEntry()
+                  activeEditorFocusID = UUID()
+                }
+              }
+            },
+            onLinkAction: {
+              selectedTextForLink = ""
+              selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
+              showingLinkCreation = true
+            },
+            allowTenor: appState.appSettings.allowTenor
           )
           .frame(minHeight: 140)
           .frame(maxWidth: .infinity)
@@ -443,9 +471,6 @@ struct PostComposerViewUIKit: View {
       // Outline hashtags editor
       outlineTagsSection
 
-      // Media toolbar
-      mediaToolbar
-
       // Language chips
       languageSection
         .contextMenu {
@@ -508,7 +533,34 @@ struct PostComposerViewUIKit: View {
                   onTextChanged: onTextChanged,
                   onLinkCreationRequested: onLinkCreationRequested,
                   focusOnAppear: true,
-                  focusActivationID: activeEditorFocusID
+                  focusActivationID: activeEditorFocusID,
+                  onPhotosAction: { photoPickerVisible = true },
+                  onVideoAction: { videoPickerVisible = true },
+                  onAudioAction: { showingAudioRecorder = true },
+                  onGifAction: { viewModel.showingGifPicker = true },
+                  onLabelsAction: { viewModel.showLabelSelector = true },
+                  onThreadgateAction: { viewModel.showThreadgateOptions = true },
+                  onLanguageAction: { showingLanguagePicker = true },
+                  onThreadAction: {
+                    if viewModel.isThreadMode {
+                      withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        viewModel.addNewThreadEntry()
+                        activeEditorFocusID = UUID()
+                      }
+                    } else {
+                      withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        viewModel.enterThreadMode()
+                        viewModel.addNewThreadEntry()
+                        activeEditorFocusID = UUID()
+                      }
+                    }
+                  },
+                  onLinkAction: {
+                    selectedTextForLink = ""
+                    selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
+                    showingLinkCreation = true
+                  },
+                  allowTenor: appState.appSettings.allowTenor
                 )
                 .frame(minHeight: 120)
                 .frame(maxWidth: .infinity)
@@ -564,9 +616,6 @@ struct PostComposerViewUIKit: View {
 
         // Active entry URL cards (if any)
         urlCardsSection
-
-        // Media toolbar should remain visible in thread mode
-        mediaToolbar
 
         // Language chips and character count
         languageSection
@@ -794,6 +843,7 @@ struct PostComposerViewUIKit: View {
     .padding(.vertical, 8)
   }
 
+
   // MARK: - Toolbar (Liquid Glass Style)
   @ToolbarContentBuilder
   private var toolbarContent: some ToolbarContent {
@@ -840,82 +890,6 @@ struct PostComposerViewUIKit: View {
       }
   }
 
-  // MARK: - Media Toolbar
-  private var mediaToolbar: some View {
-    HStack(spacing: 16) {
-      // Photos
-      Button(action: { photoPickerVisible = true }) {
-        Image(systemName: "photo").appFont(size: 22).foregroundStyle(Color.accentColor)
-      }
-      .keyboardShortcut("i", modifiers: .command)
-      // Video
-      Button(action: { videoPickerVisible = true }) {
-        Image(systemName: "video").appFont(size: 22).foregroundStyle(Color.accentColor)
-      }
-      .keyboardShortcut("v", modifiers: .command)
-      // Audio
-      Button(action: { showingAudioRecorder = true }) {
-        Image(systemName: "mic").appFont(size: 22).foregroundStyle(Color.accentColor)
-      }
-      .keyboardShortcut("a", modifiers: .command)
-      // GIF
-      if appState.appSettings.allowTenor {
-        Button(action: { viewModel.showingGifPicker = true }) {
-          Text("GIF")
-            .font(.system(size: 14, weight: .semibold, design: .monospaced))
-            .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 1.5))
-        }
-        .keyboardShortcut("g", modifiers: .command)
-      }
-      // Labels selector
-      Button(action: { viewModel.showLabelSelector = true }) {
-        Image(systemName: "tag").appFont(size: 20)
-      }
-      // Threadgate options
-      Button(action: { viewModel.showThreadgateOptions = true }) {
-        Image(systemName: "lock").appFont(size: 20)
-      }
-      // Languages add
-      Button(action: { showingLanguagePicker = true }) {
-        Image(systemName: "globe").appFont(size: 20)
-      }
-      // Thread mode / Add thread entry
-      Button(action: {
-        if viewModel.isThreadMode {
-          withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            viewModel.addNewThreadEntry()
-            activeEditorFocusID = UUID()
-          }
-        } else {
-          withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            viewModel.enterThreadMode()
-            viewModel.addNewThreadEntry()
-            activeEditorFocusID = UUID()
-          }
-        }
-      }) {
-        Image(systemName: viewModel.isThreadMode ? "text.append" : "text.badge.plus")
-          .appFont(size: 20)
-      }
-      .keyboardShortcut("t", modifiers: .command)
-      Spacer()
-      // Link creation shortcut
-      Button(action: {
-        // Default to caret insertion at end of text
-        selectedTextForLink = ""
-        selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
-        showingLinkCreation = true
-      }) {
-        Image(systemName: "link").appFont(size: 20)
-      }
-      .keyboardShortcut("l", modifiers: .command)
-    }
-    .padding(.horizontal)
-    .padding(.vertical, 8)
-  }
 
   // MARK: - Language Chips
   private var languageSection: some View {

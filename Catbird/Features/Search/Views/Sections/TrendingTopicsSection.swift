@@ -327,7 +327,7 @@ private struct TrendingTopicSummaryLine: View {
                 // Lightweight loading shimmer
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
-                    .frame(height: 12)
+                    .frame(height: 15 * 3) // Approx. 3 lines
                     .redacted(reason: .placeholder)
             }
         }

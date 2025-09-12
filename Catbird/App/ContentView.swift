@@ -108,7 +108,7 @@ struct ContentViewLoadingView: View {
 
   init(message: String, progress: AuthProgress? = nil, onCancel: (() -> Void)? = nil) {
     self.message = message
-    self.progress = progress
+      self.progress = progress
     self.onCancel = onCancel
   }
 
@@ -251,19 +251,14 @@ struct AuthErrorView: View {
 
 // MARK: - Main Content Container View
 
-// Helper to apply matched transition source only on iOS 26+
+// Helper to apply matched transition source for zoom transitions
 @available(iOS 18.0, *)
 private struct ComposeSourceModifier: ViewModifier {
   let namespace: Namespace.ID
 
-  @ViewBuilder
   func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content
-        .matchedTransitionSource(id: "compose", in: namespace)
-    } else {
-      content
-    }
+    content
+      .matchedTransitionSource(id: "compose", in: namespace)
   }
 }
 
@@ -299,159 +294,199 @@ struct MainContentView18: View {
     ZStack(alignment: .top) {
       #if os(iOS)
       SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
-        TabView(
-          selection: Binding(
-            get: { selectedTab },
-            set: { newValue in
-              if selectedTab == newValue {
-                logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-                lastTappedTab = newValue
-              }
-              selectedTab = newValue
+        if #available(iOS 26.0, *) {
+          GlassEffectContainer(spacing: 20) {
+            ZStack(alignment: .bottomTrailing) {
+              TabView(
+                selection: Binding(
+                  get: { selectedTab },
+                  set: { newValue in
+                    if selectedTab == newValue {
+                      logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+                      lastTappedTab = newValue
+                    }
+                    selectedTab = newValue
 
-              // Update the navigation manager with the new tab index
-              navigationManager.updateCurrentTab(newValue)
-            }
-          )
-        ) {
-          // Home Tab
-          Tab("Home", systemImage: "house", value: 0) {
-            HomeView(
-              selectedTab: $selectedTab,
-              lastTappedTab: $lastTappedTab,
-              selectedFeed: $selectedFeed,
-              currentFeedName: $currentFeedName,
-              isDrawerOpen: $isDrawerOpen,
-              isRootView: $isRootView
-            )
-            .id(appState.currentUserDID)
-          }
-
-          // Search Tab
-          Tab(value: 1, role: .search) {
-            RefinedSearchView(
-              appState: appState,
-              selectedTab: $selectedTab,
-              lastTappedTab: $lastTappedTab
-            )
-            .id(appState.currentUserDID)
-          }
-
-          // Notifications Tab
-          Tab("Notifications", systemImage: "bell", value: 2) {
-            NotificationsView(
-              appState: appState,
-              selectedTab: $selectedTab,
-              lastTappedTab: $lastTappedTab
-            )
-            .id(appState.currentUserDID)
-          }
-          .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
-
-          // Profile Tab - Hidden on iPhone to save space
-          if !PlatformDeviceInfo.isPhone {
-            Tab("Profile", systemImage: "person", value: 3) {
-              NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-                UnifiedProfileView(
-                  appState: appState,
-                  selectedTab: $selectedTab,
-                  lastTappedTab: $lastTappedTab,
-                  path: appState.navigationManager.pathBinding(for: 3)
+                    // Update the navigation manager with the new tab index
+                    navigationManager.updateCurrentTab(newValue)
+                  }
                 )
-                .id(appState.currentUserDID)
-                .navigationDestination(for: NavigationDestination.self) { destination in
-                  NavigationHandler.viewForDestination(
-                    destination,
-                    path: appState.navigationManager.pathBinding(for: 3),
-                    appState: appState,
-                    selectedTab: $selectedTab
+              ) {
+                // Home Tab
+                Tab("Home", systemImage: "house", value: 0) {
+                  HomeView(
+                    selectedTab: $selectedTab,
+                    lastTappedTab: $lastTappedTab,
+                    selectedFeed: $selectedFeed,
+                    currentFeedName: $currentFeedName,
+                    isDrawerOpen: $isDrawerOpen,
+                    isRootView: $isRootView
                   )
+                  .id(appState.currentUserDID)
                 }
-              }
-            }
-          }
 
-          #if os(iOS)
-          // Chat Tab (iOS only)
-          Tab("Messages", systemImage: "envelope", value: 4) {
-            ChatTabView(
-              selectedTab: $selectedTab,
-              lastTappedTab: $lastTappedTab
-            )
-            .id(appState.currentUserDID)
-          }
-          .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
-          #endif
-        }
-        .onAppear {
-          // Theme is already applied during AppState initialization - no need to reapply here
-          
-          // Initialize from notification manager
-          notificationBadgeCount = appState.notificationManager.unreadCount
+                // Search Tab
+                Tab(value: 1, role: .search) {
+                  RefinedSearchView(
+                    appState: appState,
+                    selectedTab: $selectedTab,
+                    lastTappedTab: $lastTappedTab
+                  )
+                  .id(appState.currentUserDID)
+                }
 
-          // Set up notification observer
-          NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("UnreadNotificationCountChanged"),
-            object: nil,
-            queue: .main
-          ) { notification in
-            if let count = notification.userInfo?["count"] as? Int {
-              notificationBadgeCount = count
-            }
-          }
-          
-          // Restore UI state
-          Task {
-            await restoreUIState()
-          }
-          
-          // Note: Theme change updates are now handled by @Observable system in AppState
-          // No need for NotificationCenter observers that conflict with SwiftUI observation
-            
-          Task {
-            // Only initialize feed on first load
-            if !hasInitializedFeed {
-              hasInitializedFeed = true
-              
-              // First check for a pinned feed to use as default
-              if let preferences = try? await appState.preferencesManager.getPreferences(),
-                 let firstPinnedFeed = preferences.pinnedFeeds.first,
-                 let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
-                  
-                let feedInfo = try? await appState.atProtoClient?.app.bsky.feed.getFeedGenerator(input: .init(feed: uri)).data
-                  
-                // Use the first pinned feed as default
-                DispatchQueue.main.async {
-                  selectedFeed = .feed(uri)
-                  if let displayName = feedInfo?.view.displayName {
-                    currentFeedName = displayName
-                  } else {
-                    currentFeedName = "Feed"
+                // Notifications Tab
+                Tab("Notifications", systemImage: "bell", value: 2) {
+                  NotificationsView(
+                    appState: appState,
+                    selectedTab: $selectedTab,
+                    lastTappedTab: $lastTappedTab
+                  )
+                  .id(appState.currentUserDID)
+                }
+                .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
+
+                // Profile Tab - Hidden on iPhone to save space
+                if !PlatformDeviceInfo.isPhone {
+                  Tab("Profile", systemImage: "person", value: 3) {
+                    NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+                      UnifiedProfileView(
+                        appState: appState,
+                        selectedTab: $selectedTab,
+                        lastTappedTab: $lastTappedTab,
+                        path: appState.navigationManager.pathBinding(for: 3)
+                      )
+                      .id(appState.currentUserDID)
+                      .navigationDestination(for: NavigationDestination.self) { destination in
+                        NavigationHandler.viewForDestination(
+                          destination,
+                          path: appState.navigationManager.pathBinding(for: 3),
+                          appState: appState,
+                          selectedTab: $selectedTab
+                        )
+                      }
+                    }
                   }
                 }
-              } else {
-                // Fallback to timeline
-                DispatchQueue.main.async {
-                  selectedFeed = .timeline
-                  currentFeedName = "Timeline"
+
+                #if os(iOS)
+                // Chat Tab (iOS only)
+                Tab("Messages", systemImage: "envelope", value: 4) {
+                  ChatTabView(
+                    selectedTab: $selectedTab,
+                    lastTappedTab: $lastTappedTab
+                  )
+                  .id(appState.currentUserDID)
                 }
+                .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
+                #endif
+              }
+              
+              if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
+                FAB(
+                  composeAction: { showingPostComposer = true },
+                  feedsAction: {},
+                  showFeedsButton: false,
+                  hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
+                  clearDraftAction: {
+                    appState.composerDraftManager.clearDraft()
+                  }
+                )
+                .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
+                .padding(.trailing, 5)
+                // Mark FAB as the source of the Liquid Glass morph on iOS 26
+                .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
               }
             }
           }
-            
-          navigationManager.registerTabSelectionCallback { newTab in
-            selectedTab = newTab
-          }
-          
-          // Restore drawer state after initial setup
-          restoreDrawerState()
-        }
-        .safeAreaInset(edge: .bottom) {
-          if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-            ZStack(alignment: .trailing) {
-              // This creates space for the tab bar
-              Color.clear.frame(height: 49)  // Tab bar height
+        } else {
+          ZStack(alignment: .bottomTrailing) {
+            TabView(
+              selection: Binding(
+                get: { selectedTab },
+                set: { newValue in
+                  if selectedTab == newValue {
+                    logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+                    lastTappedTab = newValue
+                  }
+                  selectedTab = newValue
 
+                  // Update the navigation manager with the new tab index
+                  navigationManager.updateCurrentTab(newValue)
+                }
+              )
+            ) {
+              // Home Tab
+              Tab("Home", systemImage: "house", value: 0) {
+                HomeView(
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab,
+                  selectedFeed: $selectedFeed,
+                  currentFeedName: $currentFeedName,
+                  isDrawerOpen: $isDrawerOpen,
+                  isRootView: $isRootView
+                )
+                .id(appState.currentUserDID)
+              }
+
+              // Search Tab
+              Tab(value: 1, role: .search) {
+                RefinedSearchView(
+                  appState: appState,
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.currentUserDID)
+              }
+
+              // Notifications Tab
+              Tab("Notifications", systemImage: "bell", value: 2) {
+                NotificationsView(
+                  appState: appState,
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.currentUserDID)
+              }
+              .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
+
+              // Profile Tab - Hidden on iPhone to save space
+              if !PlatformDeviceInfo.isPhone {
+                Tab("Profile", systemImage: "person", value: 3) {
+                  NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+                    UnifiedProfileView(
+                      appState: appState,
+                      selectedTab: $selectedTab,
+                      lastTappedTab: $lastTappedTab,
+                      path: appState.navigationManager.pathBinding(for: 3)
+                    )
+                    .id(appState.currentUserDID)
+                    .navigationDestination(for: NavigationDestination.self) { destination in
+                      NavigationHandler.viewForDestination(
+                        destination,
+                        path: appState.navigationManager.pathBinding(for: 3),
+                        appState: appState,
+                        selectedTab: $selectedTab
+                      )
+                    }
+                  }
+                }
+              }
+
+              #if os(iOS)
+              // Chat Tab (iOS only)
+              Tab("Messages", systemImage: "envelope", value: 4) {
+                ChatTabView(
+                  selectedTab: $selectedTab,
+                  lastTappedTab: $lastTappedTab
+                )
+                .id(appState.currentUserDID)
+              }
+              .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
+              #endif
+            }
+            
+            if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
               FAB(
                 composeAction: { showingPostComposer = true },
                 feedsAction: {},
@@ -461,74 +496,12 @@ struct MainContentView18: View {
                   appState.composerDraftManager.clearDraft()
                 }
               )
-              .offset(x: -5, y: -70)  // Position FAB above tab bar
+              .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
+              .padding(.trailing, 5)
               // Mark FAB as the source of the Liquid Glass morph on iOS 26
               .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
             }
-          } else {
-            // If no FAB, still provide space for tab bar
-            Color.clear.frame(height: 49)
           }
-        }
-        .sheet(isPresented: $showingPostComposer) {
-          if #available(iOS 26.0, *) {
-            Group {
-              if let draft = appState.composerDraftManager.currentDraft {
-                PostComposerViewUIKit(
-                  restoringFromDraft: draft,
-                  appState: appState
-                )
-              } else {
-                PostComposerViewUIKit(
-                  appState: appState
-                )
-              }
-            }
-            .presentationDetents([.fraction(1/8), .medium, .large])
-            .presentationDragIndicator(.visible)
-            // Link the sheet to the FAB for Liquid Glass morph
-            .navigationTransition(.zoom(sourceID: "compose", in: composeTransitionNamespace))
-          } else {
-            Group {
-              if let draft = appState.composerDraftManager.currentDraft {
-                PostComposerViewUIKit(
-                  restoringFromDraft: draft,
-                  appState: appState
-                )
-              } else {
-                PostComposerViewUIKit(
-                  appState: appState
-                )
-              }
-            }
-            .presentationDetents([PresentationDetent.large])
-            .presentationDragIndicator(.hidden)
-            .presentationBackground(.thinMaterial)
-          }
-        }
-        .sheet(isPresented: $showingNewMessageSheet) {
-          NewMessageView()
-            .environment(appState)
-            .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(.thinMaterial)
-        }
-        .sheet(isPresented: $showingOnboarding) {
-          WelcomeOnboardingView()
-            .environment(appState)
-        }
-        .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
-          showingOnboarding = newValue
-        }
-        .onChange(of: showingOnboarding) { _, newValue in
-          if !newValue && appState.onboardingManager.showWelcomeSheet {
-            Task { @MainActor in
-              appState.onboardingManager.completeWelcomeOnboarding()
-            }
-          }
-        }
-        .onChange(of: isDrawerOpen) { _, newValue in
-          saveDrawerState()
         }
       } drawer: {
           NavigationStack {
@@ -557,6 +530,108 @@ struct MainContentView18: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
+      .onAppear {
+        // Theme is already applied during AppState initialization - no need to reapply here
+        
+        // Initialize from notification manager
+        notificationBadgeCount = appState.notificationManager.unreadCount
+
+        // Set up notification observer
+        NotificationCenter.default.addObserver(
+          forName: NSNotification.Name("UnreadNotificationCountChanged"),
+          object: nil,
+          queue: .main
+        ) { notification in
+          if let count = notification.userInfo?["count"] as? Int {
+            notificationBadgeCount = count
+          }
+        }
+        
+        // Restore UI state
+        Task {
+          await restoreUIState()
+        }
+        
+        // Note: Theme change updates are now handled by @Observable system in AppState
+        // No need for NotificationCenter observers that conflict with SwiftUI observation
+          
+        Task {
+          // Only initialize feed on first load
+          if !hasInitializedFeed {
+            hasInitializedFeed = true
+            
+            // First check for a pinned feed to use as default
+            if let preferences = try? await appState.preferencesManager.getPreferences(),
+               let firstPinnedFeed = preferences.pinnedFeeds.first,
+               let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
+                
+              let feedInfo = try? await appState.atProtoClient?.app.bsky.feed.getFeedGenerator(input: .init(feed: uri)).data
+                
+              // Use the first pinned feed as default
+              DispatchQueue.main.async {
+                selectedFeed = .feed(uri)
+                if let displayName = feedInfo?.view.displayName {
+                  currentFeedName = displayName
+                } else {
+                  currentFeedName = "Feed"
+                }
+              }
+            } else {
+              // Fallback to timeline
+              DispatchQueue.main.async {
+                selectedFeed = .timeline
+                currentFeedName = "Timeline"
+              }
+            }
+          }
+        }
+          
+        navigationManager.registerTabSelectionCallback { newTab in
+          selectedTab = newTab
+        }
+      }
+      .sheet(isPresented: $showingPostComposer) {
+        Group {
+          if let draft = appState.composerDraftManager.currentDraft {
+            PostComposerViewUIKit(
+              restoringFromDraft: draft,
+              appState: appState
+            )
+          } else {
+            PostComposerViewUIKit(
+              appState: appState
+            )
+          }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .applyComposerNavigationTransition(
+          enabled: (selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone)),
+          sourceID: "compose",
+          namespace: composeTransitionNamespace
+        )
+      }
+      .sheet(isPresented: $showingNewMessageSheet) {
+        NewMessageView()
+          .environment(appState)
+          .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
+          .presentationDragIndicator(.visible)
+          .presentationBackground(.thinMaterial)
+      }
+      .sheet(isPresented: $showingOnboarding) {
+        WelcomeOnboardingView()
+          .environment(appState)
+      }
+      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+        showingOnboarding = newValue
+      }
+      .onChange(of: showingOnboarding) { _, newValue in
+        if !newValue && appState.onboardingManager.showWelcomeSheet {
+          Task { @MainActor in
+            appState.onboardingManager.completeWelcomeOnboarding()
+          }
+        }
+      }
       
       #elseif os(macOS)
       // macOS content goes here directly without SideDrawer
@@ -701,20 +776,16 @@ struct MainContentView18: View {
         }
       }
       .sheet(isPresented: $showingPostComposer) {
-        if #available(iOS 26.0, *) {
-          PostComposerViewUIKit(
-            appState: appState
-          )
-          .presentationDetents([.medium, .large])
-          .presentationDragIndicator(.visible)
-          .navigationTransition(.zoom(sourceID: "compose", in: composeTransitionNamespace))
-        } else {
-          PostComposerViewUIKit(
-            appState: appState
-          )
-          .presentationDetents([PresentationDetent.large])
-          .presentationDragIndicator(.hidden)
-        }
+        PostComposerViewUIKit(
+          appState: appState
+        )
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .applyComposerNavigationTransition(
+          enabled: (selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone)),
+          sourceID: "compose",
+          namespace: composeTransitionNamespace
+        )
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
@@ -942,9 +1013,6 @@ struct MainContentView17: View {
         navigationManager.registerTabSelectionCallback { newTab in
           selectedTab = newTab
         }
-        
-        // Restore drawer state after initial setup
-        restoreDrawerState()
       }
       .safeAreaInset(edge: .bottom) {
         if selectedTab == 0 {
@@ -968,14 +1036,13 @@ struct MainContentView17: View {
         PostComposerViewUIKit(
           appState: appState
         )
-        .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
+        .presentationDetents([PresentationDetent.large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(.thinMaterial)
       }
       .sheet(isPresented: $showingNewMessageSheet) {
         NewMessageView()
           .environment(appState)
-          .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
+          .presentationDetents([PresentationDetent.large])
           .presentationDragIndicator(.visible)
           .presentationBackground(.thinMaterial)
       }
@@ -992,9 +1059,6 @@ struct MainContentView17: View {
             appState.onboardingManager.completeWelcomeOnboarding()
           }
         }
-      }
-      .onChange(of: isDrawerOpen) { _, newValue in
-        saveDrawerState()
       }
       } drawer: {
         FeedsStartPage(
@@ -1408,61 +1472,22 @@ extension MainContentView18 {
   func restoreUIState() async {
     guard !hasRestoredState else { return }
     hasRestoredState = true
-    
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    
-    // Restore selected tab
-    let savedTab = defaults.integer(forKey: "last_selected_tab")
-    if savedTab >= 0 && savedTab <= 4 {
-      // On iPhone, don't restore profile tab (tab 3) - fallback to home (tab 0)
-      if savedTab == 3 && PlatformDeviceInfo.isPhone {
-        selectedTab = 0
-        logger.debug("[ContentView] Restored tab 3 -> tab 0 (iPhone)")
-      } else {
-        selectedTab = savedTab
-        logger.debug("[ContentView] Restored selected tab: \(savedTab)")
-      }
-    }
-    
-    // Clean up restoration flags
-    defaults.removeObject(forKey: "should_restore_drawer_open")
-  }
-  
-  @MainActor
-  func restoreDrawerState() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    
-    // Restore drawer state if flagged for restoration
-    if defaults.bool(forKey: "should_restore_drawer_open") && selectedTab == 0 {
-      isDrawerOpen = true
-      defaults.removeObject(forKey: "should_restore_drawer_open")
-      logger.debug("[ContentView] Restored drawer open state")
-    }
-  }
-  
-  @MainActor
-  func saveDrawerState() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    defaults.set(isDrawerOpen, forKey: "drawer_was_open")
   }
 }
 
 extension MainContentView17 {
-  @MainActor
-  func restoreDrawerState() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    
-    // Restore drawer state if flagged for restoration
-    if defaults.bool(forKey: "should_restore_drawer_open") && selectedTab == 0 {
-      isDrawerOpen = true
-      defaults.removeObject(forKey: "should_restore_drawer_open")
-      logger.debug("[ContentView] Restored drawer open state")
+}
+
+// MARK: - Conditional Navigation Transition Helper
+
+extension View {
+  @available(iOS 18.0, macOS 15.0, *)
+  @ViewBuilder
+  func applyComposerNavigationTransition(enabled: Bool, sourceID: String, namespace: Namespace.ID) -> some View {
+    if enabled {
+      self.navigationTransition(.zoom(sourceID: sourceID, in: namespace))
+    } else {
+      self
     }
-  }
-  
-  @MainActor
-  func saveDrawerState() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    defaults.set(isDrawerOpen, forKey: "drawer_was_open")
   }
 }

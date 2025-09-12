@@ -17,6 +17,7 @@ struct HomeView: View {
 
   // Local state
   @State private var showingSettings = false
+  
 
   // For logging
   let id = UUID().uuidString.prefix(6)
@@ -25,11 +26,13 @@ struct HomeView: View {
   var body: some View {
     let navigationPath = appState.navigationManager.pathBinding(for: 0)
     
-    mainNavigationView(navigationPath: navigationPath)
-      .sheet(isPresented: $showingSettings) {
-        SettingsView()
-              .environment(appState)
-      }
+    ZStack {
+      mainNavigationView(navigationPath: navigationPath)
+        .sheet(isPresented: $showingSettings) {
+          SettingsView()
+                .environment(appState)
+        }
+    }
       .onAppear {
         appState.navigationManager.updateCurrentTab(0)
       }
@@ -57,6 +60,7 @@ struct HomeView: View {
         .ensureNavigationFonts()
         .toolbar {
           leadingToolbarContent
+          centerToolbarContent
           trailingToolbarContent
           #if targetEnvironment(macCatalyst)
           // Add a refresh button for Mac Catalyst and bind Cmd-R
@@ -113,6 +117,12 @@ struct HomeView: View {
       .disabled(!isRootView)
       .accessibilityLabel("Feed selector")
       .accessibilityHint("Opens feed selection drawer")
+    }
+  }
+  
+  private var centerToolbarContent: some ToolbarContent {
+    ToolbarItem(placement: .principal) {
+      EmptyView()
     }
   }
   

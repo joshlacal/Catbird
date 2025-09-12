@@ -95,8 +95,8 @@ var id: String {
         // Show error state
         errorView(for: error)
       } else {
-        // Show normal post content
-        normalPostView
+        // Show post with moderation gate (Hide/Warn/Show) applied to the entire post
+        moderatedPostView
       }
     }
     .task {
@@ -108,6 +108,18 @@ var id: String {
     }
   }
   
+  // Wrap the entire post in a moderation gate that can Hide/Warn/Show
+  @ViewBuilder
+  private var moderatedPostView: some View {
+    if let labels = postState.currentPost.labels, !labels.isEmpty {
+      ContentLabelManager(labels: labels, contentType: "post") {
+        normalPostView
+      }
+    } else {
+      normalPostView
+    }
+  }
+
   private var normalPostView: some View {
     HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
       // Use the extracted AuthorAvatarColumn view
@@ -392,7 +404,7 @@ var id: String {
         }
       }
     }
-
+    
     // Fetch user data
     fetchCurrentUserDid()
 

@@ -56,6 +56,17 @@ struct ChatTabView: View {
     .sheet(isPresented: $showingNewMessageSheet) {
       NewMessageView()
     }
+    // Global FAB overlay so it shows regardless of which column is visible
+    .overlay(alignment: .bottomTrailing) {
+      if shouldShowChatFAB {
+        ChatFAB(newMessageAction: {
+          showingNewMessageSheet = true
+        })
+        .padding(.trailing, 16)
+        .padding(.bottom, 16)
+        .zIndex(10)
+      }
+    }
   }
   
   // MARK: - Sidebar Content
@@ -64,7 +75,7 @@ struct ChatTabView: View {
   private var chatSidebarContent: some View {
     ZStack(alignment: .bottom) {
       conversationList
-      chatFABContainer
+      // FAB moved to a global overlay; nothing else needed here
     }
   }
   
@@ -170,25 +181,6 @@ struct ChatTabView: View {
       }
   }
   
-  @ViewBuilder
-  private var chatFABContainer: some View {
-    ZStack(alignment: .trailing) {
-      Color.clear.frame(height: 49)
-      ChatFAB(newMessageAction: {
-        showingNewMessageSheet = true
-      })
-      .offset(x: -5, y: -70)  // Position FAB above tab bar
-    }
-    .ignoresSafeArea()
-#if os(iOS)
-    .safeAreaInset(edge: .bottom) {
-      EmptyView()
-    }
-#elseif os(macOS)
-    .padding(.bottom, 0)
-#endif
-  }
-  
   // MARK: - Detail Content
   
   @ViewBuilder
@@ -254,8 +246,10 @@ struct ChatTabView: View {
   
   private var shouldShowChatFAB: Bool {
     if DeviceInfo.isIPad {
+      // Always show on iPad (split view)
       return true
     } else {
+      // On iPhone: show only when the list is visible (no conversation selected and stack is at root)
       return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
     }
   }

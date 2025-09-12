@@ -322,7 +322,15 @@ extension PostComposerViewModel {
         }
         
         // Create self labels
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
+        // If adult content is disabled, do not allow adult self-labels on posts
+        let adultOnly: Set<String> = ["porn", "sexual", "nudity"]
+        let filteredLabels: Set<ComAtprotoLabelDefs.LabelValue>
+        if !appState.isAdultContentEnabled {
+            filteredLabels = selectedLabels.filter { !adultOnly.contains($0.rawValue) }
+        } else {
+            filteredLabels = selectedLabels
+        }
+        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
         
         // Set up threadgate for the first post
         var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
@@ -426,7 +434,15 @@ extension PostComposerViewModel {
         }
         
         // Create self labels
-        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: selectedLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
+        // If adult content is disabled, do not allow adult self-labels on posts
+        let adultOnly: Set<String> = ["porn", "sexual", "nudity"]
+        let filteredLabels: Set<ComAtprotoLabelDefs.LabelValue>
+        if !appState.isAdultContentEnabled {
+            filteredLabels = selectedLabels.filter { !adultOnly.contains($0.rawValue) }
+        } else {
+            filteredLabels = selectedLabels
+        }
+        let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
         
         // Convert threadgate settings if needed
         var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?

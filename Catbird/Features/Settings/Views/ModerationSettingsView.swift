@@ -121,11 +121,25 @@ struct ModerationSettingsView: View {
                 
                 // Content Filters Section
                 Section("Content Filters") {
-                    Toggle("Adult Content", isOn: $adultContentEnabled)
-                        .tint(.blue)
-                        .onChange(of: adultContentEnabled) { 
-                            updateAdultContentSetting()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Adult Content", isOn: $adultContentEnabled)
+                            .tint(.blue)
+                            // Only allow turning it off here. Enabling must be done in Bluesky.
+                            .disabled(!adultContentEnabled)
+                            .onChange(of: adultContentEnabled) {
+                                updateAdultContentSetting()
+                            }
+                        if !adultContentEnabled {
+                            HStack(spacing: 8) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.caption)
+                                Text("To enable adult content, turn it on in the official Bluesky app. You can turn it off here at any time.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                    }
                     
                     if adultContentEnabled {
                         ContentVisibilitySelector(

@@ -89,6 +89,32 @@ struct PrivacySecuritySettingsView: View {
                 }
             }
             
+            // Personal Information Section
+            Section("Personal Information") {
+                NavigationLink {
+                    BirthDateSettingsView()
+                        .environment(appState)
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Birth Date")
+                                .fontWeight(.medium)
+                            
+                            Text("Manage in the Bluesky app; not editable here")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Text("—")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .disabled(true)
+            }
+            
             Section("App Passwords") {
                 NavigationLink {
                     AppPasswordsView()
@@ -339,6 +365,8 @@ struct PrivacySecuritySettingsView: View {
             logger.debug("Error loading muted accounts: \(error)")
         }
     }
+    
+    // Age-related helper removed
 }
 
 // MARK: - App Passwords View
