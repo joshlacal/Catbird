@@ -117,46 +117,45 @@ actor ImageLoadingManager {
     /// Create and configure an optimized image pipeline
     private static func createConfiguredPipeline() -> ImagePipeline {
         var config = ImagePipeline.Configuration()
-        
+
         // Use up to 20% of available RAM for the memory cache
         config.imageCache = ImageCache(costLimit: 1024 * 1024 * 100) // 100MB
-        
+
         // Set disk cache to 300MB
         let diskCache = try? DataCache(name: "blue.catbird.ImageCache")
         diskCache?.sizeLimit = 1024 * 1024 * 300 // 300MB
         config.dataCache = diskCache
-        
+
         // Improve performance for scrolling
         config.isProgressiveDecodingEnabled = false
-        
-        // Configure request priorities
+
+        // Configure request priorities and caching
         config.dataCachePolicy = .automatic
-        
+        config.isTaskCoalescingEnabled = true
+
         // Create operation queues with appropriate QoS
         let decodingQueue = OperationQueue()
         decodingQueue.qualityOfService = .userInitiated
         decodingQueue.maxConcurrentOperationCount = 2 // Limit concurrency
         config.imageDecodingQueue = decodingQueue
-        
+
         let encodingQueue = OperationQueue()
         encodingQueue.qualityOfService = .utility
         encodingQueue.maxConcurrentOperationCount = 1 // Serial queue for encoding
         config.imageEncodingQueue = encodingQueue
-        
-        // Critical: Add additional image processing queue
+
+        // Lower priority for processing queue to avoid blocking decoding
         let processingQueue = OperationQueue()
-        processingQueue.qualityOfService = .userInitiated
-        processingQueue.maxConcurrentOperationCount = 2 // Limited concurrency
+        processingQueue.qualityOfService = .utility // Lower than decoding
+        processingQueue.maxConcurrentOperationCount = 1 // Reduce to 1 for better memory usage
         config.imageProcessingQueue = processingQueue
-        
-        // Configure for background execution to prevent blocking main thread
-        config.isTaskCoalescingEnabled = true
-        
+
         // Critical: defer image decompression to background
         config.isStoringPreviewsInMemoryCache = true
-        
-        // Enable animated image support (GIFs) - handled automatically by Nuke
-        
+
+        // Configure rate limiting for better network performance
+        config.isRateLimiterEnabled = true
+
         // Return the configured pipeline
         return ImagePipeline(configuration: config)
     }
@@ -180,106 +179,40 @@ actor ImageLoadingManager {
     }
 }
 
-// MARK: - Custom Image Processors
+// MARK: - Image Processing Helpers
 
-extension ImageProcessors {
-    /// A processor that asynchronously downscales images in a background thread
-    /// to avoid "PreferredTransform" main thread blocking issues
-    struct AsyncImageDownscaling: ImageProcessing {
-        let targetSize: CGSize
-        
-        var identifier: String {
-            "blue.catbird.async-downscaling-\(targetSize.width)x\(targetSize.height)"
+extension ImageLoadingManager {
+    /// Create optimized processors for the given target size
+    /// Uses Nuke's built-in processors for better performance and caching
+    static func processors(for targetSize: CGSize, contentMode: ImageProcessors.Resize.ContentMode = .aspectFill) -> [any ImageProcessing] {
+        // Ensure reasonable minimum size to avoid invalid dimensions
+        let safeWidth = max(1, min(4000, targetSize.width))
+        let safeHeight = max(1, min(4000, targetSize.height))
+        let safeSize = CGSize(width: safeWidth, height: safeHeight)
+
+        return [
+            ImageProcessors.Resize(size: safeSize, contentMode: contentMode, crop: false, upscale: false),
+            ImageProcessors.CoreImageFilter(name: "CIColorControls") // Optional: improve contrast for thumbnails
+        ]
+    }
+
+    /// Create a request with optimized caching key for the given size
+    static func imageRequest(for url: URL, targetSize: CGSize) -> ImageRequest {
+        var request = ImageRequest(url: url)
+
+        // Add size to cache key for better cache efficiency
+        request.processors = processors(for: targetSize)
+
+        // Set appropriate priority based on size (smaller = higher priority for thumbnails)
+        let area = targetSize.width * targetSize.height
+        if area < 100_000 { // Small thumbnails
+            request.priority = .high
+        } else if area < 500_000 { // Medium images
+            request.priority = .normal
+        } else { // Large images
+            request.priority = .low
         }
-        
-        // Using ImageProcessing protocol's required method signature
-        func process(_ image: PlatformImage) -> PlatformImage? {
-            // Ensure we're not already on the main thread
-            if Thread.isMainThread {
-                // If on main thread, create a copy to avoid blocking
-                var copy = image
-                #if os(iOS)
-                if let cgImage = image.cgImage {
-                    copy = PlatformImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
-                }
-                #elseif os(macOS)
-                if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                    copy = PlatformImage(cgImage: cgImage, size: image.size)
-                }
-                #endif
-                return applyProcessing(to: copy)
-            } else {
-                return applyProcessing(to: image)
-            }
-        }
-        
-        private func applyProcessing(to image: PlatformImage) -> PlatformImage? {
-            let targetSize = self.targetSize
-            
-            // We'll implement a safer approach that uses UIGraphicsImageRenderer 
-            // instead of SwiftUI's ImageRenderer to avoid potential compatibility issues
-            
-            // Determine the appropriate content mode-based size
-            #if os(iOS)
-            let imageSize = CGSize(width: max(1, image.size.width * image.scale), 
-                                  height: max(1, image.size.height * image.scale))
-            #elseif os(macOS)
-            let imageSize = CGSize(width: max(1, image.size.width), 
-                                  height: max(1, image.size.height))
-            #endif
-            let aspectRatio = imageSize.width / imageSize.height
-            
-            // Calculate target dimensions maintaining aspect ratio
-            var width: CGFloat
-            var height: CGFloat
-            
-            // Guard against zero or very small dimensions
-            let safeTargetWidth = max(1, targetSize.width)
-            let safeTargetHeight = max(1, targetSize.height) 
-            
-            if safeTargetWidth / safeTargetHeight > aspectRatio {
-                width = safeTargetHeight * aspectRatio
-                height = safeTargetHeight
-            } else {
-                width = safeTargetWidth
-                height = safeTargetWidth / aspectRatio
-            }
-            
-            // Ensure dimensions are at least 1pt
-            width = max(1, width)
-            height = max(1, height)
-            
-            // Check if we can safely create a resized image
-            if width.isFinite && height.isFinite && width > 0 && height > 0 {
-                let targetSize = CGSize(width: width, height: height)
-                
-                #if os(iOS)
-                let renderer = UIGraphicsImageRenderer(size: targetSize)
-                return renderer.image { _ in
-                    // Clear background to avoid artifacts
-                    UIColor.clear.setFill()
-                    UIRectFill(CGRect(origin: .zero, size: targetSize))
-                    
-                    // Draw image maintaining aspect ratio
-                    image.draw(in: CGRect(origin: .zero, size: targetSize))
-                }
-                #elseif os(macOS)
-                return NSImage(size: targetSize, flipped: false) { rect in
-                    // Clear background to avoid artifacts
-                    NSColor.clear.setFill()
-                    rect.fill()
-                    
-                    // Draw image maintaining aspect ratio
-                    image.draw(in: rect)
-                    return true
-                }
-                #endif
-            } else {
-                // If dimensions are invalid, fall back to Nuke's built-in processor with safe dimensions
-                let safeSize = CGSize(width: max(1, min(4000, targetSize.width)), 
-                                     height: max(1, min(4000, targetSize.height)))
-                return ImageProcessors.Resize(size: safeSize, contentMode: .aspectFit).process(image)
-            }
-        }
+
+        return request
     }
 }

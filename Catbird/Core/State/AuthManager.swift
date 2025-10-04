@@ -147,9 +147,29 @@ final class AuthenticationManager: AuthProgressDelegate {
   // User information
   private(set) var handle: String?
 
+  // Alert to surface critical auth transitions (e.g., auto-logout)
+  struct AuthAlert: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let message: String
+  }
+  var pendingAuthAlert: AuthAlert?
+
   // Available accounts
-   var availableAccounts: [AccountInfo] = [] // Removed private(set) as @Observable handles it
-   var isSwitchingAccount = false // Removed private(set)
+  var availableAccounts: [AccountInfo] = [] // Removed private(set) as @Observable handles it
+  var isSwitchingAccount = false // Removed private(set)
+
+  // Track expired account for automatic re-authentication
+  private(set) var expiredAccountInfo: AccountInfo?
+
+  /// True when we can present the account switcher instead of forcing the login flow.
+  var hasRegisteredAccounts: Bool {
+    if !availableAccounts.isEmpty {
+      return true
+    }
+
+    return !getStoredHandles().isEmpty
+  }
 
   // Biometric authentication
   private(set) var biometricAuthEnabled = false
@@ -204,6 +224,81 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Access state changes as an AsyncSequence
   var stateChanges: AsyncStream<AuthState> {
     return stateSubject.stream
+  }
+
+  // MARK: - Auto-logout handling from Petrel
+
+  /// Called when Petrel detects a terminal auth failure (e.g., invalid_grant) and performs a logout.
+  /// Ensures the UI transitions to the unauthenticated state and shows clear logs.
+  @MainActor
+  func handleAutoLogoutFromPetrel(did: String?, reason: String?) async {
+    logger.error("Auto logout from Petrel: did=\(did ?? "nil") reason=\(reason ?? "nil")")
+
+    // Store expired account info for automatic re-authentication
+    if let did {
+      let storedHandle = getStoredHandle(for: did)
+      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+      logger.info("Stored expired account info for automatic re-authentication: \(storedHandle ?? did)")
+    }
+
+    // Clean up notifications before clearing client
+    Task {
+      await AppState.shared.notificationManager.cleanupNotifications(previousClient: client)
+    }
+
+    // Update UI state immediately
+    updateState(.unauthenticated)
+
+    // Drop the client reference to avoid any accidental reuse under a different account
+    client = nil
+
+    // Clear known handle if it matches
+    if let did, case .authenticated(let current) = state, current == did {
+      handle = nil
+    }
+
+    updateAvailableAccountsFromStoredHandles(activeDID: nil)
+
+    // Present a one-shot alert to the user explaining why
+    let reasonText: String = {
+      switch (reason ?? "").lowercased() {
+      case "invalid_grant":
+        return "Your session expired or was revoked. Please sign in again."
+      case "invalid_token":
+        return "Your session token is no longer valid. Please sign in again."
+      default:
+        return reason.map { "Signed out: \($0). Please sign in again." } ?? "You were signed out. Please sign in again."
+      }
+    }()
+    pendingAuthAlert = AuthAlert(title: "Signed Out", message: reasonText)
+
+    // You could present a user-facing banner/toast here via AppState if desired
+  }
+
+  @MainActor
+  func clearPendingAuthAlert() {
+    pendingAuthAlert = nil
+  }
+
+  /// Clear expired account info
+  @MainActor
+  func clearExpiredAccountInfo() {
+    expiredAccountInfo = nil
+  }
+
+  /// Start OAuth flow for the expired account (if available)
+  @MainActor
+  func startOAuthFlowForExpiredAccount() async throws -> URL? {
+    guard let expiredAccount = expiredAccountInfo,
+          let handle = expiredAccount.handle else {
+      logger.warning("No expired account information available for automatic re-authentication")
+      return nil
+    }
+
+    logger.info("Starting OAuth flow for expired account: \(handle)")
+
+    // Use the existing login method
+    return try await login(handle: handle)
   }
 
   /// Update the authentication state and emit the change
@@ -268,7 +363,7 @@ final class AuthenticationManager: AuthProgressDelegate {
           // Add log immediately after *successful* creation
           logger.info("✅✅✅ ATProtoClient CREATED SUCCESSFULLY ✅✅✅")  // Make it stand out
           
-          // Set up progress delegate
+          // Set up progress and failure delegates
           await client?.setAuthProgressDelegate(self)
       }
 
@@ -595,6 +690,8 @@ final class AuthenticationManager: AuthProgressDelegate {
           await MainActor.run {
               // Clear cancellation flag on successful authentication
               self.isAuthenticationCancelled = false
+              // Clear expired account info on successful re-authentication
+              self.expiredAccountInfo = nil
               self.updateState(.authenticated(userDID: did))
           }
         self.logger.info("Authentication successful for user \(self.handle ?? "unknown")")
@@ -629,6 +726,11 @@ final class AuthenticationManager: AuthProgressDelegate {
     // Update state first to ensure UI updates immediately
     updateState(.unauthenticated)
 
+    // Clean up notifications first before clearing client
+    Task {
+      await AppState.shared.notificationManager.cleanupNotifications(previousClient: client)
+    }
+
     // Clean up
     if let client = client {
       do {
@@ -645,6 +747,11 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     // Clear user info
     handle = nil
+
+    // Clear expired account info on deliberate logout
+    expiredAccountInfo = nil
+
+    updateAvailableAccountsFromStoredHandles(activeDID: nil)
   }
 
   /// Reset after an error or cancellation
@@ -749,52 +856,115 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Get list of all available accounts
   @MainActor
   func refreshAvailableAccounts() async {
+    await ensureClientInitializedForAccountOperations()
+
+    let currentDID: String?
+    if case .authenticated(let did) = state {
+      currentDID = did
+    } else {
+      currentDID = nil
+    }
+
     guard let client = client else {
-      logger.warning("Cannot list accounts: client is nil")
+      updateAvailableAccountsFromStoredHandles(activeDID: currentDID)
+      return
+    }
+
+    // Get list of accounts from client
+    let accounts = await client.listAccounts()
+    logger.info("Found \(accounts.count) available accounts")
+
+    var accountInfos: [AccountInfo] = []
+    accountInfos.reserveCapacity(accounts.count)
+
+    for account in accounts {
+      // Try to get handle for this account (may require switching to it temporarily)
+      var handle: String?
+
+      if account.did == currentDID {
+        // For current account, we can get handle directly
+        handle = try? await client.getHandle()
+        // Also store it for future use
+        if let handle {
+          storeHandle(handle, for: account.did)
+        }
+      } else {
+        // For other accounts, get from stored handles
+        handle = getStoredHandle(for: account.did)
+      }
+
+      accountInfos.append(
+        AccountInfo(
+          did: account.did,
+          handle: handle,
+          isActive: account.did == currentDID
+        )
+      )
+    }
+
+    // Merge any stored handles that aren't part of the client's account list (e.g., after logout)
+    let storedHandles = getStoredHandles()
+    for (storedDID, storedHandle) in storedHandles where !accountInfos.contains(where: { $0.did == storedDID }) {
+      accountInfos.append(
+        AccountInfo(
+          did: storedDID,
+          handle: storedHandle,
+          isActive: storedDID == currentDID
+        )
+      )
+    }
+
+    availableAccounts = accountInfos.sorted { lhs, rhs in
+      let lhsHandle = lhs.handle ?? lhs.did
+      let rhsHandle = rhs.handle ?? rhs.did
+      return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+    }
+  }
+
+  @MainActor
+  private func ensureClientInitializedForAccountOperations() async {
+    guard client == nil else { return }
+
+    logger.info("Recreating ATProtoClient for account operations")
+    client = await ATProtoClient(
+      oauthConfig: oauthConfig,
+      namespace: "blue.catbird",
+      userAgent: "Catbird/1.0"
+    )
+
+    await client?.applicationDidBecomeActive()
+    await client?.setAuthProgressDelegate(self)
+  }
+
+  /// Update the available accounts list from locally stored handles when the client is unavailable.
+  private func updateAvailableAccountsFromStoredHandles(activeDID: String?) {
+    let storedHandles = getStoredHandles()
+
+    guard !storedHandles.isEmpty else {
       availableAccounts = []
       return
     }
 
-      // Get current DID for marking active account
-      var currentDID: String?
-      if case .authenticated(let did) = state {
-        currentDID = did
-      }
+    let infos = storedHandles.map { did, handle in
+      AccountInfo(
+        did: did,
+        handle: handle,
+        isActive: did == activeDID
+      )
+    }
 
-      // Get list of accounts from client
-      let accounts = await client.listAccounts()
-      logger.info("Found \(accounts.count) available accounts")
-
-      // Build account info objects
-      var accountInfos: [AccountInfo] = []
-
-      for account in accounts {
-        // Try to get handle for this account (may require switching to it temporarily)
-        var handle: String?
-
-          if account.did == currentDID {
-          // For current account, we can get handle directly
-          handle = try? await client.getHandle()
-          // Also store it for future use
-          if let handle = handle {
-            storeHandle(handle, for: account.did)
-          }
-        } else {
-          // For other accounts, get from stored handles
-          handle = getStoredHandle(for: account.did)
-        }
-
-          let isActive = account.did == currentDID
-          accountInfos.append(AccountInfo(did: account.did, handle: handle, isActive: isActive))
-      }
-
-      // Update state
-      availableAccounts = accountInfos
+    availableAccounts = infos.sorted { lhs, rhs in
+      let lhsHandle = lhs.handle ?? lhs.did
+      let rhsHandle = rhs.handle ?? rhs.did
+      return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+    }
   }
 
   /// Switch to a different account
   @MainActor
   func switchToAccount(did: String) async throws {
+    await ensureClientInitializedForAccountOperations()
+
     guard let client = client else {
       throw AuthError.clientNotInitialized
     }
@@ -837,6 +1007,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func addAccount(handle: String) async throws -> URL {
     logger.info("Adding new account with handle: \(handle)")
+
+    await ensureClientInitializedForAccountOperations()
 
     // Ensure client exists
     guard let client = client else {
@@ -1036,6 +1208,29 @@ final class AuthenticationManager: AuthProgressDelegate {
     // Update state on main actor
     await MainActor.run {
       self.updateState(.authenticating(progress: progress))
+    }
+  }
+
+  // MARK: - Error Recovery Methods
+
+  /// Attempts to recover from auth failures when connectivity is restored
+  @MainActor
+  func attemptRecoveryFromNetworkIssues() async {
+    logger.info("Attempting recovery from network issues")
+
+    guard let client = self.client else {
+      logger.error("Cannot attempt recovery - no client available")
+      return
+    }
+
+    do {
+      // Try to recover using the AuthenticationService method
+      try await client.attemptRecoveryFromServerFailures()
+      logger.info("Recovery successful - checking authentication state")
+      await checkAuthenticationState()
+    } catch {
+      logger.error("Recovery attempt failed: \(error)")
+      updateState(AuthState.error(message: "Recovery failed: \(error.localizedDescription)"))
     }
   }
 }

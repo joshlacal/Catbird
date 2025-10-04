@@ -290,6 +290,8 @@ actor FeedPrefetchingManager {
 
           case .unexpected:
             break
+          case .pending(_):
+              break
           }
 
       }
@@ -366,6 +368,8 @@ actor FeedPrefetchingManager {
 
     case .unexpected:
       break
-    }
+    case .pending(_):
+        break
+}
   }
 }

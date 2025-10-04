@@ -74,6 +74,8 @@ protocol LinkCreationDelegate: AnyObject {
 struct EnhancedRichTextEditor: UIViewRepresentable {
   @Binding var attributedText: NSAttributedString
   @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
+  // Optional: when set, the editor will move the caret to this range, then clear it.
+  @Binding var pendingSelectionRange: NSRange?
   
   let placeholder: String
   let onImagePasted: (UIImage) -> Void
@@ -155,7 +157,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       )
       uiView.attributedText = displayText
       
-      // Restore selection if possible
+      // Restore prior selection by default; will be overridden by pendingSelectionRange below
       if previousSelectedRange.location <= uiView.text.count {
         uiView.selectedRange = previousSelectedRange
       }
@@ -169,6 +171,23 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       context.coordinator.lastFocusID = focusActivationID
       DispatchQueue.main.async {
         _ = uiView.becomeFirstResponder()
+      }
+    }
+
+    // Apply any requested selection change (e.g., after inserting a link or mention)
+    if let requested = pendingSelectionRange {
+      let safeLoc = max(0, min(requested.location, uiView.text.count))
+      let safeLen = max(0, min(requested.length, uiView.text.count - safeLoc))
+      uiView.selectedRange = NSRange(location: safeLoc, length: safeLen)
+      // Ensure typing attributes are reset to standard (non-link) after moving the caret
+      let font = uiView.font ?? getAppropriateFont()
+      uiView.typingAttributes = [
+        .font: font,
+        .foregroundColor: UIColor.label
+      ]
+      // Clear the request so it only applies once
+      DispatchQueue.main.async {
+        self.pendingSelectionRange = nil
       }
     }
   }
@@ -431,158 +450,179 @@ struct KeyboardToolbarView: View {
   let onThread: (() -> Void)?
   let onLink: (() -> Void)?
   let allowTenor: Bool
-  
+
+  @Namespace private var glassNamespace
+
   var body: some View {
-          if #available(iOS 26.0, *) {
-                  
-                  HStack(spacing: 3) {
-                      // Photos
-                      Button(action: { onPhotos?() }) {
-                          Image(systemName: "photo")
-                              .font(.system(size: 22))
-                      }
-                      .glassEffect(.regular)
-                      
-                      // Video
-                      Button(action: { onVideo?() }) {
-                          Image(systemName: "video")
-                              .font(.system(size: 22))
-                      }
-                      .glassEffect(.regular)
-                      
-                      // Audio
-                      Button(action: { onAudio?() }) {
-                          Image(systemName: "mic")
-                              .font(.system(size: 22))
-                      }
-                      .glassEffect(.regular)
-                      
-                      // GIF
-                      if allowTenor {
-                          Button(action: { onGif?() }) {
-                              Text("GIF")
-                                  .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                  .padding(.horizontal, 8)
-                                  .padding(.vertical, 4)
-                          }
-                          .glassEffect(.regular)
-                      }
-                      
-                      // Labels selector
-                      Button(action: { onLabels?() }) {
-                          Image(systemName: "tag")
-                              .font(.system(size: 20))
-                      }
-                      .glassEffect(.regular)
-                      
-                      // Threadgate options
-                      Button(action: { onThreadgate?() }) {
-                          Image(systemName: "lock")
-                              .font(.system(size: 20))
-                      }
-                      .glassEffect(.regular)
-                      
-                      // Languages add
-                      Button(action: { onLanguage?() }) {
-                          Image(systemName: "globe")
-                              .font(.system(size: 20))
-                      }
-                      .glassEffect(.regular)
-                      
-                      // Thread mode / Add thread entry
-                      Button(action: { onThread?() }) {
-                          Image(systemName: "text.badge.plus")
-                              .font(.system(size: 20))
-                      }
-                      .glassEffect(.regular)
-                      
-                      Spacer()
-                      
-                      // Link creation shortcut
-                      Button(action: { onLink?() }) {
-                          Image(systemName: "link")
-                              .font(.system(size: 20))
-                      }
-                      .glassEffect(.regular)
-                  }
-                  .buttonStyle(.glass)
-              
-          } else {
-              HStack(spacing: 3) {
-                  // Photos
-                  Button(action: { onPhotos?() }) {
-                      Image(systemName: "photo")
-                          .font(.system(size: 22))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  // Video
-                  Button(action: { onVideo?() }) {
-                      Image(systemName: "video")
-                          .font(.system(size: 22))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  // Audio
-                  Button(action: { onAudio?() }) {
-                      Image(systemName: "mic")
-                          .font(.system(size: 22))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  // GIF
-                  if allowTenor {
-                      Button(action: { onGif?() }) {
-                          Text("GIF")
-                              .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                              .foregroundStyle(Color.accentColor)
-                              .padding(.horizontal, 8)
-                              .padding(.vertical, 4)
-                      }
-                  }
-                  
-                  // Labels selector
-                  Button(action: { onLabels?() }) {
-                      Image(systemName: "tag")
-                          .font(.system(size: 20))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  // Threadgate options
-                  Button(action: { onThreadgate?() }) {
-                      Image(systemName: "lock")
-                          .font(.system(size: 20))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  // Languages add
-                  Button(action: { onLanguage?() }) {
-                      Image(systemName: "globe")
-                          .font(.system(size: 20))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  // Thread mode / Add thread entry
-                  Button(action: { onThread?() }) {
-                      Image(systemName: "text.badge.plus")
-                          .font(.system(size: 20))
-                          .foregroundStyle(Color.accentColor)
-                  }
-                  
-                  Spacer()
-                  
-                  // Link creation shortcut
-                  Button(action: { onLink?() }) {
-                      Image(systemName: "link")
-                          .font(.system(size: 20))
-                          .foregroundStyle(Color.accentColor)
-                  }
+    if #available(iOS 26.0, *) {
+      GlassEffectContainer(spacing: 8) {
+        HStack(spacing: 8) {
+          // Left side: Individual media buttons
+          HStack(spacing: 6) {
+            Button(action: { onPhotos?() }) {
+              Image(systemName: "photo")
+                .font(.system(size: 18))
+                .frame(width: 36, height: 36)
+            }
+            .glassEffect(.regular.interactive())
+            .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
+
+            Button(action: { onVideo?() }) {
+              Image(systemName: "video")
+                .font(.system(size: 18))
+                .frame(width: 36, height: 36)
+            }
+            .glassEffect(.regular.interactive())
+            .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
+
+            if allowTenor {
+              Button(action: { onGif?() }) {
+                Text("GIF")
+                  .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                  .frame(width: 36, height: 20)
+                  .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.accentColor, lineWidth: 1.0)
+                  )
               }
-              .padding(.horizontal, 16)
-              .padding(.vertical, 12)
-              
+              .glassEffect(.regular.interactive())
+              .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
+            }
+
+            Button(action: { onAudio?() }) {
+              Image(systemName: "mic")
+                .font(.system(size: 18))
+                .frame(width: 36, height: 36)
+            }
+            .glassEffect(.regular.interactive())
+            .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
           }
+
+          Spacer()
+
+          // Right side: Settings menu, Thread, and Link
+          HStack(spacing: 6) {
+            Menu {
+              Button(action: { onLabels?() }) {
+                Label("Labels", systemImage: "tag")
+              }
+
+              Button(action: { onThreadgate?() }) {
+                Label("Who can reply", systemImage: "lock")
+              }
+
+              Button(action: { onLanguage?() }) {
+                Label("Languages", systemImage: "globe")
+              }
+            } label: {
+              Image(systemName: "ellipsis")
+                .font(.system(size: 18))
+                .frame(width: 36, height: 36)
+            }
+            .glassEffect(.regular.interactive())
+            .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
+
+            Button(action: { onThread?() }) {
+              Image(systemName: "plus")
+                .font(.system(size: 18))
+                .frame(width: 36, height: 36)
+            }
+            .glassEffect(.regular.interactive())
+            .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
+
+            Button(action: { onLink?() }) {
+              Image(systemName: "link")
+                .font(.system(size: 18))
+                .frame(width: 36, height: 36)
+            }
+            .glassEffect(.regular.interactive())
+            .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
+          }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
       }
+    } else {
+      HStack(spacing: 8) {
+        // Left side: Individual media buttons (legacy)
+        HStack(spacing: 6) {
+          Button(action: { onPhotos?() }) {
+            Image(systemName: "photo")
+              .font(.system(size: 18))
+              .foregroundStyle(Color.accentColor)
+              .frame(width: 36, height: 36)
+          }
+
+          Button(action: { onVideo?() }) {
+            Image(systemName: "video")
+              .font(.system(size: 18))
+              .foregroundStyle(Color.accentColor)
+              .frame(width: 36, height: 36)
+          }
+
+              if allowTenor {
+                Button(action: { onGif?() }) {
+                  Text("GIF")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                      RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.2), lineWidth: 0.5)
+                    )
+                }
+              }
+
+          Button(action: { onAudio?() }) {
+            Image(systemName: "mic")
+              .font(.system(size: 18))
+              .foregroundStyle(Color.accentColor)
+              .frame(width: 36, height: 36)
+          }
+        }
+
+        Spacer()
+
+        // Right side: Settings menu, Thread, and Link (legacy)
+        HStack(spacing: 6) {
+          Menu {
+            Button(action: { onLabels?() }) {
+              Label("Labels", systemImage: "tag")
+            }
+
+            Button(action: { onThreadgate?() }) {
+              Label("Who can reply", systemImage: "lock")
+            }
+
+            Button(action: { onLanguage?() }) {
+              Label("Languages", systemImage: "globe")
+            }
+          } label: {
+            Image(systemName: "ellipsis")
+              .font(.system(size: 18))
+              .foregroundStyle(Color.accentColor)
+              .frame(width: 36, height: 36)
+          }
+
+          Button(action: { onThread?() }) {
+            Image(systemName: "plus")
+              .font(.system(size: 18))
+              .foregroundStyle(Color.accentColor)
+              .frame(width: 36, height: 36)
+          }
+
+          Button(action: { onLink?() }) {
+            Image(systemName: "link")
+              .font(.system(size: 18))
+              .foregroundStyle(Color.accentColor)
+              .frame(width: 36, height: 36)
+          }
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+    }
+  }
 }
 
 #else
@@ -591,6 +631,7 @@ struct KeyboardToolbarView: View {
 struct EnhancedRichTextEditor: View {
   @Binding var attributedText: NSAttributedString
   @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
+  @Binding var pendingSelectionRange: NSRange?
   
   let placeholder: String
   let onImagePasted: (NSImage) -> Void

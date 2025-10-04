@@ -193,19 +193,30 @@ final class VideoAssetManager {
 
     // Configure player on main actor
     return await MainActor.run {
-      // Configure item with proper settings for silent playback
+      // Configure item with proper settings for silent, lightweight preview playback
       let playerItem = AVPlayerItem(asset: asset)
+      
+      // Preview-friendly defaults: shorter buffer, capped bitrate/resolution
+      playerItem.preferredForwardBufferDuration = 2.0
+      playerItem.preferredPeakBitRate = 1_200_000
+      #if os(iOS)
+      if #available(iOS 15.0, *) {
+        playerItem.preferredMaximumResolution = CGSize(width: 960, height: 540)
+      }
+      #endif
 
-      // Disable audio tracks before creating the player
+      // Disable audio tracks before creating the player (feed is muted by default)
       let audioMix = AVMutableAudioMix()
       audioMix.inputParameters = []
       playerItem.audioMix = audioMix
 
       // Create player with minimal resource usage
       let player = AVPlayer(playerItem: playerItem)
-      player.automaticallyWaitsToMinimizeStalling = true
+      // Favor responsive start; deeper buffering will be enabled when engaged
+      player.automaticallyWaitsToMinimizeStalling = false
       player.volume = 0
       player.isMuted = true
+      player.actionAtItemEnd = .none
       player.preventsDisplaySleepDuringVideoPlayback = false
 
       // Cache and return
@@ -338,7 +349,7 @@ final class VideoAssetManager {
       // Only clean up videos that aren't currently visible or in PiP
       let coordinator = VideoCoordinator.shared
       for (modelId, _) in coordinator.activeVideos {
-        if !coordinator.visibleVideoIDs.contains(modelId) && !coordinator.isInPiPMode(modelId) {
+        if !coordinator.visibleVideoIDs.contains(modelId) {
           coordinator.forceUnregister(modelId)
         }
       }
@@ -357,14 +368,9 @@ final class VideoAssetManager {
       // Also clear player cache except for PiP videos
       Task { @MainActor in
         let coordinator = VideoCoordinator.shared
-        let pipVideoIds = Set(coordinator.activeVideos.compactMap { (id, _) in
-          coordinator.isInPiPMode(id) ? id : nil
-        })
         
-        // Clear cache entries that aren't for PiP videos
         await MainActor.run {
           // We can't iterate cache objects directly, so we clear all
-          // The PiP videos will be recreated from coordinator state if needed
           self.playerCache.removeAllObjects()
         }
       }

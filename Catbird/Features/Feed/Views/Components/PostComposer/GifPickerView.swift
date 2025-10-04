@@ -33,11 +33,14 @@ struct GifPickerView: View {
     @State private var categories: [TenorCategory] = []
     @State private var suggestions: [String] = []
     @State private var isLoading = false
+    @State private var isLoadingMore = false
+    @State private var nextCursor: String?
+    @State private var currentQuery: String?
     @State private var selectedCategory: TenorCategory?
     @State private var showingSearch = false
     @State private var showingSuggestions = false
     @State private var searchTask: Task<Void, Never>?
-    
+
     let onGifSelected: (TenorGif) -> Void
     
     private var gridColumns: [GridItem] {
@@ -52,7 +55,7 @@ struct GifPickerView: View {
             VStack(spacing: 0) {
                 // Search bar
                 searchSection
-                
+
                 // Show suggestions, search results, or categories
                 if showingSuggestions && !suggestions.isEmpty {
                     suggestionsSection
@@ -103,6 +106,9 @@ struct GifPickerView: View {
                             showingSuggestions = false
                             gifs = []
                             suggestions = []
+                            isLoadingMore = false
+                            nextCursor = nil
+                            currentQuery = nil
                         } else if newValue.count >= 2 {
                             // Start autocomplete after 2 characters with debounce
                             searchTask = Task {
@@ -122,6 +128,9 @@ struct GifPickerView: View {
                         searchText = ""
                         showingSearch = false
                         gifs = []
+                        isLoadingMore = false
+                        nextCursor = nil
+                        currentQuery = nil
                     }
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.accentColor)
@@ -236,17 +245,22 @@ struct GifPickerView: View {
     }
     
     private var gifGridSection: some View {
-        ScrollView {
-            MasonryLayout(columns: 2, spacing: 8) {
-                ForEach(gifs, id: \.id) { (gif: TenorGif) in
-                    GifGridItemView(gif: gif) {
-                        onGifSelected(gif)
-                        dismiss()
+        GifWaterfallCollectionView(
+            gifs: gifs,
+            isLoadingMore: isLoadingMore,
+            onGifSelected: { gif in
+                onGifSelected(gif)
+                dismiss()
+            },
+            onLoadMore: {
+                if nextCursor != nil && !isLoadingMore {
+                    Task {
+                        await loadMoreGifs()
                     }
                 }
             }
-            .padding(8)
-        }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     // MARK: - API Calls
@@ -314,6 +328,9 @@ struct GifPickerView: View {
         await MainActor.run {
             isLoading = true
             showingSuggestions = false
+            isLoadingMore = false
+            nextCursor = nil // Reset cursor for new search
+            currentQuery = query
         }
         
         do {
@@ -324,6 +341,7 @@ struct GifPickerView: View {
             
             await MainActor.run {
                 self.gifs = response.results
+                self.nextCursor = response.next
                 self.isLoading = false
                 self.showingSearch = true
             }
@@ -332,6 +350,36 @@ struct GifPickerView: View {
                 self.isLoading = false
             }
             logger.debug("Failed to search GIFs: \(error)")
+        }
+    }
+    
+    private func loadMoreGifs() async {
+        guard let cursor = nextCursor, !isLoadingMore, let query = currentQuery else { return }
+        
+        await MainActor.run {
+            isLoadingMore = true
+        }
+        
+        do {
+            let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let url = URL(string: "https://catbird.blue/tenor/v2/search?q=\(encodedQuery)&limit=20&pos=\(cursor)")!
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
+            
+            await MainActor.run {
+                // Deduplicate GIFs to avoid showing the same GIF twice
+                let existingIDs = Set(self.gifs.map { $0.id })
+                let newGifs = response.results.filter { !existingIDs.contains($0.id) }
+                
+                self.gifs.append(contentsOf: newGifs)
+                self.nextCursor = response.next
+                self.isLoadingMore = false
+            }
+        } catch {
+            await MainActor.run {
+                self.isLoadingMore = false
+            }
+            logger.debug("Failed to load more GIFs: \(error)")
         }
     }
 }
@@ -559,4 +607,3 @@ struct GifGridItemView: View {
         GifVideoView(gif: gif, onTap: onTap)
     }
 }
-

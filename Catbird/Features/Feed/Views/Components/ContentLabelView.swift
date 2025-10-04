@@ -96,38 +96,64 @@ struct ContentLabelView: View {
 /// A view that handles display decisions for labeled content
 struct ContentLabelManager<Content: View>: View {
     let labels: [ComAtprotoLabelDefs.Label]?
+    // Optional: additional self-applied label values (e.g., from record selfLabels)
+    // Used only for visibility decisions; not displayed as badges.
+    let selfLabelValues: [String]?
     let contentType: String
     @State private var isBlurred: Bool
     @State private var contentVisibility: ContentVisibility
     @Environment(AppState.self) private var appState
     let content: Content
     
-    init(labels: [ComAtprotoLabelDefs.Label]?, contentType: String = "content", @ViewBuilder content: () -> Content) {
+    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", @ViewBuilder content: () -> Content) {
         self.labels = labels
+        self.selfLabelValues = selfLabelValues
         self.contentType = contentType
-        let initialVisibility = ContentLabelManager.getContentVisibility(labels: labels)
+        // Use a more conservative initial visibility that will be updated by async task
+        let initialVisibility = ContentLabelManager.getInitialContentVisibility(labels: labels)
         self._contentVisibility = State(initialValue: initialVisibility)
         self._isBlurred = State(initialValue: initialVisibility == .warn)
         self.content = content()
     }
     
-    static func getContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
+    /// Conservative initial visibility determination without user preferences
+    /// This is used before async preference loading completes
+    static func getInitialContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
         guard let labels = labels, !labels.isEmpty else { return .show }
-        
+
         // Check for the most restrictive content type first
         let labelValues = labels.map { $0.val.lowercased() }
-        
+
+        // Check for sensitive content labels - be conservative and hide adult content initially
+        if labelValues.contains(where: { ["nsfw", "porn", "sexual"].contains($0) }) {
+            return .hide // Conservative default - will be updated by async task if user has adult content enabled
+        }
+
+        if labelValues.contains(where: { ["nudity", "gore", "violence", "graphic", "suggestive"].contains($0) }) {
+            return .warn
+        }
+
+        return .show
+    }
+
+    /// Legacy method - kept for compatibility but prefer getInitialContentVisibility for new code
+    static func getContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
+        guard let labels = labels, !labels.isEmpty else { return .show }
+
+        // Check for the most restrictive content type first
+        let labelValues = labels.map { $0.val.lowercased() }
+
         // Check for sensitive content labels and return appropriate visibility
         // This is the basic sync version - for full preference checking, use getEffectiveContentVisibility
         if labelValues.contains(where: { ["nsfw", "porn", "nudity", "sexual", "gore", "violence", "graphic", "suggestive"].contains($0) }) {
             return .warn
         }
-        
+
         return .show
     }
     
     static func shouldInitiallyBlur(labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
-        return getContentVisibility(labels: labels) == .warn
+        return getInitialContentVisibility(labels: labels) == .warn
     }
     
     private var strongBlurOverlay: some View {
@@ -207,24 +233,44 @@ struct ContentLabelManager<Content: View>: View {
                             }
                         }
                     } else {
-                        content
-                            .overlay(alignment: .topTrailing) {
-                                if labels != nil && !labels!.isEmpty {
-                                    // Reblur button
-                                    Button {
-                                        withAnimation {
-                                            isBlurred = true
+                        // When revealed under warn, allow collapsing again to a compact placeholder
+                        VStack(alignment: .leading, spacing: 6) {
+                            content
+                                .overlay(alignment: .topTrailing) {
+                                    HStack(spacing: 8) {
+                                        if labels != nil && !labels!.isEmpty {
+                                            // Reblur button
+                                            Button {
+                                                withAnimation {
+                                                    isBlurred = true
+                                                }
+                                            } label: {
+                                                Image(systemName: "eye.slash")
+                                                    .appFont(AppTextRole.caption)
+                                                    .padding(6)
+                                                    .background(Circle().fill(Color.black.opacity(0.6)))
+                                                    .foregroundStyle(.white)
+                                            }
                                         }
-                                    } label: {
-                                        Image(systemName: "eye.slash")
+                                        // Collapse button
+                                        Button {
+                                            withAnimation {
+                                                contentVisibility = .hide
+                                            }
+                                        } label: {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: "chevron.up.square")
+                                                Text("Collapse")
+                                            }
                                             .appFont(AppTextRole.caption)
                                             .padding(6)
-                                            .background(Circle().fill(Color.black.opacity(0.6)))
+                                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.6)))
                                             .foregroundStyle(.white)
+                                        }
                                     }
                                     .padding(12)
                                 }
-                            }
+                        }
                     }
                 }
                 
@@ -240,7 +286,14 @@ struct ContentLabelManager<Content: View>: View {
             }
         }
         .task {
+            // Update visibility immediately when view appears
             await updateContentVisibility()
+        }
+        .onAppear {
+            // Also update when view appears (in case task doesn't run immediately)
+            Task {
+                await updateContentVisibility()
+            }
         }
     }
     
@@ -295,23 +348,34 @@ struct ContentLabelManager<Content: View>: View {
     }
     
     private func updateContentVisibility() async {
-        guard let labels = labels, !labels.isEmpty else { return }
-        
-        let visibility = await getEffectiveContentVisibility(for: labels)
+        // Consider both canonical labels and any self-applied label values
+        let visibility = await getEffectiveContentVisibility(for: labels ?? [], selfLabelValues: selfLabelValues ?? [])
         await MainActor.run {
             self.contentVisibility = visibility
             self.isBlurred = (visibility == .warn)
         }
     }
     
-    private func getEffectiveContentVisibility(for labels: [ComAtprotoLabelDefs.Label]) async -> ContentVisibility {
+    private func getEffectiveContentVisibility(for labels: [ComAtprotoLabelDefs.Label], selfLabelValues: [String]) async -> ContentVisibility {
         // Check each label and find the most restrictive setting
         var mostRestrictive: ContentVisibility = .show
         
+        // Evaluate canonical labels
         for label in labels {
             let visibility = await getVisibilityForLabel(label)
-            
-            // Hide is most restrictive, then warn, then show
+            switch (mostRestrictive, visibility) {
+            case (_, .hide):
+                mostRestrictive = .hide
+            case (.show, .warn):
+                mostRestrictive = .warn
+            default:
+                break
+            }
+        }
+        
+        // Evaluate self-applied label values (no src)
+        for value in selfLabelValues {
+            let visibility = await getVisibilityForLabelValue(value)
             switch (mostRestrictive, visibility) {
             case (_, .hide):
                 mostRestrictive = .hide
@@ -359,6 +423,38 @@ struct ContentLabelManager<Content: View>: View {
         } catch {
             // If we can't get preferences, use safe defaults
             if !appState.isAdultContentEnabled && ["nsfw", "porn", "sexual"].contains(label.val.lowercased()) {
+                return .hide
+            }
+            return .warn
+        }
+    }
+
+    private func getVisibilityForLabelValue(_ value: String) async -> ContentVisibility {
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            // Map value to preference key
+            let preferenceKey: String
+            switch value.lowercased() {
+            case "nsfw", "porn", "sexual":
+                preferenceKey = "nsfw"
+            case "nudity":
+                preferenceKey = "nudity"
+            case "gore", "violence", "graphic", "graphic-media":
+                preferenceKey = "graphic"
+            case "suggestive":
+                preferenceKey = "suggestive"
+            default:
+                preferenceKey = value.lowercased()
+            }
+            if preferenceKey == "nsfw" && !appState.isAdultContentEnabled { return .hide }
+            let visibility = ContentFilterManager.getVisibilityForLabel(
+                label: preferenceKey,
+                labelerDid: nil,
+                preferences: preferences.contentLabelPrefs
+            )
+            return visibility
+        } catch {
+            if !appState.isAdultContentEnabled && ["nsfw", "porn", "sexual"].contains(value.lowercased()) {
                 return .hide
             }
             return .warn

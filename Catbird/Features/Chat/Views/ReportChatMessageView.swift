@@ -59,7 +59,7 @@ struct ReportChatMessageView: View {
     #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") {
+          Button("Cancel", systemImage: "xmark") {
             onDismiss()
           }
           .disabled(isSubmitting)

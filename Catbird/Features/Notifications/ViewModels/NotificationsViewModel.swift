@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Defines notification types
 enum NotificationType: String, CaseIterable {
-  case like, repost, follow, mention, reply, quote, likeViaRepost, repostViaRepost
+  case like, repost, follow, mention, reply, quote, likeViaRepost, repostViaRepost, activitySubscription
 
   var icon: String {
     switch self {
@@ -21,6 +21,7 @@ enum NotificationType: String, CaseIterable {
     case .quote: return "quote.bubble"
     case .likeViaRepost: return "heart.fill"
     case .repostViaRepost: return "arrow.2.squarepath"
+    case .activitySubscription: return "bell.badge.fill"
     }
   }
 
@@ -34,6 +35,7 @@ enum NotificationType: String, CaseIterable {
     case .quote: return .cyan
     case .likeViaRepost: return .red
     case .repostViaRepost: return .green
+    case .activitySubscription: return .indigo
     }
   }
 
@@ -42,7 +44,7 @@ enum NotificationType: String, CaseIterable {
     switch self {
     case .like, .repost, .follow, .likeViaRepost, .repostViaRepost:
       return true
-    case .mention, .reply, .quote:
+    case .mention, .reply, .quote, .activitySubscription:
       // Don't group replies and quotes per requirement
       return false
     }
@@ -56,6 +58,7 @@ struct GroupedNotification: Identifiable {
   let type: NotificationType
   let notifications: [AppBskyNotificationListNotifications.Notification]
   let subjectPost: AppBskyFeedDefs.PostView?
+  let parentPost: AppBskyFeedDefs.PostView? // For reply notifications - the post being replied to
   // Store the page this group belongs to
   let pageNumber: Int
 
@@ -80,8 +83,43 @@ struct GroupedNotification: Identifiable {
   private(set) var isLoadingMore = false
   private(set) var hasMoreNotifications = false
   private(set) var error: Error?
-  private var cursor: String?
-  private var currentPage = 0
+
+  // Separate pagination state for each filter
+  private var cursorForAll: String?
+  private var cursorForMentions: String?
+  private var pageForAll = 0
+  private var pageForMentions = 0
+
+  // Computed properties for current filter's pagination state
+  private var cursor: String? {
+    get {
+      switch currentFilter {
+      case .all: return cursorForAll
+      case .mentions: return cursorForMentions
+      }
+    }
+    set {
+      switch currentFilter {
+      case .all: cursorForAll = newValue
+      case .mentions: cursorForMentions = newValue
+      }
+    }
+  }
+
+  private var currentPage: Int {
+    get {
+      switch currentFilter {
+      case .all: return pageForAll
+      case .mentions: return pageForMentions
+      }
+    }
+    set {
+      switch currentFilter {
+      case .all: pageForAll = newValue
+      case .mentions: pageForMentions = newValue
+      }
+    }
+  }
 
   // Add a cache for posts to avoid refetching
   private var postCache: [ATProtocolURI: (post: AppBskyFeedDefs.PostView, timestamp: Date)] = [:]
@@ -206,6 +244,8 @@ struct GroupedNotification: Identifiable {
     guard filter != currentFilter else { return }
 
     currentFilter = filter
+    // Clear notifications to show filtered view immediately
+    groupedNotifications = []
     await refreshNotifications()
   }
   
@@ -303,8 +343,9 @@ struct GroupedNotification: Identifiable {
     pageNumber: Int
   ) async -> [GroupedNotification] {
 
-    // Collect URIs to fetch for post subjects
+    // Collect URIs to fetch for post subjects and parent posts
     var urisToFetch = Set<ATProtocolURI>()
+    var parentUrisToFetch = Set<ATProtocolURI>() // For reply parent posts
 
     for notification in notifications {
       switch notification.reason {
@@ -323,6 +364,18 @@ struct GroupedNotification: Identifiable {
         }
       case "reply", "mention", "quote":
         urisToFetch.insert(notification.uri)
+
+        // For replies, also fetch the parent post to get the parent author
+        if notification.reason == "reply" {
+          // We need to fetch the reply post first to get the parent URI
+          // This will be a two-step process
+        }
+      case "subscribed-post":
+        if let subject = notification.reasonSubject {
+          urisToFetch.insert(subject)
+        } else {
+          urisToFetch.insert(notification.uri)
+        }
       default:
         break
       }
@@ -330,6 +383,19 @@ struct GroupedNotification: Identifiable {
 
     // Fetch posts that are referenced by notifications
     let fetchedPosts = await fetchPosts(uris: Array(urisToFetch))
+
+    // Now collect parent URIs from reply posts
+    for notification in notifications where notification.reason == "reply" {
+      if let replyPost = fetchedPosts[notification.uri],
+         case .knownType(let record) = replyPost.record,
+         let feedPost = record as? AppBskyFeedPost,
+         let replyRef = feedPost.reply {
+        parentUrisToFetch.insert(replyRef.parent.uri)
+      }
+    }
+
+    // Fetch parent posts for replies
+    let fetchedParentPosts = await fetchPosts(uris: Array(parentUrisToFetch))
 
     // For groupable notification types (like, repost, follow), group by type and subject
     // For non-groupable types (reply, quote, mention), keep them separate
@@ -382,6 +448,7 @@ struct GroupedNotification: Identifiable {
       })
 
       var subjectPost: AppBskyFeedDefs.PostView?
+      var parentPost: AppBskyFeedDefs.PostView?
 
       switch type {
       case .like, .repost:
@@ -401,9 +468,23 @@ struct GroupedNotification: Identifiable {
         }
       case .reply, .mention, .quote:
         subjectPost = fetchedPosts[sortedNotifications.first!.uri]
+
+        // For replies, also get the parent post
+        if type == .reply, let replyPost = subjectPost,
+           case .knownType(let record) = replyPost.record,
+           let feedPost = record as? AppBskyFeedPost,
+           let replyRef = feedPost.reply {
+          parentPost = fetchedParentPosts[replyRef.parent.uri]
+        }
       case .follow:
         // No subject post needed
         break
+      case .activitySubscription:
+        if let subject = sortedNotifications.first?.reasonSubject {
+          subjectPost = fetchedPosts[subject]
+        } else if let uri = sortedNotifications.first?.uri {
+          subjectPost = fetchedPosts[uri]
+        }
       }
 
       // Add page number to key to make it unique across pages
@@ -414,6 +495,7 @@ struct GroupedNotification: Identifiable {
         type: type,
         notifications: sortedNotifications,
         subjectPost: subjectPost,
+        parentPost: parentPost,
         pageNumber: pageNumber
       )
 
@@ -437,9 +519,10 @@ struct GroupedNotification: Identifiable {
     case "quote": return .quote
     case "like-via-repost": return .likeViaRepost
     case "repost-via-repost": return .repostViaRepost
+    case "subscribed-post": return .activitySubscription
     default: return nil
-    }
   }
+}
 
   /// Fetches multiple posts by their URIs, using cache when possible and batching requests in groups of 25
   private func fetchPosts(uris: [ATProtocolURI]) async -> [ATProtocolURI: AppBskyFeedDefs.PostView] {

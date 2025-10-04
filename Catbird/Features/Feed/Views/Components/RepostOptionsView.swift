@@ -5,6 +5,7 @@ import UIKit
 #endif
 
 struct RepostOptionsView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let post: AppBskyFeedDefs.PostView
     let viewModel: ActionButtonViewModel
 
@@ -12,7 +13,7 @@ struct RepostOptionsView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 16) {
                 mainOptionsView
             }
@@ -23,7 +24,7 @@ struct RepostOptionsView: View {
     #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
                 }
@@ -61,7 +62,7 @@ struct RepostOptionsView: View {
                 }
                 .foregroundColor(.primary)
                 .padding()
-                .background(Color.systemBackground)
+                .background(Color.elevatedBackground(appState.themeManager, currentScheme: colorScheme))
                 .cornerRadius(12)
             }
 
@@ -82,7 +83,7 @@ struct RepostOptionsView: View {
                 }
                 .foregroundColor(.primary)
                 .padding()
-                .background(Color.systemBackground)
+                .background(Color.elevatedBackground(appState.themeManager, currentScheme: colorScheme))
                 .cornerRadius(12)
                 .opacity(post.viewer?.embeddingDisabled ?? false ? 0.3 : 1)
             }

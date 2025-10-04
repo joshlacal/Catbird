@@ -57,8 +57,8 @@ struct FeedCollectionView: View {
             onScrollOffsetChanged: onScrollOffsetChanged,
             headerView: headerView ?? injectedHeaderView
         )
-        // Recreate controller on theme change to ensure UIKit reflects dim/black updates
-        .id(stateManager.appState.themeDidChange)
+        // Recreate controller on theme change or state manager change to ensure UIKit reflects updates
+        .id("\(ObjectIdentifier(stateManager))-\(stateManager.appState.themeDidChange)")
         .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
     }
 }

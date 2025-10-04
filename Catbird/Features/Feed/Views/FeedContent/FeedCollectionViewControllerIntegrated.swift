@@ -115,11 +115,10 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     }
     
     func updateThemeColors() {
-        let currentScheme = getEffectiveColorScheme()
-        let dynamicBackgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: currentScheme))
-        
-        collectionView?.backgroundColor = dynamicBackgroundColor
-        view.backgroundColor = dynamicBackgroundColor
+        // Let SwiftUI's .themedPrimaryBackground() provide the background.
+        // Keeping UIKit views transparent prevents stale colors when the system toggles appearance (e.g., sunrise schedule).
+        collectionView?.backgroundColor = .clear
+        view.backgroundColor = .clear
         
         // Avoid resetting the layout here to prevent supplementary assertions during transitions
     }
@@ -208,7 +207,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getEffectiveColorScheme()))
+        // Keep transparent and defer background to SwiftUI themed wrapper
+        collectionView.backgroundColor = .clear
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
         
@@ -240,8 +240,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     private func createLayout() -> UICollectionViewLayout {
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         
-        // Match legacy controller's configuration exactly
-        configuration.backgroundColor = UIColor(Color.dynamicBackground(stateManager.appState.themeManager, currentScheme: getEffectiveColorScheme()))
+        // Keep list configuration transparent so SwiftUI can own the background
+        configuration.backgroundColor = .clear
         configuration.showsSeparators = false // Disable UIKit separators - let SwiftUI handle them
         
         // We render header as a first cell (not supplementary) to avoid provider assertions
@@ -298,6 +298,12 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
                 cell.contentConfiguration = nil
                 return
             }
+            // Ensure full-width content and no default list/background drawing
+            cell.layoutMargins = .zero
+            cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.selectedBackgroundView = nil
+            
             cell.contentConfiguration = UIHostingConfiguration { header }
                 .margins(.all, 0)
         }
@@ -357,9 +363,23 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             controllerLogger.debug("⏸️ Skipping update - app in background")
             return
         }
-        
+
+        // Always end refreshing, even on error
+        if isRefreshing {
+            refreshControl.endRefreshing()
+            isRefreshing = false
+        }
+
+        // Check for errors before updating UI
+        if case .error(let error) = stateManager.loadingState {
+            controllerLogger.error("❌ Feed update error: \(error.localizedDescription)")
+            // Keep existing posts visible, user can retry
+            updateBackgroundState()
+            return
+        }
+
         controllerLogger.debug("🔄 Fast update: Creating snapshot")
-        
+
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         snapshot.appendSections([.main])
         // Prepend header cell when available
@@ -368,14 +388,9 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         }
         let items = stateManager.posts.map { Item.post($0.id) }
         snapshot.appendItems(items, toSection: .main)
-        
+
         await dataSource.apply(snapshot, animatingDifferences: false)
-        
-        if isRefreshing {
-            refreshControl.endRefreshing()
-            isRefreshing = false
-        }
-        
+
         controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
         updateBackgroundState()
     }
@@ -607,16 +622,26 @@ extension FeedCollectionViewControllerIntegrated {
 
 // MARK: - Background State (Loading / Empty)
 
+// MARK: - Background State Management
+
+enum FeedBackgroundState {
+    case content
+    case loading(message: String)
+    case emptyTimeline(action: () -> Void)
+    case emptyFeed(feedName: String, action: () -> Void)
+
+    var isContent: Bool {
+        if case .content = self {
+            return true
+        }
+        return false
+    }
+}
+
 @available(iOS 16.0, *)
 extension FeedCollectionViewControllerIntegrated {
-    private func updateBackgroundState() {
-        guard let collectionView = collectionView else { return }
-
-        // Determine which background (if any) to show
-        var backgroundView: AnyView? = nil
-
+    private var currentBackgroundState: FeedBackgroundState {
         if stateManager.posts.isEmpty && stateManager.isLoading {
-            // Initial loading
             let message: String
             switch stateManager.currentFeedType {
             case .timeline:
@@ -624,37 +649,56 @@ extension FeedCollectionViewControllerIntegrated {
             default:
                 message = "Loading \(stateManager.currentFeedType.displayName.lowercased())..."
             }
-            backgroundView = AnyView(
-                LoadingStateView(message: message)
-                    .background(Color.clear)
-            )
+            return .loading(message: message)
         } else if stateManager.posts.isEmpty && !stateManager.isLoading {
-            // Empty state
             switch stateManager.currentFeedType {
             case .timeline:
-                backgroundView = AnyView(
-                    ContentUnavailableStateView.emptyFollowingFeed { [weak self] in
-                        // Switch to Search tab for discovery
-                        self?.stateManager.appState.navigationManager.tabSelection?(1)
-                    }
-                    .background(Color.clear)
-                )
+                return .emptyTimeline { [weak self] in
+                    self?.stateManager.appState.navigationManager.tabSelection?(1)
+                }
             default:
-                backgroundView = AnyView(
-                    ContentUnavailableStateView.emptyFeed(
-                        feedName: stateManager.currentFeedType.displayName
-                    ) { [weak self] in
-                        guard let self else { return }
-                        Task { @MainActor in
-                            await self.stateManager.refresh()
-                        }
+                return .emptyFeed(feedName: stateManager.currentFeedType.displayName) { [weak self] in
+                    guard let self else { return }
+                    Task { @MainActor in
+                        await self.stateManager.refresh()
                     }
-                    .background(Color.clear)
-                )
+                }
             }
+        } else {
+            return .content
         }
+    }
 
-        if let backgroundView {
+    @ViewBuilder
+    private func backgroundViewForState(_ state: FeedBackgroundState) -> some View {
+        switch state {
+        case .content:
+            EmptyView()
+        case .loading(let message):
+            LoadingStateView(message: message)
+                .background(Color.clear)
+        case .emptyTimeline(let action):
+            ContentUnavailableStateView.emptyFollowingFeed(onDiscover: action)
+                .background(Color.clear)
+        case .emptyFeed(let feedName, let action):
+            ContentUnavailableStateView.emptyFeed(feedName: feedName, onRefresh: action, onExplore: nil)
+                .background(Color.clear)
+        }
+    }
+
+    private func updateBackgroundState() {
+        guard let collectionView = collectionView else { return }
+
+        let currentState = currentBackgroundState
+
+        if currentState.isContent {
+            // Remove background when showing content
+            collectionView.backgroundView = nil
+            backgroundHostingController = nil
+        } else {
+            // Show appropriate background view
+            let backgroundView = AnyView(backgroundViewForState(currentState))
+
             // Create or update hosting controller
             if let host = backgroundHostingController {
                 host.rootView = backgroundView
@@ -667,10 +711,6 @@ extension FeedCollectionViewControllerIntegrated {
                 collectionView.backgroundView = host.view
                 backgroundHostingController = host
             }
-        } else {
-            // Remove background
-            collectionView.backgroundView = nil
-            backgroundHostingController = nil
         }
     }
 

@@ -13,9 +13,38 @@ struct ConversationView: View {
   @Environment(\.colorScheme) private var colorScheme
   let convoId: String
 
-  // Get messages directly from ChatManager's map
+  // Get messages directly from ChatManager's map with defensive validation
   private var messages: [Message] {
-    appState.chatManager.messagesMap[convoId] ?? []
+    let rawMessages = appState.chatManager.messagesMap[convoId] ?? []
+
+    // Filter out invalid messages that could crash ExyteChat
+    var validMessages: [Message] = []
+    var seenIds = Set<String>()
+
+    for message in rawMessages {
+      // Skip messages with invalid IDs
+      guard !message.id.isEmpty else {
+        logger.warning("Skipping message with empty ID")
+        continue
+      }
+
+      // Skip duplicate message IDs
+      guard !seenIds.contains(message.id) else {
+        logger.warning("Skipping duplicate message ID: \(message.id)")
+        continue
+      }
+
+      // Skip messages with invalid user data
+      guard !message.user.id.isEmpty else {
+        logger.warning("Skipping message with empty user ID: \(message.id)")
+        continue
+      }
+
+      seenIds.insert(message.id)
+      validMessages.append(message)
+    }
+
+    return validMessages
   }
     
     private var chatNavigationPath: Binding<NavigationPath> {
@@ -47,17 +76,17 @@ struct ConversationView: View {
         VStack(spacing: DesignTokens.Spacing.none) {
           ChatView<AnyView, EmptyView, CustomMessageMenuAction>(
             messages: messages,
-            chatType: .conversation,
-            replyMode: .answer,
-            didSendMessage: { draft in
+            chatType: ChatType.conversation,
+            replyMode: ReplyMode.answer,
+            didSendMessage: { (draft: DraftMessage) in
               Task {
                 await sendMessage(text: draft.text)
               }
             },
             reactionDelegate: BlueskyMessageReactionDelegate(
               chatManager: chatManager, convoId: convoId),
-            messageBuilder: { message, positionInUserGroup, _, _, _, _, _ in
-              buildMessageView(message: message, positionInUserGroup: positionInUserGroup)
+            messageBuilder: { (message: Message, positionInUserGroup: PositionInUserGroup, _, _, _, _, _) in
+              AnyView(buildMessageView(message: message, positionInUserGroup: positionInUserGroup))
             },
           messageMenuAction: {
             (
@@ -80,7 +109,8 @@ struct ConversationView: View {
           },
 //          localization: ChatLocalization(inputPlaceholder: <#String#>, signatureText: <#String#>, cancelButtonText: <#String#>, recentToggleText: <#String#>, waitingForNetwork: <#String#>, recordingText: <#String#>, replyToText: <#String#>)
           )
-          .setAvailableInputs([.text])
+          // Restrict to text input only - Bluesky chat doesn't support file attachments
+          .setAvailableInputs([AvailableInputType.text])
           .showMessageMenuOnLongPress(true)
           .messageReactionDelegate(
             BlueskyMessageReactionDelegate(chatManager: chatManager, convoId: convoId)
@@ -92,7 +122,7 @@ struct ConversationView: View {
               await chatManager.loadMessages(convoId: convoId, refresh: false)
             }
           }
-          .chatTheme(accentColor: .blue)
+          .chatTheme(accentColor: Color.blue)
         }
       }
 
@@ -333,30 +363,29 @@ struct ConversationView: View {
   }
   
   // Helper method to build message view - extracted from complex messageBuilder closure
-  private func buildMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> AnyView {
-    // Defensive programming: Validate convoId and safely access originalMessagesMap
-    guard !convoId.isEmpty else {
-      logger.error("ConvoId is empty, cannot access originalMessagesMap")
-      return createSimpleMessageView(message: message, positionInUserGroup: positionInUserGroup)
-    }
-    
-    // Safely access the original messages map
-    let convoMessages = chatManager.originalMessagesMap[convoId]
-    let originalMessageView = convoMessages?[message.id]
-    
-    let record: AppBskyEmbedRecord.ViewRecordUnion?
-    switch originalMessageView?.embed {
-    case .appBskyEmbedRecordView(let recordView):
-      record = recordView.record
-    default:
-      record = nil
-    }
-    
-    return AnyView(
+  @ViewBuilder
+  private func buildMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> some View {
+    if convoId.isEmpty {
+      createSimpleMessageView(message: message, positionInUserGroup: positionInUserGroup)
+            .onAppear {
+                logger.error("Conversation ID is empty - cannot load original messages")
+                }
+    } else {
+      // Safely access the original messages map
+      let convoMessages = chatManager.originalMessagesMap[convoId]
+      let originalMessageView = convoMessages?[message.id]
+
+      let record: AppBskyEmbedRecord.ViewRecordUnion? = {
+        if case .appBskyEmbedRecordView(let recordView) = originalMessageView?.embed {
+          return recordView.record
+        }
+        return nil
+      }()
+
       VStack(alignment: message.user.isCurrentUser ? .trailing : .leading, spacing: 2) {
         MessageBubble(message: message, embed: record, position: positionInUserGroup, path: chatNavigationPath)
           .padding(1)
-        
+
         // Show reactions if available
         if let originalMessage = originalMessageView,
            let reactions = originalMessage.reactions,
@@ -370,7 +399,7 @@ struct ConversationView: View {
           .padding(.bottom, 4)
         }
       }
-    )
+    }
   }
 
   // Function to send a message
@@ -422,23 +451,20 @@ struct ConversationView: View {
         messageMyBG: .accentColor)
 
     let images = ChatTheme.Images(
-      //            camera: Image(systemName: "camera.fill"),
-        arrowSend: Image(systemName: "arrow.up"),
-      //             attach: Image(systemName: "paperclip")
-      // ... other image customizations
+        arrowSend: Image(systemName: "arrow.up")
+        // Note: attachment-related images removed since attachments are disabled
     )
 
     return ChatTheme(colors: colors, images: images)
   }
 
   // Helper to create a simple message view without embeds as fallback
-  private func createSimpleMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> AnyView {
-    return AnyView(
-      VStack(alignment: message.user.isCurrentUser ? .trailing : .leading, spacing: 2) {
-        MessageBubble(message: message, embed: nil, position: positionInUserGroup, path: chatNavigationPath)
-          .padding(1)
-      }
-    )
+  @ViewBuilder
+  private func createSimpleMessageView(message: Message, positionInUserGroup: PositionInUserGroup) -> some View {
+    VStack(alignment: message.user.isCurrentUser ? .trailing : .leading, spacing: 2) {
+      MessageBubble(message: message, embed: nil, position: positionInUserGroup, path: chatNavigationPath)
+        .padding(1)
+    }
   }
   
   // Helper to find the original MessageView for a given message ID

@@ -93,9 +93,11 @@ struct HashtagView: View {
             }
         }
         .navigationTitle("#\(tag)")
-    #if os(iOS)
+#if os(iOS)
     .toolbarTitleDisplayMode(.inline)
-    #endif
+#endif
+        // Ensure content respects device safe areas even if parent ignores them
+        .safeAreaPadding([.top, .bottom])
         .sheet(isPresented: $showFilterSheet) {
             HashtagFilterView(languageFilter: $languageFilter, onApply: {
                 posts = []
@@ -455,7 +457,7 @@ struct HashtagFilterView: View {
     #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel", systemImage: "xmark") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Apply") {

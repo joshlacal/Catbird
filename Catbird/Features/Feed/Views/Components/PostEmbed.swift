@@ -45,6 +45,8 @@ struct PostEmbed: View {
                 
             case .unexpected:
                 EmptyView()
+            case .pending(_):
+                EmptyView()
             }
         }
         // Force calculated height to prevent layout jumps
@@ -83,9 +85,19 @@ struct PostEmbed: View {
 
     @ViewBuilder
     private func recordEmbed(_ recordView: AppBskyEmbedRecord.View) -> some View {
+        // Extract labels from the embedded record itself, not the parent post
+        let embedLabels: [ComAtprotoLabelDefs.Label]? = {
+            switch recordView.record {
+            case .appBskyEmbedRecordViewRecord(let viewRecord):
+                return viewRecord.labels
+            default:
+                return nil
+            }
+        }()
+
         RecordEmbedView(
             record: recordView.record,
-            labels: labels,
+            labels: embedLabels,
             path: $path
         )
     }
@@ -127,7 +139,7 @@ struct PostEmbed: View {
                 ) {
                     if let playerView = ModernVideoPlayerView(
                         bskyVideo: videoView,
-                        postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
+                        postID: postID
                     ) {
                         playerView
                             .frame(maxWidth: .infinity)
@@ -144,9 +156,19 @@ struct PostEmbed: View {
             }
 
             //  show the record
+            // Extract labels from the embedded record itself, not the parent post
+            let embedLabels: [ComAtprotoLabelDefs.Label]? = {
+                switch recordWithMediaView.record.record {
+                case .appBskyEmbedRecordViewRecord(let viewRecord):
+                    return viewRecord.labels
+                default:
+                    return nil
+                }
+            }()
+
             RecordEmbedView(
                 record: recordWithMediaView.record.record,
-                labels: labels,
+                labels: embedLabels,
                 path: $path
             )
         }
@@ -161,7 +183,7 @@ struct PostEmbed: View {
         ) {
             if let playerView = ModernVideoPlayerView(
                 bskyVideo: videoView,
-                postID: "\(postID)-\(videoView.playlist.uriString())-\(videoView.cid)"
+                postID: postID
             ) {
                 playerView
                     .frame(maxWidth: .infinity)

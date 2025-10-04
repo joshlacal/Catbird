@@ -26,8 +26,9 @@ final class PostContextMenuViewModel {
     // Bookmark callback - will be set by PostView
     var onToggleBookmark: (() -> Void)?
     
-    // Related posts callback - will be set by PostView
-    var onShowRelatedPosts: (() -> Void)?
+
+    // Thread summarization callback - wired by PostView when supported
+    var onSummarizeThread: (() -> Void)?
 
     init(appState: AppState, post: AppBskyFeedDefs.PostView) {
         self.appState = appState
@@ -114,9 +115,9 @@ final class PostContextMenuViewModel {
         onToggleBookmark?()
     }
     
-    func showRelatedPosts() {
-        // Trigger the related posts callback
-        onShowRelatedPosts?()
+
+    func summarizeThread() {
+        onSummarizeThread?()
     }
     
     /// Creates a report subject for this post

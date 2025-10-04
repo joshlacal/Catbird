@@ -290,7 +290,8 @@ extension PostComposerViewModel {
         isLoadingURLCard = true
         
         do {
-            let cardResponse = try await URLCardService.fetchURLCard(for: urlString)
+            var cardResponse = try await URLCardService.fetchURLCard(for: urlString)
+            cardResponse.sourceURL = urlString
             urlCards[urlString] = cardResponse
         } catch {
             logger.error("Failed to load URL card for \(urlString): \(error)")

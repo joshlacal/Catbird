@@ -31,9 +31,9 @@ struct FeedScreen: View {
     }
   }
 
-  // Convert header to AnyView only when we have generator + subscription
+  // Convert header to AnyView when we have generator details
   private var headerAnyView: AnyView? {
-    guard let generatorView, isSubscribed else { return nil }
+    guard let generatorView else { return nil }
     return AnyView(
       FeedDiscoveryHeaderView(
         feed: generatorView,

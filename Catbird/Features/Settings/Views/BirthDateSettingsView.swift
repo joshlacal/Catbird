@@ -75,7 +75,7 @@ struct BirthDateSettingsView: View {
                 }
                 
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
                     .disabled(isUpdating)

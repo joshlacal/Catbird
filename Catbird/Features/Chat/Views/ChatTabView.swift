@@ -9,6 +9,7 @@ import Petrel
 struct ChatTabView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Environment(\.composerTransitionNamespace) private var composerNamespace
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
   @State private var selectedConvoId: String?
@@ -55,16 +56,18 @@ struct ChatTabView: View {
     .alert(isPresented: $isShowingErrorAlert, content: createErrorAlert)
     .sheet(isPresented: $showingNewMessageSheet) {
       NewMessageView()
+        .composerZoomTransition(namespace: composerNamespace)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(.thinMaterial)
     }
-    // Global FAB overlay so it shows regardless of which column is visible
     .overlay(alignment: .bottomTrailing) {
       if shouldShowChatFAB {
         ChatFAB(newMessageAction: {
           showingNewMessageSheet = true
         })
-        .padding(.trailing, 16)
-        .padding(.bottom, 16)
-        .zIndex(10)
+        .padding(.bottom, 20)
+        .padding(.trailing, 20)
       }
     }
   }
@@ -245,8 +248,11 @@ struct ChatTabView: View {
   // MARK: - Helper Properties
   
   private var shouldShowChatFAB: Bool {
+    // Only show when we're on the chat tab (selectedTab == 4)
+    guard selectedTab == 4 else { return false }
+
     if DeviceInfo.isIPad {
-      // Always show on iPad (split view)
+      // Always show on iPad (split view) when on chat tab
       return true
     } else {
       // On iPhone: show only when the list is visible (no conversation selected and stack is at root)

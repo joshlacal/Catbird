@@ -56,6 +56,8 @@ private struct SwiftUIThreadView: View {
     
     @State private var parentPosts: [ParentPost] = []
     @State private var mainPost: AppBskyFeedDefs.PostView? = nil
+    @State private var mainBlocked: AppBskyFeedDefs.BlockedPost? = nil
+    @State private var mainNotFound: AppBskyFeedDefs.NotFoundPost? = nil
     @State private var replyWrappers: [ReplyWrapper] = []
     
     private static let mainPostID = "main-post-id"
@@ -72,7 +74,7 @@ private struct SwiftUIThreadView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-            } else if mainPost != nil {
+            } else if mainPost != nil || mainBlocked != nil || mainNotFound != nil {
                 modernThreadView
                     .opacity(contentOpacity)
                     .onAppear {
@@ -89,18 +91,24 @@ private struct SwiftUIThreadView: View {
                         }
                     }
             } else {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 32))
-                        .foregroundColor(.orange)
-                    Text("Could not load thread")
-                        .font(.headline)
-                    Text("This post may have been deleted or is not available.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
+                VStack(spacing: 12) {
+                    if let nf = mainNotFound {
+                        PostNotFoundView(uri: nf.uri, reason: .notFound, path: $path)
+                    } else if let blocked = mainBlocked {
+                        BlockedPostView(blockedPost: blocked, path: $path)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 32))
+                            .foregroundColor(.orange)
+                        Text("Could not load thread")
+                            .font(.headline)
+                        Text("This post may have been deleted or is not available.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                 }
-                .padding()
+                .padding(.horizontal)
             }
         }
         .navigationTitle("Thread")
@@ -123,6 +131,16 @@ private struct SwiftUIThreadView: View {
                 
                 if let post = mainPost {
                     mainPostSection(post)
+                        .id(SwiftUIThreadView.mainPostID)
+                        .padding(.bottom, 12)
+                } else if let blocked = mainBlocked {
+                    BlockedPostView(blockedPost: blocked, path: $path)
+                        .padding(.vertical, 8)
+                        .id(SwiftUIThreadView.mainPostID)
+                        .padding(.bottom, 12)
+                } else if let nf = mainNotFound {
+                    PostNotFoundView(uri: nf.uri, reason: .notFound, path: $path)
+                        .padding(.vertical, 8)
                         .id(SwiftUIThreadView.mainPostID)
                         .padding(.bottom, 12)
                 }
@@ -510,6 +528,8 @@ private struct SwiftUIThreadView: View {
         case .appBskyFeedDefsThreadViewPost(let threadViewPost):
             parentPosts = collectParentPosts(from: threadViewPost.parent)
             mainPost = threadViewPost.post
+            mainBlocked = nil
+            mainNotFound = nil
             
             if let replies = threadViewPost.replies {
                 replyWrappers = selectRelevantReplies(replies, opAuthorID: threadViewPost.post.author.did.didString())
@@ -517,9 +537,23 @@ private struct SwiftUIThreadView: View {
                 replyWrappers = []
             }
             
+        case .appBskyFeedDefsBlockedPost(let blocked):
+            parentPosts = []
+            mainPost = nil
+            mainBlocked = blocked
+            mainNotFound = nil
+            replyWrappers = []
+        case .appBskyFeedDefsNotFoundPost(let nf):
+            parentPosts = []
+            mainPost = nil
+            mainBlocked = nil
+            mainNotFound = nf
+            replyWrappers = []
         default:
             parentPosts = []
             mainPost = nil
+            mainBlocked = nil
+            mainNotFound = nil
             replyWrappers = []
         }
     }

@@ -11,107 +11,109 @@ import SwiftUI
 
 /// Enhanced version of FeedPost that supports thread consolidation
 struct EnhancedFeedPost: View, Equatable {
-  
   static func == (lhs: EnhancedFeedPost, rhs: EnhancedFeedPost) -> Bool {
     lhs.id == rhs.id
   }
-  
+
   // MARK: - Properties
   let cachedPost: CachedFeedViewPost
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
-  
+
   // MARK: - Layout Constants
   private static let baseUnit: CGFloat = 3
-  private static let avatarSize: CGFloat = 48
-  
+
   // MARK: - Computed Properties
   private var id: String {
-    cachedPost.id
+    guard
+      let feedViewPost,
+      case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedViewPost.reason
+    else {
+      return cachedPost.id
+    }
+
+    return "\(cachedPost.id)-repost-\(reasonRepost.indexedAt)"
   }
-  
-  private var feedViewPost: AppBskyFeedDefs.FeedViewPost {
-    cachedPost.feedViewPost
+
+  private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
+    try? cachedPost.feedViewPost
   }
-  
+
   // MARK: - Body
   var body: some View {
+    Group {
+      if let feedViewPost {
+        content(for: feedViewPost)
+      } else {
+        EmptyView()
+      }
+    }
+  }
+
+  // MARK: - Content Builders
+  @ViewBuilder
+  private func content(for feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Repost header if needed
       if case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedViewPost.reason {
         RepostHeaderView(reposter: reasonRepost.by, path: $path)
-          .frame(height: EnhancedFeedPost.baseUnit * 8)
-          .padding(.horizontal, EnhancedFeedPost.baseUnit * 2)
-          .padding(.bottom, EnhancedFeedPost.baseUnit * 2)
+          .frame(height: Self.baseUnit * 8)
+          .padding(.horizontal, Self.baseUnit * 2)
+          .padding(.bottom, Self.baseUnit * 2)
           .fixedSize(horizontal: false, vertical: true)
       }
-      
-      // Pinned post badge if needed
-      let shouldShowBadge: Bool = {
-        if case .appBskyFeedDefsReasonPin = feedViewPost.reason {
-          return true
-        }
-        if let pinned = feedViewPost.post.viewer?.pinned, pinned {
-          return true
-        }
-        return false
-      }()
-      
-      if shouldShowBadge {
+
+      if shouldShowPinnedBadge(feedViewPost) {
         pinnedPostBadge
-          .frame(height: EnhancedFeedPost.baseUnit * 8)
-          .padding(.horizontal, EnhancedFeedPost.baseUnit * 2)
-          .padding(.bottom, EnhancedFeedPost.baseUnit * 2)
+          .frame(height: Self.baseUnit * 8)
+          .padding(.horizontal, Self.baseUnit * 2)
+          .padding(.bottom, Self.baseUnit * 2)
       }
-      
-      // Main thread content based on display mode
-      threadContent
+
+      threadContent(for: feedViewPost)
     }
-    .padding(.top, EnhancedFeedPost.baseUnit * 3)
-    .padding(.horizontal, EnhancedFeedPost.baseUnit * 1.5)
+    .padding(.top, Self.baseUnit * 3)
+    .padding(.horizontal, Self.baseUnit * 1.5)
     .fixedSize(horizontal: false, vertical: true)
     .contentShape(Rectangle())
     .allowsHitTesting(true)
     .frame(maxWidth: 600, alignment: .center)
     .frame(maxWidth: .infinity, alignment: .center)
   }
-  
-  // MARK: - Thread Content
-  
-  @ViewBuilder
-  private var threadContent: some View {
-    let mode = threadDisplayMode
-    
-    Group {
-      switch mode {
-      case .standard:
-        standardThreadContent
-        
-      case .expanded(let postCount):
-        expandedThreadContent(postCount: postCount)
-        
-      case .collapsed(let hiddenCount):
-        collapsedThreadContent(hiddenCount: hiddenCount)
-      }
+
+  private func shouldShowPinnedBadge(_ feedViewPost: AppBskyFeedDefs.FeedViewPost) -> Bool {
+    if case .appBskyFeedDefsReasonPin = feedViewPost.reason {
+      return true
     }
-    .onAppear {
-      // Initialize post appearance
+
+    return feedViewPost.post.viewer?.pinned == true
+  }
+
+  // MARK: - Thread Content
+  @ViewBuilder
+  private func threadContent(for feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
+    switch threadDisplayMode {
+    case .standard:
+      standardThreadContent(feedViewPost)
+
+    case .expanded(let postCount):
+      expandedThreadContent(feedViewPost, postCount: postCount)
+
+    case .collapsed(let hiddenCount):
+      collapsedThreadContent(feedViewPost, hiddenCount: hiddenCount)
     }
   }
-  
-  // MARK: - Thread Display Mode
-  
+
   private enum ThreadMode {
     case standard
     case expanded(postCount: Int)
     case collapsed(hiddenCount: Int)
   }
-  
+
   private var threadDisplayMode: ThreadMode {
     guard let modeString = cachedPost.threadDisplayMode else {
       return .standard
     }
-    
+
     switch modeString {
     case "expanded":
       let count = cachedPost.threadPostCount ?? 2
@@ -123,37 +125,36 @@ struct EnhancedFeedPost: View, Equatable {
       return .standard
     }
   }
-  
-  // MARK: - Standard Thread Content (Current Behavior)
-  
+
+  // MARK: - Standard Thread Content
   @ViewBuilder
-  private var standardThreadContent: some View {
+  private func standardThreadContent(_ feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Parent post if needed (for replies) - always show like FeedPost does
       if let parentPost = feedViewPost.reply?.parent, feedViewPost.reason == nil {
-        parentPostContent(parentPost)
-          .padding(.bottom, EnhancedFeedPost.baseUnit * 2)
+        parentPostContent(parentPost, feedViewPost: feedViewPost)
+          .padding(.bottom, Self.baseUnit * 2)
       }
-      
-      // Main post content
+
       mainPostContent(feedViewPost)
     }
   }
-  
-  // MARK: - Expanded Thread Content (2-3 posts)
-  
+
+  // MARK: - Expanded Thread Content
   @ViewBuilder
-  private func expandedThreadContent(postCount: Int) -> some View {
+  private func expandedThreadContent(
+    _ feedViewPost: AppBskyFeedDefs.FeedViewPost,
+    postCount: Int
+  ) -> some View {
+
     VStack(alignment: .leading, spacing: 0) {
-      // Show all posts in the slice for expanded threads
       if let sliceItems = cachedPost.sliceItems, !sliceItems.isEmpty {
         ForEach(Array(sliceItems.enumerated()), id: \.element.id) { index, item in
           let isLast = index == sliceItems.count - 1
-          
+
           PostView(
             post: item.post,
             grandparentAuthor: nil,
-            isParentPost: !isLast, // All but last are considered parent posts
+            isParentPost: !isLast,
             isSelectable: false,
             path: $path,
             appState: appState
@@ -164,27 +165,26 @@ struct EnhancedFeedPost: View, Equatable {
           .onTapGesture {
             path.append(NavigationDestination.post(item.post.uri))
           }
-          
+
           if !isLast {
             Spacer()
-              .frame(height: EnhancedFeedPost.baseUnit * 2)
+              .frame(height: Self.baseUnit * 2)
           }
         }
       } else {
-        // Fallback to standard behavior if slice items not available
-        standardThreadContent
+        standardThreadContent(feedViewPost)
       }
     }
   }
-  
-  // MARK: - Collapsed Thread Content (Root + separator + bottom posts)
-  
+
+  // MARK: - Collapsed Thread Content
   @ViewBuilder
-  private func collapsedThreadContent(hiddenCount: Int) -> some View {
+  private func collapsedThreadContent(
+    _ feedViewPost: AppBskyFeedDefs.FeedViewPost,
+    hiddenCount: Int
+  ) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Show: ROOT + "View Full Thread" + LAST 2 POSTS (React Native pattern)
       if let sliceItems = cachedPost.sliceItems, sliceItems.count >= 3 {
-        // Root post (first item)
         let rootItem = sliceItems[0]
         PostView(
           post: rootItem.post,
@@ -200,20 +200,17 @@ struct EnhancedFeedPost: View, Equatable {
         .onTapGesture {
           path.append(NavigationDestination.post(rootItem.post.uri))
         }
-        
-        // Thread separator
+
         ThreadSeparatorView(hiddenPostCount: hiddenCount) {
-          // Navigate to full thread view
-            if case let .appBskyFeedDefsPostView(parentReply) = feedViewPost.reply?.root {
-                path.append(NavigationDestination.post(parentReply.uri))
-            }
+          if case let .appBskyFeedDefsPostView(parentReply)? = feedViewPost.reply?.root {
+            path.append(NavigationDestination.post(parentReply.uri))
+          }
         }
-        
-        // Last 2 posts
+
         let lastTwoItems = Array(sliceItems.suffix(2))
         ForEach(Array(lastTwoItems.enumerated()), id: \.element.id) { index, item in
           let isLast = index == lastTwoItems.count - 1
-          
+
           PostView(
             post: item.post,
             grandparentAuthor: isLast ? nil : item.parentAuthor,
@@ -228,30 +225,28 @@ struct EnhancedFeedPost: View, Equatable {
           .onTapGesture {
             path.append(NavigationDestination.post(item.post.uri))
           }
-          
+
           if !isLast {
             Spacer()
-              .frame(height: EnhancedFeedPost.baseUnit * 2)
+              .frame(height: Self.baseUnit * 2)
           }
         }
       } else {
-        // Fallback to standard behavior if slice items not available
-        standardThreadContent
+        standardThreadContent(feedViewPost)
       }
     }
   }
-  
+
   // MARK: - Content Components
-  
   @ViewBuilder
   private var pinnedPostBadge: some View {
     HStack(alignment: .center, spacing: 4) {
       Image(systemName: "pin")
         .foregroundColor(.secondary)
         .appFont(AppTextRole.subheadline)
-      
+
       Text("Pinned")
-                        .appFont(AppTextRole.body)
+        .appFont(AppTextRole.body)
         .textScale(.secondary)
         .foregroundColor(.secondary)
         .lineLimit(1)
@@ -263,10 +258,12 @@ struct EnhancedFeedPost: View, Equatable {
     .padding(.vertical, 6)
     .padding(.horizontal, 10)
   }
-  
-  /// Renders the parent post if this is a reply
+
   @ViewBuilder
-  private func parentPostContent(_ parentPost: AppBskyFeedDefs.ReplyRefParentUnion) -> some View {
+  private func parentPostContent(
+    _ parentPost: AppBskyFeedDefs.ReplyRefParentUnion,
+    feedViewPost: AppBskyFeedDefs.FeedViewPost
+  ) -> some View {
     switch parentPost {
     case .appBskyFeedDefsPostView(let postView):
       PostView(
@@ -283,57 +280,123 @@ struct EnhancedFeedPost: View, Equatable {
       .onTapGesture {
         path.append(NavigationDestination.post(postView.uri))
       }
-    case .appBskyFeedDefsNotFoundPost:
-      Text("Post not found")
-        .appFont(AppTextRole.caption)
-        .foregroundColor(.secondary)
-        .padding(.vertical, EnhancedFeedPost.baseUnit * 2)
+    case .appBskyFeedDefsNotFoundPost(let notFound):
+      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+        AuthorAvatarColumn(
+          author: createPlaceholderAuthor(for: notFound.uri),
+          isParentPost: true,
+          isAvatarLoaded: .constant(false),
+          path: $path
+        )
+
+        VStack(alignment: .leading, spacing: 0) {
+          PostNotFoundView(uri: notFound.uri, reason: .notFound, path: $path)
+            .padding(.top, Self.baseUnit)
+        }
+      }
+      .id("\(feedViewPost.id)-parent-notfound-\(notFound.uri.uriString())")
+
     case .appBskyFeedDefsBlockedPost(let blocked):
-      BlockedPostView(blockedPost: blocked, path: $path)
+      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
+        AuthorAvatarColumn(
+          author: createPlaceholderAuthor(from: blocked.author),
+          isParentPost: true,
+          isAvatarLoaded: .constant(false),
+          path: $path
+        )
+
+        VStack(alignment: .leading, spacing: 0) {
+          BlockedPostView(blockedPost: blocked, path: $path)
+            .padding(.top, Self.baseUnit)
+        }
+      }
+      .id("\(feedViewPost.id)-parent-blocked-\(blocked.uri.uriString())")
+
     case .unexpected:
       Text("Unexpected post type")
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
-        .padding(.vertical, EnhancedFeedPost.baseUnit * 2)
+        .padding(.vertical, Self.baseUnit * 2)
+    case .pending:
+      EmptyView()
     }
   }
-  
-  /// Renders the main post content
+
   @ViewBuilder
-  private func mainPostContent(_ post: AppBskyFeedDefs.FeedViewPost) -> some View {
-    // Determine grandparent author for reposts of replies
+  private func mainPostContent(_ feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
     let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = {
-      // If this is a repost, check the original post for reply context
-      if case .appBskyFeedDefsReasonRepost = post.reason {
-        // For reposts, the reply context is on the original post (post.post), not the repost wrapper
-        if case .knownType(let originalPostRecord) = post.post.record,
-           let originalPost = originalPostRecord as? AppBskyFeedPost,
-           let originalReply = originalPost.reply
-            {
-          // Check if we have parent post data in the feed reply context
-          if let replyContext = post.reply,
-             case let .appBskyFeedDefsPostView(parentPost) = replyContext.parent {
-            return parentPost.author
-          }
-        }
+      guard case .appBskyFeedDefsReasonRepost = feedViewPost.reason else {
+        return nil
       }
+
+      guard
+        case .knownType(let record) = feedViewPost.post.record,
+        let originalPost = record as? AppBskyFeedPost,
+        originalPost.reply != nil
+      else {
+        return nil
+      }
+
+      if let replyContext = feedViewPost.reply,
+         case let .appBskyFeedDefsPostView(parentPost) = replyContext.parent {
+        return parentPost.author
+      }
+
       return nil
     }()
-    
+
     PostView(
-      post: post.post,
+      post: feedViewPost.post,
       grandparentAuthor: grandparentAuthor,
       isParentPost: false,
       isSelectable: false,
       path: $path,
       appState: appState
     )
-    .environment(\.feedPostID, post.id)
-    .id("\(post.id)-main-\(post.post.uri.uriString())")
+    .environment(\.feedPostID, feedViewPost.id)
+    .id("\(feedViewPost.id)-main-\(feedViewPost.post.uri.uriString())")
     .contentShape(Rectangle())
     .allowsHitTesting(true)
     .onTapGesture {
-      path.append(NavigationDestination.post(post.post.uri))
+      path.append(NavigationDestination.post(feedViewPost.post.uri))
     }
+  }
+
+  // MARK: - Placeholder Author Helpers
+  private func createPlaceholderAuthor(
+    from blockedAuthor: AppBskyFeedDefs.BlockedAuthor
+  ) -> AppBskyActorDefs.ProfileViewBasic {
+    let placeholderHandle = try! Handle(handleString: "blocked.user")
+    return AppBskyActorDefs.ProfileViewBasic(
+      did: blockedAuthor.did,
+      handle: placeholderHandle,
+      displayName: nil,
+      avatar: nil,
+      associated: nil,
+      viewer: blockedAuthor.viewer,
+      labels: nil,
+      createdAt: nil,
+      verification: nil,
+      status: nil
+    )
+  }
+
+  private func createPlaceholderAuthor(
+    for uri: ATProtocolURI
+  ) -> AppBskyActorDefs.ProfileViewBasic {
+    let placeholderDID = try! DID(didString: "did:plc:unknown")
+    let placeholderHandle = try! Handle(handleString: "deleted.user")
+    return AppBskyActorDefs.ProfileViewBasic(
+      did: placeholderDID,
+      handle: placeholderHandle,
+      displayName: nil,
+      avatar: nil,
+      associated: nil,
+      viewer: nil,
+      labels: nil,
+      createdAt: nil,
+      verification: nil,
+      status: nil
+    )
   }
 }

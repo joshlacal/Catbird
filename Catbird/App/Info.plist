@@ -5,7 +5,17 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>blue.catbird.posting.retry</string>
+		<string>blue.catbird.chat.refresh</string>
 	</array>
+	<key>DCAppAttestService</key>
+	<dict>
+		<key>Enabled</key>
+		<true/>
+	</dict>
+	<key>LegalPrivacyPolicyURL</key>
+	<string>https://catbird.blue/privacy</string>
+	<key>LegalTermsOfServiceURL</key>
+	<string>https://catbird.blue/terms</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -25,6 +35,8 @@
 	</array>
 	<key>NSUserNotificationUsageDescription</key>
 	<string>Catbird needs permission to send you notifications about mentions, replies, and interactions with your posts.</string>
+	<key>SupportURL</key>
+	<string>https://catbird.blue/support</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

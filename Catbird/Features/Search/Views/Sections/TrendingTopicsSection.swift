@@ -62,8 +62,10 @@ struct TrendingTopicsSection: View {
             }
         }
         // Prefetch summaries for visible topics (maxItems)
-        .task(id: topics.prefix(maxItems).map { $0.link }.joined(separator: ",")) {
-            await TopicSummaryService.shared.primeSummaries(for: Array(topics.prefix(maxItems)), appState: appState, max: maxItems)
+        .task(id: topics.prefix(maxItems).map { $0.summaryIdentityKey }.joined(separator: ",")) {
+            if #available(iOS 26.0, *) {
+                await TopicSummaryService.shared.primeSummaries(for: Array(topics.prefix(maxItems)), appState: appState, max: maxItems)
+            }
         }
     }
     
@@ -134,13 +136,14 @@ struct TrendingTopicsSection: View {
                 categoryIcon(for: topic.category)
                     .appFont(AppTextRole.title3)
                     .foregroundColor(categoryColor(for: topic.category))
-                    .padding(8)
+                    .padding(12)
                     .frame(width: 32, height: 32)
                     .background(
                         Circle().stroke(categoryColor(for: topic.category), lineWidth: 1)
                             .fill(categoryColor(for: topic.category).opacity(0.1))
                             .scaleEffect(1.2)
                     )
+                    .padding(.top, 10)
                 
                 VStack(alignment: .leading, spacing: 4) {
                     
@@ -181,7 +184,10 @@ struct TrendingTopicsSection: View {
                     .padding(.top, 2)
 
                     // Topic summary (iOS 26+ via Foundation Models). Hidden if unavailable.
-                    TrendingTopicSummaryLine(topic: topic)
+                    if #available(iOS 26.0, *) {
+                        TrendingTopicSummaryLine(topic: topic)
+                            .id(topic.summaryIdentityKey)
+                    }
                 }
                 
                 Spacer()
@@ -303,8 +309,13 @@ struct TrendingTopicsSection: View {
     }
 }
 
+private extension AppBskyUnspeccedDefs.TrendView {
+    var summaryIdentityKey: String { "\(link)|\(displayName)" }
+}
+
 // MARK: - Summary Line Subview
 
+@available(iOS 26.0, *)
 private struct TrendingTopicSummaryLine: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
@@ -314,13 +325,14 @@ private struct TrendingTopicSummaryLine: View {
     @State private var summary: String?
     @State private var isLoading: Bool = false
 
+    private var taskID: String { topic.summaryIdentityKey }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let summary {
                 Text(summary)
                     .appFont(AppTextRole.footnote)
                     .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    .lineLimit(5)
                     .transition(.opacity)
                     .accessibilityLabel("Topic summary")
             } else if isLoading {
@@ -331,7 +343,7 @@ private struct TrendingTopicSummaryLine: View {
                     .redacted(reason: .placeholder)
             }
         }
-        .task(id: topic.link) {
+        .task(id: taskID) {
             // Avoid re-entrancy
             guard !isLoading, summary == nil else { return }
             isLoading = true

@@ -11,6 +11,43 @@ import NaturalLanguage
 /// Central state container for the Catbird app
 @Observable
 final class AppState {
+  // MARK: - Nested Types
+
+  struct SearchRequest: Equatable {
+    enum Focus: Equatable {
+      case all
+      case profiles
+      case posts
+      case feeds
+    }
+
+    let id: UUID
+    let query: String
+    let focus: Focus
+    let originProfileDID: String?
+
+    init(query: String, focus: Focus = .posts, originProfileDID: String? = nil) {
+      self.id = UUID()
+      self.query = query
+      self.focus = focus
+      self.originProfileDID = originProfileDID
+    }
+  }
+
+  struct ReauthenticationRequest: Equatable {
+    let id: UUID
+    let handle: String
+    let did: String
+    let authURL: URL
+
+    init(handle: String, did: String, authURL: URL) {
+      self.id = UUID()
+      self.handle = handle
+      self.did = did
+      self.authURL = authURL
+    }
+  }
+
   // MARK: - Singleton Pattern
   
   /// Shared instance to prevent multiple AppState creation
@@ -79,6 +116,11 @@ final class AppState {
   /// Font manager for handling typography and font settings - observes via fontDidChange
   @ObservationIgnored private let _fontManager = FontManager()
   
+#if canImport(FoundationModels)
+  /// Shared Bluesky intelligence agent storage (lazy)
+  @ObservationIgnored private var blueskyAgentStorage: Any?
+#endif
+  
   /// Theme manager for handling app-wide theme changes - observes via themeDidChange
   @ObservationIgnored private let _themeManager: ThemeManager
   
@@ -99,13 +141,44 @@ final class AppState {
   /// Navigation manager for handling navigation
   @ObservationIgnored let navigationManager = AppNavigationManager()
 
+  /// Pending search request to be handled by the dedicated search tab
+  var pendingSearchRequest: SearchRequest?
+
+  /// Pending reauthentication request when account switching fails due to expired tokens
+  var pendingReauthenticationRequest: ReauthenticationRequest?
+
   /// Feed filter settings manager
   @ObservationIgnored let feedFilterSettings = FeedFilterSettings()
 
   
 
+  /// Persisted App Attest metadata shared with the notification service.
+  var appAttestInfo: AppAttestInfo? {
+    didSet {
+      persistAppAttestInfo(appAttestInfo)
+    }
+  }
+
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
+  
+  /// Activity subscription manager for app-level access
+  @ObservationIgnored
+  private var activitySubscriptionServiceStorage: ActivitySubscriptionService?
+
+  @MainActor
+  var activitySubscriptionService: ActivitySubscriptionService {
+    if let existing = activitySubscriptionServiceStorage {
+      return existing
+    }
+
+    let service = ActivitySubscriptionService(
+      client: nil,
+      notificationManager: notificationManager
+    )
+    activitySubscriptionServiceStorage = service
+    return service
+  }
   
   /// Composer draft manager for handling minimized post composer drafts
   let composerDraftManager = ComposerDraftManager()
@@ -140,6 +213,12 @@ final class AppState {
   @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?
   @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
 
+  @ObservationIgnored private let appAttestDefaultsKey = "catbird.appAttestInfo"
+
+  private var appAttestDefaults: UserDefaults {
+    UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
+  }
+
   // MARK: - Initialization
 
   private init() {
@@ -172,10 +251,12 @@ final class AppState {
     #endif
 
     // Load user settings
-      if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(forKey: "isAdultContentEnabled")
+    if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(forKey: "isAdultContentEnabled")
       as? Bool {
       self.isAdultContentEnabled = storedContentSetting
     }
+
+    self.appAttestInfo = loadPersistedAppAttestInfo()
 
     // Configure notification manager with app state reference (skip for FaultOrdering)
     if !isFaultOrderingMode {
@@ -199,8 +280,25 @@ final class AppState {
               self.graphManager = GraphManager(atProtoClient: client)
               self.listManager.updateClient(client)
               self.listManager.updateAppState(self)
+              self.activitySubscriptionService.updateClient(client)
+#if canImport(FoundationModels)
+              if #available(iOS 26.0, macOS 15.0, *), !isFaultOrderingMode {
+                let agent = self.blueskyAgent
+                Task {
+                  await agent.updateClient(client)
+                }
+              }
+#endif
+#if canImport(FoundationModels)
+              if #available(iOS 26.0, macOS 15.0, *), !isFaultOrderingMode {
+                Task(priority: .background) {
+                  await TopicSummaryService.shared.prepareLaunchWarmup(appState: self)
+                }
+              }
+#endif
               #if os(iOS)
               if !isFaultOrderingMode {
+                self.chatManager.updateAppState(self) // Wire AppState reference to ChatManager
                 await self.chatManager.updateClient(client) // Update ChatManager client
                 self.urlHandler.configure(with: self)
               }
@@ -226,6 +324,10 @@ final class AppState {
                     self.logger.error(
                       "Error fetching preferences after authentication: \(error.localizedDescription)"
                     )
+                  }
+
+                  Task { @MainActor in
+                    await self.activitySubscriptionService.refreshSubscriptions()
                   }
 
                     guard let userDID = self.currentUserDID else {
@@ -266,6 +368,16 @@ final class AppState {
             self.graphManager = GraphManager(atProtoClient: nil)
             self.listManager.updateClient(nil)
             self.listManager.updateAppState(nil)
+            self.activitySubscriptionService.updateClient(nil)
+#if canImport(FoundationModels)
+            if #available(iOS 26.0, macOS 15.0, *) {
+              if let agent = self.blueskyAgentStorage as? BlueskyIntelligenceAgent {
+                Task {
+                  await agent.updateClient(nil)
+                }
+              }
+            }
+#endif
             #if os(iOS)
             await self.chatManager.updateClient(nil)
             #endif
@@ -306,7 +418,6 @@ final class AppState {
   
   
   deinit {
-    logger.debug("AppState deinitializing (instance #\(AppState.initializationCount))")
     // Clean up notification observers
     NotificationCenter.default.removeObserver(self)
     // Cancel auth state observation task
@@ -327,7 +438,7 @@ final class AppState {
 
           // Refresh preferences
           group.addTask {
-            if self.isAuthenticated {
+              if await self.isAuthenticated {
               do {
                 try await self.preferencesManager.fetchPreferences(forceRefresh: true)
               } catch {
@@ -404,6 +515,7 @@ final class AppState {
       listManager.updateClient(client)
       listManager.updateAppState(self)
       #if os(iOS)
+      chatManager.updateAppState(self) // Wire AppState reference to ChatManager
       await chatManager.updateClient(client) // Update ChatManager client if uncommented
       updateChatUnreadCount() // Update chat unread count
       #endif
@@ -455,27 +567,66 @@ final class AppState {
   func switchToAccount(did: String) async throws {
     logger.info("Switching to account: \(did)")
 
+    // Get account info before switching (for potential reauthentication)
+    let accountInfo = authManager.availableAccounts.first { $0.did == did }
+
     // Clear current user profile before switching
     currentUserProfile = nil
     logger.debug("SWITCH: Cleared current user profile")
 
-    // 3. Yield before account switch to ensure UI updates
+    // Yield before account switch to ensure UI updates
     await Task.yield()
     logger.debug("SWITCH: Yielded after resetting profile state")
 
-    // 4. Switch account in AuthManager
-    try await authManager.switchToAccount(did: did)
-    logger.debug("SWITCH: AuthManager switched account")
+    do {
+      // Switch account in AuthManager
+      try await authManager.switchToAccount(did: did)
+      logger.debug("SWITCH: AuthManager switched account")
 
-    // 5. Update client references in all managers
-    await refreshAfterAccountSwitch()
+      // Update client references in all managers
+      await refreshAfterAccountSwitch()
 
-    // 6. Notify that account was switched to trigger view refreshes
-    notifyAccountSwitched()
+      // Notify that account was switched to trigger view refreshes
+      notifyAccountSwitched()
 
-    // 7. Wait to ensure client is ready
-    try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+      // Wait to ensure client is ready
+      try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
 
+    } catch {
+      // If switching failed due to auth issues, trigger reauthentication
+      logger.error("Account switch failed: \(error.localizedDescription)")
+
+      // Check if we have account info to attempt reauthentication
+      if let accountInfo = accountInfo {
+        let handle = accountInfo.handle ?? accountInfo.did
+        logger.info("Attempting to trigger reauthentication for handle: \(handle)")
+
+        do {
+          // Initiate reauthentication flow by starting OAuth for this account
+          let authURL = try await authManager.addAccount(handle: handle)
+
+          // Store the pending reauthentication request for the UI to handle
+          pendingReauthenticationRequest = ReauthenticationRequest(
+            handle: handle,
+            did: did,
+            authURL: authURL
+          )
+
+          logger.info("Reauthentication flow initiated for handle: \(handle)")
+          logger.info("UI should present OAuth session for URL: \(authURL)")
+
+          // Don't re-throw the error here - the UI will handle reauthentication
+          return
+        } catch {
+          logger.error("Failed to initiate reauthentication: \(error.localizedDescription)")
+          // Re-throw the original account switch error
+          throw error
+        }
+      }
+
+      // Re-throw the error if we couldn't initiate reauthentication
+      throw error
+    }
   }
 
   @MainActor
@@ -496,6 +647,7 @@ final class AppState {
     preferencesManager.updateClient(authManager.client)
     notificationManager.updateClient(authManager.client)
     #if os(iOS)
+    chatManager.updateAppState(self) // Wire AppState reference to ChatManager
     await chatManager.updateClient(authManager.client) // Update ChatManager client
     updateChatUnreadCount() // Update chat unread count
     #endif
@@ -579,6 +731,19 @@ final class AppState {
   var atProtoClient: ATProtoClient? {
     authManager.client
   }
+
+#if canImport(FoundationModels)
+  @available(iOS 26.0, macOS 15.0, *)
+  var blueskyAgent: BlueskyIntelligenceAgent {
+    if let blueskyAgentStorage = blueskyAgentStorage as? BlueskyIntelligenceAgent {
+      return blueskyAgentStorage
+    }
+
+    let agent = BlueskyIntelligenceAgent(client: authManager.client)
+    blueskyAgentStorage = agent
+    return agent
+  }
+#endif
 
   /// Update post manager when client changes
   private func updatePostManagerClient() {
@@ -1159,6 +1324,45 @@ final class AppState {
   func notifyThreadUpdated(_ rootUri: String) {
     logger.debug("Thread updated notification: \(rootUri)")
     stateInvalidationBus.notifyThreadUpdated(rootUri)
+  }
+
+  // MARK: - App Attest Persistence
+
+  private func loadPersistedAppAttestInfo() -> AppAttestInfo? {
+    let defaults = appAttestDefaults
+    guard let storedData = defaults.data(forKey: appAttestDefaultsKey) else {
+      return nil
+    }
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+
+    do {
+      return try decoder.decode(AppAttestInfo.self, from: storedData)
+    } catch {
+      logger.error("Failed to decode App Attest info: \(error.localizedDescription)")
+      defaults.removeObject(forKey: appAttestDefaultsKey)
+      return nil
+    }
+  }
+
+  private func persistAppAttestInfo(_ info: AppAttestInfo?) {
+    let defaults = appAttestDefaults
+
+    guard let info else {
+      defaults.removeObject(forKey: appAttestDefaultsKey)
+      return
+    }
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+
+    do {
+      let data = try encoder.encode(info)
+      defaults.set(data, forKey: appAttestDefaultsKey)
+    } catch {
+      logger.error("Failed to encode App Attest info: \(error.localizedDescription)")
+    }
   }
 }
 

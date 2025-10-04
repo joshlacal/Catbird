@@ -1,3 +1,4 @@
+import Foundation
 import NukeUI
 import OSLog
 import Observation
@@ -8,6 +9,7 @@ import LazyPager
 #endif
 import Nuke
 import TipKit
+import SwiftData
 
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
@@ -267,41 +269,73 @@ struct UnifiedProfileView: View {
             Task { await loadAction() }
           }
       } else {
-        // Post rows with NotificationsView pattern - constrained content, full-width dividers
-        ForEach(posts, id: \.post.uri) { post in
-          Button {
-            navigationPath.append(NavigationDestination.post(post.post.uri))
-          } label: {
-            VStack(spacing: 0) {
-              // Post content constrained like NotificationCard
-              EnhancedFeedPost(
-                cachedPost: CachedFeedViewPost(feedViewPost: post),
-                path: $navigationPath
-              )
-              .frame(maxWidth: 600, alignment: .center)
-              .frame(maxWidth: .infinity, alignment: .center)
-              
-              // Divider extends full width like NotificationsView
-              Divider()
-                .padding(.top, 8)
-            }
-          }
-          .buttonStyle(.plain)
-          .onAppear {
-            // Load more when reaching the end, but only if not already loading
-            if post == posts.last && !viewModel.isLoadingMorePosts {
-              Task { await loadAction() }
-            }
+        // Use cached SwiftData objects and EnhancedFeedPost for consistency
+        ProfileCachedPostsList(
+          feedKey: viewModel.profileFeedKey(for: viewModel.selectedProfileTab),
+          isLoadingMore: viewModel.isLoadingMorePosts,
+          loadMore: {
+            await loadAction()
+          },
+          path: $navigationPath
+        )
+      }
+    }
+  }
+
+  // MARK: - Cached Posts List (SwiftData-backed)
+  struct ProfileCachedPostsList: View {
+    let feedKey: String
+    let isLoadingMore: Bool
+    let loadMore: @MainActor () async -> Void
+    @Binding var path: NavigationPath
+
+    @Query private var cached: [CachedFeedViewPost]
+
+    init(
+      feedKey: String,
+      isLoadingMore: Bool,
+      loadMore: @escaping @MainActor () async -> Void,
+      path: Binding<NavigationPath>
+    ) {
+      self.feedKey = feedKey
+      self.isLoadingMore = isLoadingMore
+      self.loadMore = loadMore
+      self._path = path
+      self._cached = Query(
+        filter: #Predicate<CachedFeedViewPost> { post in
+          post.feedType == feedKey
+        },
+        sort: [SortDescriptor(\.createdAt, order: .reverse)]
+      )
+    }
+
+    var body: some View {
+      ForEach(cached) { cachedPost in
+        VStack(spacing: 0) {
+          EnhancedFeedPost(
+            cachedPost: cachedPost,
+            path: $path
+          )
+          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+
+          Divider()
+            .padding(.top, 8)
+        }
+        .contentShape(Rectangle())
+        .onAppear {
+          // Load more when reaching the end
+          if cachedPost == cached.last && !isLoadingMore {
+            Task { await loadMore() }
           }
         }
-          
-        // Loading indicator for pagination
-        if viewModel.isLoadingMorePosts {
-          ProgressView()
-            .padding()
-            .frame(maxWidth: 600, alignment: .center)
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
+      }
+
+      if isLoadingMore {
+        ProgressView()
+          .padding()
+          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
       }
     }
   }
@@ -434,6 +468,12 @@ struct UnifiedProfileView: View {
         Label("Add to List", systemImage: "list.bullet.rectangle")
       }
 
+      Button {
+        searchPostsForProfile(profile)
+      } label: {
+        Label("Search This Profile", systemImage: "magnifyingglass")
+      }
+
       Divider()
 
       Button {
@@ -500,6 +540,28 @@ struct UnifiedProfileView: View {
       }
       lastTappedTab = nil
     }
+  }
+
+  private func searchPostsForProfile(_ profile: AppBskyActorDefs.ProfileViewDetailed) {
+    let queryHandle = "from:\(profile.handle.description)"
+
+    appState.navigationManager.clearPath(for: 1)
+
+    if let selectTab = appState.navigationManager.tabSelection {
+      selectTab(1)
+    } else {
+      appState.navigationManager.updateCurrentTab(1)
+    }
+
+    selectedTab = 1
+    appState.navigationManager.updateCurrentTab(1)
+    lastTappedTab = nil
+
+    appState.pendingSearchRequest = AppState.SearchRequest(
+      query: queryHandle,
+      focus: .posts,
+      originProfileDID: profile.did.didString()
+    )
   }
 
   private func initialLoad() async {
@@ -899,6 +961,12 @@ struct UnifiedProfileView: View {
         } label: {
           Label("Add to List", systemImage: "list.bullet.rectangle")
         }
+
+        Button {
+          searchPostsForProfile(profile)
+        } label: {
+          Label("Search This Profile", systemImage: "magnifyingglass")
+        }
         Divider()
       }
       
@@ -907,7 +975,7 @@ struct UnifiedProfileView: View {
       } label: {
         Label("Report User", systemImage: "flag")
       }
-      
+
       Button {
         toggleMute()
       } label: {
@@ -940,6 +1008,9 @@ struct ProfileHeader: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isFollowButtonLoading = false
     @State private var localIsFollowing: Bool = false
+    @State private var localActivitySubscription: AppBskyNotificationDefs.ActivitySubscription?
+    @State private var isActivitySubscriptionLoading = false
+    @State private var activitySubscriptionError: String?
     @State private var isShowingProfileImageViewer = false
     @Namespace private var imageTransition
     
@@ -989,11 +1060,219 @@ struct ProfileHeader: View {
         .onAppear {
             // Initialize local follow state based on profile
             localIsFollowing = profile.viewer?.following != nil
+            updateLocalActivitySubscription()
         }
         .onChange(of: profile) { _, newProfile in
             // Update local follow state when profile changes
             localIsFollowing = newProfile.viewer?.following != nil
+            updateLocalActivitySubscription()
         }
+        .onChange(of: activitySubscriptionSnapshot) { _, _ in
+            updateLocalActivitySubscription()
+        }
+    }
+    
+    private var activitySubscriptionService: ActivitySubscriptionService {
+        appState.activitySubscriptionService
+    }
+
+    // Snapshot type to ensure Equatable conformance for onChange
+    private struct SubscriptionSnapshot: Equatable {
+        let id: String
+        let post: Bool
+        let reply: Bool
+    }
+
+    private var activitySubscriptionSnapshot: [SubscriptionSnapshot] {
+        activitySubscriptionService.subscriptions.map { entry in
+            SubscriptionSnapshot(
+                id: entry.id,
+                post: entry.subscription?.post ?? false,
+                reply: entry.subscription?.reply ?? false
+            )
+        }
+    }
+    
+    private var isSubscriptionUpdating: Bool {
+        isActivitySubscriptionLoading || activitySubscriptionService.isUpdating(did: profile.did.didString())
+    }
+    
+    private var canSubscribeToActivity: Bool {
+        guard !viewModel.isCurrentUser else { return false }
+        if profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true {
+            return false
+        }
+        if let allowSubscriptions = profile.associated?.activitySubscription?.allowSubscriptions {
+            // The lexicon currently allows: followers, mutuals, or none.
+            switch allowSubscriptions {
+            case "none":
+                return false
+            case "followers":
+                return profile.viewer?.following != nil
+            case "mutuals":
+                return profile.viewer?.following != nil && profile.viewer?.followedBy != nil
+            default:
+                return true
+            }
+        }
+        return true
+    }
+    
+    private var currentActivitySubscriptionState: ActivitySubscriptionState {
+        guard let subscription = localActivitySubscription else { return .none }
+        switch (subscription.post, subscription.reply) {
+        case (true, true):
+            return .postsAndReplies
+        case (true, false):
+            return .postsOnly
+        case (false, true):
+            return .repliesOnly
+        default:
+            return .none
+        }
+    }
+    
+    private var nextActivitySubscriptionState: ActivitySubscriptionState {
+        switch currentActivitySubscriptionState {
+        case .none:
+            return .postsOnly
+        case .postsOnly:
+            return .postsAndReplies
+        case .postsAndReplies, .repliesOnly:
+            return .none
+        }
+    }
+    
+    private var subscriptionButtonIcon: String {
+        switch currentActivitySubscriptionState {
+        case .none:
+            return "bell"
+        case .postsOnly:
+            return "bell.badge"
+        case .postsAndReplies:
+            return "bell.badge.fill"
+        case .repliesOnly:
+            return "bubble.left"
+        }
+    }
+    
+    private var subscriptionButtonTint: Color {
+        switch currentActivitySubscriptionState {
+        case .none:
+            return .secondary
+        case .postsOnly, .postsAndReplies:
+            return .indigo
+        case .repliesOnly:
+            return .teal
+        }
+    }
+    
+    private var subscriptionButtonAccessibilityLabel: String {
+        switch currentActivitySubscriptionState {
+        case .none:
+            return "Activity notifications off"
+        case .postsOnly:
+            return "Activity notifications for posts"
+        case .postsAndReplies:
+            return "Activity notifications for posts and replies"
+        case .repliesOnly:
+            return "Activity notifications for replies"
+        }
+    }
+    
+    private var isSubscriptionControlDisabled: Bool {
+        isSubscriptionUpdating
+    }
+    
+    @ViewBuilder
+    private var activitySubscriptionControl: some View {
+        Button(action: cycleActivitySubscriptionState) {
+            Group {
+                if isSubscriptionUpdating {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(subscriptionButtonTint)
+                        .frame(width: 36, height: 36)
+                } else {
+                    Image(systemName: subscriptionButtonIcon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(subscriptionButtonTint)
+                        .frame(width: 18, height: 18)
+                        .padding(10)
+                        .background(
+                            Circle()
+                                .fill(currentActivitySubscriptionState == .none ? Color.clear : subscriptionButtonTint.opacity(0.15))
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(subscriptionButtonTint.opacity(0.8), lineWidth: 1.5)
+                        )
+                        .contentShape(Circle())
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(subscriptionButtonAccessibilityLabel)
+        .accessibilityHint("Cycles activity notifications between posts, posts & replies, or off")
+        .disabled(isSubscriptionControlDisabled)
+    }
+    
+    private func cycleActivitySubscriptionState() {
+        guard canSubscribeToActivity, !isSubscriptionControlDisabled else { return }
+        let did = profile.did.didString()
+        let nextState = nextActivitySubscriptionState
+        activitySubscriptionError = nil
+        isActivitySubscriptionLoading = true
+
+        Task {
+            do {
+                let updatedSubscription: AppBskyNotificationDefs.ActivitySubscription?
+
+                switch nextState {
+                case .none:
+                    try await activitySubscriptionService.clearSubscription(for: did)
+                    updatedSubscription = nil
+                case .postsOnly:
+                    updatedSubscription = try await activitySubscriptionService.setSubscription(for: did, posts: true, replies: false)
+                case .postsAndReplies:
+                    updatedSubscription = try await activitySubscriptionService.setSubscription(for: did, posts: true, replies: true)
+                case .repliesOnly:
+                    updatedSubscription = try await activitySubscriptionService.setSubscription(for: did, posts: false, replies: true)
+                }
+
+                await MainActor.run {
+                    localActivitySubscription = updatedSubscription
+                    activitySubscriptionError = nil
+                }
+            } catch {
+                logger.error("Failed to update activity subscription: \(error.localizedDescription)")
+                await MainActor.run {
+                    activitySubscriptionError = error.localizedDescription
+                }
+            }
+
+            await MainActor.run {
+                isActivitySubscriptionLoading = false
+            }
+        }
+    }
+
+    private func updateLocalActivitySubscription() {
+        let did = profile.did.didString()
+        if let subscription = profile.viewer?.activitySubscription {
+            localActivitySubscription = subscription
+        } else if let cached = activitySubscriptionService.subscription(for: did) {
+            localActivitySubscription = cached
+        } else {
+            localActivitySubscription = nil
+        }
+    }
+
+    private enum ActivitySubscriptionState {
+        case none
+        case postsOnly
+        case postsAndReplies
+        case repliesOnly
     }
     
     private var avatarView: some View {
@@ -1021,19 +1300,30 @@ struct ProfileHeader: View {
     private var profileInfoContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Top section with edit/follow button aligned to trailing edge
-            HStack(alignment: .top) {
+            HStack(alignment: .top, spacing: 8) {
                 Spacer()
                 
-                // Follow/Edit button at the trailing edge
                 if viewModel.isCurrentUser {
                     editProfileButton
                         .allowsHitTesting(true)
                 } else {
-                    followButton
-                        .allowsHitTesting(true)
+                    HStack(spacing: 8) {
+                        followButton
+                            .allowsHitTesting(true)
+                        if canSubscribeToActivity {
+                            activitySubscriptionControl
+                        }
+                    }
                 }
             }
             .padding(.top, 4)
+
+            if let activitySubscriptionError {
+                Text(activitySubscriptionError)
+                    .appCaption()
+                    .foregroundStyle(.red)
+                    .padding(.top, 2)
+            }
             
             // Display name and handle
             VStack(alignment: .leading, spacing: 6) {
@@ -1056,7 +1346,10 @@ struct ProfileHeader: View {
             }
             
             // Bio
-            if let description = profile.description, !description.isEmpty {
+            if let attributedBio = bioAttributedString(for: profile) {
+                TappableTextView(attributedString: attributedBio)
+                    .padding(.top, 2)
+            } else if let description = profile.description, !description.isEmpty {
                 Text(description)
                     .enhancedAppBody()
                     .lineLimit(nil)
@@ -1103,6 +1396,88 @@ struct ProfileHeader: View {
             }
         }
         .padding(.bottom, verticalSpacing)
+    }
+
+    // MARK: - Bio Helpers
+
+    private func bioAttributedString(for profile: AppBskyActorDefs.ProfileViewDetailed) -> AttributedString? {
+        guard let description = profile.description, !description.isEmpty else {
+            return nil
+        }
+
+        let attributedBio = NSMutableAttributedString(string: description)
+
+        applyDetectedLinks(in: description, to: attributedBio)
+        applyDetectedHandles(in: description, to: attributedBio)
+
+        return AttributedString(attributedBio)
+    }
+
+    private func applyDetectedLinks(in text: String, to attributedText: NSMutableAttributedString) {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return
+        }
+
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+
+        detector.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+            guard let match, let url = match.url else { return }
+            guard !hasLinkAttribute(in: attributedText, range: match.range) else { return }
+            applyLinkAttributes(url: url, range: match.range, on: attributedText)
+        }
+    }
+
+    private func applyDetectedHandles(in text: String, to attributedText: NSMutableAttributedString) {
+        let pattern = "(?<![\\w@])@[A-Za-z0-9][A-Za-z0-9.-]*"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return
+        }
+
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+
+        regex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+            guard let match else { return }
+            guard !hasLinkAttribute(in: attributedText, range: match.range) else { return }
+
+            let handleWithPrefix = nsText.substring(with: match.range)
+            let handle = String(handleWithPrefix.dropFirst())
+            guard !handle.isEmpty else { return }
+
+            let encodedHandle = handle.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? handle
+            guard let url = URL(string: "mention://\(encodedHandle)") else { return }
+            applyLinkAttributes(url: url, range: match.range, on: attributedText, underline: false)
+        }
+    }
+
+    private func applyLinkAttributes(
+        url: URL,
+        range: NSRange,
+        on attributedText: NSMutableAttributedString,
+        underline: Bool = true
+    ) {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .link: url,
+            .foregroundColor: PlatformColor.platformLink
+        ]
+
+        if underline {
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+
+        attributedText.addAttributes(attributes, range: range)
+    }
+
+    private func hasLinkAttribute(in attributedText: NSMutableAttributedString, range: NSRange) -> Bool {
+        var hasLink = false
+        attributedText.enumerateAttribute(.link, in: range, options: []) { value, _, stop in
+            if value != nil {
+                hasLink = true
+                stop.pointee = true
+            }
+        }
+        return hasLink
     }
     
     private var editProfileButton: some View {
@@ -1326,7 +1701,10 @@ struct ProfileImageViewerView: View {
 #if os(iOS)
                 LazyPager(data: [imageUrl]) { image in
                     GeometryReader { geometry in
-                        LazyImage(url: URL(string: image)) { state in
+                        LazyImage(request: ImageLoadingManager.imageRequest(
+                            for: URL(string: image) ?? URL(string: "about:blank")!,
+                            targetSize: CGSize(width: geometry.size.width, height: geometry.size.height)
+                        )) { state in
                             if let fullImage = state.image {
                                 fullImage
                                     .resizable()
@@ -1335,7 +1713,7 @@ struct ProfileImageViewerView: View {
                                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                                     .id(image) // Use the image string for proper identification
                                     .matchedTransitionSource(id: image, in: namespace)
-                                
+
                             } else if state.error != nil {
                                 Image(systemName: "exclamationmark.triangle")
                                     .appFont(AppTextRole.largeTitle)
@@ -1348,10 +1726,6 @@ struct ProfileImageViewerView: View {
                             }
                         }
                         .pipeline(ImageLoadingManager.shared.pipeline)
-                        .priority(.high)
-                        .processors([
-                            ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
-                        ])
                     }
                 }
                 .zoomable(min: 1.0, max: 3.0, doubleTapGesture: .scale(2.0))
@@ -1370,7 +1744,10 @@ struct ProfileImageViewerView: View {
 #else
                 // macOS: Simple image viewer without LazyPager
                 GeometryReader { geometry in
-                    LazyImage(url: URL(string: imageUrl)) { state in
+                    LazyImage(request: ImageLoadingManager.imageRequest(
+                        for: URL(string: imageUrl) ?? URL(string: "about:blank")!,
+                        targetSize: CGSize(width: geometry.size.width, height: geometry.size.height)
+                    )) { state in
                         if let fullImage = state.image {
                             fullImage
                                 .resizable()
@@ -1391,10 +1768,6 @@ struct ProfileImageViewerView: View {
                         }
                     }
                     .pipeline(ImageLoadingManager.shared.pipeline)
-                    .priority(.high)
-                    .processors([
-                        ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: geometry.size.height))
-                    ])
                 }
                 .onTapGesture {
                     isPresented = false

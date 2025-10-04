@@ -737,6 +737,7 @@ struct EnhancedRecommendationCard: View {
     let showRank: Bool
     let onSubscribe: () async -> Void
     
+    @State private var path = NavigationPath()
     @State private var isSubscribing = false
     @State private var showingFullFeed = false
     
@@ -767,34 +768,18 @@ struct EnhancedRecommendationCard: View {
     }
     
     private var feedPreviewSheet: some View {
-        NavigationStack {
-            FeedCollectionView.create(
-                for: .feed(recommendation.feed.uri),
-                appState: AppState.shared,
-                navigationPath: .constant(NavigationPath())
-            )
-            .navigationTitle(recommendation.feed.displayName)
+        NavigationStack (path: $path){
+            FeedScreen(path: $path, uri: recommendation.feed.uri)
+                .environment(AppState.shared)
+                .navigationTitle(recommendation.feed.displayName)
     #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
+                .toolbarTitleDisplayMode(.inline)
     #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") {
-                        showingFullFeed = false
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { showingFullFeed = false }
                     }
                 }
-                
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Subscribe") {
-                        Task {
-                            await onSubscribe()
-                            showingFullFeed = false
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-            }
         }
     }
     @ViewBuilder
@@ -1157,7 +1142,7 @@ struct InterestPickerSheet: View {
     #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
                 }

@@ -27,7 +27,9 @@ struct ComposePostIntent: AppIntent {
         outlineTags: [],
         threadEntries: [],
         isThreadMode: false,
-        currentThreadIndex: 0
+        currentThreadIndex: 0,
+        parentPostURI: nil,
+        quotedPostURI: nil
       )
       appState.composerDraftManager.storeDraft(draft)
     }

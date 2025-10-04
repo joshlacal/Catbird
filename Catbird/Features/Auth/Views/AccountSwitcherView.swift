@@ -10,6 +10,9 @@ struct AccountSwitcherView: View {
   @Environment(\.webAuthenticationSession) private var webAuthenticationSession
   @Environment(\.dismiss) private var dismiss
 
+  // MARK: - Presentation
+  private let showsDismissButton: Bool
+
   // MARK: - State
   @State private var accounts: [AccountViewModel] = []
   @State private var isAddingAccount = false
@@ -25,6 +28,10 @@ struct AccountSwitcherView: View {
   // Logger
   private let logger = Logger(subsystem: "blue.catbird", category: "AccountSwitcher")
   
+  init(showsDismissButton: Bool = true) {
+    self.showsDismissButton = showsDismissButton
+  }
+
   // Model for account display
   struct AccountViewModel: Identifiable {
     let id: String // Using DID as identifier
@@ -62,9 +69,11 @@ struct AccountSwitcherView: View {
       #endif
       .toolbar {
         #if os(iOS)
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") {
-            dismiss()
+        if showsDismissButton {
+          ToolbarItem(placement: .cancellationAction) {
+            Button("Done") {
+              dismiss()
+            }
           }
         }
 
@@ -76,9 +85,11 @@ struct AccountSwitcherView: View {
           }
         }
         #elseif os(macOS)
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") {
-            dismiss()
+        if showsDismissButton {
+          ToolbarItem(placement: .cancellationAction) {
+            Button("Done") {
+              dismiss()
+            }
           }
         }
 
@@ -121,6 +132,14 @@ struct AccountSwitcherView: View {
           // Refresh account list when auth state changes to authenticated
           Task {
             await loadAccounts()
+          }
+        }
+      }
+      .onChange(of: appState.pendingReauthenticationRequest) { _, newRequest in
+        if let request = newRequest {
+          // Automatically handle reauthentication when account switching fails
+          Task {
+            await handleReauthentication(request)
           }
         }
       }
@@ -183,7 +202,7 @@ struct AccountSwitcherView: View {
       // Avatar
       ProfileAvatarView(url: account.avatar, fallbackText: account.handle.prefix(1).uppercased())
         .frame(width: 36, height: 36)
-      
+
       // Account info
       VStack(alignment: .leading, spacing: 2) {
         Text(account.displayName ?? "@" + account.handle)
@@ -205,28 +224,25 @@ struct AccountSwitcherView: View {
           .background(.tint.opacity(0.1))
           .foregroundStyle(.tint)
           .clipShape(RoundedRectangle(cornerRadius: 8))
-      } else {
-        Button("Switch") {
-          Task {
-            await switchToAccount(account)
-          }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-      }
-
-      // Don't allow removing the active account
-      if !account.isActive {
-        Button {
-          showConfirmRemove = account
-        } label: {
-          Image(systemName: "trash")
-            .foregroundStyle(.red)
-        }
-        .buttonStyle(.plain)
       }
     }
     .padding(.vertical, 4)
+    .contentShape(Rectangle())
+    .onTapGesture {
+      guard !account.isActive else { return }
+      Task {
+        await switchToAccount(account)
+      }
+    }
+    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+      if !account.isActive {
+        Button(role: .destructive) {
+          showConfirmRemove = account
+        } label: {
+          Label("Delete", systemImage: "trash")
+        }
+      }
+    }
   }
 
   // MARK: - Add Account Sheet
@@ -346,7 +362,7 @@ struct AccountSwitcherView: View {
       #endif
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
-          Button("Cancel") {
+          Button("Cancel", systemImage: "xmark") {
             isAddingAccount = false
           }
         }
@@ -409,10 +425,8 @@ struct AccountSwitcherView: View {
       isLoading = true
 
       do {
-        try await appState.authManager.switchToAccount(did: account.did)
-
-        // Wait a moment for state to update
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        // Use AppState's switchToAccount which has enhanced error handling and reauthentication
+        try await appState.switchToAccount(did: account.did)
 
         // Refresh account list
         await loadAccounts()
@@ -422,8 +436,13 @@ struct AccountSwitcherView: View {
           dismiss()
         }
       } catch {
+        // If we get here, reauthentication wasn't possible or failed
+        // The error will be shown to the user, but reauthentication might be triggered automatically
         logger.error("Failed to switch account: \(error.localizedDescription)")
-        self.error = "Failed to switch account: \(error.localizedDescription)"
+        if appState.pendingReauthenticationRequest == nil {
+          // Only show error if reauthentication wasn't triggered
+          self.error = "Failed to switch account: \(error.localizedDescription)"
+        }
       }
 
       isLoading = false
@@ -540,6 +559,62 @@ struct AccountSwitcherView: View {
       // Error starting login flow
       logger.error("Error starting add account: \(error.localizedDescription)")
       self.error = error.localizedDescription
+      isLoading = false
+    }
+  }
+
+  private func handleReauthentication(_ request: AppState.ReauthenticationRequest) async {
+    logger.info("Handling automatic reauthentication for handle: \(request.handle)")
+
+    // Clear the pending request to prevent repeated attempts
+    appState.pendingReauthenticationRequest = nil
+
+    // Update loading state
+    isLoading = true
+    error = nil
+
+    // Open web authentication session with the provided auth URL
+    do {
+      let callbackURL: URL
+      if #available(iOS 17.4, *) {
+        callbackURL = try await webAuthenticationSession.authenticate(
+          using: request.authURL,
+          callback: .https(host: "catbird.blue", path: "/oauth/callback"),
+          preferredBrowserSession: .shared,
+          additionalHeaderFields: [:]
+        )
+      } else {
+        // Fallback on earlier versions
+        callbackURL = try await webAuthenticationSession.authenticate(
+          using: URL(string: "https://catbird/oauth/callback")!,
+          callbackURLScheme: "catbird",
+          preferredBrowserSession: .shared
+        )
+      }
+
+      logger.info("Reauthentication session completed successfully")
+
+      // Process callback
+      try await appState.authManager.handleCallback(callbackURL)
+
+      // Refresh account list
+      await loadAccounts()
+
+      // Try switching to the account again now that it's reauthenticated
+      if let account = accounts.first(where: { $0.did == request.did }) {
+        await switchToAccount(account)
+      }
+
+      isLoading = false
+    } catch _ as ASWebAuthenticationSessionError {
+      // User cancelled reauthentication
+      logger.notice("Reauthentication was cancelled by user")
+      authenticationCancelled = true
+      isLoading = false
+    } catch {
+      // Other authentication errors
+      logger.error("Reauthentication error: \(error.localizedDescription)")
+      self.error = "Failed to reauthenticate: \(error.localizedDescription)"
       isLoading = false
     }
   }

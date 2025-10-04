@@ -29,8 +29,14 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         #if os(iOS)
         return CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
         #elseif os(macOS)
-        // On macOS, we'll use a default medium size since there's no system Dynamic Type
-        // This could be enhanced to read from user defaults or system preferences
+        // On macOS and Mac Catalyst, check if we're running as Catalyst
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            // Running as Mac Catalyst - use iOS behavior but with adjusted scaling
+            if let preferredContentSizeCategory = UIApplication.shared.preferredContentSizeCategory as? UIContentSizeCategory {
+                return CrossPlatformContentSizeCategory(from: preferredContentSizeCategory)
+            }
+        }
+        // Pure macOS - use a default medium size since there's no system Dynamic Type
         return .medium
         #endif
     }
@@ -153,9 +159,19 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             object: nil
         )
         #elseif os(macOS)
-        // macOS doesn't have system Dynamic Type, but we can still set up
-        // observers for potential future enhancements or manual triggers
-        logger.debug("Dynamic Type observer setup completed for macOS (no system notifications available)")
+        // On Mac Catalyst, we can still observe Dynamic Type changes
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(contentSizeCategoryDidChange),
+                name: UIContentSizeCategory.didChangeNotification,
+                object: nil
+            )
+            logger.debug("Dynamic Type observer setup completed for Mac Catalyst")
+        } else {
+            // Pure macOS doesn't have system Dynamic Type
+            logger.debug("Dynamic Type observer setup completed for macOS (no system notifications available)")
+        }
         #endif
     }
     
@@ -169,18 +185,30 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
                 self.currentContentSizeCategory = newCategory
             }
         }
-        
+
         logger.info("Dynamic Type size changed to: \(newCategory.rawValue)")
         #elseif os(macOS)
-        // On macOS, we could potentially update from system preferences
-        // For now, keep the current category as-is
-        logger.info("Content size category change notification received on macOS (no automatic update)")
-        #endif
-        
-        // Post notification for UI updates if Dynamic Type is enabled
-        if dynamicTypeEnabled {
-            NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
+        // On Mac Catalyst, handle Dynamic Type changes like iOS
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            let newCategory = CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
+            if Thread.isMainThread {
+                currentContentSizeCategory = newCategory
+            } else {
+                Task { @MainActor in
+                    self.currentContentSizeCategory = newCategory
+                }
+            }
+            logger.info("Dynamic Type size changed on Mac Catalyst to: \(newCategory.rawValue)")
+        } else {
+            // Pure macOS - no automatic update
+            logger.info("Content size category change notification received on macOS (no automatic update)")
         }
+        #endif
+
+        // Always post notification for UI updates when content size changes
+        // This ensures the UI updates regardless of Dynamic Type setting
+        NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
+        NotificationCenter.default.post(name: NSNotification.Name("DynamicTypeChanged"), object: nil)
     }
     
     // MARK: - Caching Properties
@@ -197,18 +225,30 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     
     /// Scale factor based on font size preference
     var sizeScale: CGFloat {
+        let baseScale: CGFloat
         switch fontSize {
         case "small":
-            return 0.9
+            baseScale = 0.85
         case "default":
-            return 1.0
+            baseScale = 1.0
         case "large":
-            return 1.1
+            baseScale = 1.15
         case "extraLarge":
-            return 1.2
+            baseScale = 1.3
         default:
-            return 1.0
+            baseScale = 1.0
         }
+
+        // Apply additional scaling for Mac Catalyst
+        #if os(iOS)
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            // Mac Catalyst needs larger base scaling due to display differences
+            let catalystScale = baseScale * 1.2
+            return catalystScale
+        }
+        #endif
+
+        return baseScale
     }
     
     /// Font design based on style preference
@@ -299,7 +339,25 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             return
         }
         
-        logger.info("Applying font settings - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), tracking: \(letterSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
+        let platformInfo: String
+        #if os(iOS)
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            platformInfo = "Mac Catalyst"
+        } else {
+            platformInfo = "iOS"
+        }
+        #elseif os(macOS)
+        platformInfo = "macOS"
+        #else
+        platformInfo = "Unknown"
+        #endif
+
+        // Log current system Dynamic Type state for debugging
+        let systemContentSize = CrossPlatformContentSizeCategory.current
+        let currentSizeScale = sizeScale
+
+        logger.info("Applying font settings on \(platformInfo) - style: \(fontStyle), size: \(fontSize), spacing: \(lineSpacing), tracking: \(letterSpacing), dynamic: \(dynamicTypeEnabled), maxSize: \(maxDynamicTypeSize)")
+        logger.info("System Dynamic Type: \(systemContentSize.rawValue) (scale: \(systemContentSize.scaleFactor)), App size scale: \(currentSizeScale)")
         logger.debug("Previous settings - style: \(self.currentFontStyle), size: \(self.currentFontSize), spacing: \(self.currentLineSpacing), tracking: \(self.currentLetterSpacing), dynamic: \(self.currentDynamicTypeEnabled), maxSize: \(self.currentMaxDynamicTypeSize)")
         
         // Update cache FIRST to prevent re-entrance
@@ -537,15 +595,15 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     }
     
     /// Create a scaled system font
-    /// 
+    ///
     /// This method combines two scaling mechanisms:
-    /// 1. User font size preference (90% to 120% scale factor)
+    /// 1. User font size preference (85% to 130% scale factor, with Mac Catalyst 20% boost)
     /// 2. iOS Dynamic Type (accessibility scaling)
-    /// 
+    ///
     /// When Dynamic Type is enabled, the font will scale with both:
-    /// - The user's font size setting (small/default/large/extraLarge)  
+    /// - The user's font size setting (small/default/large/extraLarge)
     /// - The system's Dynamic Type setting (including accessibility sizes)
-    /// 
+    ///
     /// When Dynamic Type is disabled, only the user's font size preference applies.
     func scaledFont(
         size: CGFloat,
@@ -553,10 +611,13 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         relativeTo textStyle: Font.TextStyle? = nil
     ) -> Font {
         let scaledSize = self.scaledSize(size)
-        
+
+        logger.debug("scaledFont called: baseSize=\(size), scaledSize=\(scaledSize), dynamicType=\(self.dynamicTypeEnabled), textStyle=\(String(describing: textStyle))")
+
         if dynamicTypeEnabled, let textStyle = textStyle {
             // Use Dynamic Type scaling WITH our size preference
             // This properly combines app scaling with system Dynamic Type
+            logger.debug("Using Dynamic Type with custom base size: \(scaledSize)")
             return Font.customDynamicFont(
                 baseSize: scaledSize,
                 weight: weight,
@@ -566,6 +627,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             )
         } else {
             // Use only our fixed size with user's size preference
+            logger.debug("Using fixed size font: \(scaledSize)")
             return Font.system(size: scaledSize, weight: weight, design: fontDesign)
         }
     }
@@ -864,13 +926,14 @@ extension View {
     }
     
     /// Compatibility layer for .system() method calls on AppTextRole
+    @ViewBuilder
     func appFont(_ systemCall: SystemFontCall) -> some View {
         switch systemCall {
         case .system(let textStyle, _, _):
             let appRole = AppTextRole.from(textStyle)
-            return AnyView(self.modifier(AppFontModifier(role: appRole)))
+            self.modifier(AppFontModifier(role: appRole))
         case .systemSize(let size, let weight, _):
-            return AnyView(self.modifier(CustomAppFontModifier(size: size, weight: weight, textStyle: .body)))
+            self.modifier(CustomAppFontModifier(size: size, weight: weight, textStyle: .body))
         }
     }
     

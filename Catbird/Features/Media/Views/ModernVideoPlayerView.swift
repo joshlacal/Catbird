@@ -23,7 +23,6 @@ struct ModernVideoPlayerView: View {
   @State private var isVisible = false
   @State private var showControls = false
   @State private var showFullscreen = false
-  private let maxPipRetries = 5
   @Environment(\.scenePhase) private var scenePhase
   @Environment(AppState.self) private var appState
   let postID: String
@@ -47,25 +46,33 @@ struct ModernVideoPlayerView: View {
   }
 
   // Convenience initializer for AppBskyEmbedVideo.View
+  // Avoid copying large structs by extracting only needed fields
   init?(bskyVideo: AppBskyEmbedVideo.View, postID: String) {
+    // Safely unwrap URL first
     guard let playlistURL = bskyVideo.playlist.url else {
       return nil
     }
 
-    let aspectRatio = bskyVideo.aspectRatio.map {
-      CGFloat($0.width) / CGFloat($0.height)
-    } ?? 16 / 9
+    // Compute aspect ratio defensively (avoid divide by zero)
+    let ar: CGFloat
+    if let arIn = bskyVideo.aspectRatio, arIn.height != 0 {
+      ar = CGFloat(arIn.width) / CGFloat(arIn.height)
+    } else {
+      ar = 16.0 / 9.0
+    }
 
-    let aspectRatioStruct = bskyVideo.aspectRatio.map {
+    let aspectRatioStruct: VideoModel.AspectRatio? = bskyVideo.aspectRatio.map {
       VideoModel.AspectRatio(width: $0.width, height: $0.height)
     }
 
+    // Build a stable ID without embedding large payloads
+    let id = "\(postID)-\(bskyVideo.cid)"
+
     self.model = VideoModel(
-      id: "\(postID)-\(bskyVideo.playlist.uriString())-\(bskyVideo.cid)",
+      id: id,
       url: playlistURL,
-      type: .hlsStream(
-        playlistURL: playlistURL, cid: bskyVideo.cid, aspectRatio: aspectRatioStruct),
-      aspectRatio: aspectRatio,
+      type: .hlsStream(playlistURL: playlistURL, cid: bskyVideo.cid, aspectRatio: aspectRatioStruct),
+      aspectRatio: ar,
       thumbnailURL: bskyVideo.thumbnail?.url
     )
     self.postID = postID
@@ -108,7 +115,7 @@ struct ModernVideoPlayerView: View {
         handleTap(location: location)
       }
 
-      // HLS video controls (mute and PiP buttons)
+      // HLS video controls (mute button)
       if let player = player, case .hlsStream = model.type {
         videoControls(player: player)
       }
@@ -124,11 +131,7 @@ struct ModernVideoPlayerView: View {
         await setupPlayer()
       }
       .onAppear {
-        // First try to restore player from persistent storage (for PiP videos)
-        if player == nil, let restoredPlayer = VideoCoordinator.shared.restorePlayerFromPersistentStorage(for: model.id) {
-          logger.debug("📺 Restored player \(model.id) from persistent storage")
-          player = restoredPlayer
-        }
+        // Setup player if needed
         
         if let player = player {
           VideoCoordinator.shared.appSettings = appState.appSettings
@@ -180,8 +183,9 @@ struct ModernVideoPlayerView: View {
       let playerView = PlayerLayerView(
         player: player,
         gravity: model.type.isGif ? .resizeAspectFill : .resizeAspect,
-        shouldLoop: model.type.isGif,
-        onLayerReady: setupPiPIfNeeded
+        // Loop in-feed so videos don’t freeze on the last frame
+        shouldLoop: true,
+        onLayerReady: nil
       )
 
       if #available(iOS 18.0, *) {
@@ -206,8 +210,6 @@ struct ModernVideoPlayerView: View {
   @ViewBuilder
   private func videoControls(player: AVPlayer) -> some View {
     HStack {
-      // Picture-in-Picture button (disabled)
-      // PiP functionality removed
       
       Spacer()
       
@@ -229,15 +231,6 @@ struct ModernVideoPlayerView: View {
     .zIndex(5)
   }
 
-  private var disabledPiPButton: some View {
-    Button(action: {}) {
-      Image(systemName: "pip.enter")
-        .foregroundStyle(.gray)
-        .frame(width: 32, height: 32)
-        .background(Circle().fill(Color.black.opacity(0.6)))
-    }
-    .disabled(true)
-  }
 
   @ViewBuilder
   private func fullscreenPlayerView(player: AVPlayer) -> some View {
@@ -279,18 +272,6 @@ struct ModernVideoPlayerView: View {
 
   // MARK: - Private Methods
 
-  private func setupPiPIfNeeded(layer: AVPlayerLayer) {
-    logger.debug(
-      "🎬 PlayerLayerView onLayerReady called for model type: \(String(describing: model.type))")
-      logger.debug("🎬 Layer frame: \(layer.frame.debugDescription), player: \(String(describing: layer.player.debugDescription))")
-    
-    if case .hlsStream = model.type {
-      // Add a small delay to ensure the layer has proper dimensions
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-        self.setupPictureInPicture(with: layer)
-      }
-    }
-  }
 
   private func setupPlayer() async {
     // Check if we already have a player (from restoration or previous setup)
@@ -299,17 +280,7 @@ struct ModernVideoPlayerView: View {
       return
     }
     
-    // Try to restore from persistent storage first
-    if let restoredPlayer = VideoCoordinator.shared.restorePlayerFromPersistentStorage(for: model.id) {
-      await MainActor.run {
-        self.player = restoredPlayer
-        logger.debug("📺 Restored player \(model.id) during setup")
-        VideoCoordinator.shared.register(model, player: restoredPlayer)
-      }
-      return
-    }
-    
-    // Create new player if no restoration possible
+    // Create player
     do {
       let newPlayer = try await VideoAssetManager.shared.preparePlayer(for: model)
       await MainActor.run {
@@ -321,10 +292,12 @@ struct ModernVideoPlayerView: View {
         case .hlsStream:
           model.isMuted = true
           model.volume = 0
-          // Don't configure audio session until needed (when unmuting or starting PiP)
+          // Ensure audio session is configured for silent playback only
+          AudioSessionManager.shared.configureForSilentPlayback()
         case .tenorGif, .giphyGif:
           model.isMuted = true
           model.volume = 0
+          // GIFs don't need audio session configuration
         }
         VideoCoordinator.shared.register(model, player: newPlayer)
       }
@@ -334,18 +307,6 @@ struct ModernVideoPlayerView: View {
   }
 
   private func cleanupPlayer() {
-    if VideoCoordinator.shared.isInPiPMode(model.id) {
-      logger.debug("📺 Video \(model.id) is in PiP mode, preserving player")
-      VideoCoordinator.shared.updateVisibility(false, for: model.id)
-      
-      // CRITICAL: Transfer player to persistent storage instead of destroying it
-      if let currentPlayer = player {
-        VideoCoordinator.shared.transferPlayerToPersistentStorage(currentPlayer, for: model.id)
-        // Clear local reference but don't destroy the player
-        player = nil
-      }
-      return
-    }
 
     if VideoCoordinator.shared.shouldPreserveStream(for: model.id) {
       logger.debug("💾 Preserving video stream for \(model.id) during scroll")
@@ -355,7 +316,6 @@ struct ModernVideoPlayerView: View {
 
     logger.debug("🧹 Fully cleaning up video \(model.id)")
     if case .hlsStream = model.type {
-      AudioSessionManager.shared.resetPiPAudioSession()
     }
     player?.pause()
     model.isPlaying = false
@@ -376,89 +336,7 @@ struct ModernVideoPlayerView: View {
     }
   }
 
-  private func setupPictureInPicture(with playerLayer: AVPlayerLayer, retryCount: Int = 0) {
-    #if os(iOS)
-    guard AVPictureInPictureController.isPictureInPictureSupported() else {
-      logger.debug("❌ PiP not supported")
-      return
-    }
-    
-    // PiP functionality disabled
-    logger.debug("📺 PiP disabled")
-    return
-    #else
-    logger.debug("📺 PiP not available on macOS")
-    return
-    #endif
-    
-      logger.debug("🎬 PiP setup validation - player: \(String(describing: playerLayer.player)), frame: \(playerLayer.frame.debugDescription)")
-    
-    guard let player = playerLayer.player else {
-      logger.debug("❌ No player in layer")
-      retryPipSetup(with: playerLayer, currentCount: retryCount)
-      return
-    }
-    
-    guard let playerItem = player.currentItem else {
-      logger.debug("❌ No current item")
-      retryPipSetup(with: playerLayer, currentCount: retryCount)
-      return
-    }
-    
-    logger.debug("🎬 Player item status: \(playerItem.status.rawValue)")
-    
-    guard playerItem.status == .readyToPlay else {
-      logger.debug("❌ Player item not ready to play")
-      retryPipSetup(with: playerLayer, currentCount: retryCount)
-      return
-    }
-    
-    guard playerLayer.frame.width > 0, playerLayer.frame.height > 0 else {
-        logger.debug("❌ Invalid frame size: \(playerLayer.frame.debugDescription)")
-      retryPipSetup(with: playerLayer, currentCount: retryCount)
-      return
-    }
-    
-    let videoTracks = playerItem.tracks.filter({ $0.assetTrack?.mediaType == .video })
-    guard !videoTracks.isEmpty else {
-      logger.debug("❌ No video tracks found")
-      retryPipSetup(with: playerLayer, currentCount: retryCount)
-      return
-    }
-    
-    logger.debug("✅ All PiP requirements met - proceeding with setup")
 
-    // Use the enhanced setup method that creates persistent layers
-    VideoCoordinator.shared.setupPiPController(for: model.id, validatedPlayerLayer: playerLayer)
-    
-    logger.debug("✅ PiP controller setup completed with persistent layer")
-    
-    // Check if PiP is possible after a brief delay
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-      if let pipController = VideoCoordinator.shared.getPiPController(for: model.id) {
-        self.logger.debug("🎬 PiP controller check - isPossible: \(pipController.isPictureInPicturePossible)")
-        if pipController.isPictureInPicturePossible == false {
-          self.logger.debug("🎬 PiP still not possible, attempting one final setup")
-          self.retryPipSetup(with: playerLayer, currentCount: retryCount)
-        }
-      } else {
-        self.logger.debug("❌ No PiP controller found after setup!")
-      }
-    }
-  }
-
-  private func retryPipSetup(with playerLayer: AVPlayerLayer, currentCount: Int) {
-    let nextCount = currentCount + 1
-    guard nextCount < maxPipRetries else {
-      logger.debug("❌ Max PiP setup retries reached")
-      return
-    }
-    let delay = min(0.5 * pow(2.0, Double(currentCount)), 4.0)
-    logger.debug("🔄 Retrying PiP setup in \(delay) seconds (attempt \(nextCount))")
-    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-      self.setupPictureInPicture(with: playerLayer, retryCount: nextCount)
-    }
-  }
 }
 
 // MARK: - Helper Components
@@ -482,74 +360,6 @@ struct VideoThumbnailView: View {
   }
 }
 
-/// Unified Picture-in-Picture button
-#if os(iOS)
-struct PiPButton: View {
-  let controller: AVPictureInPictureController
-
-  var body: some View {
-    Button(action: {
-      logger.debug("🎬 PiP button tapped - isPossible: \(controller.isPictureInPicturePossible), isActive: \(controller.isPictureInPictureActive)")
-      
-      if controller.isPictureInPictureActive {
-        logger.debug("🎬 Stopping PiP")
-        controller.stopPictureInPicture()
-      } else {
-        logger.debug("🎬 Starting PiP")
-        
-        
-        // Ensure video is playing before attempting PiP - this is often required
-        if let player = controller.playerLayer.player {
-          logger.debug("🎬 Player rate: \(player.rate), status: \(player.currentItem?.status.rawValue ?? -1)")
-          
-          // Check if app is in foreground active state (required for PiP)
-          #if os(iOS)
-          guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                windowScene.activationState == .foregroundActive else {
-            logger.debug("❌ App not in foreground active state - cannot start PiP")
-            logger.debug("🎬 Current scene state: \(UIApplication.shared.connectedScenes.first?.activationState.rawValue ?? -1)")
-            return
-          }
-          #endif
-          
-          // If video is not playing, start it first
-          if player.rate == 0 {
-            logger.debug("🎬 Video not playing, starting playback first")
-            player.safePlay()
-            
-            // Wait a moment for playback to start, then attempt PiP
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-              logger.debug("🎬 Attempting PiP after starting playback")
-              controller.startPictureInPicture()
-            }
-          } else {
-            // Video is already playing, attempt PiP immediately
-            logger.debug("🎬 Video already playing, starting PiP immediately")
-            controller.startPictureInPicture()
-          }
-        } else {
-          logger.debug("❌ No player found in controller layer")
-        }      }
-    }) {
-      Image(systemName: controller.isPictureInPictureActive ? "pip.exit" : "pip.enter")
-        .foregroundStyle(controller.isPictureInPicturePossible ? .white : .gray)
-        .frame(width: 32, height: 32)
-        .background(Circle().fill(Color.black.opacity(0.6)))
-    }
-    .disabled(!controller.isPictureInPicturePossible)
-    .onAppear {
-      logger.debug("🎬 PiP button appeared - isPossible: \(controller.isPictureInPicturePossible), isActive: \(controller.isPictureInPictureActive)")
-    }
-  }
-}
-#else
-// PiP button not available on macOS
-struct PiPButton: View {
-  var body: some View {
-    EmptyView()
-  }
-}
-#endif
 
 /// Unified Mute button
 struct MuteButton: View {

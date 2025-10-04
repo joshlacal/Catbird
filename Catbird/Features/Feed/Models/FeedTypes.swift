@@ -57,19 +57,26 @@ enum FetchType: Hashable, Sendable, CustomStringConvertible {
         }
     }
     
-    /// Human-readable display name for this feed type
+    /// Human-readable display name for this feed type.
+    /// For custom feeds and lists, prefers cached generator names (if available) via shared defaults to avoid network calls.
     var displayName: String {
         switch self {
         case .timeline:
             return "Timeline"
         case .list(let uri):
-            // Get just the record key part from the URI
+            // Try cached mapping first
+            if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
+                return cachedName
+            }
+            // Fallback to record key
             let recordKey = uri.uriString().components(separatedBy: "/").last ?? "Unknown"
             return "List: \(recordKey)"
         case .feed(let uri):
-            // Get just the record key part from the URI
+            if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
+                return cachedName
+            }
             let recordKey = uri.uriString().components(separatedBy: "/").last ?? "Unknown"
-            return "Custom Feed: \(recordKey)"
+            return "Feed: \(recordKey)"
         case .author(let did):
             // Display handle if available, otherwise DID
             return "Posts by \(did)"
@@ -111,5 +118,23 @@ enum FetchType: Hashable, Sendable, CustomStringConvertible {
 extension FetchType: Equatable {
     static func == (lhs: FetchType, rhs: FetchType) -> Bool {
         return lhs.identifier == rhs.identifier
+    }
+}
+
+// MARK: - Cached Name Lookup (no network)
+extension FetchType {
+    /// Attempts to resolve a display name for a feed/list using cached generator mapping in shared defaults.
+    /// The mapping is maintained elsewhere (e.g., FeedsStartPageViewModel, FeedWidgetDataProvider).
+    static func lookupCachedGeneratorName(for uri: ATProtocolURI) -> String? {
+        let uriString = uri.uriString()
+        // Try shared app group defaults where generators are stored
+        guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+              let data = defaults.data(forKey: "feedGenerators") else {
+            return nil
+        }
+        if let mapping = try? JSONDecoder().decode([String: String].self, from: data) {
+            return mapping[uriString]
+        }
+        return nil
     }
 }

@@ -16,6 +16,7 @@
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
 		215795952D9E16F60030A8C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */; };
+		215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */ = {isa = PBXBuildFile; productRef = 215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */; };
 		216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; };
 		216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E57042E0EFF02001E7844 /* FaultOrderingTests */; };
@@ -221,6 +222,7 @@
 				2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */,
 				212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
+				215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */,
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
 				216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */,
 			);
@@ -335,6 +337,7 @@
 				21196F292DC1115E00662CC3 /* Embed Foundation Extensions */,
 				21AC6E602DD0DDBF00251536 /* Run Script */,
 				21F0719D2E0CF935003BE8C2 /* Embed Frameworks */,
+				B053C52A45CB4C7DB58BB024 /* Upload Debug Symbols to Sentry */,
 			);
 			buildRules = (
 			);
@@ -358,6 +361,7 @@
 				21993DFF2DCE71E600E13661 /* MCEmojiPicker */,
 				2121B3F42DF5201E003871F1 /* ExyteChat */,
 				216E56FE2E0EFEF8001E7844 /* FaultOrdering */,
+				215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */,
 			);
 			productName = Catbird;
 			productReference = 212E93FD2D60132700D3E1DD /* Catbird.app */;
@@ -504,6 +508,7 @@
 				21993DFE2DCE71E600E13661 /* XCRemoteSwiftPackageReference "MCEmojiPicker" */,
 				2121B3F32DF5201E003871F1 /* XCRemoteSwiftPackageReference "Chat" */,
 				216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */,
+				215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 212E93FE2D60132700D3E1DD /* Products */;
@@ -587,6 +592,21 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "#if command -v swiftlint >/dev/null 2>&1\n#then\n#    swiftlint\n#    swiftlint --fix\n#else\n#    echo \"warning: `swiftlint` command not found - See https://github.com/realm/SwiftLint#installation for installation instructions.\"\n#fi\n\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n      echo \"Generating dSYMs for frameworks without them...\"\n\n      # Find all frameworks in the built products directory\n      find \"$BUILT_PRODUCTS_DIR\" -name \"*.framework\" | while read framework; do\n          framework_name=$(basename \"$framework\" .framework)\n          dsym_path=\"$BUILT_PRODUCTS_DIR/$framework_name.framework.dSYM\"\n\n          # Check if dSYM already exists\n          if [ ! -d \"$dsym_path\" ]; then\n              echo \"Generating dSYM for $framework_name\"\n              dsymutil \"$framework/$framework_name\" -o \"$dsym_path\" 2>/dev/null || true\n          fi\n      done\n\n      # Specifically handle GiphyUISDK if it exists\n      giphy_framework=\"$BUILT_PRODUCTS_DIR/GiphyUISDK.framework\"\n      if [ -d \"$giphy_framework\" ]; then\n          echo \"Ensuring GiphyUISDK dSYM exists\"\n          dsymutil \"$giphy_framework/GiphyUISDK\" -o\n  \"$BUILT_PRODUCTS_DIR/GiphyUISDK.framework.dSYM\" 2>/dev/null || true\n      fi\n  fi\n";
+		};
+		B053C52A45CB4C7DB58BB024 /* Upload Debug Symbols to Sentry */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
+			);
+			name = "Upload Debug Symbols to Sentry";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# This script is responsible for uploading debug symbols and source context for Sentry.\nif which sentry-cli >/dev/null; then\n  export SENTRY_ORG=josh-lacalamito\n  export SENTRY_PROJECT=catbird\n  ERROR=$(sentry-cli debug-files upload --include-sources \"$DWARF_DSYM_FOLDER_PATH\" 2>&1 >/dev/null)\n  if [ ! $? -eq 0 ]; then\n    echo \"warning: sentry-cli - $ERROR\"\n  fi\nelse\n  echo \"warning: sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -744,16 +764,25 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = Catbird/Catbird.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Catbird/App/Info.plist;
@@ -783,6 +812,12 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -798,16 +833,25 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = Catbird/Catbird.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Catbird/Resources/Preview Content\"";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Catbird/App/Info.plist;
@@ -837,6 +881,12 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1285,6 +1335,14 @@
 				minimumVersion = 12.8.0;
 			};
 		};
+		215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.56.1;
+			};
+		};
 		218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gh123man/LazyPager";
@@ -1335,6 +1393,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */;
 			productName = NukeUI;
+		};
+		215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = "Sentry-Dynamic";
 		};
 		216E56FE2E0EFEF8001E7844 /* FaultOrdering */ = {
 			isa = XCSwiftPackageProductDependency;

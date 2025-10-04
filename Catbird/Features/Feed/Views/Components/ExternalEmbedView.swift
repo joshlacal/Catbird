@@ -79,43 +79,10 @@ struct ExternalEmbedView: View {
     
     @ViewBuilder
     private func webViewEmbedContent(url: URL, embedType: ExternalMediaType) -> some View {
-        VStack(spacing: 0) {
-            ZStack {
-                // Enhanced embedded media view (disabled for now)
-                Rectangle()
-                    .fill(Color.gray.opacity(0.3))
-                    .overlay {
-                        VStack {
-                            Image(systemName: "globe")
-                                .font(.largeTitle)
-                                .foregroundColor(.secondary)
-                            Text("External Link")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                
-                // PiP functionality disabled
-                if false {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            
-                            Image(systemName: "pip.enter")
-                                .foregroundColor(.white.opacity(0.8))
-                                .font(.caption)
-                                .padding(4)
-                                .background(Circle().fill(Color.black.opacity(0.6)))
-                                .padding(.top, 8)
-                                .padding(.trailing, 8)
-                        }
-                        Spacer()
-                    }
-                }
-            }
-            .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            
+        VStack(spacing: 6) {
+            EmbeddedMediaWebView(url: url, embedType: embedType, shouldBlur: shouldBlur)
+                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             // Hide embed button
             HStack {
                 Spacer()
@@ -135,7 +102,6 @@ struct ExternalEmbedView: View {
                     .padding(.vertical, 4)
                 }
             }
-            .padding(.top, 4)
         }
     }
     
@@ -807,20 +773,6 @@ extension URL {
               let queryItems = components.queryItems else { return nil }
         return queryItems.reduce(into: [String: String]()) { result, item in
             result[item.name] = item.value
-        }
-    }
-}
-
-// MARK: - PiP Support Extension
-
-extension ExternalMediaType {
-    /// Indicates whether this media type supports Picture-in-Picture
-    var supportsPiP: Bool {
-        switch self {
-        case .youtube, .youtubeShorts, .vimeo, .twitch:
-            return true
-        case .spotify, .appleMusic, .soundcloud, .giphy, .tenor, .flickr:
-            return false
         }
     }
 }

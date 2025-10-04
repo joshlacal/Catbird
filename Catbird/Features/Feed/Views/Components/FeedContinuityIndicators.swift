@@ -69,7 +69,7 @@ struct FeedContinuityBanner: View {
       
       Spacer()
       
-      if let onDismiss = onDismiss {
+      if onDismiss != nil {
         Button(action: { dismissBanner() }) {
           Image(systemName: "xmark")
             .font(.system(size: 12, weight: .semibold))
@@ -266,10 +266,22 @@ final class FeedContinuityManager {
     feedIdentifier: String,
     onNewContentFound: @escaping (Int) -> Void
   ) {
-    guard let continuityInfo = persistentManager.loadFeedContinuityInfo(for: feedIdentifier) else {
-      logger.debug("No continuity info for \(feedIdentifier)")
-      return
+    Task {
+      guard let continuityInfo = await persistentManager.loadFeedContinuityInfo(for: feedIdentifier) else {
+        logger.debug("No continuity info for \(feedIdentifier)")
+        return
+      }
+
+      await checkContinuity(continuityInfo: continuityInfo, currentPosts: currentPosts, feedIdentifier: feedIdentifier, onNewContentFound: onNewContentFound)
     }
+  }
+
+  private func checkContinuity(
+    continuityInfo: FeedContinuityInfo,
+    currentPosts: [CachedFeedViewPost],
+    feedIdentifier: String,
+    onNewContentFound: @escaping (Int) -> Void
+  ) async {
     
     // Check if we have new content at the top
     if let lastKnownTopId = continuityInfo.lastKnownTopPostId,
@@ -341,14 +353,20 @@ final class FeedContinuityManager {
   func detectGaps(in posts: [CachedFeedViewPost]) -> [String] {
     // Simple gap detection based on timestamp differences
     var gaps: [String] = []
-    
+
     for i in 0..<(posts.count - 1) {
       let currentPost = posts[i]
       let nextPost = posts[i + 1]
-      
-      // Check for significant time gaps (>1 hour with <10 posts between)
-      let currentTime = currentPost.feedViewPost.post.indexedAt.date
-      let nextTime = nextPost.feedViewPost.post.indexedAt.date
+
+      guard
+        let currentFeedViewPost = try? currentPost.feedViewPost,
+        let nextFeedViewPost = try? nextPost.feedViewPost
+      else {
+        continue
+      }
+
+      let currentTime = currentFeedViewPost.post.indexedAt.date
+      let nextTime = nextFeedViewPost.post.indexedAt.date
       
       let timeDifference = currentTime.timeIntervalSince(nextTime)
       if timeDifference > 3600 && i < 10 { // 1 hour gap in recent posts
@@ -366,14 +384,16 @@ final class FeedContinuityManager {
     posts: [CachedFeedViewPost],
     hasNewContent: Bool = false
   ) {
-    persistentManager.saveFeedContinuityInfo(
-      feedIdentifier: feedIdentifier,
-      hasNewContent: hasNewContent,
-      lastKnownTopPostId: posts.first?.id,
-      newPostCount: hasNewContent ? 1 : 0,
-      gapDetected: !detectedGaps.isEmpty
-    )
-    logger.debug("Updated continuity info for \(feedIdentifier)")
+    Task {
+      await persistentManager.saveFeedContinuityInfo(
+        feedIdentifier: feedIdentifier,
+        hasNewContent: hasNewContent,
+        lastKnownTopPostId: posts.first?.id,
+        newPostCount: hasNewContent ? 1 : 0,
+        gapDetected: !detectedGaps.isEmpty
+      )
+      logger.debug("Updated continuity info for \(feedIdentifier)")
+    }
   }
 }
 

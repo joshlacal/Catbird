@@ -442,8 +442,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func setupUI() {
       view.backgroundColor = .systemBackground
 
-    // Ensure collection view is visible without animated fade-in
-    collectionView.alpha = 1
+    // Start collection view hidden, will fade in after layout settles
+    collectionView.alpha = 0
 
     view.addSubview(collectionView)
     view.addSubview(loadingView)
@@ -736,16 +736,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           self.scrollToMainPostWithPartialParentVisibility(animated: false)
           self.hasScrolledToMainPost = true
           
-          // Ensure collection view is visible (no animation)
-          self.collectionView.alpha = 1
+          // Fade in collection view to mask any layout settling animations
+          UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut]) {
+            self.collectionView.alpha = 1
+          }
           // If VoiceOver is running, post focus to main post
           if UIAccessibility.isVoiceOverRunning {
             self.focusVoiceOverOnMainPost()
           }
         }
       } else {
-        // Ensure collection view is visible (no animation)
-        self.collectionView.alpha = 1
+        // Fade in collection view to mask any layout settling animations
+        UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut]) {
+          self.collectionView.alpha = 1
+        }
         // If VoiceOver is running, post focus to main post
         if UIAccessibility.isVoiceOverRunning {
           self.focusVoiceOverOnMainPost()
@@ -1369,11 +1373,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     // Store current post URIs to track content changes (include all thread content)
-    let currentPostIds = (
-      parentPosts.compactMap { $0.uri?.uriString() } +
-      [mainPost?.uri.uriString()].compactMap { $0 } +
-      replyWrappers.map { $0.post.uri.uriString() }
-    ).filter { $0.hasPrefix("at://unknown") == false }
+    var currentPostIds: [String] = []
+
+    // Add parent post URIs
+    currentPostIds.append(contentsOf: parentPosts.compactMap { $0.uri?.uriString() })
+
+    // Add main post URI if available
+    if let mainPostUri = mainPost?.uri.uriString() {
+      currentPostIds.append(mainPostUri)
+    }
+
+    // Add reply URIs
+    currentPostIds.append(contentsOf: replyWrappers.compactMap { $0.post?.uri.uriString() })
+
+    // Filter out unknown URIs
+    currentPostIds = currentPostIds.filter { !$0.hasPrefix("at://unknown") }
     
     // Apply atomic update with position preservation (like feed view does)
     await applyAtomicParentUpdateWithPreservation(
@@ -1617,7 +1631,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         controllerLogger.debug("⚠️ Reply index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      postId = replyWrappers[firstVisibleIndexPath.item].post.uri.uriString()
+      if let replyPost = replyWrappers[firstVisibleIndexPath.item].post {
+        postId = replyPost.uri.uriString()
+      } else {
+        // Use the reply wrapper's URI for non-accessible posts
+        postId = replyWrappers[firstVisibleIndexPath.item].uri.uriString()
+      }
       
     default:
       controllerLogger.debug("⚠️ Unknown section for anchor capture: \(firstVisibleIndexPath.section)")
@@ -1676,7 +1695,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       // Replies section (Section.replies.rawValue = 3)
       for (index, replyWrapper) in replyWrappers.enumerated() {
-        let key = replyWrapper.post.uri.uriString()
+        let key = replyWrapper.uri.uriString()
         if key.hasPrefix("at://unknown") == false {
           mapping[key] = IndexPath(item: index, section: Section.replies.rawValue)
         }
@@ -2358,7 +2377,7 @@ final class ParentPostCell: UICollectionViewCell {
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
-        content.transaction { txn in txn.animation = nil }
+        content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
       }
       .margins(.all, .zero)
     }
@@ -2406,7 +2425,7 @@ final class MainPostCell: UICollectionViewCell {
       )
     
     // Avoid removing/readding subviews if configuration hasn't changed
-    let content = AnyView(
+    let content =
       VStack(spacing: 0) {
         WidthLimitedContainer(maxWidth: 600) {
           ThreadViewMainPostView(
@@ -2415,6 +2434,7 @@ final class MainPostCell: UICollectionViewCell {
             path: path,
             appState: appState
           )
+          .equatable()
           .padding(.horizontal, 6)
           .padding(.vertical, 6)
         }
@@ -2423,7 +2443,7 @@ final class MainPostCell: UICollectionViewCell {
         Divider()
           .padding(.bottom, 9)
       }
-    )
+    .id(post.uri.uriString())
 
     // Only reconfigure if needed (using post URI as identity check)
     if contentConfiguration == nil
@@ -2434,7 +2454,7 @@ final class MainPostCell: UICollectionViewCell {
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
-        content.transaction { txn in txn.animation = nil }
+          content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
       }
       .margins(.all, .zero)
     }
@@ -2504,7 +2524,7 @@ final class ReplyCell: UICollectionViewCell {
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
-        content.transaction { txn in txn.animation = nil }
+        content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
       }
       .margins(.all, .zero)
     }
@@ -2678,9 +2698,12 @@ struct ParentPostView: View {
       }
 
     case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-      Text("Parent post not found \(notFoundPost.uri)")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.red)
+      PostNotFoundView(
+        uri: notFoundPost.uri,
+        reason: .notFound,
+        path: $path
+      )
+      .environment(appState)
 
     case .appBskyFeedDefsBlockedPost(let blockedPost):
       BlockedPostView(blockedPost: blockedPost, path: $path)
@@ -2717,8 +2740,12 @@ struct ReplyView: View {
       .frame(maxWidth: 550, alignment: .leading)
 
     case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-      Text("Reply not found: \(notFoundPost.uri.uriString())")
-        .foregroundColor(.red)
+      PostNotFoundView(
+        uri: notFoundPost.uri,
+        reason: .notFound,
+        path: $path
+      )
+      .environment(appState)
 
     case .appBskyFeedDefsBlockedPost(let blocked):
       BlockedPostView(blockedPost: blocked, path: $path)
@@ -2925,18 +2952,27 @@ extension AppBskyFeedDefs.ThreadViewPost {
 // MARK: - ReplyWrapper Extensions
 extension ReplyWrapper {
   /// Computed property to access the post from the reply union
-  var post: AppBskyFeedDefs.PostView {
+  /// Returns nil for non-accessible post types (not found, blocked, etc.)
+  var post: AppBskyFeedDefs.PostView? {
     switch reply {
     case .appBskyFeedDefsThreadViewPost(let threadPost):
       return threadPost.post
+    case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected, .pending:
+      return nil
+    }
+  }
+
+  /// URI accessor that works for all reply types
+  var uri: ATProtocolURI {
+    switch reply {
+    case .appBskyFeedDefsThreadViewPost(let threadPost):
+      return threadPost.post.uri
     case .appBskyFeedDefsNotFoundPost(let notFound):
-      // Create a placeholder PostView for not found posts
-      fatalError("Cannot access post from not found reply: \(notFound.uri.uriString())")
+      return notFound.uri
     case .appBskyFeedDefsBlockedPost(let blocked):
-      // Create a placeholder PostView for blocked posts  
-      fatalError("Cannot access post from blocked reply: \(blocked.uri.uriString())")
-    default:
-      fatalError("Cannot access post from unexpected reply type")
+      return blocked.uri
+    case .unexpected, .pending:
+      return try! ATProtocolURI(uriString: "at://unknown/unknown/unknown")
     }
   }
 }

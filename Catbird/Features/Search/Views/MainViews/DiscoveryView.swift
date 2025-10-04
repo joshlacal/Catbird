@@ -79,8 +79,44 @@ struct AllTrendingTopicsView: View {
     
     enum ViewMode {
         case list, grid
+}
+
+// Local summary line helper to avoid cross-file visibility constraints
+private struct InlineTopicSummaryLine: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+    let topic: AppBskyUnspeccedDefs.TrendView
+    @State private var summary: String?
+    @State private var isLoading = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let summary {
+                Text(summary)
+                    .appFont(AppTextRole.footnote)
+                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                    .lineLimit(5)
+                    .transition(.opacity)
+            } else if isLoading {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
+                    .frame(height: 15 * 3)
+                    .redacted(reason: .placeholder)
+            }
+        }
+        .task(id: topic.link) {
+            guard !isLoading, summary == nil else { return }
+            isLoading = true
+            defer { isLoading = false }
+            if #available(iOS 26.0, *) {
+                let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
+                await MainActor.run { summary = text }
+
+            }
+        }
+        .padding(.top, 6)
     }
-    
+}
+
     let topics: [AppBskyUnspeccedDefs.TrendView]
     let onSelect: (String) -> Void
     
@@ -246,7 +282,7 @@ struct AllTrendingTopicsView: View {
     
     private func topicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            onSelect(topic.displayName)
+            onSelect(topic.link)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 16) {
@@ -291,6 +327,8 @@ struct AllTrendingTopicsView: View {
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                             .multilineTextAlignment(.leading)
                             .lineLimit(2)
+                        // Topic summary
+                        InlineTopicSummaryLine(topic: topic)
                         
                         // Stats row
                         HStack(spacing: 20) {
@@ -345,7 +383,7 @@ struct AllTrendingTopicsView: View {
     
     private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            onSelect(topic.displayName)
+            onSelect(topic.link)
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 12) {
@@ -371,6 +409,7 @@ struct AllTrendingTopicsView: View {
                     .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
+                InlineTopicSummaryLine(topic: topic)
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(formatPostCount(topic.postCount))

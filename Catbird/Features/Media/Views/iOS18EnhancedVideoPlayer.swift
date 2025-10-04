@@ -24,7 +24,6 @@ struct iOS18EnhancedVideoPlayer: View {
     let videoURL: URL
     let autoPlay: Bool
     let showControls: Bool
-    let enablePiP: Bool
     
     @StateObject private var playerController: EnhancedVideoPlayerController
     @State private var isFullScreen: Bool = false
@@ -39,12 +38,10 @@ struct iOS18EnhancedVideoPlayer: View {
         videoURL: URL,
         autoPlay: Bool = false,
         showControls: Bool = true,
-        enablePiP: Bool = true
     ) {
         self.videoURL = videoURL
         self.autoPlay = autoPlay
         self.showControls = showControls
-        self.enablePiP = enablePiP
         self._playerController = StateObject(wrappedValue: EnhancedVideoPlayerController(url: videoURL))
     }
     
@@ -56,7 +53,6 @@ struct iOS18EnhancedVideoPlayer: View {
                 VideoPlayerViewRepresentable(
                     player: playerController.player,
                     showControls: showControls,
-                    enablePiP: enablePiP,
                     onPlaybackStateChange: { state in
                         playerController.handlePlaybackStateChange(state)
                     }
@@ -502,7 +498,6 @@ enum PlaybackState {
 struct VideoPlayerViewRepresentable: UIViewControllerRepresentable {
     let player: AVPlayer
     let showControls: Bool
-    let enablePiP: Bool
     let onPlaybackStateChange: (PlaybackState) -> Void
     
     func makeUIViewController(context: Context) -> AVPlayerViewController {
@@ -510,11 +505,6 @@ struct VideoPlayerViewRepresentable: UIViewControllerRepresentable {
         controller.player = player
         controller.showsPlaybackControls = showControls
         
-        // iOS 18: Configure for Picture in Picture
-        if enablePiP {
-            controller.allowsPictureInPicturePlayback = true
-            controller.canStartPictureInPictureAutomaticallyFromInline = true
-        }
         
         // iOS 18: Enhanced video gravity
         controller.videoGravity = .resizeAspectFill
@@ -542,14 +532,6 @@ struct VideoPlayerViewRepresentable: UIViewControllerRepresentable {
             self.onPlaybackStateChange = onPlaybackStateChange
         }
         
-        // iOS 18: PiP delegate methods
-        func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
-            // Handle PiP start
-        }
-        
-        func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
-            // Handle PiP stop
-        }
     }
 }
 #endif
@@ -866,8 +848,7 @@ struct iOS18EnhancedVideoPlayer_Previews: PreviewProvider {
         iOS18EnhancedVideoPlayer(
             videoURL: URL(string: "https://example.com/video.mp4")!,
             autoPlay: true,
-            showControls: true,
-            enablePiP: true
+            showControls: true
         )
     }
 }

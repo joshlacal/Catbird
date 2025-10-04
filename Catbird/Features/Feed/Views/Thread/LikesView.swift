@@ -33,16 +33,24 @@ struct LikesView: View {
                 List {
                     ForEach(likes, id: \.actor.did) { like in
                         ProfileRowView(profile: like.actor, path: $path)
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
+                            .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
+                            .listRowSeparator(.visible)
+                            .listRowInsets(EdgeInsets())
+
                     }
-                    
+
                     if let cursor = cursor {
                         ProgressView()
                             .onAppear {
                                 Task { await loadMoreLikes() }
                             }
+                            .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.plain)
+                .frame(maxWidth: 600)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationTitle("Likes")

@@ -215,7 +215,10 @@ struct ViewImageGridView: View {
         .fill(Color.gray.opacity(0.1))
         .frame(width: width, height: height)
 
-      LazyImage(url: URL(string: viewImage.thumb.uriString())) { state in
+      LazyImage(request: ImageLoadingManager.imageRequest(
+        for: URL(string: viewImage.thumb.uriString()) ?? URL(string: "about:blank")!,
+        targetSize: CGSize(width: width, height: height)
+      )) { state in
         if let image = state.image {
           image
             .resizable()
@@ -239,10 +242,6 @@ struct ViewImageGridView: View {
         }
       }
       .pipeline(ImageLoadingManager.shared.pipeline)
-      .priority(.high)
-      .processors([
-        ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: width, height: height))
-      ])
     }
     .frame(width: width, height: height)
     .onTapGesture {
@@ -278,7 +277,10 @@ struct ViewImageGridView: View {
           .frame(maxWidth: .infinity)
           .frame(height: height)
 
-        LazyImage(url: URL(string: viewImage.thumb.uriString())) { state in
+        LazyImage(request: ImageLoadingManager.imageRequest(
+          for: URL(string: viewImage.thumb.uriString()) ?? URL(string: "about:blank")!,
+          targetSize: CGSize(width: geometry.size.width, height: height)
+        )) { state in
           if let image = state.image {
             image
               .resizable()
@@ -303,10 +305,6 @@ struct ViewImageGridView: View {
           }
         }
         .pipeline(ImageLoadingManager.shared.pipeline)
-        .priority(.high)
-        .processors([
-          ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: geometry.size.width, height: height))
-        ])
       }
       .frame(maxWidth: .infinity)
       .frame(height: height)

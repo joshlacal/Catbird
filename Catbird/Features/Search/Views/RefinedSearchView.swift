@@ -27,6 +27,8 @@ struct RefinedSearchView: View {
     @State private var isShowingAdvancedFilters = false
     @State private var isShowingAllTrendingTopics = false
     @FocusState private var isSearchFieldFocused: Bool
+    @State private var lastHandledSearchRequestID: UUID?
+    @State private var isApplyingPendingSearchRequest = false
     
     private let logger = Logger(subsystem: "blue.catbird", category: "RefinedSearchView")
     
@@ -46,6 +48,9 @@ struct RefinedSearchView: View {
         }
         .onChange(of: selectedTab) { _, newTab in
             handleTabChange(newTab)
+            if newTab == 1 {
+                applyPendingSearchRequestIfNeeded()
+            }
         }
         .onChange(of: lastTappedTab) { _, newValue in
             handleTabTap(newValue)
@@ -53,9 +58,13 @@ struct RefinedSearchView: View {
         .onChange(of: searchText) { _, newText in
             updateSearchWithText(newText)
         }
+        .onChange(of: appState.pendingSearchRequest?.id) { _, _ in
+            applyPendingSearchRequestIfNeeded()
+        }
         // selectedContentType handler moved next to the scope binding
         .onAppear {
             initializeOnAppear()
+            applyPendingSearchRequestIfNeeded()
         }
         .onDisappear {
             handleViewDisappear()
@@ -96,6 +105,7 @@ struct RefinedSearchView: View {
         .navigationTitle("Search")
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
+        .searchFocused($isSearchFieldFocused)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -109,6 +119,11 @@ struct RefinedSearchView: View {
         .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
             logger.debug("Search scope changed from \(oldValue.title) to \(newValue.title)")
             logger.debug("Current search state: \(String(describing: viewModel.searchState)), searchText: '\(searchText)', isCommittedSearch: \(viewModel.isCommittedSearch)")
+
+            if isApplyingPendingSearchRequest {
+                logger.debug("Skipping scope side effects while applying pending search request")
+                return
+            }
             
             // Ensure scope changes while typing commit a search and dismiss typeahead
             guard let client = appState.atProtoClient else { 
@@ -121,9 +136,6 @@ struct RefinedSearchView: View {
                 
                 // Forcefully dismiss keyboard and search field focus
                 isSearchFieldFocused = false
-                #if os(iOS)
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                #endif
                 
                 // Delay to ensure keyboard dismissal takes effect
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -142,6 +154,7 @@ struct RefinedSearchView: View {
             text: $searchText,
             prompt: "Profiles, posts, or feeds"
         )
+        .searchFocused($isSearchFieldFocused)
         .searchScopes($bindableViewModel.selectedContentType) {
             ForEach(ContentType.allCases, id: \.self) { scope in
                 Text(scope.title).tag(scope)
@@ -150,6 +163,11 @@ struct RefinedSearchView: View {
         .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
             logger.debug("Search scope changed from \(oldValue.title) to \(newValue.title)")
             logger.debug("Current search state: \(String(describing: viewModel.searchState)), searchText: '\(searchText)', isCommittedSearch: \(viewModel.isCommittedSearch)")
+
+            if isApplyingPendingSearchRequest {
+                logger.debug("Skipping scope side effects while applying pending search request")
+                return
+            }
             
             // Ensure scope changes while typing commit a search and dismiss typeahead
             guard let client = appState.atProtoClient else { 
@@ -162,9 +180,6 @@ struct RefinedSearchView: View {
                 
                 // Forcefully dismiss keyboard and search field focus
                 isSearchFieldFocused = false
-                #if os(iOS)
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                #endif
                 
                 // Delay to ensure keyboard dismissal takes effect
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -443,7 +458,56 @@ struct RefinedSearchView: View {
             lastTappedTab = nil
         }
     }
-    
+
+    private func applyPendingSearchRequestIfNeeded() {
+        guard selectedTab == 1 else { return }
+        guard let request = appState.pendingSearchRequest else { return }
+        guard request.id != lastHandledSearchRequestID else { return }
+
+        lastHandledSearchRequestID = request.id
+        applySearchRequest(request)
+    }
+
+    private func applySearchRequest(_ request: AppState.SearchRequest) {
+        isApplyingPendingSearchRequest = true
+
+        if let desiredScope = contentType(for: request.focus),
+           viewModel.selectedContentType != desiredScope {
+            viewModel.selectedContentType = desiredScope
+        }
+
+        searchText = request.query
+        viewModel.searchQuery = request.query
+
+        Task { @MainActor in
+            await focusSearchField()
+            isApplyingPendingSearchRequest = false
+        }
+
+        appState.pendingSearchRequest = nil
+    }
+
+    @MainActor
+    private func focusSearchField() async {
+        // Toggle focus to guarantee SwiftUI registers the change
+        isSearchFieldFocused = false
+        await Task.yield()
+        isSearchFieldFocused = true
+    }
+
+    private func contentType(for focus: AppState.SearchRequest.Focus) -> ContentType? {
+        switch focus {
+        case .all:
+            return .all
+        case .profiles:
+            return .profiles
+        case .posts:
+            return .posts
+        case .feeds:
+            return .feeds
+        }
+    }
+
     private func updateSearchWithText(_ newText: String) {
         if let client = appState.atProtoClient {
             viewModel.updateSearch(query: newText, client: client)
@@ -477,14 +541,8 @@ struct RefinedSearchView: View {
     }
     
     private func commitSearch() {
-        logger.debug("commitSearch() called, dismissing keyboard")
-        
-        // Forcefully dismiss keyboard and search field focus
-        isSearchFieldFocused = false
-        #if os(iOS)
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        #endif
-        
+        logger.debug("commitSearch() called")
+
         if let client = appState.atProtoClient {
             viewModel.commitSearch(client: client)
         }
@@ -513,6 +571,13 @@ struct RefinedSearchView: View {
     }
     
     private func handleTopicSelection(_ term: String) {
+        // If term looks like a trending topic link, route directly to the feed via URLHandler
+        if term.hasPrefix("http://") || term.hasPrefix("https://") {
+            if let url = URL(string: term) {
+                _ = appState.urlHandler.handle(url)
+                return
+            }
+        }
         if let client = appState.atProtoClient {
             searchText = term
             viewModel.searchQuery = term

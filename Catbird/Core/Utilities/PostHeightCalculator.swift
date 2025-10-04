@@ -486,6 +486,8 @@ class PostHeightCalculator {
             
         case .unexpected:
             return 60 // Default height for unexpected embeds
+        case .pending(_):
+            return 0
         }
     }
     
@@ -559,6 +561,8 @@ class PostHeightCalculator {
             
         case .unexpected:
             return 60
+        case .pending(_):
+            return 0
         }
     }
     

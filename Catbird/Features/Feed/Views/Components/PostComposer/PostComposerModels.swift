@@ -4,7 +4,7 @@ import SwiftUI
 
 // MARK: - Tenor API Models (shared with GifPickerView)
 
-struct TenorGif: Codable, Identifiable {
+struct TenorGif: Codable, Identifiable, Equatable {
     let id: String
     let title: String
     let content_description: String
@@ -18,7 +18,7 @@ struct TenorGif: Codable, Identifiable {
     let content_description_source: String
 }
 
-struct TenorMediaFormats: Codable {
+struct TenorMediaFormats: Codable, Equatable {
     let gif: TenorMediaItem?
     let mediumgif: TenorMediaItem?
     let tinygif: TenorMediaItem?
@@ -36,7 +36,7 @@ struct TenorMediaFormats: Codable {
     let nanogifpreview: TenorMediaItem?
 }
 
-struct TenorMediaItem: Codable {
+struct TenorMediaItem: Codable, Equatable {
     let url: String
     let dims: [Int]
     let duration: Double?
@@ -92,6 +92,8 @@ struct PostComposerDraft: Codable {
   let threadEntries: [CodableThreadEntry]
   let isThreadMode: Bool
   let currentThreadIndex: Int
+  let parentPostURI: String?
+  let quotedPostURI: String?
 }
 
 // MARK: - Codable Wrappers for Draft State

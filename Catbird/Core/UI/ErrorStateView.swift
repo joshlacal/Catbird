@@ -3,6 +3,8 @@ import SwiftUI
 /// Standardized error state view for consistent error handling across the app
 struct ErrorStateView: View {
   // MARK: - Properties
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
   
   let error: Error
   let context: String
@@ -58,7 +60,7 @@ struct ErrorStateView: View {
     }
     .padding(24)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.systemBackground)
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
   // MARK: - Computed Properties
@@ -122,7 +124,9 @@ struct NetworkStateIndicator: View {
 /// Content unavailable view for empty states
 struct ContentUnavailableStateView: View {
   // MARK: - Properties
-  
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+
   let title: String
   let description: String
   let systemImage: String
@@ -182,7 +186,7 @@ struct ContentUnavailableStateView: View {
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.systemBackground)
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
     .accessibilityElement(children: .contain)
   }
 }
@@ -191,7 +195,9 @@ struct ContentUnavailableStateView: View {
 struct LoadingStateView: View {
   // MARK: - Properties
   
-  let message: String
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+let message: String
   let showProgress: Bool
   
   // MARK: - Initialization
@@ -217,7 +223,7 @@ struct LoadingStateView: View {
     }
     .padding(24)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.systemBackground)
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
 }
 
@@ -234,10 +240,11 @@ extension ErrorStateView {
   }
   
   /// Create an error view for authentication errors
-  static func authenticationError() -> ErrorStateView {
+  static func authenticationError(retryAction: (() -> Void)? = nil) -> ErrorStateView {
     ErrorStateView(
       error: AuthenticationError.sessionExpired,
-      context: "Your session has expired. Please log in again."
+      context: "Your session has expired. Please log in again.",
+      retryAction: retryAction
     )
   }
 }

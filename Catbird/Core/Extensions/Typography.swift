@@ -519,9 +519,10 @@ extension View {
 }
 
 extension Font {
-    #if canImport(UIKit)
+    #if canImport(UIKit) && (os(iOS) || targetEnvironment(macCatalyst))
     /// Creates a dynamic font that hijacks iOS Dynamic Type to use app-specific base sizes
     /// This allows us to combine user's app font size preference with Dynamic Type scaling
+    /// Works on both iOS and Mac Catalyst
     static func customDynamicFont(
         baseSize: CGFloat,
         weight: Font.Weight = .regular,
@@ -678,9 +679,9 @@ extension Font {
         }
     }
     
-    #elseif canImport(AppKit)
-    
-    /// macOS version - simplified dynamic font
+    #elseif canImport(AppKit) && os(macOS) && !targetEnvironment(macCatalyst)
+
+    /// macOS version - simplified dynamic font (pure macOS only, not Mac Catalyst)
     static func customDynamicFont(
         baseSize: CGFloat,
         weight: Font.Weight = .regular,
@@ -693,7 +694,7 @@ extension Font {
         return .system(size: baseSize * scaledSize, weight: weight, design: design)
     }
     
-    /// macOS version - simplified custom system font
+    /// macOS version - simplified custom system font (pure macOS only, not Mac Catalyst)
     static func customSystemFont(
         size: CGFloat,
         weight: Font.Weight,

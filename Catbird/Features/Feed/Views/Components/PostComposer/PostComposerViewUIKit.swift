@@ -19,23 +19,6 @@ import UIKit
 
 private let pcUIKitLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerUIKit")
 
-// MARK: - Liquid Glass Toolbar Label Style
-
-struct ToolbarLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        if #available(iOS 26, *) {
-            Label(configuration)
-        } else {
-            Label(configuration)
-                .labelStyle(.titleOnly)
-        }
-    }
-}
-
-@available(iOS, introduced: 18, obsoleted: 26, message: "Remove this property in iOS 26")
-extension LabelStyle where Self == ToolbarLabelStyle {
-    static var toolbar: Self { .init() }
-}
 
 struct PostComposerViewUIKit: View {
     let appState = AppState.shared
@@ -49,6 +32,8 @@ struct PostComposerViewUIKit: View {
   @State private var selectedTextForLink: String = ""
   @State private var selectedRangeForLink: NSRange = .init(location: 0, length: 0)
   @State private var linkFacets: [RichTextFacetUtils.LinkFacet] = []
+  // When set, the UIKit editor will move the caret to this range, then clear it
+  @State private var pendingSelectionRange: NSRange? = nil
 
   // Submission
   @State private var isSubmitting = false
@@ -71,6 +56,9 @@ struct PostComposerViewUIKit: View {
   @State private var showingDismissAlert = false
   // Focus control for UIKit editor
   @State private var activeEditorFocusID = UUID()
+
+  // Keyboard tracking for bottom toolbar positioning
+  // Removed: handled by inputAccessoryView; no separate bottom toolbar
 
   // Track how the view was dismissed to decide draft persistence
   private enum DismissReason { case none, discard, submit }
@@ -119,6 +107,11 @@ struct PostComposerViewUIKit: View {
           .transition(.move(edge: .top).combined(with: .opacity))
         }
       }
+      #if os(macOS)
+      .safeAreaInset(edge: .bottom) {
+        macOSBottomToolbar
+      }
+      #endif
       .ignoresSafeArea(.keyboard, edges: .bottom)
   }
 
@@ -126,7 +119,79 @@ struct PostComposerViewUIKit: View {
     let nav = content
       .navigationTitle(getNavigationTitle())
       .toolbarTitleDisplayMode(.inline)
-      .toolbar { toolbarContent }
+      .toolbar {
+        // X mark (Cancel)
+        ToolbarItem(placement: .cancellationAction) {
+          Button(action: {
+            if !viewModel.postText.isEmpty || !viewModel.mediaItems.isEmpty || viewModel.videoItem != nil {
+              showingDismissAlert = true
+            } else {
+              dismissReason = .discard
+              appState.composerDraftManager.clearDraft()
+              dismiss()
+            }
+          }) {
+            Image(systemName: "xmark")
+          }
+          .accessibilityLabel("Cancel")
+          .confirmationDialog(
+            "Discard post?",
+            isPresented: $showingDismissAlert,
+            titleVisibility: .visible
+          ) {
+            Button("Discard", role: .destructive) {
+              dismissReason = .discard
+              appState.composerDraftManager.clearDraft()
+              dismiss()
+            }
+            Button("Keep Editing", role: .cancel) { }
+          } message: {
+            Text("You'll lose your post if you discard now.")
+          }
+
+        }
+
+          
+        // Up arrow (Post/Reply)
+        ToolbarItem(placement: .primaryAction) {
+            if #available(iOS 26.0, macOS 26.0, *) {
+                Button(action: { submit() }) {
+                    Group {
+                        if isSubmitting {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "arrow.up")
+                        }
+                    }
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(viewModel.isPostButtonDisabled || isSubmitting)
+                .opacity(isSubmitting ? 0.7 : 1)
+                .buttonStyle(.glassProminent)
+                .accessibilityLabel(getPostButtonText())
+            } else {
+                Button(action: { submit() }) {
+                  Group {
+                    if isSubmitting {
+                      ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(.white)
+                    } else {
+                      Image(systemName: "arrow.up")
+                    }
+                  }
+                  .foregroundColor(.white)
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(viewModel.isPostButtonDisabled || isSubmitting)
+                .opacity(isSubmitting ? 0.7 : 1)
+                .accessibilityLabel(getPostButtonText())
+
+            }
+        }
+      }
       // Allow swipe-to-dismiss and decide persistence on disappear
       .interactiveDismissDisabled(false)
       .onDisappear { handleAutoPersistOnDismiss() }
@@ -134,20 +199,6 @@ struct PostComposerViewUIKit: View {
 
     let alerts = nav.alert(item: $viewModel.alertItem) { item in
       Alert(title: Text(item.title), message: Text(item.message), dismissButton: .default(Text("OK")))
-    }
-    .confirmationDialog(
-      "Discard post?",
-      isPresented: $showingDismissAlert,
-      titleVisibility: .visible
-    ) {
-      Button("Discard", role: .destructive) {
-        dismissReason = .discard
-        appState.composerDraftManager.clearDraft()
-        dismiss()
-      }
-      Button("Keep Editing", role: .cancel) { }
-    } message: {
-      Text("You'll lose your post if you discard now.")
     }
 
     let sheetsPrimary = alerts
@@ -188,6 +239,7 @@ struct PostComposerViewUIKit: View {
       .onChange(of: Array(viewModel.urlCards.keys).sorted()) { _, _ in
         Task { await viewModel.preUploadThumbnails() }
       }
+      // Keyboard notifications no longer needed without a custom bottom toolbar
 
     let pickers = tasks
       .photosPicker(
@@ -331,6 +383,7 @@ struct PostComposerViewUIKit: View {
           EnhancedRichTextEditor(
             attributedText: $viewModel.richAttributedText,
             linkFacets: $linkFacets,
+            pendingSelectionRange: $pendingSelectionRange,
             placeholder: "What's on your mind?",
             onImagePasted: onImagePasted,
             onGenmojiDetected: onGenmojiDetected,
@@ -381,6 +434,9 @@ struct PostComposerViewUIKit: View {
             suggestions: viewModel.mentionSuggestions.map { MentionSuggestion(profile: $0) },
             onSuggestionSelected: { suggestion in
               viewModel.insertMention(suggestion.profile)
+              // Move caret to end of inserted mention + ensure typing continues after it
+              pendingSelectionRange = NSRange(location: viewModel.postText.count, length: 0)
+              activeEditorFocusID = UUID()
             },
             onDismiss: {
               // Clear suggestions if needed; viewModel clears on insert/update already
@@ -486,6 +542,327 @@ struct PostComposerViewUIKit: View {
     }
   }
 
+  // MARK: - Unified Liquid Glass Toolbar
+  @available(iOS 26.0, macOS 26.0, *)
+  private var unifiedLiquidGlassToolbar: some View {
+    GlassEffectContainer(spacing: 12) {
+      HStack(spacing: 16) {
+        // Cancel button
+        Button("Cancel") {
+          if !viewModel.postText.isEmpty || !viewModel.mediaItems.isEmpty || viewModel.videoItem != nil {
+            showingDismissAlert = true
+          } else {
+            dismissReason = .discard
+            appState.composerDraftManager.clearDraft()
+            dismiss()
+          }
+        }
+        .font(.system(size: 16, weight: .medium))
+        .foregroundColor(.secondary)
+        .glassEffect(.regular.interactive())
+
+        // Media and formatting buttons
+        HStack(spacing: 12) {
+          Button(action: { photoPickerVisible = true }) {
+            Image(systemName: "photo")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Add photos")
+          .glassEffect(.regular.interactive())
+
+          Button(action: { videoPickerVisible = true }) {
+            Image(systemName: "video")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Add video")
+          .disabled(viewModel.videoUploadBlockedReason != nil)
+          .glassEffect(.regular.interactive())
+
+          Button(action: { showingAudioRecorder = true }) {
+            Image(systemName: "mic")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Record audio")
+          .glassEffect(.regular.interactive())
+
+          Button(action: { viewModel.showingGifPicker = true }) {
+            Image(systemName: "gift")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Add GIF")
+          .disabled(!appState.appSettings.allowTenor)
+          .glassEffect(.regular.interactive())
+
+          Button(action: {
+            selectedTextForLink = ""
+            selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
+            showingLinkCreation = true
+          }) {
+            Image(systemName: "link")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Add link")
+          .glassEffect(.regular.interactive())
+        }
+        .foregroundColor(.accentColor)
+
+        Spacer()
+
+        // Additional options
+        HStack(spacing: 12) {
+          Button(action: { viewModel.showLabelSelector = true }) {
+            Image(systemName: "tag")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Add labels")
+          .glassEffect(.regular.interactive())
+
+          Button(action: { viewModel.showThreadgateOptions = true }) {
+            Image(systemName: "person.2")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Thread settings")
+          .glassEffect(.regular.interactive())
+
+          Button(action: { showingLanguagePicker = true }) {
+            Image(systemName: "globe")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Set language")
+          .glassEffect(.regular.interactive())
+
+          Button(action: {
+            if viewModel.isThreadMode {
+              withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                viewModel.addNewThreadEntry()
+                activeEditorFocusID = UUID()
+              }
+            } else {
+              withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                viewModel.enterThreadMode()
+                viewModel.addNewThreadEntry()
+                activeEditorFocusID = UUID()
+              }
+            }
+          }) {
+            Image(systemName: "plus.bubble")
+              .font(.system(size: 18))
+          }
+          .accessibilityLabel("Add to thread")
+          .glassEffect(.regular.interactive())
+        }
+        .foregroundColor(.accentColor)
+
+        // Post/Submit button
+        Button(action: { submit() }) {
+          HStack(spacing: 6) {
+            if isSubmitting {
+              ProgressView()
+                .progressViewStyle(.circular)
+                .tint(.white)
+                .scaleEffect(0.8)
+            } else {
+              Image(systemName: "arrow.up")
+                .font(.system(size: 16, weight: .semibold))
+            }
+            Text(getPostButtonText())
+              .font(.system(size: 16, weight: .semibold))
+          }
+          .foregroundColor(.white)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+        }
+        .disabled(viewModel.isPostButtonDisabled || isSubmitting)
+        .opacity(isSubmitting ? 0.7 : 1)
+        .accessibilityLabel(getPostButtonText())
+        .keyboardShortcut(.return, modifiers: .command)
+        .glassEffect(.regular.tint(.accentColor).interactive())
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 12)
+    }
+  }
+
+  // Fallback for iOS 18+ and macOS 13+ compatibility
+  @available(iOS, introduced: 18.0, obsoleted: 26.0)
+  @available(macOS, introduced: 13.0, obsoleted: 26.0)
+  private var legacyMaterialToolbar: some View {
+    HStack(spacing: 16) {
+      // Cancel button
+      Button("Cancel") {
+        if !viewModel.postText.isEmpty || !viewModel.mediaItems.isEmpty || viewModel.videoItem != nil {
+          showingDismissAlert = true
+        } else {
+          dismissReason = .discard
+          appState.composerDraftManager.clearDraft()
+          dismiss()
+        }
+      }
+      .font(.system(size: 16, weight: .medium))
+      .foregroundColor(.secondary)
+
+      // Media and formatting buttons
+      HStack(spacing: 12) {
+        Button(action: { photoPickerVisible = true }) {
+          Image(systemName: "photo")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Add photos")
+
+        Button(action: { videoPickerVisible = true }) {
+          Image(systemName: "video")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Add video")
+        .disabled(viewModel.videoUploadBlockedReason != nil)
+
+        Button(action: { showingAudioRecorder = true }) {
+          Image(systemName: "mic")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Record audio")
+
+        Button(action: { viewModel.showingGifPicker = true }) {
+          Image(systemName: "gift")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Add GIF")
+        .disabled(!appState.appSettings.allowTenor)
+
+        Button(action: {
+          selectedTextForLink = ""
+          selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
+          showingLinkCreation = true
+        }) {
+          Image(systemName: "link")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Add link")
+      }
+      .foregroundColor(.accentColor)
+
+      Spacer()
+
+      // Additional options
+      HStack(spacing: 12) {
+        Button(action: { viewModel.showLabelSelector = true }) {
+          Image(systemName: "tag")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Add labels")
+
+        Button(action: { viewModel.showThreadgateOptions = true }) {
+          Image(systemName: "person.2")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Thread settings")
+
+        Button(action: { showingLanguagePicker = true }) {
+          Image(systemName: "globe")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Set language")
+
+        Button(action: {
+          if viewModel.isThreadMode {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+              viewModel.addNewThreadEntry()
+              activeEditorFocusID = UUID()
+            }
+          } else {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+              viewModel.enterThreadMode()
+              viewModel.addNewThreadEntry()
+              activeEditorFocusID = UUID()
+            }
+          }
+        }) {
+          Image(systemName: "plus.bubble")
+            .font(.system(size: 18))
+        }
+        .accessibilityLabel("Add to thread")
+      }
+      .foregroundColor(.accentColor)
+
+      // Post/Submit button
+      Button(action: { submit() }) {
+        HStack(spacing: 6) {
+          if isSubmitting {
+            ProgressView()
+              .progressViewStyle(.circular)
+              .tint(.white)
+              .scaleEffect(0.8)
+          } else {
+            Image(systemName: "arrow.up")
+              .font(.system(size: 16, weight: .semibold))
+          }
+          Text(getPostButtonText())
+            .font(.system(size: 16, weight: .semibold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.tint)
+        .cornerRadius(8)
+      }
+      .disabled(viewModel.isPostButtonDisabled || isSubmitting)
+      .opacity(isSubmitting ? 0.7 : 1)
+      .accessibilityLabel(getPostButtonText())
+      .keyboardShortcut(.return, modifiers: .command)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
+    .background(.regularMaterial)
+    .overlay(
+      Rectangle()
+        .frame(height: 0.5)
+        .foregroundColor(.separator),
+      alignment: .top
+    )
+  }
+
+  // MARK: - macOS Bottom Toolbar
+  #if os(macOS)
+  private var macOSBottomToolbar: some View {
+    KeyboardToolbarView(
+      onPhotos: { photoPickerVisible = true },
+      onVideo: { videoPickerVisible = true },
+      onAudio: { showingAudioRecorder = true },
+      onGif: { viewModel.showingGifPicker = true },
+      onLabels: { viewModel.showLabelSelector = true },
+      onThreadgate: { viewModel.showThreadgateOptions = true },
+      onLanguage: { showingLanguagePicker = true },
+      onThread: {
+        if viewModel.isThreadMode {
+          withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            viewModel.addNewThreadEntry()
+            activeEditorFocusID = UUID()
+          }
+        } else {
+          withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            viewModel.enterThreadMode()
+            viewModel.addNewThreadEntry()
+            activeEditorFocusID = UUID()
+          }
+        }
+      },
+      onLink: {
+        selectedTextForLink = ""
+        selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
+        showingLinkCreation = true
+      },
+      allowTenor: appState.appSettings.allowTenor
+    )
+    .background(.regularMaterial)
+    .overlay(
+      Rectangle()
+        .frame(height: 0.5)
+        .foregroundColor(.separator),
+      alignment: .top
+    )
+  }
+  #endif
+
   // MARK: - Thread Composer Stack
   private var threadComposerStack: some View {
     // Hoist closures to stabilize UIViewRepresentable identity
@@ -527,6 +904,7 @@ struct PostComposerViewUIKit: View {
                 EnhancedRichTextEditor(
                   attributedText: $viewModel.richAttributedText,
                   linkFacets: $linkFacets,
+                  pendingSelectionRange: $pendingSelectionRange,
                   placeholder: "What's on your mind?",
                   onImagePasted: onImagePasted,
                   onGenmojiDetected: onGenmojiDetected,
@@ -806,9 +1184,9 @@ struct PostComposerViewUIKit: View {
 
   // MARK: - Outline Tags
   private var outlineTagsSection: some View {
-    OutlineTagsView(tags: $viewModel.outlineTags, compact: true)
+    CompactOutlineTagsView(tags: $viewModel.outlineTags)
       .padding(.horizontal)
-      .padding(.top, 2)
+      .padding(.top, 4)
   }
 
   // MARK: - Selected GIF View
@@ -844,85 +1222,39 @@ struct PostComposerViewUIKit: View {
   }
 
 
-  // MARK: - Toolbar (Liquid Glass Style)
-  @ToolbarContentBuilder
-  private var toolbarContent: some ToolbarContent {
-    // Leading group: Cancel
-      ToolbarItemGroup(placement: .cancellationAction) {
-          Button("Cancel", systemImage: "xmark") {
-              if !viewModel.postText.isEmpty || !viewModel.mediaItems.isEmpty || viewModel.videoItem != nil {
-                  showingDismissAlert = true
-              } else {
-                  dismissReason = .discard
-                  appState.composerDraftManager.clearDraft()
-                  dismiss()
-              }
-          }
-          .labelStyle(.toolbar)
-          .tint(.secondary)
-      }
-
-    // Centered title
-//    ToolbarItem(placement: .principal) {
-//      Text(getNavigationTitle())
-//        .appFont(AppTextRole.headline)
-//    }
-
-    // Trailing group: Post action only
-    ToolbarItem(placement: .confirmationAction) {
-        
-        Button("Post", systemImage: "arrow.up") { submit() }
-              .labelStyle(.toolbar)
-              .keyboardShortcut(.return, modifiers: .command)
-              .disabled(viewModel.isPostButtonDisabled || isSubmitting)
-              .opacity(isSubmitting ? 0.5 : 1)
-              .overlay(
-                Group {
-                    if isSubmitting {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(.white)
-                            .scaleEffect(0.8)
-                    }
-                }
-              )
-              .accessibilityLabel(getPostButtonText())
-      }
-  }
 
 
   // MARK: - Language Chips
   private var languageSection: some View {
     Group {
       if !viewModel.selectedLanguages.isEmpty {
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Image(systemName: "globe").appFont(AppTextRole.caption).foregroundColor(.secondary)
-            Text("Languages").appFont(AppTextRole.caption).foregroundColor(.secondary)
-            Spacer()
-          }
-          ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-              ForEach(viewModel.selectedLanguages, id: \.self) { lang in
-                HStack(spacing: 6) {
-                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
-                    .appFont(AppTextRole.caption)
-                  Button(action: { viewModel.toggleLanguage(lang) }) {
-                    Image(systemName: "xmark.circle.fill").appFont(AppTextRole.caption2).foregroundColor(.secondary)
-                  }
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 6) {
+            Image(systemName: "globe")
+              .font(.system(size: 12))
+              .foregroundColor(.secondary)
+
+            ForEach(viewModel.selectedLanguages, id: \.self) { lang in
+              HStack(spacing: 4) {
+                Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                  .font(.system(size: 11, weight: .medium))
+                Button(action: { viewModel.toggleLanguage(lang) }) {
+                  Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.accentColor.opacity(0.1))
-                .foregroundColor(.accentColor)
-                .cornerRadius(8)
               }
+              .padding(.horizontal, 8)
+              .padding(.vertical, 4)
+              .background(Color.secondary.opacity(0.1))
+              .foregroundColor(.secondary)
+              .cornerRadius(6)
             }
-            .padding(.horizontal, 1)
           }
+          .padding(.horizontal, 1)
         }
         .padding(.horizontal)
-        .padding(.top, 4)
+        .padding(.top, 2)
       }
     }
   }
@@ -1015,6 +1347,15 @@ struct PostComposerViewUIKit: View {
       let linkFacet = RichTextFacetUtils.LinkFacet(range: effectiveRange, url: url, displayText: displayText ?? "")
       linkFacets.append(linkFacet)
       viewModel.updateManualLinkFacets(from: linkFacets)
+      // Move caret to immediately after the inserted link to avoid extending it while typing.
+      // Defer until the attributed text reflects the new link so we can derive the precise run length.
+      DispatchQueue.main.async {
+        if let preciseRange = self.linkRangeNearest(to: range.location) {
+          self.pendingSelectionRange = NSRange(location: preciseRange.location + preciseRange.length, length: 0)
+        } else {
+          self.pendingSelectionRange = NSRange(location: effectiveRange.location + effectiveRange.length, length: 0)
+        }
+      }
     } else {
       let newAttributedText = RichTextFacetUtils.addOrInsertLinkFacet(
         to: viewModel.richAttributedText,
@@ -1028,7 +1369,38 @@ struct PostComposerViewUIKit: View {
       linkFacets.append(linkFacet)
       // Update manual link facets immediately after adding the link
       viewModel.updateManualLinkFacets(from: linkFacets)
+      // Move caret after link (use precise attribution if available)
+      DispatchQueue.main.async {
+        if let preciseRange = self.linkRangeNearest(to: range.location) {
+          self.pendingSelectionRange = NSRange(location: preciseRange.location + preciseRange.length, length: 0)
+        } else {
+          self.pendingSelectionRange = NSRange(location: effectiveRange.location + effectiveRange.length, length: 0)
+        }
+      }
     }
+  }
+
+  // Find the link attributed run nearest to a location in the current richAttributedText
+  private func linkRangeNearest(to location: Int) -> NSRange? {
+    let ns = viewModel.richAttributedText
+    var best: (range: NSRange, distance: Int)?
+    ns.enumerateAttribute(.link, in: NSRange(location: 0, length: ns.length)) { value, range, _ in
+      guard value is URL else { return }
+      let dist: Int
+      if location >= range.location && location <= range.location + range.length {
+        dist = 0
+      } else if location < range.location {
+        dist = range.location - location
+      } else {
+        dist = location - (range.location + range.length)
+      }
+      if let cur = best {
+        if dist < cur.distance { best = (range, dist) }
+      } else {
+        best = (range, dist)
+      }
+    }
+    return best?.range
   }
 
   // MARK: - Audio Helpers
@@ -1127,6 +1499,118 @@ struct PostComposerViewUIKit: View {
     }
 
     return handled
+  }
+
+  // MARK: - Compact Outline Tags View
+
+  private struct CompactOutlineTagsView: View {
+    @Binding var tags: [String]
+    @State private var newTag: String = ""
+    @State private var isAddingTag: Bool = false
+    @FocusState private var isTextFieldFocused: Bool
+
+    private let maxTagLength = 25
+    private let maxTags = 10
+
+    var body: some View {
+      HStack(spacing: 8) {
+          Image(systemName: "number")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+              ForEach(tags, id: \.self) { tag in
+                HStack(spacing: 4) {
+                  Text("#\(tag)")
+                    .font(.system(size: 11, weight: .medium))
+                  Button(action: { removeTag(tag) }) {
+                    Image(systemName: "xmark.circle.fill")
+                      .font(.system(size: 10))
+                      .foregroundColor(.secondary)
+                  }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .foregroundColor(.secondary)
+                .cornerRadius(6)
+              }
+
+              if isAddingTag {
+                HStack(spacing: 4) {
+                  TextField("hashtag", text: $newTag)
+                    .focused($isTextFieldFocused)
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(minWidth: 60)
+                    .onSubmit { addTag() }
+
+                  Button(action: addTag) {
+                    Image(systemName: "checkmark.circle.fill")
+                      .font(.system(size: 10))
+                      .foregroundColor(.accentColor)
+                  }
+                  .disabled(!canAddTag)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.1))
+                .cornerRadius(6)
+              } else if tags.count < maxTags {
+                Button(action: { startAddingTag() }) {
+                  Image(systemName: "plus.circle")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                }
+              }
+            }
+            .padding(.horizontal, 1)
+          }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var canAddTag: Bool {
+      let trimmedTag = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+      return !trimmedTag.isEmpty &&
+             trimmedTag.count <= maxTagLength &&
+             tags.count < maxTags &&
+             !tags.contains(cleanedTag(trimmedTag).lowercased())
+    }
+
+    private func startAddingTag() {
+      isAddingTag = true
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        isTextFieldFocused = true
+      }
+    }
+
+    private func addTag() {
+      let trimmedTag = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+
+      guard !trimmedTag.isEmpty else { return }
+      guard trimmedTag.count <= maxTagLength else { return }
+      guard tags.count < maxTags else { return }
+
+      let cleanTag = cleanedTag(trimmedTag)
+
+      if !tags.contains(where: { $0.lowercased() == cleanTag.lowercased() }) {
+        tags.append(cleanTag.lowercased())
+        newTag = ""
+        isAddingTag = false
+        isTextFieldFocused = false
+      }
+    }
+
+    private func removeTag(_ tag: String) {
+      tags.removeAll { $0 == tag }
+    }
+
+    private func cleanedTag(_ tag: String) -> String {
+      var cleaned = tag.hasPrefix("#") ? String(tag.dropFirst()) : tag
+      cleaned = cleaned.replacingOccurrences(of: " ", with: "")
+      cleaned = cleaned.replacingOccurrences(of: "#", with: "")
+      return cleaned
+    }
   }
 
   // MARK: - Thread Vertical View

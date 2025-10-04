@@ -17,13 +17,14 @@ struct FeedDiscoveryCardsView: View {
   @State private var subscriptionStatus: [String: Bool] = [:]
   @State private var showOnboarding = true
   @State private var hasInteracted = false
+    @State private var path = NavigationPath()
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryCards")
   private let cardAnimationDuration = 0.25
   private let swipeThreshold: CGFloat = 100
   
   var body: some View {
-    NavigationStack {
+      NavigationStack (path: $path) {
       ZStack {
         // Background
         Color(platformColor: .platformSystemBackground)
@@ -81,7 +82,7 @@ struct FeedDiscoveryCardsView: View {
               isSubscribed: subscriptionStatus[feeds[index].uri.uriString()] ?? false,
               onSubscriptionToggle: {
                 await toggleSubscription(feeds[index])
-              }
+              }, path: $path
             )
             .scaleEffect(scaleForCard(at: index))
             .offset(y: offsetForCard(at: index))
@@ -97,7 +98,7 @@ struct FeedDiscoveryCardsView: View {
             isSubscribed: subscriptionStatus[feeds[currentIndex].uri.uriString()] ?? false,
             onSubscriptionToggle: {
               await toggleSubscription(feeds[currentIndex])
-            }
+            }, path: $path
           )
           .offset(dragOffset)
           .rotationEffect(.degrees(Double(dragOffset.width) * 0.1))
@@ -483,6 +484,7 @@ struct FeedDiscoveryCard: View {
   @State private var isLoadingPreview = false
   @State private var previewService: FeedPreviewService?
   @State private var showingFullFeed = false
+    @Binding var path: NavigationPath
   
   private let cardHeight: CGFloat = 600
   private let headerHeight: CGFloat = 140
@@ -547,32 +549,17 @@ struct FeedDiscoveryCard: View {
     .sheet(isPresented: $showingFullFeed) {
       NavigationStack {
         if let feedUri = try? ATProtocolURI(uriString: feed.uri.uriString()) {
-          FeedCollectionView.create(
-            for: .feed(feedUri),
-            appState: appState,
-            navigationPath: .constant(NavigationPath())
-          )
-          .navigationTitle(feed.displayName)
+            FeedScreen(path: $path, uri: feedUri)
+            .environment(appState)
+            .navigationTitle(feed.displayName)
     #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inline)
     #endif
-          .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-              Button("Close") {
-                showingFullFeed = false
+            .toolbar {
+              ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { showingFullFeed = false }
               }
             }
-            
-            ToolbarItem(placement: .primaryAction) {
-              Button(isSubscribed ? "Unsubscribe" : "Subscribe") {
-                Task {
-                  await onSubscriptionToggle()
-                }
-              }
-              .buttonStyle(.borderedProminent)
-              .controlSize(.small)
-            }
-          }
         } else {
           Text("Unable to load feed")
             .foregroundColor(.secondary)

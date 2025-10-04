@@ -115,11 +115,6 @@ class RichTextView: UITextView {
     var onImagePasted: ((UIImage) -> Void)?
     var onGenmojiDetected: (([GenmojiData]) -> Void)?
     
-    override func awakeFromNib() {
-        super.awakeFromNib()
-        setupView()
-    }
-    
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
         setupView()

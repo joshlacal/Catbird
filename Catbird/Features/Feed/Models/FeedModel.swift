@@ -93,9 +93,9 @@ final class FeedModel: StateInvalidationSubscriber {
     self.cursor = nil
     
     logger.debug("Restored \(posts.count) persisted posts to FeedModel")
-    
+
     // Refresh shadows for restored posts
-    let feedViewPosts = posts.map { $0.feedViewPost }
+    let feedViewPosts = posts.compactMap { try? $0.feedViewPost }
     await refreshPostShadows(feedViewPosts)
   }
 
@@ -142,8 +142,9 @@ final class FeedModel: StateInvalidationSubscriber {
       let filterSettings = await getFilterSettings()
       let slices = feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
       logger.debug("🔍 FeedTuner returned \(slices.count) slices")
-      let newPosts = slices.map { slice in
+      let newPosts = slices.compactMap { slice in
         // Convert to CachedFeedViewPost with thread metadata preserved
+        // Returns nil if validation fails (malformed data)
         return CachedFeedViewPost(from: slice, feedType: fetch.identifier)
       }
 
@@ -155,12 +156,12 @@ final class FeedModel: StateInvalidationSubscriber {
         if uniqueNewPostCount > posts.count / 10 || forceRefresh {
           self.posts = newPosts
           // Persist feed data for caching
-          PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetch.identifier)
+          await PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetch.identifier)
         }
       } else {
         self.posts = newPosts
         // Persist feed data for caching
-        PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetch.identifier)
+        await PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetch.identifier)
       }
 
       self.cursor = newCursor
@@ -196,12 +197,12 @@ final class FeedModel: StateInvalidationSubscriber {
     let filterSettings = await getFilterSettings()
     let slices = feedTuner.tune(cachedPosts, filterSettings: filterSettings)
     await MainActor.run {
-      self.posts = slices.map { slice in
+      self.posts = slices.compactMap { slice in
         return CachedFeedViewPost(from: slice, feedType: "timeline")
       }
       self.cursor = cursor
       self.hasMore = cursor != nil
-      
+
       // Update widget data for cached feed
       FeedWidgetDataProvider.shared.updateWidgetData(from: self.posts, feedType: lastFeedType)
     }
@@ -234,7 +235,7 @@ final class FeedModel: StateInvalidationSubscriber {
       // Process new posts using FeedTuner
       let filterSettings = await getFilterSettings()
       let newSlices = feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
-      let newCachedPosts = newSlices.map { slice in
+      let newCachedPosts = newSlices.compactMap { slice in
         return CachedFeedViewPost(from: slice, feedType: fetchType.identifier)
       }
       let existingIds = Set(posts.map { $0.id })
@@ -244,7 +245,7 @@ final class FeedModel: StateInvalidationSubscriber {
       self.cursor = newCursor
       self.hasMore = newCursor != nil
       // Persist combined feed data for caching
-      PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetchType.identifier)
+      await PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetchType.identifier)
       
       logger.debug("🔍 loadMore completed - added \(uniqueNewPosts.count) posts, newCursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
@@ -394,7 +395,9 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // First pass: collect all parent post URIs
     for cachedPost in postsToFilter {
-      if let reply = cachedPost.feedViewPost.reply {
+      guard let feedViewPost = try? cachedPost.feedViewPost else { continue }
+
+      if let reply = feedViewPost.reply {
         switch reply.parent {
         case .appBskyFeedDefsPostView(let parentView):
           parentPostURIs.insert(parentView.uri.uriString())
@@ -406,7 +409,10 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // Second pass: filter out standalone posts that are also parents in replies
     return postsToFilter.filter { cachedPost in
-      let post = cachedPost.feedViewPost
+      guard let post = try? cachedPost.feedViewPost else {
+        return false
+      }
+
       let postURI = post.post.uri.uriString()
 
       // If this post's URI is in the parent set AND it's not a reply itself, filter it out
@@ -427,7 +433,10 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // Apply standard filters first (excluding the deduplication filter itself)
     let standardFilteredPosts = posts.filter { cachedPost in
-      let post = cachedPost.feedViewPost
+      guard let post = try? cachedPost.feedViewPost else {
+        return false
+      }
+
       for filter in activeFilters {
         // Skip the deduplication filter here, it's applied separately
         if filter.name == "Hide Duplicate Posts" { continue }
@@ -461,7 +470,7 @@ final class FeedModel: StateInvalidationSubscriber {
     logger.debug("🔍 processAndFilterPosts: FeedTuner returned \(slices.count) slices")
     
     // Convert slices to cached posts
-    let newCachedPosts = slices.map { slice in
+    let newCachedPosts = slices.compactMap { slice in
       return CachedFeedViewPost(from: slice, feedType: "timeline")
     }
 
@@ -470,7 +479,10 @@ final class FeedModel: StateInvalidationSubscriber {
 
     // Apply standard filters first (excluding the deduplication filter itself)
     let standardFilteredPosts = newCachedPosts.filter { cachedPost in
-      let post = cachedPost.feedViewPost
+      guard let post = try? cachedPost.feedViewPost else {
+        return false
+      }
+
       for filter in activeFilters {
         // Skip the deduplication filter here, it's applied separately
         if filter.name == "Hide Duplicate Posts" { continue }
@@ -518,7 +530,7 @@ final class FeedModel: StateInvalidationSubscriber {
     error = nil
 
     // Check for client availability
-    guard let client = appState.atProtoClient else {
+    guard appState.atProtoClient != nil else {
       logger.warning("🔥 FEED MODEL: No AT Proto client available - cannot load feed data for \(fetch.identifier)")
       if strategy == .backgroundRefresh {
         isBackgroundRefreshing = false
@@ -643,7 +655,8 @@ final class FeedModel: StateInvalidationSubscriber {
         // Check if the parent post is visible in the current feed
         let parentVisible = await MainActor.run {
           posts.contains { cachedPost in
-            cachedPost.feedViewPost.post.uri.uriString() == parentUri
+            guard let post = try? cachedPost.feedViewPost else { return false }
+            return post.post.uri.uriString() == parentUri
           }
         }
         
@@ -739,9 +752,12 @@ final class FeedModel: StateInvalidationSubscriber {
     )
     
     // Create a cached post with temporary flag
-      let cachedPost = CachedFeedViewPost(from: feedViewPost, feedType: lastFeedType.identifier)
+    guard let cachedPost = CachedFeedViewPost(from: feedViewPost, feedType: lastFeedType.identifier) else {
+      logger.error("Failed to create cached post for optimistic insert")
+      return
+    }
     cachedPost.isTemporary = true
-    
+
     // Insert at the beginning of the feed
     posts.insert(cachedPost, at: 0)
     
@@ -765,11 +781,14 @@ final class FeedModel: StateInvalidationSubscriber {
     
     // Don't refresh if we don't have posts yet
     guard !posts.isEmpty else { return }
-    
+
     // Reapply filters to existing posts using updated mute cache
     let filterSettings = await getFilterSettings()
-    let tunedSlices = feedTuner.tune(posts.map { $0.feedViewPost }, filterSettings: filterSettings)
-    let reprocessedPosts = tunedSlices.map { slice in
+    let validFeedViewPosts = posts.compactMap { try? $0.feedViewPost }
+    guard !validFeedViewPosts.isEmpty else { return }
+
+    let tunedSlices = feedTuner.tune(validFeedViewPosts, filterSettings: filterSettings)
+    let reprocessedPosts = tunedSlices.compactMap { slice in
       return CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
     }
     

@@ -17,6 +17,10 @@ struct URLCardResponse: Codable, Identifiable {
   let description: String
   let image: String
   
+  /// Original URL detected in the composer text. Card service may canonicalize `url`,
+  /// so keep the full user-provided link for embeds and local caching.
+  var sourceURL: String? = nil
+  
   /// Cached thumbnail blob after upload (not persisted)
   var thumbnailBlob: Blob? = nil
 
@@ -29,6 +33,9 @@ struct URLCardResponse: Codable, Identifiable {
     case image
     // thumbnailBlob is excluded from coding
   }
+
+  /// URL string to use when preserving the exact user-provided link.
+  var resolvedURL: String { sourceURL ?? url }
 }
 
 struct PostParser {
@@ -128,28 +135,25 @@ struct PostParser {
         urls.append(matchUrl)
 
         // Convert range to UTF-8 byte offsets for facet
-        let startIndex = content.startIndex
+        // Calculate UTF-8 byte positions directly to handle multi-byte characters (emoji, etc.)
         let matchStartIndex = range.lowerBound
         let matchEndIndex = range.upperBound
 
-        let utf8Start = content.utf8.distance(
-          from: content.utf8.startIndex,
-          to: content.utf8.index(
-            content.utf8.startIndex,
-            offsetBy: content.distance(from: startIndex, to: matchStartIndex)))
-        let utf8End = content.utf8.distance(
-          from: content.utf8.startIndex,
-          to: content.utf8.index(
-            content.utf8.startIndex,
-            offsetBy: content.distance(from: startIndex, to: matchEndIndex)))
+        let utf8Start = content[..<matchStartIndex].utf8.count
+        let utf8End = utf8Start + content[matchStartIndex..<matchEndIndex].utf8.count
 
         let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: utf8Start, byteEnd: utf8End)
-        // Fix URI creation
-        let linkFeature = AppBskyRichtextFacet.Link(uri: URI(matchUrl)!)
-        let facet = AppBskyRichtextFacet(
-          index: byteSlice, features: [.appBskyRichtextFacetLink(linkFeature)])
-
-        facets.append(facet)
+        // Create link facet only for well-formed URLs with a non-empty scheme
+        if let url = URL(string: matchUrl), let scheme = url.scheme, !scheme.isEmpty,
+           let safeURI = try? URI(uriString: matchUrl) {
+          let linkFeature = AppBskyRichtextFacet.Link(uri: safeURI)
+          let facet = AppBskyRichtextFacet(
+            index: byteSlice, features: [.appBskyRichtextFacetLink(linkFeature)])
+          facets.append(facet)
+        } else {
+          // Skip malformed URLs (e.g., "//") to avoid crashes in URI parsing
+          continue
+        }
       }
     }
 

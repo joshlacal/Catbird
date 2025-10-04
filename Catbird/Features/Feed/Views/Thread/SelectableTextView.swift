@@ -19,16 +19,38 @@ class SelectableSelfSizingTextView: UITextView {
   override var intrinsicContentSize: CGSize {
     // Ensure we have a valid width to work with
     let currentWidth = bounds.width > 0 ? bounds.width : frame.width
-    
+
     if currentWidth > 0 {
       // Use the actual available width for accurate text layout
       textContainer.size = CGSize(width: currentWidth, height: CGFloat.greatestFiniteMagnitude)
       layoutManager.ensureLayout(for: textContainer)
-      
+
       // Get the used rect which accounts for all text content
       let usedRect = layoutManager.usedRect(for: textContainer)
-      let height = ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom)
-      
+
+      // Account for font descent and line spacing below the last line
+      var additionalBottomSpace: CGFloat = 0
+      if let attributedText = attributedText, attributedText.length > 0 {
+        let lastCharacterRange = NSRange(location: attributedText.length - 1, length: 1)
+
+        // Get font descent to ensure descenders are visible
+        if let font = attributedText.attribute(.font, at: lastCharacterRange.location, effectiveRange: nil) as? UIFont {
+          additionalBottomSpace += abs(font.descender)
+        }
+
+        // Add line spacing from paragraph style
+        if let paragraphStyle = attributedText.attribute(.paragraphStyle, at: lastCharacterRange.location, effectiveRange: nil) as? NSParagraphStyle {
+          additionalBottomSpace += paragraphStyle.lineSpacing
+          // Also account for line height multiple if set
+          if paragraphStyle.lineHeightMultiple > 0 {
+            additionalBottomSpace += paragraphStyle.lineSpacing * (paragraphStyle.lineHeightMultiple - 1)
+          }
+        }
+      }
+
+      // Add generous bottom padding to prevent clipping (8pt safety margin)
+      let height = ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+
       return CGSize(width: UIView.noIntrinsicMetric, height: max(height, 1))
     } else {
       // Fallback for when width isn't available yet
@@ -40,13 +62,18 @@ class SelectableSelfSizingTextView: UITextView {
   
   override func layoutSubviews() {
     super.layoutSubviews()
-    
+
     // Only invalidate if the width has changed significantly to avoid unnecessary layout passes
     let currentWidth = bounds.width
     if abs(currentWidth - lastKnownWidth) > 1 {
       lastKnownWidth = currentWidth
       DispatchQueue.main.async {
-        self.invalidateIntrinsicContentSize()
+        UIView.performWithoutAnimation {
+          CATransaction.begin()
+          CATransaction.setDisableActions(true)
+          self.invalidateIntrinsicContentSize()
+          CATransaction.commit()
+        }
       }
     }
   }
@@ -140,7 +167,11 @@ struct SelectableTextView: UIViewRepresentable {
       "frame": NSNull(),
       "contents": NSNull(),
       "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
+      "onOrderOut": NSNull(),
+      "opacity": NSNull(),
+      "transform": NSNull(),
+      "sublayers": NSNull(),
+      "hidden": NSNull()
     ]
     textView.layer.actions = noAnim
     textView.textContainer.layoutManager?.allowsNonContiguousLayout = false
@@ -163,10 +194,13 @@ struct SelectableTextView: UIViewRepresentable {
 
       if uiView.attributedText != nsAttributedString {
         uiView.attributedText = nsAttributedString
-        // Trigger immediate layout update after content changes
+        // Trigger immediate layout update after content changes without animation
         uiView.invalidateIntrinsicContentSize()
         uiView.setNeedsLayout()
         uiView.layoutIfNeeded()
+
+        // Force immediate superview layout to prevent cascading animations
+        uiView.superview?.layoutIfNeeded()
       }
     }
     

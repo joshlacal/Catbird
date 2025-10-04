@@ -149,7 +149,7 @@ struct ThreadgateOptionsView: View {
       .navigationTitle("Reply Settings")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
+          Button("Cancel", systemImage: "xmark") { dismiss() }
         }
 
         ToolbarItem(placement: .confirmationAction) {

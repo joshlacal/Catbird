@@ -129,6 +129,18 @@ struct ResultsView: View {
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
+                .onAppear {
+                    if limit == nil && profile == items.last {
+                        triggerLoadMoreIfNeeded()
+                    }
+                }
+                .task {
+                    // More responsive infinite scrolling for profiles
+                    if limit == nil, let lastIndex = items.firstIndex(where: { $0.did == profile.did }),
+                       lastIndex >= items.count - 3 {
+                        triggerLoadMoreIfNeeded()
+                    }
+                }
             }
             if showSeeAll, viewModel.profileResults.count > (limit ?? 0) {
                 Button { selectedContentType = .profiles } label: {
@@ -174,13 +186,26 @@ struct ResultsView: View {
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .onAppear {
-                    if limit == nil && post == items.last { triggerLoadMoreIfNeeded() }
+                    if limit == nil && post == items.last { 
+                        triggerLoadMoreIfNeeded() 
+                    }
+                }
+                .task {
+                    // More responsive infinite scrolling - trigger when we're near the end
+                    if limit == nil, let lastIndex = items.firstIndex(where: { $0.uri == post.uri }),
+                       lastIndex >= items.count - 3 {
+                        triggerLoadMoreIfNeeded()
+                    }
                 }
             }
             if showSeeAll, viewModel.postResults.count > (limit ?? 0) {
                 Button { selectedContentType = .posts } label: {
                     Text("See all \(viewModel.postResults.count) posts")
-                        .appFont(AppTextRole.subheadline)
+                        .appFont(AppTextRole.subheadline.weight(.semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
                         .foregroundColor(.accentColor)
                 }
                 .buttonStyle(.plain)
@@ -205,22 +230,14 @@ struct ResultsView: View {
                         )
                         .task { await updateSubscriptionStatus(for: feed.uri) }
 
-                        Button { path.append(NavigationDestination.feed(feed.uri)) } label: {
-                            HStack {
-                                Text("Preview Feed")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(.accentColor)
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .appFont(AppTextRole.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .buttonStyle(.plain)
+                        // Make the entire card tappable to preview feed (bigger tap target)
+                        EmptyView()
                     }
                     .mainContentFrame()
                     .padding(.horizontal, baseUnit * 1.5)
                     .padding(.top, baseUnit * 3)
+                    .contentShape(Rectangle())
+                    .onTapGesture { path.append(NavigationDestination.feed(feed.uri)) }
 
                     if feed != items.last {
                         Rectangle()
@@ -246,10 +263,36 @@ struct ResultsView: View {
 
     @ViewBuilder
     private func loadMoreSectionIfNeeded(cursor: String?) -> some View {
-        if cursor != nil {
+        if cursor != nil && !viewModel.isLoadingMoreResults {
             Section {
-                HStack { Spacer(); ProgressView().padding(.vertical, 8); Spacer() }
-                    .onAppear { triggerLoadMoreIfNeeded() }
+                HStack { 
+                    Spacer() 
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Loading more results...")
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer() 
+                }
+                .padding(.vertical, 16)
+                .onAppear { triggerLoadMoreIfNeeded() }
+                .listRowInsets(EdgeInsets())
+            }
+        } else if viewModel.isLoadingMoreResults {
+            Section {
+                HStack { 
+                    Spacer() 
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Loading...")
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer() 
+                }
+                .padding(.vertical, 16)
+                .listRowInsets(EdgeInsets())
             }
         }
     }
@@ -527,26 +570,11 @@ struct ResultsView: View {
                         await updateSubscriptionStatus(for: feed.uri)
                     }
                     
-                    HStack {
-                        Button {
-                            path.append(NavigationDestination.feed(feed.uri))
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "eye")
-                                Text("Preview Feed")
-                                    .fontWeight(.semibold)
-                            }
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                            .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 2)
+                    // Tap anywhere on the card to preview the feed
+                    HStack { Spacer(minLength: 0) }.padding(.horizontal, 2)
                 }
+                .contentShape(Rectangle())
+                .onTapGesture { path.append(NavigationDestination.feed(feed.uri)) }
                 
                 if feed != viewModel.feedResults.last {
                     Divider()

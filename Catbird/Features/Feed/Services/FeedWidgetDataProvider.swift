@@ -26,8 +26,10 @@ final class FeedWidgetDataProvider {
   
   /// Helper method to convert a cached post to widget format
   private func convertToWidgetPost(_ cachedPost: CachedFeedViewPost) -> WidgetPost? {
-    let post = cachedPost.feedViewPost
-    
+    guard let post = try? cachedPost.feedViewPost else {
+      return nil
+    }
+
     guard case .knownType(let record) = post.post.record,
           let feedPost = record as? AppBskyFeedPost else {
       return nil
@@ -235,8 +237,10 @@ final class FeedWidgetDataProvider {
   
   /// Enhanced post conversion with better metadata
   private func convertToWidgetPostEnhanced(_ cachedPost: CachedFeedViewPost) -> WidgetPost? {
-    let post = cachedPost.feedViewPost
-    
+    guard let post = try? cachedPost.feedViewPost else {
+      return nil
+    }
+
     guard case .knownType(let record) = post.post.record,
           let feedPost = record as? AppBskyFeedPost else {
       return nil

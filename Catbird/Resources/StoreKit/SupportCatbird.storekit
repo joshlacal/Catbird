@@ -1,0 +1,210 @@
+{
+  "appPolicies": {
+    "eula": "",
+    "policies": [
+      {
+        "locale": "en_US",
+        "policyText": "",
+        "policyURL": ""
+      }
+    ]
+  },
+  "identifier": "E738B3AD",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "id": "blue.catbird.support.onetime.small",
+      "type": "Consumable",
+      "referenceName": "Support Small",
+      "displayName": "Small Support",
+      "description": "Help keep Catbird flying with a small one-time contribution.",
+      "familyShareable": false,
+      "subscriptionGroupID": null,
+      "images": [],
+      "localizations": [
+        {
+          "locale": "en_US",
+          "displayName": "Small Support",
+          "description": "Help keep Catbird flying with a small one-time contribution."
+        }
+      ],
+      "prices": [
+        {
+          "currency": "USD",
+          "price": 4.99,
+          "displayPrice": "$4.99",
+          "startDate": null
+        }
+      ]
+    },
+    {
+      "id": "blue.catbird.support.onetime.medium",
+      "type": "Consumable",
+      "referenceName": "Support Medium",
+      "displayName": "Medium Support",
+      "description": "Fuel ongoing development with a medium one-time contribution.",
+      "familyShareable": false,
+      "subscriptionGroupID": null,
+      "images": [],
+      "localizations": [
+        {
+          "locale": "en_US",
+          "displayName": "Medium Support",
+          "description": "Fuel ongoing development with a medium one-time contribution."
+        }
+      ],
+      "prices": [
+        {
+          "currency": "USD",
+          "price": 9.99,
+          "displayPrice": "$9.99",
+          "startDate": null
+        }
+      ]
+    },
+    {
+      "id": "blue.catbird.support.onetime.large",
+      "type": "Consumable",
+      "referenceName": "Support Large",
+      "displayName": "Large Support",
+      "description": "Boost Catbird with a generous contribution.",
+      "familyShareable": false,
+      "subscriptionGroupID": null,
+      "images": [],
+      "localizations": [
+        {
+          "locale": "en_US",
+          "displayName": "Large Support",
+          "description": "Boost Catbird with a generous contribution."
+        }
+      ],
+      "prices": [
+        {
+          "currency": "USD",
+          "price": 19.99,
+          "displayPrice": "$19.99",
+          "startDate": null
+        }
+      ]
+    },
+    {
+      "id": "blue.catbird.support.onetime.extralarge",
+      "type": "Consumable",
+      "referenceName": "Support Extra Large",
+      "displayName": "Extra Large Support",
+      "description": "Provide a major lift with an extra large contribution.",
+      "familyShareable": false,
+      "subscriptionGroupID": null,
+      "images": [],
+      "localizations": [
+        {
+          "locale": "en_US",
+          "displayName": "Extra Large Support",
+          "description": "Provide a major lift with an extra large contribution."
+        }
+      ],
+      "prices": [
+        {
+          "currency": "USD",
+          "price": 49.99,
+          "displayPrice": "$49.99",
+          "startDate": null
+        }
+      ]
+    },
+    {
+      "id": "blue.catbird.support.monthly",
+      "type": "Auto-Renewable Subscription",
+      "referenceName": "Support Monthly",
+      "displayName": "Support Catbird Monthly",
+      "description": "Support Catbird development every month.",
+      "familyShareable": false,
+      "subscriptionGroupID": "supporter-subscriptions",
+      "images": [],
+      "localizations": [
+        {
+          "locale": "en_US",
+          "displayName": "Support Catbird Monthly",
+          "description": "Support Catbird development every month."
+        }
+      ],
+      "prices": [
+        {
+          "currency": "USD",
+          "price": 3.99,
+          "displayPrice": "$3.99",
+          "startDate": null
+        }
+      ],
+      "subscription": {
+        "duration": "P1M",
+        "introductoryOffers": [],
+        "promotionalOffers": [],
+        "trialPeriod": null
+      }
+    },
+    {
+      "id": "blue.catbird.support.yearly",
+      "type": "Auto-Renewable Subscription",
+      "referenceName": "Support Yearly",
+      "displayName": "Support Catbird Yearly",
+      "description": "Support Catbird development with an annual plan.",
+      "familyShareable": false,
+      "subscriptionGroupID": "supporter-subscriptions",
+      "images": [],
+      "localizations": [
+        {
+          "locale": "en_US",
+          "displayName": "Support Catbird Yearly",
+          "description": "Support Catbird development with an annual plan."
+        }
+      ],
+      "prices": [
+        {
+          "currency": "USD",
+          "price": 39.99,
+          "displayPrice": "$39.99",
+          "startDate": null
+        }
+      ],
+      "subscription": {
+        "duration": "P1Y",
+        "introductoryOffers": [],
+        "promotionalOffers": [],
+        "trialPeriod": null
+      }
+    }
+  ],
+  "settings": {
+    "_applicationInternalID": "6743628331",
+    "_askToBuyEnabled": false,
+    "_billingGracePeriodEnabled": false,
+    "_billingIssuesEnabled": false,
+    "_developerTeamID": "44U2ZPNQPK",
+    "_disableDialogs": false,
+    "_failTransactionsEnabled": false,
+    "_lastSynchronizedDate": 779416768.211377,
+    "_locale": "en_US",
+    "_renewalBillingIssuesEnabled": false,
+    "_storefront": "USA",
+    "_storeKitErrors": [],
+    "_timeRate": 0
+  },
+  "subscriptionGroups": [
+    {
+      "id": "supporter-subscriptions",
+      "referenceName": "Supporter Subscriptions",
+      "localizations": [
+        {
+          "locale": "en_US",
+          "name": "Supporter Subscriptions",
+          "description": "Recurring contributions to keep Catbird thriving."
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 4,
+    "minor": 0
+  }
+}

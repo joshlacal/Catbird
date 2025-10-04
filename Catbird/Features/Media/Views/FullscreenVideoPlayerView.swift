@@ -92,7 +92,6 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         
         // Configure for fullscreen experience
         controller.showsPlaybackControls = true
-        controller.allowsPictureInPicturePlayback = false
         controller.entersFullScreenWhenPlaybackBegins = true
         controller.updatesNowPlayingInfoCenter = true
         

@@ -69,10 +69,36 @@ struct ContentView: View {
             await appState.authManager.checkAuthenticationState()
           }
         })
+      } else if case .unauthenticated = currentAuthState {
+        // If there's an expired account, show LoginView for automatic re-authentication
+        // Otherwise, show AccountSwitcherView if there are registered accounts
+        if appState.authManager.expiredAccountInfo != nil {
+          LoginView()
+        } else if appState.authManager.hasRegisteredAccounts {
+          AccountSwitcherView(showsDismissButton: false)
+        } else {
+          LoginView()
+        }
       } else {
         LoginView()
       }
     }
+    // Global auth alerts (e.g., auto-logout)
+    .alert(
+      item: Binding(
+        get: { appState.authManager.pendingAuthAlert },
+        set: { _ in Task { await appState.authManager.clearPendingAuthAlert() } }
+      ),
+      content: { alert in
+        Alert(
+          title: Text(alert.title),
+          message: Text(alert.message),
+          dismissButton: .default(Text("OK"), action: {
+            Task { await appState.authManager.clearPendingAuthAlert() }
+          })
+        )
+      }
+    )
     .onChange(of: appState.authState) { _, newValue in
       if case .authenticated = newValue {
         DispatchQueue.main.async {
@@ -152,7 +178,7 @@ struct ContentViewLoadingView: View {
       }
       
       if let onCancel = onCancel {
-        Button("Cancel") {
+        Button("Cancel", systemImage: "xmark") {
           onCancel()
         }
         .buttonStyle(.bordered)
@@ -382,7 +408,7 @@ struct MainContentView18: View {
                 #endif
               }
               
-              if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
+              if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
                 FAB(
                   composeAction: { showingPostComposer = true },
                   feedsAction: {},
@@ -395,7 +421,7 @@ struct MainContentView18: View {
                 .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
                 .padding(.trailing, 5)
                 // Mark FAB as the source of the Liquid Glass morph on iOS 26
-                .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
+                    // Source tagging now occurs inside FAB on the compose button itself
               }
             }
           }
@@ -486,7 +512,7 @@ struct MainContentView18: View {
               #endif
             }
             
-            if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
+            if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
               FAB(
                 composeAction: { showingPostComposer = true },
                 feedsAction: {},
@@ -499,7 +525,7 @@ struct MainContentView18: View {
               .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
               .padding(.trailing, 5)
               // Mark FAB as the source of the Liquid Glass morph on iOS 26
-              .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
+                  // Source tagging now occurs inside FAB on the compose button itself
             }
           }
         }
@@ -763,7 +789,7 @@ struct MainContentView18: View {
         }
       }
       .overlay(alignment: .bottomTrailing) {
-        if selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
+        if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
           FAB(
             composeAction: { showingPostComposer = true },
             feedsAction: {},
@@ -772,7 +798,7 @@ struct MainContentView18: View {
           .padding(.bottom, 20)
           .padding(.trailing, 20)
           // Mark FAB as the source for the iOS 26 morph
-          .modifier(ComposeSourceModifier(namespace: composeTransitionNamespace))
+          // Source tagging now occurs inside FAB on the compose button itself
         }
       }
       .sheet(isPresented: $showingPostComposer) {
@@ -1015,7 +1041,7 @@ struct MainContentView17: View {
         }
       }
       .safeAreaInset(edge: .bottom) {
-        if selectedTab == 0 {
+        if selectedTab == 0 && isRootView {
           ZStack(alignment: .trailing) {
             // This creates space for the tab bar
             Color.clear.frame(height: 49)  // Tab bar height
@@ -1207,7 +1233,7 @@ struct MainContentView17: View {
         }
       }
       .overlay(alignment: .bottomTrailing) {
-        if selectedTab == 0 {
+        if selectedTab == 0 && isRootView {
           FAB(
             composeAction: { showingPostComposer = true },
             feedsAction: {},

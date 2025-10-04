@@ -9,6 +9,8 @@ struct RecordEmbedView: View {
     @Binding var path: NavigationPath
     @Environment(\.postID) var postID
     @Environment(AppState.self) private var appState
+    // When true, render full post styling for quoted posts (used in thread main post view)
+    var useFullPostStyle: Bool = false
     
     @State private var isExpanded = false
     
@@ -33,77 +35,137 @@ struct RecordEmbedView: View {
                     .padding(.vertical, 4)
         case .unexpected:
             unsupportedView
+        case .pending(_):
+            EmptyView()
         }
     }
     
     @ViewBuilder
     private func postView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
-        Button {
-            path.append(NavigationDestination.post(post.uri))
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                // Author info
-                HStack(spacing: 8) {
-                    if let avatarURL = post.author.finalAvatarURL() {
-                        LazyImage(url: avatarURL) { state in
-                            if let image = state.image {
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } else {
-                                Image(systemName: "person.circle.fill")
-                                    .foregroundStyle(.secondary)
+        Group {
+            if useFullPostStyle {
+                // Render a fuller post style with standard card background and let tap navigate
+                VStack(alignment: .leading, spacing: 8) {
+                    // Author row
+                    HStack(spacing: 10) {
+                        if let avatarURL = post.author.finalAvatarURL() {
+                            LazyImage(request: ImageLoadingManager.imageRequest(
+                                for: avatarURL,
+                                targetSize: CGSize(width: 36, height: 36)
+                            )) { state in
+                                if let image = state.image {
+                                    image.resizable().aspectRatio(contentMode: .fill)
+                                } else {
+                                    Image(systemName: "person.circle.fill").foregroundStyle(.secondary)
+                                }
                             }
+                            .pipeline(ImageLoadingManager.shared.pipeline)
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
                         }
-                        .pipeline(ImageLoadingManager.shared.pipeline)
-                        .priority(.high)
-                        .processors([
-                          ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: 20, height: 20))
-                        ])
-                        .frame(width: 20, height: 20)
-                        .clipShape(Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(post.author.displayName ?? post.author.handle.description)
+                                .appFont(AppTextRole.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text("@\(post.author.handle.description)")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
                     }
-                    
-                    PostHeaderView(displayName: post.author.displayName ?? post.author.handle.description, handle: post.author.handle.description, timeAgo: post.indexedAt.date)
-                        .textScale(.secondary)
-                        .foregroundStyle(.primary)
-                    
-                    Spacer()
-                }
-                
-                // Post content
-                if case let .knownType(record) = post.value,
-                   let feedPost = record as? AppBskyFeedPost {
-                    if !feedPost.text.isEmpty {
+                    // Text
+                    if case let .knownType(record) = post.value,
+                       let feedPost = record as? AppBskyFeedPost,
+                       !feedPost.text.isEmpty {
                         Text(feedPost.text)
                             .appFont(AppTextRole.body)
                             .foregroundStyle(.primary)
-                            .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 4)
                     }
-                    // Add embed content if present
+                    // Embeds
                     embeddedContent(for: post)
                 }
-                
+                .contentShape(Rectangle())
+                .onTapGesture { path.append(NavigationDestination.post(post.uri)) }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Button {
+                    path.append(NavigationDestination.post(post.uri))
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Author info
+                        HStack(spacing: 8) {
+                            if let avatarURL = post.author.finalAvatarURL() {
+                                LazyImage(request: ImageLoadingManager.imageRequest(
+                                    for: avatarURL,
+                                    targetSize: CGSize(width: 20, height: 20)
+                                )) { state in
+                                    if let image = state.image {
+                                        image
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                    } else {
+                                        Image(systemName: "person.circle.fill")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .pipeline(ImageLoadingManager.shared.pipeline)
+                                .frame(width: 20, height: 20)
+                                .clipShape(Circle())
+                            }
+                            
+                            PostHeaderView(displayName: post.author.displayName ?? post.author.handle.description, handle: post.author.handle.description, timeAgo: post.indexedAt.date)
+                                .textScale(.secondary)
+                                .foregroundStyle(.primary)
+                            
+                            Spacer()
+                        }
+                        
+                        // Post content
+                        if case let .knownType(record) = post.value,
+                           let feedPost = record as? AppBskyFeedPost {
+                            if !feedPost.text.isEmpty {
+                                Text(feedPost.text)
+                                    .appFont(AppTextRole.body)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            // Add embed content if present
+                            embeddedContent(for: post)
+                        }
+                        
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .onTapGesture {
+                    withAnimation {
+                        isExpanded.toggle()
+                    }
+                }
+                // Use fixed sizing to prevent layout jumps
+                .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-            )
-
         }
-        .buttonStyle(.plain)
-        .onTapGesture {
-            withAnimation {
-                isExpanded.toggle()
-            }
-        }
-        // Use fixed sizing to prevent layout jumps
-        .fixedSize(horizontal: false, vertical: true)
     }
     
     // MARK: - Embedded Content
@@ -122,7 +184,7 @@ struct RecordEmbedView: View {
                 switch embeds[index] {
                 case .appBskyEmbedImagesView(let imageView):
                     ContentLabelManager(
-                        labels: labels,
+                        labels: post.labels, // Use the embedded post's labels, not parent
                         contentType: "image"
                     ) {
                         ViewImageGridView(
@@ -135,7 +197,7 @@ struct RecordEmbedView: View {
                     
                 case .appBskyEmbedExternalView(let external):
                     ContentLabelManager(
-                        labels: labels,
+                        labels: post.labels, // Use the embedded post's labels, not parent
                         contentType: "link"
                     ) {
                         ExternalEmbedView(
@@ -148,7 +210,7 @@ struct RecordEmbedView: View {
                     
                 case .appBskyEmbedVideoView(let video):
                     ContentLabelManager(
-                        labels: labels,
+                        labels: post.labels, // Use the embedded post's labels, not parent
                         contentType: "video"
                     ) {
                         if let playerView = ModernVideoPlayerView(
@@ -232,7 +294,7 @@ struct RecordEmbedView: View {
                         switch recordWithMediaView.media {
                         case .appBskyEmbedImagesView(let imagesView):
                             ContentLabelManager(
-                                labels: labels,
+                                labels: post.labels, // Use the embedded post's labels, not parent
                                 contentType: "image"
                             ) {
                                 ViewImageGridView(
@@ -245,7 +307,7 @@ struct RecordEmbedView: View {
                             
                         case .appBskyEmbedExternalView(let externalView):
                             ContentLabelManager(
-                                labels: labels,
+                                labels: post.labels, // Use the embedded post's labels, not parent
                                 contentType: "link"
                             ) {
                                 ExternalEmbedView(
@@ -258,7 +320,7 @@ struct RecordEmbedView: View {
                             
                         case .appBskyEmbedVideoView(let videoView):
                             ContentLabelManager(
-                                labels: labels,
+                                labels: post.labels, // Use the embedded post's labels, not parent
                                 contentType: "video"
                             ) {
                                 if let playerView = ModernVideoPlayerView(
@@ -287,6 +349,9 @@ struct RecordEmbedView: View {
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 6)
+                case .pending(_):
+                    EmptyView()
+
                 }
             }
         }

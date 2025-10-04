@@ -9,6 +9,7 @@ import AppKit
 
 struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.themeManager) private var themeManager
   let feed: AppBskyFeedDefs.GeneratorView
   let isSubscribed: Bool
   let onSubscriptionToggle: () async -> Void
@@ -37,7 +38,12 @@ struct FeedDiscoveryHeaderView: View {
       actionSection
     }
     .padding(24)
-    .background(Color(platformColor: .platformSystemBackground))
+    .if(themeManager != nil) { view in
+      view.themedElevatedBackground(themeManager!, appSettings: appState.appSettings)
+    }
+    .if(themeManager == nil) { view in
+      view.background(Color(platformColor: .platformSystemBackground))
+    }
     .clipShape(RoundedRectangle(cornerRadius: 16))
     .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
     .task(id: feed.uri.uriString()) {

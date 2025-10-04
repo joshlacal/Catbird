@@ -8,8 +8,11 @@ struct GifVideoView: View {
     let gif: TenorGif
     let onTap: () -> Void
     
+    @Environment(\.scenePhase) private var scenePhase
     @State private var player: AVPlayer?
     @State private var hasError = false
+    @State private var isVisibleOnScreen = false
+    private let visibilityThreshold: Double = 0.2
     
     var body: some View {
         Button(action: onTap) {
@@ -52,11 +55,15 @@ struct GifVideoView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
-        .onAppear {
-            setupVideoPlayer()
+        .onScrollVisibilityChange(threshold: visibilityThreshold) { isVisible in
+            handleVisibilityChange(isVisible)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            handleScenePhaseChange(newPhase)
         }
         .onDisappear {
             cleanupPlayer()
+            isVisibleOnScreen = false
         }
     }
     
@@ -98,13 +105,51 @@ struct GifVideoView: View {
                     .foregroundColor(.secondary)
             )
     }
-    
+
+    private func handleVisibilityChange(_ visible: Bool) {
+        Task { @MainActor in
+            guard visible != isVisibleOnScreen else { return }
+            isVisibleOnScreen = visible
+
+            if visible {
+                guard !hasError else { return }
+                if player == nil {
+                    setupVideoPlayer()
+                } else {
+                    player?.play()
+                }
+            } else {
+                player?.pause()
+            }
+        }
+    }
+
+    private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        Task { @MainActor in
+            guard player != nil else { return }
+
+            if newPhase == .active {
+                if isVisibleOnScreen {
+                    player?.play()
+                }
+            } else {
+                player?.pause()
+            }
+        }
+    }
+
+    @MainActor
     private func setupVideoPlayer() {
+        guard player == nil else {
+            player?.play()
+            return
+        }
+
         guard let videoURL = bestVideoURL else {
             hasError = true
             return
         }
-        
+
         let playerItem = AVPlayerItem(url: videoURL)
         let avPlayer = AVPlayer(playerItem: playerItem)
         
@@ -137,12 +182,13 @@ struct GifVideoView: View {
         avPlayer.play()
     }
     
+    @MainActor
     private func cleanupPlayer() {
         player?.pause()
         player = nil
         NotificationCenter.default.removeObserver(self)
     }
-    
+
     /// Get the best video URL for animation from Tenor's media formats
     private var bestVideoURL: URL? {
         // Priority: loopedmp4 > mp4 > tinymp4 > nanomp4
@@ -191,4 +237,3 @@ struct GifVideoView: View {
         return 1.0
     }
 }
-

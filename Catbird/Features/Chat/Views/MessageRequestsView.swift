@@ -6,6 +6,7 @@ import Petrel
 /// View for managing message requests (conversations with status "request")
 struct MessageRequestsView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.dismiss) private var dismiss
   @State private var selectedFilter: RequestFilter = .all
   @State private var showingBulkActions = false
   
@@ -59,10 +60,15 @@ struct MessageRequestsView: View {
         }
       }
       .navigationTitle("Message Requests")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
+#if os(iOS)
+      .toolbarTitleDisplayMode(.inline)
+#endif
       .toolbar {
+        // Provide an explicit close affordance for Mac (and also handy on iOS)
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") { dismiss() }
+            .keyboardShortcut(.escape, modifiers: [])
+        }
         ToolbarItem(placement: .primaryAction) {
           RequestsToolbarMenu(
             hasRequests: !appState.chatManager.messageRequests.isEmpty,
@@ -341,6 +347,8 @@ struct MessagePreviewView: View {
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
           .italic()
+      case .pending(_):
+          EmptyView()
       }
     }
   }

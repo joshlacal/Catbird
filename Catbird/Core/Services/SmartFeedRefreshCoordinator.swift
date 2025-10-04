@@ -53,7 +53,7 @@ final class SmartFeedRefreshCoordinator {
   
   func setModelContext(_ context: ModelContext) {
     self.modelContext = context
-    persistentManager.setModelContext(context)
+    // Note: PersistentFeedStateManager is now a @ModelActor and manages its own context
   }
   
   // MARK: - Public Interface
@@ -63,29 +63,29 @@ final class SmartFeedRefreshCoordinator {
     for feedIdentifier: String,
     userInitiated: Bool = false,
     forced: Bool = false
-  ) -> RefreshStrategy {
-    
+  ) async -> RefreshStrategy {
+
     // Always refresh if forced (account switch, etc.)
     if forced {
       logger.debug("Forced refresh for \(feedIdentifier)")
       return .immediate
     }
-    
+
     // User-initiated always takes priority
     if userInitiated {
       lastUserRefreshTime[feedIdentifier] = Date()
       logger.debug("User-initiated refresh for \(feedIdentifier)")
       return .immediate
     }
-    
+
     // If offline, use cached data only
     if isOffline {
       logger.debug("Offline mode for \(feedIdentifier)")
       return .offline
     }
-    
+
     // Check if we should refresh based on cached data age and app state
-    let shouldRefresh = persistentManager.shouldRefreshFeed(
+    let shouldRefresh = await persistentManager.shouldRefreshFeed(
       feedIdentifier: feedIdentifier,
       lastUserRefresh: lastUserRefreshTime[feedIdentifier],
       appBecameActiveTime: lastAppBecameActive
@@ -138,8 +138,8 @@ final class SmartFeedRefreshCoordinator {
   }
   
   /// Load cached data immediately from SwiftData
-  func loadCachedData(for feedIdentifier: String) -> [CachedFeedViewPost]? {
-    return persistentManager.loadFeedData(for: feedIdentifier)
+  func loadCachedData(for feedIdentifier: String) async -> [CachedFeedViewPost]? {
+    return await persistentManager.loadFeedData(for: feedIdentifier)
   }
   
   /// Check for new content in background
@@ -217,7 +217,7 @@ final class SmartFeedRefreshCoordinator {
     switch strategy {
     case .cached:
       // Load cached data only
-      if let cachedPosts = loadCachedData(for: feedIdentifier) {
+      if let cachedPosts = await loadCachedData(for: feedIdentifier) {
         logger.debug("Loaded \(cachedPosts.count) cached posts for \(feedIdentifier)")
         onComplete(cachedPosts)
         continuityManager.updateContinuityInfo(for: feedIdentifier, posts: cachedPosts)
@@ -237,7 +237,7 @@ final class SmartFeedRefreshCoordinator {
       
     case .offline:
       // Offline mode - cached only with banner
-      if let cachedPosts = loadCachedData(for: feedIdentifier) {
+      if let cachedPosts = await loadCachedData(for: feedIdentifier) {
         logger.debug("Offline: Using \(cachedPosts.count) cached posts for \(feedIdentifier)")
         onComplete(cachedPosts)
         continuityManager.showCacheFallbackBanner()
@@ -295,9 +295,9 @@ final class SmartFeedRefreshCoordinator {
       
       // Get the updated posts
       let updatedPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
-      
+
       // Save to persistent storage
-      persistentManager.saveFeedData(updatedPosts, for: feedIdentifier)
+      await persistentManager.saveFeedData(updatedPosts, for: feedIdentifier)
       
       // Update continuity info
       continuityManager.updateContinuityInfo(for: feedIdentifier, posts: updatedPosts, hasNewContent: true)
@@ -310,9 +310,9 @@ final class SmartFeedRefreshCoordinator {
       
     } catch {
       logger.error("Network refresh failed for \(feedIdentifier): \(error)")
-      
+
       // Fall back to cached data if available
-      if let cachedPosts = loadCachedData(for: feedIdentifier) {
+      if let cachedPosts = await loadCachedData(for: feedIdentifier) {
         logger.debug("Falling back to cached data for \(feedIdentifier)")
         onComplete(cachedPosts)
         continuityManager.showCacheFallbackBanner()
@@ -371,10 +371,12 @@ final class SmartFeedRefreshCoordinator {
   private func handleAppBecameActive() {
     lastAppBecameActive = Date()
     logger.debug("App became active")
-    
+
     // Clean up stale data
-    persistentManager.cleanupStaleData()
-    
+    Task {
+      await persistentManager.cleanupStaleData()
+    }
+
     // Check network status
     Task {
       await updateNetworkStatus()

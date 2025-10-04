@@ -19,85 +19,82 @@ extension AVPlayer {
         
         // Prevent automatic audio session activation
         self.preventsDisplaySleepDuringVideoPlayback = false
-        self.automaticallyWaitsToMinimizeStalling = true
-        
-        // Now play
-        if self.rate == 0 { self.play() }
-    }
-    
-    /// Prepares the player for Picture-in-Picture mode
-    func preparePiP() {
-        #if os(iOS)
-        // Ensure player is configured for PiP
-        self.allowsExternalPlayback = true
-        self.usesExternalPlaybackWhileExternalScreenIsActive = false
-        
-        // Configure for background playback if needed
-        self.preventsDisplaySleepDuringVideoPlayback = true
-        #else
-        // PiP not available on macOS, do nothing
-        #endif
-    }
-    
-    /// Safely enters PiP mode with proper audio session handling
-    func enterPiPMode() {
-        #if os(iOS)
-        // Configure audio session for PiP
-        AudioSessionManager.shared.configureForPictureInPicture()
-        
-        // Prepare player for PiP
-        preparePiP()
-        
-        // Ensure video is playing for PiP
-        if rate == 0 {
-            safePlay()
+        // Respect existing buffering strategy configured by the coordinator
+        if self.rate == 0 {
+            if self.automaticallyWaitsToMinimizeStalling {
+                // For engaged playback, allow the player to buffer to reduce stutter
+                self.play()
+            } else if self.currentItem?.status == .readyToPlay {
+                // For feed preview where we favor responsiveness, start immediately
+                self.playImmediately(atRate: 1.0)
+            } else {
+                self.play()
+            }
         }
-        #else
-        // PiP not available on macOS, just play normally
-        if rate == 0 {
-            safePlay()
+    }
+    
+    
+    
+    
+    
+    
+    /// Configure player/item for lightweight, muted preview in a scrolling feed
+    /// Reduces decode/network pressure while keeping autoplay smooth
+    func configureForFeedPreview() {
+        guard let item = currentItem else { return }
+        
+        // Keep muted in preview to avoid audio session churn
+        if !isMuted { isMuted = true }
+        if volume != 0 { volume = 0 }
+        
+        // Favor responsive start over deep buffering
+        automaticallyWaitsToMinimizeStalling = false
+        item.preferredForwardBufferDuration = 2.0
+        
+        // Cap quality for small, in-feed rendering to reduce CPU/GPU work
+        // ~1.2 Mbps is usually plenty for thumbnail-sized playback
+        item.preferredPeakBitRate = 1_200_000
+        
+        // Cap resolution when available (keeps decoder load down for feed tiles)
+        #if os(iOS)
+        if #available(iOS 15.0, *) {
+            item.preferredMaximumResolution = CGSize(width: 960, height: 540) // ~540p cap
         }
         #endif
+        
+        // When paused or offscreen, disallow network for live streams
+        item.canUseNetworkResourcesForLiveStreamingWhilePaused = false
     }
     
-    /// Safely exits PiP mode and restores normal playback
-    func exitPiPMode() {
-        #if os(iOS)
-        // Reset audio session
-        AudioSessionManager.shared.resetPiPAudioSession()
+    /// Configure player/item for an engaged experience (e.g., top visible, fullscreen, or unmuted)
+    /// Restores buffer/quality so the system can pick higher variants when appropriate
+    func configureForEngagedPlayback(isUnmuted: Bool) {
+        guard let item = currentItem else { return }
         
-        // Reset display sleep prevention for normal playback
-        self.preventsDisplaySleepDuringVideoPlayback = false
-        #else
-        // PiP not available on macOS, just reset display sleep
-        self.preventsDisplaySleepDuringVideoPlayback = false
-        #endif
-    }
-    
-    /// Checks if the current item supports PiP
-    var supportsPiP: Bool {
-        #if os(iOS)
-        guard let currentItem = currentItem else { return false }
+        // Restore stalling minimization for smoother long-form playback
+        automaticallyWaitsToMinimizeStalling = true
+        item.preferredForwardBufferDuration = 5.0
         
-        // Check if item has video tracks
-        let hasVideoTracks = currentItem.tracks.contains { track in
-            track.assetTrack?.mediaType == .video
+        // Let ABR choose the optimal variant; 0 clears manual cap
+        item.preferredPeakBitRate = 0
+        
+        #if os(iOS)
+        if #available(iOS 15.0, *) {
+            // .zero removes the cap and allows full resolution
+            item.preferredMaximumResolution = .zero
         }
-        
-        // Check if PiP is supported on the device
-        let deviceSupportsPiP = AVPictureInPictureController.isPictureInPictureSupported()
-        
-        return hasVideoTracks && deviceSupportsPiP && currentItem.status == .readyToPlay
-        #else
-        // PiP not available on macOS
-        return false
         #endif
-    }
-    
-    /// Gets the current playback time in a PiP-safe format
-    var pipSafeCurrentTime: CMTime {
-        // Return a valid time even if player is not ready
-        let current = currentTime()
-        return current.isValid ? current : .zero
+        
+        // When actively watched, allow network while paused (e.g., fast resume)
+        item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+        
+        // Respect requested audio state
+        if isUnmuted {
+            if isMuted { isMuted = false }
+            if volume == 0 { volume = 1.0 }
+        } else {
+            if !isMuted { isMuted = true }
+            if volume != 0 { volume = 0 }
+        }
     }
 }

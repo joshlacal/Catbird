@@ -48,10 +48,20 @@ let isToYou: Bool
   @State private var shadowUpdateTask: Task<Void, Error>?  // For AsyncStream management
   @State private var initialLoadComplete = false  // For transaction animation control
   @State private var postError: PostViewError?  // Error state tracking
+  @State private var isShowingThreadSummary = false
+  @State private var isThreadSummaryLoading = false
+  @State private var threadSummaryText: String?
+  @State private var threadSummaryError: String?
+  @State private var canRetryThreadSummary = false
+  @State private var threadSummaryTask: Task<Void, Never>?
 
   // MARK: - Computed Properties
 var id: String {
+    // Base ID from post URI and CID
     let postID = post.uri.uriString() + post.cid.string
+
+    // If we have a feed post ID from the environment, use it to ensure uniqueness
+    // This handles cases where the same post appears multiple times in a feed (e.g., multiple reposts)
     if let feedPostID = feedPostID {
       return "\(feedPostID)-\(postID)"
     } else {
@@ -90,72 +100,24 @@ var id: String {
 
   // MARK: - Body
   var body: some View {
-    Group {
-      if let error = postError {
-        // Show error state
-        errorView(for: error)
-      } else {
-        // Show post with moderation gate (Hide/Warn/Show) applied to the entire post
-        moderatedPostView
-      }
-    }
-    .task {
-      await setupPost()
-    }
-    .onDisappear {  // Cancel the shadow update task when the view disappears
-      shadowUpdateTask?.cancel()
-      shadowUpdateTask = nil
-    }
-  }
-  
-  // Wrap the entire post in a moderation gate that can Hide/Warn/Show
-  @ViewBuilder
-  private var moderatedPostView: some View {
-    if let labels = postState.currentPost.labels, !labels.isEmpty {
-      ContentLabelManager(labels: labels, contentType: "post") {
-        normalPostView
-      }
-    } else {
-      normalPostView
-    }
-  }
-
-  private var normalPostView: some View {
     HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-      // Use the extracted AuthorAvatarColumn view
+      // Always show avatar column with thread line
       AuthorAvatarColumn(
-        author: postState.currentPost.author,
+        author: getAuthorForDisplay(),
         isParentPost: isParentPost,
         isAvatarLoaded: $postState.isAvatarLoaded,
         path: $path
       )
 
-      // Content column
+      // Content column - show error view or normal post content
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-        // Only show content labels if there's no embed - embeds handle their own labels
-        if let labels = postState.currentPost.labels, !labels.isEmpty, postState.currentPost.embed == nil {
-          ContentLabelView(labels: labels)
-            .padding(.bottom, PostView.baseUnit)
+        if let error = postError {
+          // Show error content
+          errorContentView(for: error)
+        } else {
+          // Show normal post content with moderation
+          moderatedPostContent
         }
-
-        postContentView
-              .padding(.bottom, PostView.baseUnit)
-
-        // Embed content (images, links, videos, etc.)
-        if let embed = postState.currentPost.embed {
-          embedContent(embed, labels: postState.currentPost.labels)
-            .environment(\.postID, id)
-            .padding(.bottom, PostView.baseUnit)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-
-        // Action buttons
-        ActionButtonsView(
-          post: postState.currentPost,
-          postViewModel: viewModel,
-          path: $path
-        )
-        .padding(.bottom, PostView.baseUnit)
       }
       .padding(.top, PostView.baseUnit)
     }
@@ -166,10 +128,17 @@ var id: String {
         t.animation = nil
       }
     }
-    // This is critical for preventing layout jumps
     .fixedSize(horizontal: false, vertical: true)
-    // Present the report form when showingReportView is true
-    .sheet(isPresented: $postState.showingReportView) {  // Use consolidated state
+    .task {
+      await setupPost()
+    }
+    .onDisappear {
+      shadowUpdateTask?.cancel()
+      shadowUpdateTask = nil
+      threadSummaryTask?.cancel()
+      threadSummaryTask = nil
+    }
+    .sheet(isPresented: $postState.showingReportView) {
       if let client = appState.atProtoClient {
         let reportingService = ReportingService(client: client)
         let subject = contextMenuViewModel.createReportSubject()
@@ -182,7 +151,6 @@ var id: String {
         )
       }
     }
-    // Present the add to list sheet when showingAddToListSheet is true
     .sheet(isPresented: $postState.showingAddToListSheet) {
       AddToListSheet(
         userDID: postState.currentPost.author.did.didString(),
@@ -190,23 +158,76 @@ var id: String {
         userDisplayName: postState.currentPost.author.displayName
       )
     }
+    .sheet(isPresented: $isShowingThreadSummary) {
+      ThreadSummarySheet(
+        isLoading: isThreadSummaryLoading,
+        summaryText: threadSummaryText,
+        errorText: threadSummaryError,
+        canRetry: canRetryThreadSummary && !isThreadSummaryLoading,
+        onRetry: canRetryThreadSummary ? { summarizeCurrentThread() } : nil,
+        post: postState.currentPost
+      )
+    }
   }
-  
+
+  // MARK: - Content Views
+
   @ViewBuilder
-  private func errorView(for error: PostViewError) -> some View {
+  private var moderatedPostContent: some View {
+    let labels = postState.currentPost.labels
+    let selfLabelValues = extractSelfLabelValues(from: postState.currentPost)
+    if let labels, !labels.isEmpty || !selfLabelValues.isEmpty {
+      ContentLabelManager(labels: labels, selfLabelValues: selfLabelValues, contentType: "post") {
+        normalPostContent
+      }
+    } else {
+      normalPostContent
+    }
+  }
+
+  @ViewBuilder
+  private var normalPostContent: some View {
+    // Only show content labels if there's no embed - embeds handle their own labels
+    if let labels = postState.currentPost.labels, !labels.isEmpty, postState.currentPost.embed == nil {
+      ContentLabelView(labels: labels)
+        .padding(.bottom, PostView.baseUnit)
+    }
+
+    postContentView
+      .padding(.bottom, PostView.baseUnit)
+
+    // Embed content (images, links, videos, etc.)
+    if let embed = postState.currentPost.embed {
+      embedContent(embed, labels: postState.currentPost.labels)
+        .environment(\.postID, id)
+        .padding(.bottom, PostView.baseUnit)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // Action buttons
+    ActionButtonsView(
+      post: postState.currentPost,
+      postViewModel: viewModel,
+      path: $path
+    )
+    .padding(.bottom, PostView.baseUnit)
+  }
+
+  @ViewBuilder
+  private func errorContentView(for error: PostViewError) -> some View {
     switch error {
     case .blocked(let blockedPost):
       BlockedPostView(blockedPost: blockedPost, path: $path)
         .id("blocked-\(post.uri.uriString())")
-        
+
     case .notFound(let reason):
       PostNotFoundView(uri: post.uri, reason: reason, path: $path)
         .id("notfound-\(post.uri.uriString())")
-        
+
     case .parseError:
       PostNotFoundView(uri: post.uri, reason: .parseError, path: $path)
         .id("parseerror-\(post.uri.uriString())")
-        
+
     case .permissionDenied:
       PostNotFoundView(uri: post.uri, reason: .permissionDenied, path: $path)
         .id("permission-\(post.uri.uriString())")
@@ -273,6 +294,18 @@ var id: String {
         Divider()
       }
       
+#if canImport(FoundationModels)
+      if #available(iOS 26.0, macOS 15.0, *) {
+        Button(action: {
+          contextMenuViewModel.summarizeThread()
+        }) {
+          Label("Summarize Thread", systemImage: "text.append")
+        }
+
+        Divider()
+      }
+#endif
+
       // Bookmark button - available for all posts
       Button(action: {
         contextMenuViewModel.toggleBookmark()
@@ -343,20 +376,20 @@ var id: String {
           .offset(y: -1)
           .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
 
-          if isToYou {
-            Text("you")
-                  .appBody()
-                  .offset(y: -1)
-                  .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
-          } else if let grandparentAuthor = grandparentAuthor {
-              Text(verbatim: "@\(grandparentAuthor.handle)")
-                  .appBody()
-                  .offset(y: -1)
-                  .foregroundStyle(Color.accentColor)
-                  .onTapGesture {
-                      path.append(NavigationDestination.profile(grandparentAuthor.did.didString()))
-                  }
-          }
+        if isToYou {
+          Text("you")
+            .appBody()
+            .offset(y: -1)
+            .foregroundStyle(Color.accentColor)
+        } else if let grandparentAuthor = grandparentAuthor {
+          Text(verbatim: "@\(grandparentAuthor.handle)")
+            .appBody()
+            .offset(y: -1)
+            .foregroundStyle(Color.accentColor)
+            .onTapGesture {
+              path.append(NavigationDestination.profile(grandparentAuthor.did.didString()))
+            }
+        }
       }
     }
     .padding(.leading, PostView.baseUnit)
@@ -373,6 +406,49 @@ var id: String {
   }
 
   // MARK: - Setup & Helpers
+
+  /// Get the author to display in the avatar column
+  private func getAuthorForDisplay() -> AppBskyActorDefs.ProfileViewBasic {
+    // If there's an error, try to extract author info from the error
+    if let error = postError {
+      switch error {
+      case .blocked(let blockedPost):
+        // Create placeholder from blocked author
+        let placeholderHandle = try! Handle(handleString: "blocked.user")
+        return AppBskyActorDefs.ProfileViewBasic(
+          did: blockedPost.author.did,
+          handle: placeholderHandle,
+          displayName: nil,
+          avatar: nil,
+          associated: nil,
+          viewer: blockedPost.author.viewer,
+          labels: nil,
+          createdAt: nil,
+          verification: nil,
+          status: nil
+        )
+      case .notFound, .parseError, .permissionDenied:
+        // Generic placeholder for deleted/not found posts
+        let placeholderDID = try! DID(didString: "did:plc:unknown")
+        let placeholderHandle = try! Handle(handleString: "deleted.user")
+        return AppBskyActorDefs.ProfileViewBasic(
+          did: placeholderDID,
+          handle: placeholderHandle,
+          displayName: nil,
+          avatar: nil,
+          associated: nil,
+          viewer: nil,
+          labels: nil,
+          createdAt: nil,
+          verification: nil,
+          status: nil
+        )
+      }
+    }
+
+    // Normal case - return actual post author
+    return postState.currentPost.author
+  }
 
   /// Set up the post and its observers
   private func setupPost() async {
@@ -404,6 +480,12 @@ var id: String {
         }
       }
     }
+
+#if canImport(FoundationModels)
+    contextMenuViewModel.onSummarizeThread = {
+      summarizeCurrentThread()
+    }
+#endif
     
     // Fetch user data
     fetchCurrentUserDid()
@@ -427,6 +509,87 @@ var id: String {
     initialLoadComplete = true
   }
   
+#if canImport(FoundationModels)
+  @MainActor
+  private func summarizeCurrentThread() {
+    threadSummaryTask?.cancel()
+    threadSummaryTask = nil
+
+    isShowingThreadSummary = true
+    isThreadSummaryLoading = true
+    threadSummaryText = nil
+    threadSummaryError = nil
+    canRetryThreadSummary = false
+
+    guard appState.atProtoClient != nil else {
+      threadSummaryError = "Sign in to summarize threads."
+      isThreadSummaryLoading = false
+      canRetryThreadSummary = false
+      return
+    }
+
+    if #available(iOS 26.0, macOS 15.0, *) {
+      let agent = appState.blueskyAgent
+      let targetURI = postState.currentPost.uri
+
+      threadSummaryTask = Task {
+        do {
+          let summary = try await agent.summarizeThread(at: targetURI)
+          guard !Task.isCancelled else { return }
+
+          let cleaned = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+          await MainActor.run {
+            if cleaned.isEmpty {
+              self.threadSummaryError = "The model couldn't generate a summary for this thread."
+              self.isThreadSummaryLoading = false
+              self.canRetryThreadSummary = true
+            } else {
+              self.threadSummaryText = cleaned
+              self.isThreadSummaryLoading = false
+              self.canRetryThreadSummary = false
+            }
+          }
+        } catch {
+          guard !Task.isCancelled else { return }
+          let (message, retryable) = summarizeThreadErrorMessage(for: error)
+          await MainActor.run {
+            self.threadSummaryError = message
+            self.isThreadSummaryLoading = false
+            self.canRetryThreadSummary = retryable
+          }
+        }
+      }
+    } else {
+      threadSummaryError = "Thread summarization requires iOS 26 or later."
+      isThreadSummaryLoading = false
+      canRetryThreadSummary = false
+    }
+  }
+
+  private func summarizeThreadErrorMessage(for error: Error) -> (String, Bool) {
+    if let agentError = error as? BlueskyAgentError {
+      switch agentError {
+      case .missingClient:
+        return ("Sign in to summarize threads.", false)
+      case .modelUnavailable:
+        return ("Apple Intelligence is still preparing. Try again in a moment.", true)
+      case .foundationModelsUnavailable:
+        return ("Thread summarization isn't available on this device.", false)
+      case .invalidThreadURI(let value):
+        return ("The thread identifier \(value) is invalid.", false)
+      case .emptyResult:
+        return ("There isn't enough conversation to summarize yet.", false)
+      case .underlying(let underlying):
+        let message = (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription
+        return (message, true)
+      }
+    }
+
+    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    return (message, true)
+  }
+#endif
+
   /// Detect if the post has any error conditions
   private func detectPostError() -> PostViewError? {
     // Check if the post record can be decoded
@@ -512,6 +675,112 @@ var id: String {
       return lowercasedValue == "porn" || lowercasedValue == "nsfw" || lowercasedValue == "nudity"
     } ?? false
   }
+
+  // Extract self-applied label values from the record (if present)
+  private func extractSelfLabelValues(from postView: AppBskyFeedDefs.PostView) -> [String] {
+    guard case .knownType(let record) = postView.record,
+          let feedPost = record as? AppBskyFeedPost,
+          let postLabels = feedPost.labels else { return [] }
+
+    switch postLabels {
+    case .comAtprotoLabelDefsSelfLabels(let selfLabels):
+      return selfLabels.values.map { $0.val.lowercased() }
+    default:
+      return []
+    }
+  }
+}
+
+private struct ThreadSummarySheet: View {
+  let isLoading: Bool
+  let summaryText: String?
+  let errorText: String?
+  let canRetry: Bool
+  let onRetry: (() -> Void)?
+  let post: AppBskyFeedDefs.PostView
+
+  @Environment(\.dismiss) private var dismiss
+
+  private var authorDisplayName: String {
+    post.author.displayName ?? post.author.handle.description
+  }
+
+  var body: some View {
+    NavigationStack {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+        header
+
+        content
+
+        Spacer()
+
+        if let onRetry, canRetry {
+          Button("Try Again", action: onRetry)
+            .buttonStyle(.borderedProminent)
+        }
+
+        Text("Summaries run on-device with Apple Intelligence.")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .padding(DesignTokens.Spacing.lg)
+      .navigationTitle("Thread Summary")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Close") { dismiss() }
+        }
+      }
+    }
+  }
+
+  private var header: some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+      Text(authorDisplayName)
+        .font(.headline)
+
+      Text("@\(post.author.handle.description)")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  @ViewBuilder
+  private var content: some View {
+    if isLoading {
+      VStack(alignment: .center, spacing: DesignTokens.Spacing.md) {
+        ProgressView()
+        Text("Summarizing thread…")
+          .font(.body)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, DesignTokens.Spacing.lg)
+    } else if let summaryText {
+      ScrollView {
+        Text(summaryText)
+          .font(.body)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.vertical, DesignTokens.Spacing.sm)
+      }
+    } else if let errorText {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+        Image(systemName: "exclamationmark.triangle")
+          .foregroundStyle(.orange)
+        Text(errorText)
+          .font(.body)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.vertical, DesignTokens.Spacing.lg)
+    } else {
+      Text("No summary is available right now.")
+        .font(.body)
+        .foregroundStyle(.secondary)
+        .padding(.vertical, DesignTokens.Spacing.lg)
+    }
+  }
 }
 
 // MARK: - Extracted AuthorAvatarColumn View
@@ -526,15 +795,20 @@ struct AuthorAvatarColumn: View {
   private static let avatarSize: CGFloat = 48
   private static let avatarContainerWidth: CGFloat = 54
 
-  // Reusable image processor
-  private let avatarProcessor = ImageProcessors.AsyncImageDownscaling(
-    targetSize: CGSize(width: Self.avatarSize, height: Self.avatarSize)
-  )
+  // Reusable image request for avatars
+  private var avatarRequest: (URL) -> ImageRequest {
+    { url in
+      ImageLoadingManager.imageRequest(
+        for: url,
+        targetSize: CGSize(width: Self.avatarSize, height: Self.avatarSize)
+      )
+    }
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       if let finalURL = author.finalAvatarURL() {
-        LazyImage(url: finalURL) { state in
+        LazyImage(request: avatarRequest(finalURL)) { state in
           if let image = state.image {
             image
               .resizable()
@@ -552,7 +826,6 @@ struct AuthorAvatarColumn: View {
           }
         }
         .pipeline(ImageLoadingManager.shared.pipeline)
-        .processors([avatarProcessor])  // Apply processor
         // Placeholder is handled inside the content closure now
         .onTapGesture {
           path.append(NavigationDestination.profile(author.did.didString()))

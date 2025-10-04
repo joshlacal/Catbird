@@ -275,7 +275,7 @@ struct CreateListView: View {
   @ToolbarContentBuilder
   private var toolbarContent: some ToolbarContent {
     ToolbarItem(placement: .cancellationAction) {
-      Button("Cancel") {
+      Button("Cancel", systemImage: "xmark") {
         dismiss()
       }
     }

@@ -1,9 +1,21 @@
 import SwiftUI
 import NukeUI
+import Nuke
 
 struct AsyncProfileImage: View {
     let url: URL?
     let size: CGFloat
+    
+    // Build a Nuke request that decodes at the exact pixel size to avoid large decode/scale costs
+    private func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
+        guard let url = url else { return nil }
+        let scale = PlatformScreenInfo.scale
+        let pixelSize = CGSize(width: sizeInPoints * scale, height: sizeInPoints * scale)
+        let processors: [any ImageProcessing] = [
+            ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
+        ]
+        return ImageRequest(url: url, processors: processors)
+    }
     
     var body: some View {
         ZStack {
@@ -12,9 +24,9 @@ struct AsyncProfileImage: View {
                 .fill(Color.gray.opacity(0.2))
                 .frame(width: size, height: size)
             
-            if let url = url {
-                // Using NukeUI's LazyImage instead of AsyncImage
-                LazyImage(url: url) { state in
+            if let request = resizedRequest(for: url, sizeInPoints: size) {
+                // Using NukeUI's LazyImage with a resized ImageRequest
+                LazyImage(request: request) { state in
                     if state.isLoading {
                         // Loading state
                         ProgressView()

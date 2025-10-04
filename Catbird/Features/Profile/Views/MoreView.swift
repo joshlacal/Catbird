@@ -70,5 +70,7 @@ struct MoreView: View {
         )
         .padding(.horizontal, 16)
         .padding(.top, 16)
+
+        Spacer(minLength: 100)
     }
 }

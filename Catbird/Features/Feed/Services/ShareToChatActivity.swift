@@ -199,7 +199,7 @@ struct ModernChatSelectionView: View {
     #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         onDismiss()
                     }
                     .disabled(isSending)
@@ -803,7 +803,7 @@ struct LegacyChatSelectionView: View {
     #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         onDismiss()
                     }
                 }

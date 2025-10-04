@@ -23,32 +23,9 @@ struct NotificationsView: View {
   }
 
   var body: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPathBinding = appState.navigationManager.pathBinding(for: 2)
 
-    NavigationStack(path: navigationPath) {
-      notificationContentWithHeader
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-      .navigationTitle("Notifications")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
-    #endif
-      .toolbar {
-          
-        ToolbarItem(placement: .primaryAction) {
-          Button(action: {
-            Task {
-              await viewModel.refreshNotifications()
-            }
-          }) {
-            Image(systemName: "arrow.clockwise")
-                  .imageScale(.medium)
-          }
-        }
-      }
-      .navigationDestination(for: NavigationDestination.self) { destination in
-        destinationView(for: destination)
-      }
-    }
+    return navigationStack(using: navigationPathBinding)
     .onChange(of: lastTappedTab) { _, newValue in
       if newValue == 2, selectedTab == 2 {
         Task {
@@ -87,6 +64,42 @@ struct NotificationsView: View {
       }
     }
     #endif
+  }
+
+  @ViewBuilder
+  private func navigationStack(using navigationPath: Binding<NavigationPath>) -> some View {
+    NavigationStack(path: navigationPath) {
+      notificationContentWithHeader
+        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+        .navigationTitle("Notifications")
+      #if os(iOS)
+        .toolbarTitleDisplayMode(.large)
+      #endif
+        .toolbar {
+          ToolbarItem(placement: .primaryAction) {
+            Button {
+              navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
+            } label: {
+              Image(systemName: "bell.badge")
+                .imageScale(.medium)
+            }
+          }
+
+          ToolbarItem(placement: .primaryAction) {
+            Button(action: {
+              Task {
+                await viewModel.refreshNotifications()
+              }
+            }) {
+              Image(systemName: "arrow.clockwise")
+                .imageScale(.medium)
+            }
+          }
+        }
+        .navigationDestination(for: NavigationDestination.self) { destination in
+          NavigationHandler.viewForDestination(destination, path: navigationPath, appState: appState, selectedTab: $selectedTab)
+        }
+    }
   }
 
   private var filterPicker: some View {
@@ -213,11 +226,12 @@ struct NotificationsView: View {
             }, path: navigationPath
           )
           .id(group.id)
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
           .listRowSeparator(.visible)
+          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
           .alignmentGuide(.listRowSeparatorLeading) { _ in
             0
           }
+          .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           .onAppear {
             let index =
@@ -277,6 +291,7 @@ struct NotificationsView: View {
           .alignmentGuide(.listRowSeparatorLeading) { _ in
             0
           }
+          .alignmentGuide(.listRowSeparatorTrailing) { _ in 0 }
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           .onAppear {
             let index =
@@ -321,13 +336,6 @@ struct NotificationsView: View {
     }
   }
 
-  @ViewBuilder
-  private func destinationView(for destination: NavigationDestination) -> some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
-
-    NavigationHandler.viewForDestination(
-      destination, path: navigationPath, appState: appState, selectedTab: $selectedTab)
-  }
   
   private func retryLoadNotifications() async {
     viewModel.clearError()
@@ -441,24 +449,49 @@ struct NotificationCard: View {
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: 8))
-    .padding(.horizontal, 12)
     .padding(.bottom, 8)
   }
 
   private func replyOrQuoteNotificationView(post: AppBskyFeedDefs.PostView) -> some View {
     VStack(alignment: .leading, spacing: 8) {
+      let (isToYou, parentAuthor) = determineReplyContext()
       PostView(
         post: post,
-        grandparentAuthor: nil,
+        grandparentAuthor: parentAuthor,
         isParentPost: false,
         isSelectable: false,
         path: $path,
         appState: appState,
-        isToYou: group.type == .reply
+        isToYou: isToYou
       )
     }
     .padding(.top, 6)
     .contentShape(Rectangle())
+  }
+
+  /// Determines if the reply is to the current user and who the parent author is
+  private func determineReplyContext() -> (isToYou: Bool, parentAuthor: AppBskyActorDefs.ProfileViewBasic?) {
+    // Only check for reply notifications
+    guard group.type == .reply else {
+      return (false, nil)
+    }
+
+    // Get the parent post from the group (fetched in ViewModel)
+    guard let parentPost = group.parentPost else {
+      return (false, nil)
+    }
+
+    // Check if the parent post author is the current user
+    let currentUserDid = appState.currentUserDID
+    let isReplyToCurrentUser = parentPost.author.did.didString() == currentUserDid
+
+    if isReplyToCurrentUser {
+      // Reply is to the current user, show "Replied to you"
+      return (true, nil)
+    } else {
+      // Reply is to someone else, show "Replied to @handle"
+      return (false, parentPost.author)
+    }
   }
 
   private var standardNotificationView: some View {
@@ -567,6 +600,8 @@ struct NotificationCard: View {
     case (.quote, _):
       attributedText.append(
         AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") quoted"))
+    case (.activitySubscription, _):
+      attributedText.append(AttributedString(" shared a new post"))
     }
 
     return attributedText
@@ -574,7 +609,8 @@ struct NotificationCard: View {
 
   private var shouldShowPostPreview: Bool {
     switch group.type {
-    case .like, .repost, .likeViaRepost, .repostViaRepost: return group.subjectPost != nil
+    case .like, .repost, .likeViaRepost, .repostViaRepost, .activitySubscription:
+      return group.subjectPost != nil
     default: return false
     }
   }
@@ -669,6 +705,12 @@ struct NotificationCard: View {
     case .follow:
       break
     case .reply, .quote, .mention:
+      if let post = group.subjectPost {
+        onTap(NavigationDestination.post(post.uri))
+      } else if let uri = group.notifications.first?.uri {
+        onTap(NavigationDestination.post(uri))
+      }
+    case .activitySubscription:
       if let post = group.subjectPost {
         onTap(NavigationDestination.post(post.uri))
       } else if let uri = group.notifications.first?.uri {
@@ -769,7 +811,9 @@ struct NotificationCard: View {
       
     case .unexpected:
       break
-    }
+    case .pending(_):
+        break
+}
     
     return thumbnails
   }
@@ -824,7 +868,10 @@ struct NotificationMediaThumbnail: View {
       ForEach(0..<min(maxThumbnails, thumbnails.count), id: \.self) { index in
         let thumbnail = thumbnails[index]
         
-        LazyImage(url: thumbnail.url) { state in
+        LazyImage(request: ImageLoadingManager.imageRequest(
+          for: thumbnail.url,
+          targetSize: CGSize(width: thumbnailSize * 2, height: thumbnailSize * 2)
+        )) { state in
           if let image = state.image {
             image
               .resizable()
@@ -844,10 +891,6 @@ struct NotificationMediaThumbnail: View {
           }
         }
         .pipeline(ImageLoadingManager.shared.pipeline)
-        .priority(.high)
-        .processors([
-          ImageProcessors.AsyncImageDownscaling(targetSize: CGSize(width: thumbnailSize * 2, height: thumbnailSize * 2))
-        ])
         .frame(width: thumbnailSize, height: thumbnailSize)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .overlay(
@@ -926,14 +969,4 @@ struct AvatarStack: View {
     }
     .offset(x: -3)
   }
-}
-
-// MARK: - Preview
-
-#Preview {
-  NotificationsView(
-    appState: AppState.shared,
-    selectedTab: .constant(2),
-    lastTappedTab: .constant(nil)
-  )
 }

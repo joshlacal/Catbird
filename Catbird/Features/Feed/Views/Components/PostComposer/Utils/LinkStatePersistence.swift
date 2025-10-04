@@ -189,6 +189,7 @@ struct LinkStatePersistence {
     
     struct CodableURLCard: Codable {
         let url: String
+        let sourceURL: String?
         let title: String
         let description: String
         let image: String
@@ -196,6 +197,7 @@ struct LinkStatePersistence {
         
         init(from urlCard: URLCardResponse) {
             self.url = urlCard.url
+            self.sourceURL = urlCard.sourceURL
             self.title = urlCard.title
             self.description = urlCard.description
             self.image = urlCard.image
@@ -217,6 +219,7 @@ struct LinkStatePersistence {
                 description: description,
                 image: image
             )
+            urlCard.sourceURL = sourceURL
             
             // Deserialize thumbnail blob if available
             if let blobData = thumbnailBlobData,

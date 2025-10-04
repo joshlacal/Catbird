@@ -19,6 +19,7 @@ enum NavigationDestination: Hashable {
     case postReposts(String) // postUri
     case postQuotes(String) // postUri
     case bookmarks
+    case activitySubscriptions
     #if os(iOS)
     case conversation(String) // convoId
     case chatTab
@@ -72,6 +73,8 @@ enum NavigationDestination: Hashable {
             hasher.combine(postUri)
         case .bookmarks:
             hasher.combine("bookmarks")
+        case .activitySubscriptions:
+            hasher.combine("activitySubscriptions")
         #if os(iOS)
         case .conversation(let convoId):
             hasher.combine("conversation")
@@ -115,6 +118,8 @@ enum NavigationDestination: Hashable {
         case (.postQuotes(let lhsUri), .postQuotes(let rhsUri)):
             return lhsUri == rhsUri
         case (.bookmarks, .bookmarks):
+            return true
+        case (.activitySubscriptions, .activitySubscriptions):
             return true
         #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):

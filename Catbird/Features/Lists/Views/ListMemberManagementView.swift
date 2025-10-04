@@ -241,18 +241,30 @@ struct ListMemberManagementView: View {
   }
   
   var body: some View {
-    Group {
-      if initializationFailed {
-        errorView
-      } else if let viewModel = viewModel {
-        contentView(viewModel: viewModel)
-      } else {
-        loadingView
+    NavigationStack {
+      Group {
+        if initializationFailed {
+          errorView
+        } else if let viewModel = viewModel {
+          contentView(viewModel: viewModel)
+        } else {
+          loadingView
+        }
       }
-    }
-    .onAppear {
-      Task { @MainActor in
-        await initializeView()
+      .navigationTitle("Manage Members")
+#if os(iOS)
+      .toolbarTitleDisplayMode(.inline)
+#endif
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Done") { dismiss() }
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+      }
+      .onAppear {
+        Task { @MainActor in
+          await initializeView()
+        }
       }
     }
   }

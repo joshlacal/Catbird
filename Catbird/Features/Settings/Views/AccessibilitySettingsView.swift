@@ -363,12 +363,26 @@ private struct TypographyPreviewView: View {
     }
     
     var sizeScale: CGFloat {
+        let baseScale: CGFloat
         switch fontSize {
-        case "small": return 0.85
-        case "large": return 1.15
-        case "extraLarge": return 1.3
-        default: return 1.0
+        case "small":
+            baseScale = 0.85
+        case "large":
+            baseScale = 1.15
+        case "extraLarge":
+            baseScale = 1.3
+        default:
+            baseScale = 1.0
         }
+
+        // Apply additional scaling for Mac Catalyst to match FontManager behavior
+        #if os(iOS)
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            return baseScale * 1.2
+        }
+        #endif
+
+        return baseScale
     }
     
     var spacingMultiplier: CGFloat {
@@ -437,24 +451,25 @@ private struct LinkPreviewView: View {
         )
     }
     
+    @ViewBuilder
     private func linkText(_ text: String) -> some View {
         let result = Text(text)
             .appFont(AppTextRole.subheadline)
-        
+
         if highlightLinks {
             switch linkStyle {
             case "underline":
-                return AnyView(result.underline())
+                result.underline()
             case "color":
-                return AnyView(result.foregroundStyle(.blue))
+                result.foregroundStyle(.blue)
             case "both":
-                return AnyView(result.foregroundStyle(.blue).underline())
+                result.foregroundStyle(.blue).underline()
             default:
-                return AnyView(result.foregroundStyle(.blue))
+                result.foregroundStyle(.blue)
             }
+        } else {
+            result
         }
-        
-        return AnyView(result)
     }
     
     private func linkTextConcatenated(_ text: String) -> Text {

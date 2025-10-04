@@ -8,6 +8,7 @@ import TipKit
 import UIKit
 #endif
 import UniformTypeIdentifiers
+import Nuke
 
 // MARK: - FeedsStartPage
 struct FeedsStartPage: View {
@@ -37,6 +38,8 @@ struct FeedsStartPage: View {
   @State private var lastProtectedFeedAction: String = ""
   @State private var showErrorAlert = false
   @State private var errorAlertMessage = ""
+  // Preview state
+  
 
   // Drag and drop state
   @State private var draggedFeedItem: String?
@@ -278,6 +281,17 @@ struct FeedsStartPage: View {
     }
   }
 
+  // Build a Nuke ImageRequest that decodes at the exact pixel size for avatars
+  private func avatarImageRequest(from urlString: String?, sizeInPoints: CGFloat) -> ImageRequest? {
+    guard let urlString, let url = URL(string: urlString) else { return nil }
+    let scale = PlatformScreenInfo.scale
+    let pixelSize = CGSize(width: sizeInPoints * scale, height: sizeInPoints * scale)
+    let processors: [any ImageProcessing] = [
+      ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
+    ]
+    return ImageRequest(url: url, processors: processors, priority: .high)
+  }
+
   // MARK: - UI Components
   @ViewBuilder
   private func sectionHeader(_ title: String) -> some View {
@@ -481,7 +495,9 @@ struct FeedsStartPage: View {
         let generator = viewModel.feedGenerators[uri]
       {
         // Custom feed avatar
-        LazyImage(url: URL(string: generator.avatar?.uriString() ?? "")) { state in
+        LazyImage(
+          request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
+        ) { state in
           if let image = state.image {
             image
               .resizable()
@@ -558,7 +574,9 @@ struct FeedsStartPage: View {
         // Feed icon
         Group {
           if let generator = viewModel.feedGenerators[uri] {
-            LazyImage(url: URL(string: generator.avatar?.uriString() ?? "")) { state in
+            LazyImage(
+              request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
+            ) { state in
               if let image = state.image {
                 image.resizable().aspectRatio(contentMode: .fill)
               } else {
@@ -581,6 +599,8 @@ struct FeedsStartPage: View {
           .frame(minHeight: 28, alignment: .top)
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
+
+        
       }
       .frame(width: itemWidth)
       .padding(6)
@@ -605,6 +625,7 @@ struct FeedsStartPage: View {
 
     }
     .buttonStyle(PlainButtonStyle())
+    
 
     .overlay(
       Group {
@@ -784,6 +805,7 @@ struct FeedsStartPage: View {
       onAppear: handleOnAppear,
       onDisappear: handleOnDisappear
     )
+    
   }
   
   @ViewBuilder

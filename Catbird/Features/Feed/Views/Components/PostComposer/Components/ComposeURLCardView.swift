@@ -12,7 +12,7 @@ import Petrel
 extension URLCardResponse {
   func toViewExternal() -> AppBskyEmbedExternal.ViewExternal {
     // Create a URI from the URL string
-    let uri = URI(self.url)
+    let uri = URI(self.resolvedURL)
 
     return AppBskyEmbedExternal.ViewExternal(
       uri: uri ?? URI(""),

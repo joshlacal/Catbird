@@ -32,17 +32,30 @@ struct QuotesView: View {
             } else {
                 List {
                     ForEach(quotes, id: \.uri) { post in
-                        PostQuoteRowView(post: post, path: $path)
+                        PostView(
+                            post: post,
+                            grandparentAuthor: nil,
+                            isParentPost: false,
+                            isSelectable: false,
+                            path: $path,
+                            appState: appState
+                        )
+                        .listRowSeparator(.visible)
+                        .listRowSeparatorTint(.clear)
+                        .listRowInsets(EdgeInsets())
                     }
-                    
+
                     if let cursor = cursor {
                         ProgressView()
                             .onAppear {
                                 Task { await loadMoreQuotes() }
                             }
+                            .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.plain)
+                .frame(maxWidth: 600)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationTitle("Quotes")

@@ -65,11 +65,20 @@ final class ChatManager: StateInvalidationSubscriber {
   // Callback for when unread count changes
   var onUnreadCountChanged: (() -> Void)?
 
+  // Track last seen message for each conversation to detect new messages
+  private var lastSeenMessages: [String: String] = [:]  // [convoId: messageId]
+
+  // Reference to app state for notifications
+  private weak var appState: AppState?
+
+  @ObservationIgnored private var activeClientDid: String?
+
   init(client: ATProtoClient? = nil, appState: AppState? = nil) {
     self.client = client
+    self.appState = appState
     logger.debug("ChatManager initialized")
     setupNotificationObservers()
-    
+
     // Subscribe to state invalidation events if appState is provided
     if let appState = appState {
       appState.stateInvalidationBus.subscribe(self)
@@ -126,35 +135,33 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // Update client when auth changes
   func updateClient(_ client: ATProtoClient?) async {
+    let previousDid = activeClientDid
     self.client = client
     logger.debug("ChatManager client updated")
 
-    let currentClientDid = try? await client?.getDid()
-    // Clear existing data when client changes (e.g., logout or account switch)
-    if client == nil || currentClientDid != currentClientDid {
-      stopAllPolling()
-      conversations = []
-      messagesMap = [:]
-      originalMessagesMap = [:]
-      conversationsCursor = nil
-      messagesCursors = [:]
-      loadingConversations = false
-      loadingMessages = [:]
-      errorState = nil
-      profileCache = [:]  // Clear profile cache on client change
-      filteredConversations = []
-      filteredProfiles = []
-      messageRequests = []
-      acceptedConversations = []
-      logger.debug("Chat data cleared due to client change.")
-    } else if client != nil {
-      // Start polling for the new client
-      startConversationsPolling()
+    guard let client else {
+      activeClientDid = nil
+      await MainActor.run { self.clearChatData() }
+      logger.debug("Chat data cleared because client became nil")
+      return
     }
+
+    let nextDid = try? await client.getDid()
+
+    if previousDid != nextDid {
+      await MainActor.run { self.clearChatData() }
+      logger.debug("Chat data cleared due to client change")
+    }
+
+    activeClientDid = nextDid
+
+    // Start polling for the new or existing client
+    startConversationsPolling()
   }
   
   /// Update app state reference and subscribe to state invalidation events
   func updateAppState(_ appState: AppState?) {
+    self.appState = appState
     if let appState = appState {
       appState.stateInvalidationBus.subscribe(self)
       logger.debug("ChatManager subscribed to state invalidation bus")
@@ -237,6 +244,7 @@ final class ChatManager: StateInvalidationSubscriber {
     originalMessagesMap = [:]
     conversationsCursor = nil
     messagesCursors = [:]
+    lastSeenMessages = [:]
     loadingConversations = false
     loadingMessages = [:]
     errorState = nil
@@ -324,12 +332,164 @@ final class ChatManager: StateInvalidationSubscriber {
       // Notify that unread count may have changed
       onUnreadCountChanged?()
 
+      // Check for new messages and trigger notifications if needed
+      await checkForNewMessages()
+
     } catch {
       logger.error("Error loading conversations: \(error.localizedDescription)")
       setErrorState(error)
     }
 
     loadingConversations = false
+  }
+
+  // MARK: - Chat Notifications
+
+  /// Check for new messages and trigger notifications if appropriate
+  @MainActor
+  private func checkForNewMessages() async {
+    guard let appState = appState,
+          let currentUserDID = try? await client?.getDid() else {
+      return
+    }
+    
+      // TODO: async fetch getProfiles for all members in conversations to cache display names
+
+    for conversation in conversations {
+      // Skip if the conversation is muted
+      if conversation.muted {
+        continue
+      }
+
+      // Skip conversations that the server reports as fully read
+      guard conversation.unreadCount > 0 else {
+        continue
+      }
+
+      // Get the latest message in this conversation
+      guard let latestMessage = conversation.lastMessage else { continue }
+
+      // Extract the message ID and check if it's new
+      let messageID: String
+      let messageText: String
+      let senderDID: String
+      let senderDisplayName: String
+      let senderHandle: String
+
+      switch latestMessage {
+      case .chatBskyConvoDefsMessageView(let messageView):
+        messageID = messageView.id
+        messageText = messageView.text
+        senderDID = messageView.sender.did.didString()
+         let senderProfile = await getProfile(for: senderDID)
+          senderDisplayName = senderProfile?.displayName ?? senderProfile?.handle.description ?? senderDID
+        senderHandle = senderProfile?.handle.description ?? senderDID
+      default:
+        continue // Skip deleted messages or other types
+      }
+
+      // Don't notify on our own messages
+      if senderDID == currentUserDID {
+        // Update the last seen message ID so we don't check again
+        lastSeenMessages[conversation.id] = messageID
+        continue
+      }
+
+      // Check if this is a new message we haven't seen before
+      if let lastSeenMessageID = lastSeenMessages[conversation.id] {
+        if lastSeenMessageID == messageID {
+          // Same message, no notification needed
+          continue
+        }
+      }
+
+      // This is a new message - check if we should notify
+      let shouldNotify = await shouldNotifyForMessage(
+        conversationID: conversation.id,
+        senderDID: senderDID
+      )
+
+      if shouldNotify {
+        // Create conversation title
+        let conversationTitle = createConversationTitle(for: conversation, currentUserDID: currentUserDID)
+
+        // Create notification payload
+        let payload = ChatNotificationPayload(
+          messageID: messageID,
+          conversationID: conversation.id,
+          senderDisplayName: senderDisplayName,
+          senderHandle: senderHandle,
+          conversationTitle: conversationTitle,
+          messagePreview: String(messageText.prefix(100)), // Truncate to 100 chars
+          unreadCount: totalUnreadCount
+        )
+
+        // Schedule the notification
+        await appState.notificationManager.scheduleChatNotification(payload)
+
+        logger.info("Scheduled chat notification for new message from \(senderHandle) in conversation \(conversation.id)")
+      }
+
+      // Update the last seen message ID
+      lastSeenMessages[conversation.id] = messageID
+    }
+  }
+
+  /// Determine if we should notify for a message
+  @MainActor
+  private func shouldNotifyForMessage(conversationID: String, senderDID: String) async -> Bool {
+    guard let appState = appState else { return false }
+
+    // Don't notify if chat notifications are disabled
+    guard appState.notificationManager.chatNotificationsEnabled else { return false }
+
+    // Don't notify if the app is currently active and user is viewing this conversation
+    // This requires checking if the current tab is chat and if this conversation is selected
+    // For simplicity, we'll check if the app is in the foreground
+    #if os(iOS)
+    guard UIApplication.shared.applicationState != .active else {
+      logger.debug("App is active, skipping chat notification")
+      return false
+    }
+    #elseif os(macOS)
+    guard !NSApplication.shared.isActive else {
+      logger.debug("App is active, skipping chat notification")
+      return false
+    }
+    #endif
+
+    // Don't notify if the sender is muted or blocked
+    if appState.graphManager.muteCache.contains(senderDID) ||
+       appState.graphManager.blockCache.contains(senderDID) {
+      logger.debug("Sender \(senderDID) is muted/blocked, skipping notification")
+      return false
+    }
+
+    return true
+  }
+
+  /// Create a user-friendly title for the conversation
+  private func createConversationTitle(for conversation: ChatBskyConvoDefs.ConvoView, currentUserDID: String) -> String {
+    // Filter out current user from members
+    let otherMembers = conversation.members.filter { $0.did.didString() != currentUserDID }
+
+    if otherMembers.isEmpty {
+      return "Chat" // Fallback
+    } else if otherMembers.count == 1 {
+      // Direct message - use the other person's name
+      let member = otherMembers.first!
+      return member.displayName ?? "@\(member.handle.description)"
+    } else {
+      // Group chat - combine names
+      let names = otherMembers.prefix(2).compactMap { member in
+        member.displayName ?? "@\(member.handle.description)"
+      }
+      if otherMembers.count > 2 {
+        return "\(names.joined(separator: ", ")) and \(otherMembers.count - 2) others"
+      } else {
+        return names.joined(separator: ", ")
+      }
+    }
   }
 
   // MARK: - Messages Loading
@@ -668,9 +828,11 @@ final class ChatManager: StateInvalidationSubscriber {
     // This prevents message duplication where both ExyteChat and ChatManager create optimistic messages
 
     do {
+      // Build mention facets for @handles in chat
+      let facets = await buildChatMentionFacets(for: text)
       let messageInput = ChatBskyConvoDefs.MessageInput(
         text: text,
-        facets: nil,  // Placeholder for rich text facets
+        facets: facets.isEmpty ? nil : facets,
         embed: embed
       )
 
@@ -718,6 +880,44 @@ final class ChatManager: StateInvalidationSubscriber {
       setErrorState(error)
       return false
     }
+  }
+
+  // MARK: - Chat Mention Facets
+  private func buildChatMentionFacets(for text: String) async -> [AppBskyRichtextFacet] {
+    guard let client = client else { return [] }
+    var facets: [AppBskyRichtextFacet] = []
+
+    // Extract candidate @handles
+    let pattern = #"@([a-zA-Z0-9.-]+)"#
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return [] }
+    let ns = text as NSString
+    let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+
+    // Resolve and create facets
+    for m in matches {
+      guard m.numberOfRanges > 1 else { continue }
+      let fullRange = m.range(at: 0)
+      let handleRange = m.range(at: 1)
+      guard let swiftRange = Range(handleRange, in: text) else { continue }
+      let handle = String(text[swiftRange])
+      do {
+        let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
+        let (code, response) = try await client.app.bsky.actor.searchActors(input: params)
+        if code >= 200 && code < 300, let profile = response?.actors.first,
+           profile.handle.description.lowercased() == handle.lowercased() {
+          // Compute UTF-8 byte range
+          let bytesBefore = (ns.substring(to: fullRange.location)).data(using: .utf8)?.count ?? 0
+          let bytesIn = (ns.substring(with: fullRange)).data(using: .utf8)?.count ?? 0
+          let slice = AppBskyRichtextFacet.ByteSlice(byteStart: bytesBefore, byteEnd: bytesBefore + bytesIn)
+          let mention = AppBskyRichtextFacet.Mention(did: profile.did)
+          let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
+          facets.append(AppBskyRichtextFacet(index: slice, features: [feature]))
+        }
+      } catch {
+        // Ignore and continue
+      }
+    }
+    return facets
   }
 
   @MainActor
@@ -1131,6 +1331,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // MARK: - Helper Methods
 
+  @MainActor
   private func getProfile(for did: String) async -> AppBskyActorDefs.ProfileViewDetailed? {
     guard let client = client else {
       logger.error("Cannot fetch profile for \(did): client is nil")
@@ -1274,6 +1475,9 @@ final class ChatManager: StateInvalidationSubscriber {
         
       case .unexpected(let data):
         logger.debug("Unexpected embed type: \(String(describing: data))")
+      case .pending(let data):
+          logger.debug("Pending type: \(String(describing: data))")
+
       }
     }
     return Message(

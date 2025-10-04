@@ -103,7 +103,7 @@ struct MessageReactionsView: View {
             .font(.headline)
             .padding(.leading)
           Spacer()
-          Button("Cancel") {
+          Button("Cancel", systemImage: "xmark") {
             showingEmojiPicker = false
           }
           .padding(.trailing)

@@ -137,7 +137,7 @@ struct PostComposerView: View {
                 }
                 
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         // Show confirmation if there's content that would be lost
                         if !viewModel.postText.isEmpty || !viewModel.mediaItems.isEmpty || viewModel.videoItem != nil {
                             showingDismissAlert = true
@@ -959,7 +959,7 @@ struct PostComposerView: View {
     }
     
     private var outlineTagsSection: some View {
-        OutlineTagsView(tags: $viewModel.outlineTags)
+        OutlineTagsView(tags: $viewModel.outlineTags, compact: true)
     }
     
     // Helper computed properties for character count

@@ -136,7 +136,7 @@ extension PostComposerViewModel {
     
     func enterThreadMode() {
         guard !isThreadMode else { return }
-        
+
         // Save current post content to first thread entry
         threadEntries[0].text = postText
         threadEntries[0].mediaItems = mediaItems
@@ -145,7 +145,10 @@ extension PostComposerViewModel {
         threadEntries[0].detectedURLs = detectedURLs
         threadEntries[0].urlCards = urlCards
         threadEntries[0].hashtags = outlineTags
-        
+
+        // Preserve reply/quote references in thread entries
+        // This ensures parentPost and quotedPost are maintained when toggling thread mode
+
         isThreadMode = true
         isThread = true
         currentThreadIndex = 0
@@ -311,12 +314,9 @@ extension PostComposerViewModel {
                 embed = try await createVideoEmbed()
                 self.videoItem = nil // Clear it
             } else if let urlCard = entry.urlCards.values.first {
-                // Only create an external embed if this post doesn't already contain
-                // inline link facets. Inline links should remain as rich text, not embeds.
-                let facetsForEntry = idx < allFacets.count ? allFacets[idx] : []
-                if !facetsContainLinks(facetsForEntry) {
-                    embed = await createExternalEmbedWithThumbnail(urlCard)
-                }
+                // Attach external embed when the card is still present. If the user dismissed
+                // it via the UI, the card will have been removed from `urlCards`.
+                embed = await createExternalEmbedWithThumbnail(urlCard)
             }
             allEmbeds.append(embed)
         }
@@ -421,14 +421,8 @@ extension PostComposerViewModel {
             // Handle quote post embed
             embed = createQuoteEmbed(quotedPost)
         } else if let urlCard = urlCards.values.first {
-            // If the post contains inline link facets, prefer keeping them inline
-            // and do NOT create an external embed.
-            if !facetsContainLinks(facets) {
-                logger.debug("Creating external link embed")
-                embed = await createExternalEmbedWithThumbnail(urlCard)
-            } else {
-                logger.debug("Inline link facets present; skipping external link embed")
-            }
+            logger.debug("Creating external link embed")
+            embed = await createExternalEmbedWithThumbnail(urlCard)
         } else {
             logger.debug("No embed needed")
         }
@@ -483,23 +477,13 @@ extension PostComposerViewModel {
         logger.info("Post created successfully")
     }
 
-    // MARK: - Helpers
-    private func facetsContainLinks(_ facets: [AppBskyRichtextFacet]) -> Bool {
-        for facet in facets {
-            for feature in facet.features {
-                if case .appBskyRichtextFacetLink = feature { return true }
-            }
-        }
-        return false
-    }
-    
     // MARK: - Thumbnail Management
     
     /// Pre-upload thumbnails for all URL cards that don't have them yet
     @MainActor
     func preUploadThumbnails() async {
         let urlCardsToProcess = urlCards.values.filter {
-            !$0.image.isEmpty && thumbnailCache[$0.url] == nil && $0.thumbnailBlob == nil
+            !$0.image.isEmpty && thumbnailCache[$0.resolvedURL] == nil && $0.thumbnailBlob == nil
         }
         
         // Process thumbnails in background to avoid blocking UI
@@ -510,7 +494,7 @@ extension PostComposerViewModel {
                         await self.uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
                     }
                 } catch {
-                    logger.error("Failed to upload thumbnail for \(urlCard.url): \(error)")
+                    logger.error("Failed to upload thumbnail for \(urlCard.resolvedURL): \(error)")
                 }
             }
         } else {
@@ -757,10 +741,11 @@ extension PostComposerViewModel {
         // 1. URLCard's cached thumbnailBlob
         // 2. Thumbnail cache by URL 
         // 3. Async upload if needed
-        let thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[urlCard.url]
+        let cacheKey = urlCard.resolvedURL
+        let thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
         
         let external = AppBskyEmbedExternal.External(
-            uri: URI(uriString: urlCard.url),
+            uri: URI(uriString: cacheKey),
             title: urlCard.title,
             description: urlCard.description,
             thumb: thumbBlob
@@ -780,16 +765,17 @@ extension PostComposerViewModel {
     @MainActor
     private func createExternalEmbedWithThumbnail(_ urlCard: URLCardResponse) async -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
         // Check for existing thumbnail
-        var thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[urlCard.url]
+        let cacheKey = urlCard.resolvedURL
+        var thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
         
         // If no thumbnail exists but image URL is available, try to upload synchronously
         if thumbBlob == nil && !urlCard.image.isEmpty {
             await uploadAndCacheThumbnail(imageURL: urlCard.image, urlCard: urlCard)
-            thumbBlob = thumbnailCache[urlCard.url]
+            thumbBlob = thumbnailCache[cacheKey]
         }
         
         let external = AppBskyEmbedExternal.External(
-            uri: URI(uriString: urlCard.url),
+            uri: URI(uriString: cacheKey),
             title: urlCard.title,
             description: urlCard.description,
             thumb: thumbBlob
@@ -853,12 +839,16 @@ extension PostComposerViewModel {
             
             // Cache the blob reference for future use
             await MainActor.run {
-                self.thumbnailCache[urlCard.url] = blob
+                let cacheKey = urlCard.resolvedURL
+                self.thumbnailCache[cacheKey] = blob
                 
                 // Update the URL card if it still exists in current cards
-                if var existingCard = self.urlCards[urlCard.url] {
+                if var existingCard = self.urlCards[cacheKey] {
                     existingCard.thumbnailBlob = blob
-                    self.urlCards[urlCard.url] = existingCard
+                    if existingCard.sourceURL == nil {
+                        existingCard.sourceURL = cacheKey
+                    }
+                    self.urlCards[cacheKey] = existingCard
                 }
             }
             

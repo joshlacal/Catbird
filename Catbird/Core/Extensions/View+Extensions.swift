@@ -49,26 +49,28 @@ extension View {
     }
     
     /// Apply scale animation that respects reduce motion
+    @ViewBuilder
     func accessibleScaleEffect(_ scale: CGFloat, anchor: UnitPoint = .center, appState: AppState?) -> some View {
         let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
-        
+
         if shouldReduceMotion {
             // Use subtle opacity change instead of scale
-            return AnyView(self.opacity(scale > 1.0 ? 0.8 : 1.0))
+            self.opacity(scale > 1.0 ? 0.8 : 1.0)
         } else {
-            return AnyView(self.scaleEffect(scale, anchor: anchor))
+            self.scaleEffect(scale, anchor: anchor)
         }
     }
     
     /// Apply rotation animation that respects reduce motion
+    @ViewBuilder
     func accessibleRotationEffect(_ angle: Angle, anchor: UnitPoint = .center, appState: AppState?) -> some View {
         let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
-        
+
         if shouldReduceMotion {
             // Skip rotation entirely when reduce motion is on
-            return AnyView(self)
+            self
         } else {
-            return AnyView(self.rotationEffect(angle, anchor: anchor))
+            self.rotationEffect(angle, anchor: anchor)
         }
     }
     

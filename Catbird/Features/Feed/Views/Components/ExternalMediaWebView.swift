@@ -29,7 +29,6 @@ extension ExternalMediaWebView: UIViewRepresentable {
         // Configure for embedded content with better interactivity
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        configuration.allowsPictureInPictureMediaPlayback = true
         
         // Enable user interaction
         configuration.suppressesIncrementalRendering = false

@@ -116,6 +116,7 @@ struct Post: View, Equatable {
                         lineSpacing: lineSpacing,
                         letterSpacing: letterSpacing
                     )
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(3)
                     .transition(.opacity)
                     .layoutPriority(1)
@@ -130,6 +131,7 @@ struct Post: View, Equatable {
                         lineSpacing: lineSpacing,
                         letterSpacing: letterSpacing
                     )
+                    .fixedSize(horizontal: false, vertical: true)
                     .modifier(SelectableModifier(isSelectable: isSelectable))
                     .padding(3)
                     .transition(.opacity)

@@ -2,7 +2,11 @@ import NukeUI
 import Petrel
 import SwiftUI
 
-struct ThreadViewMainPostView: View {
+struct ThreadViewMainPostView: View, Equatable {
+    static func == (lhs: ThreadViewMainPostView, rhs: ThreadViewMainPostView) -> Bool {
+        lhs.post.uri == rhs.post.uri && lhs.post.indexedAt == rhs.post.indexedAt && lhs.viewModel.isBookmarked == rhs.viewModel.isBookmarked
+    }
+    
     let post: AppBskyFeedDefs.PostView
     let showLine: Bool
     let appState: AppState
@@ -74,7 +78,7 @@ struct ThreadViewMainPostView: View {
     }
     
     var body: some View {
-        ContentLabelManager(labels: post.labels, contentType: "post") {
+        ContentLabelManager(labels: post.labels, selfLabelValues: extractSelfLabelValues(from: post), contentType: "post") {
             VStack(alignment: .leading, spacing: 0) {
                 
                 VStack(alignment: .leading, spacing: 0) {
@@ -129,7 +133,7 @@ struct ThreadViewMainPostView: View {
                                     post: feedPost,
                                     isSelectable: true,
                                     path: $path,
-                                    textSize: 28,
+                                    textSize: 23,
                                     textStyle: .title3,
                                     textDesign: .default,
                                     textWeight: .regular,
@@ -159,10 +163,32 @@ struct ThreadViewMainPostView: View {
                             //                  .padding(.trailing, 6)
                             //              }
                             if let embed = post.embed {
-                                PostEmbed(embed: embed, labels: post.labels, path: $path)
+                                // In the thread main post view, render quoted posts in full style
+                                switch embed {
+                                case .appBskyEmbedRecordView(let recordView):
+                                    RecordEmbedView(
+                                        record: recordView.record,
+                                        labels: post.labels,
+                                        path: $path,
+                                        useFullPostStyle: true
+                                    )
                                     .padding(.vertical, 6)
                                     .padding(.leading, 6)
                                     .padding(.trailing, 6)
+                                case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+                                    // Still show as unified embed (media + record), but render record with full style
+                                    VStack(spacing: 8) {
+                                        PostEmbed(embed: .appBskyEmbedRecordWithMediaView(recordWithMedia), labels: post.labels, path: $path)
+                                    }
+                                    .padding(.vertical, 6)
+                                    .padding(.leading, 6)
+                                    .padding(.trailing, 6)
+                                default:
+                                    PostEmbed(embed: embed, labels: post.labels, path: $path)
+                                        .padding(.vertical, 6)
+                                        .padding(.leading, 6)
+                                        .padding(.trailing, 6)
+                                }
                             }
                             
                             Text(Self.dateTimeFormatter.string(from: feedPost.createdAt.date))
@@ -217,6 +243,19 @@ struct ThreadViewMainPostView: View {
         }
         
         
+    }
+    
+    /// Extract self-applied labels from record for visibility decisions
+    private func extractSelfLabelValues(from postView: AppBskyFeedDefs.PostView) -> [String] {
+        guard case .knownType(let record) = postView.record,
+              let feedPost = record as? AppBskyFeedPost,
+              let postLabels = feedPost.labels else { return [] }
+        switch postLabels {
+        case .comAtprotoLabelDefsSelfLabels(let selfLabels):
+            return selfLabels.values.map { $0.val.lowercased() }
+        default:
+            return []
+        }
     }
     // MARK: - Setup & Helpers
 
@@ -273,11 +312,6 @@ struct ThreadViewMainPostView: View {
                 )
             }
             
-            Button(action: {
-                contextMenuViewModel.showRelatedPosts()
-            }) {
-                Label("Related Posts", systemImage: "arrow.triangle.branch")
-            }
             
             Divider()
             

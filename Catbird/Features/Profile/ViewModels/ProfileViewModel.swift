@@ -3,6 +3,7 @@ import OSLog
 import Observation
 import Petrel
 import SwiftUI
+import SwiftData
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -183,16 +184,20 @@ import AppKit
   /// Loads user's posts
   func loadPosts() async {
     await loadFeed(type: .posts, resetCursor: postsCursor == nil)
+    // Persist to SwiftData for profile posts feed
+    await cacheCurrentTabPosts(for: .posts)
   }
 
   /// Loads user's replies
   func loadReplies() async {
     await loadFeed(type: .replies, resetCursor: repliesCursor == nil)
+    await cacheCurrentTabPosts(for: .replies)
   }
 
   /// Loads user's posts with media
   func loadMediaPosts() async {
     await loadFeed(type: .media, resetCursor: mediaPostsCursor == nil)
+    await cacheCurrentTabPosts(for: .media)
   }
 
   /// Loads user's liked posts
@@ -377,7 +382,9 @@ import AppKit
               case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
                 // For other parent types, include them in the result
                 return true
-              }
+              case .pending(_):
+                  return true
+}
             }
             return false
           }
@@ -548,6 +555,51 @@ import AppKit
 
   private enum FeedType {
     case posts, replies, media, likes
+  }
+
+  // MARK: - SwiftData Caching for Profile Tabs
+
+  /// Computes a unique feed key for this profile tab for SwiftData persistence
+  func profileFeedKey(for tab: ProfileTab) -> String {
+    let base = "author:\(userDID)"
+    switch tab {
+    case .posts: return base + ":posts"
+    case .replies: return base + ":replies"
+    case .media: return base + ":media"
+    case .likes: return base + ":likes"
+    default: return base + ":other"
+    }
+  }
+
+  /// Creates CachedFeedViewPost entries for the current tab and saves them via PersistentFeedStateManager
+  @MainActor
+  private func cacheCurrentTabPosts(for type: FeedType) async {
+    let tab: ProfileTab
+    let source: [AppBskyFeedDefs.FeedViewPost]
+    switch type {
+    case .posts:
+      tab = .posts
+      source = posts
+    case .replies:
+      tab = .replies
+      source = replies
+    case .media:
+      tab = .media
+      source = postsWithMedia
+    case .likes:
+      tab = .likes
+      source = _likes
+    }
+
+    let key = profileFeedKey(for: tab)
+
+    // Map to CachedFeedViewPost with this tab-specific feed key
+    let cached = source.compactMap { post in
+      CachedFeedViewPost(from: post, feedType: key)
+    }
+
+    // Persist using the ModelActor
+    await PersistentFeedStateManager.shared.saveFeedData(cached, for: key)
   }
 
   /// Loads user's feeds (feed generators)

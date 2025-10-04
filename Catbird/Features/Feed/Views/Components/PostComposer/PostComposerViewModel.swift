@@ -260,19 +260,21 @@ final class PostComposerViewModel {
       outlineTags: outlineTags,
       threadEntries: threadEntries.map { CodableThreadEntry(from: $0, parentPost: parentPost, quotedPost: quotedPost) },
       isThreadMode: isThreadMode,
-      currentThreadIndex: currentThreadIndex
+      currentThreadIndex: currentThreadIndex,
+      parentPostURI: parentPost?.uri.uriString(),
+      quotedPostURI: quotedPost?.uri.uriString()
     )
   }
   
   func restoreDraftState(_ draft: PostComposerDraft) {
     isUpdatingText = true
     isDraftMode = true
-    
+
     defer {
       isUpdatingText = false
       isDraftMode = false
     }
-    
+
     postText = draft.postText
     mediaItems = draft.mediaItems.map { $0.toMediaItem() }
     videoItem = draft.videoItem?.toMediaItem()
@@ -283,9 +285,21 @@ final class PostComposerViewModel {
     threadEntries = draft.threadEntries.map { $0.toThreadEntry() }
     isThreadMode = draft.isThreadMode
     currentThreadIndex = draft.currentThreadIndex
-    
+
     richAttributedText = NSAttributedString(string: postText)
     updatePostContent()
+
+    // Restore parent and quoted post references from URIs
+    if let parentURI = draft.parentPostURI {
+      Task {
+        await restorePostFromURI(parentURI, isParent: true)
+      }
+    }
+    if let quotedURI = draft.quotedPostURI {
+      Task {
+        await restorePostFromURI(quotedURI, isParent: false)
+      }
+    }
 
     // If the restored draft contains a video URL but no thumbnail yet, generate it now
     if let restoredVideo = videoItem, restoredVideo.image == nil, restoredVideo.rawVideoURL != nil {
@@ -296,6 +310,31 @@ final class PostComposerViewModel {
     }
     // Also preflight eligibility when restoring draft with a video
     Task { await checkVideoUploadEligibility() }
+  }
+
+  /// Fetch and restore a post from its URI
+  private func restorePostFromURI(_ uriString: String, isParent: Bool) async {
+    guard let client = appState.atProtoClient else { return }
+
+    do {
+        let uri = try ATProtocolURI(uriString: uriString)
+      let params = AppBskyFeedGetPosts.Parameters(uris: [uri])
+      let (responseCode, response) = try await client.app.bsky.feed.getPosts(input: params)
+
+      if responseCode >= 200 && responseCode < 300,
+         let posts = response?.posts,
+         let post = posts.first {
+        await MainActor.run {
+          if isParent {
+            self.parentPost = post
+          } else {
+            self.quotedPost = post
+          }
+        }
+      }
+    } catch {
+      logger.error("Failed to restore post from URI \(uriString): \(error)")
+    }
   }
   
   // MARK: - Media Item Model

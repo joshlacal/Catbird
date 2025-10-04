@@ -238,8 +238,6 @@ struct ActionButtonsView: View {
       RepostOptionsView(post: post, viewModel: viewModel)
         #if os(iOS)
         .presentationDetents([.fraction(1 / 4)])
-        .presentationBackground(.regularMaterial)
-        .presentationCornerRadius(12)
         #endif
     }
     .sheet(isPresented: $showingPostComposer) {

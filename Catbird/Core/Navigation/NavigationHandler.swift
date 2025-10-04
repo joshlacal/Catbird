@@ -45,8 +45,7 @@ struct NavigationHandler {
 
     case .hashtag(let tag):
       HashtagView(tag: tag, path: path)
-            .ignoresSafeArea()
-
+        // Respect safe areas for this screen; content manages its own padding
         //                .themedNavigationBar(appState.themeManager)
         .id(tag)
 
@@ -115,6 +114,14 @@ struct NavigationHandler {
         Text("Bookmarks require iOS 26.0 or macOS 26.0")
           .navigationTitle("Bookmarks")
       }
+
+    case .activitySubscriptions:
+      ActivitySubscriptionsView()
+        .navigationTitle("Activity Alerts")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.large)
+        #endif
+        .id("activitySubscriptions")
 
     #if os(iOS)
     case .conversation(let convoId):
@@ -208,6 +215,8 @@ struct NavigationHandler {
       return "Quotes"
     case .bookmarks:
       return "Bookmarks"
+    case .activitySubscriptions:
+      return "Activity Alerts"
     #if os(iOS)
     case .conversation:
       // Title might be dynamic based on convo, but NavigationHandler provides a static one
@@ -287,6 +296,8 @@ struct NavigationHandler {
     
     case .listMembers:
       return "person.2.badge.gearshape"
+    case .activitySubscriptions:
+        return "bell.badge"
     }
   }
 }

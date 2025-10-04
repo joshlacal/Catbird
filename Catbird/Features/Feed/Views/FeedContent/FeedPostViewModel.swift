@@ -55,20 +55,25 @@ final class FeedPostViewModel {
     private let logger = Logger(subsystem: "blue.catbird", category: "PostViewModel")
     
     // MARK: - Initialization
-    
+
     init(post: CachedFeedViewPost, appState: AppState? = nil) {
         self.post = post
         self.appState = appState
-        
+
         // Initialize bookmark state from preferences
         self.isBookmarked = checkBookmarkState()
-        
+
         // Initialize content warning state
         if hasContentWarning {
             self.isBlurred = true
         }
-        
+
         logger.debug("FeedPostViewModel initialized for post: \(post.id)")
+    }
+
+    /// Accessor for feedViewPost from the cached post
+    private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
+        try? post.feedViewPost
     }
     
     // MARK: - Data Updates
@@ -81,12 +86,15 @@ final class FeedPostViewModel {
         }
         
         // Clear cached properties if content changed
-        let oldText = extractTextFromRecord(post.feedViewPost.post.record)
-        let newText = extractTextFromRecord(newPost.feedViewPost.post.record)
-        if oldText != newText {
-            clearAllCache()
+        if let oldPost = feedViewPost,
+           let newFVP = try? newPost.feedViewPost {
+            let oldText = extractTextFromRecord(oldPost.post.record)
+            let newText = extractTextFromRecord(newFVP.post.record)
+            if oldText != newText {
+                clearAllCache()
+            }
         }
-        
+
         post = newPost
         
         // Update bookmark state from preferences
@@ -102,8 +110,8 @@ final class FeedPostViewModel {
         if let cached = _displayText {
             return cached
         }
-        
-        let text = extractTextFromRecord(post.feedViewPost.post.record)
+
+        let text = extractTextFromRecord(feedViewPost?.post.record)
         _displayText = text
         return text
     }
@@ -139,8 +147,13 @@ final class FeedPostViewModel {
         if let cached = _authorDisplayName {
             return cached
         }
-        
-        let name = post.feedViewPost.post.author.displayName ?? post.feedViewPost.post.author.handle.description
+
+        guard let fvp = feedViewPost else {
+            _authorDisplayName = "Unknown"
+            return "Unknown"
+        }
+
+        let name = fvp.post.author.displayName ?? fvp.post.author.handle.description
         _authorDisplayName = name
         return name
     }
@@ -150,66 +163,79 @@ final class FeedPostViewModel {
         if let cached = _timeAgoString {
             return cached
         }
-        
-        let timeAgo = formatTimeAgo(from: post.feedViewPost.post.indexedAt.iso8601String)
+
+        guard let fvp = feedViewPost else {
+            _timeAgoString = "now"
+            return "now"
+        }
+
+        let timeAgo = formatTimeAgo(from: fvp.post.indexedAt.iso8601String)
         _timeAgoString = timeAgo
         return timeAgo
     }
-    
+
     /// Whether the post has media content
     var hasMedia: Bool {
         if let cached = _hasMedia {
             return cached
         }
-        
-        let hasMediaContent = post.feedViewPost.post.embed != nil
+
+        guard let fvp = feedViewPost else {
+            _hasMedia = false
+            return false
+        }
+
+        let hasMediaContent = fvp.post.embed != nil
         _hasMedia = hasMediaContent
         return hasMediaContent
     }
-    
+
     /// Whether this is part of a thread
     var isThread: Bool {
         if let cached = _isThread {
             return cached
         }
-        
-        let isThreadPost = post.feedViewPost.reply != nil
+
+        guard let fvp = feedViewPost else {
+            _isThread = false
+            return false
+        }
+
+        let isThreadPost = fvp.reply != nil
         _isThread = isThreadPost
         return isThreadPost
     }
-    
-    
+
+
     /// Current like state from PostShadowManager
     var isLiked: Bool {
-        // Check viewer state first, then shadow state
-        if let likeUri = post.feedViewPost.post.viewer?.like {
-            return likeUri != nil
+        guard let viewer = feedViewPost?.post.viewer else {
+            return false
         }
-        return false
+        return viewer.like != nil
     }
-    
+
     /// Current repost state from PostShadowManager
     var isReposted: Bool {
-        // Check viewer state first, then shadow state
-        if let repostUri = post.feedViewPost.post.viewer?.repost {
-            return repostUri != nil
+        guard let viewer = feedViewPost?.post.viewer else {
+            return false
         }
-        return false
+        return viewer.repost != nil
     }
-    
+
     /// Current like count from PostShadowManager
     var likeCount: Int {
-        post.feedViewPost.post.likeCount ?? 0
+        feedViewPost?.post.likeCount ?? 0
     }
-    
+
     /// Current repost count from PostShadowManager
     var repostCount: Int {
-        post.feedViewPost.post.repostCount ?? 0
+        feedViewPost?.post.repostCount ?? 0
     }
-    
+
     /// Current reply count from PostShadowManager
     var replyCount: Int {
-        post.feedViewPost.post.replyCount ?? 0
+        feedViewPost?.post.replyCount ?? 0
     }
     
     // MARK: - UI Actions
@@ -268,14 +294,19 @@ final class FeedPostViewModel {
     func toggleLike() async {
         guard let appState = appState,
               !isLikeInProgress else { return }
-        
+
         isLikeInProgress = true
         defer { isLikeInProgress = false }
-        
+
         trackInteraction()
-        
+
         // Perform actual like/unlike operation
-        let postUri = post.feedViewPost.post.uri.uriString()
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when toggling like for: \(self.post.id, privacy: .public)")
+            return
+        }
+
+        let postUri = fvp.post.uri.uriString()
         let currentlyLiked = isLiked
         let newLikedState = !currentlyLiked
         
@@ -303,14 +334,19 @@ final class FeedPostViewModel {
     func toggleRepost() async {
         guard let appState = appState,
               !isRepostInProgress else { return }
-        
+
         isRepostInProgress = true
         defer { isRepostInProgress = false }
-        
+
         trackInteraction()
-        
+
         // Perform actual repost/unrepost operation
-        let postUri = post.feedViewPost.post.uri.uriString()
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when toggling repost for: \(self.post.id, privacy: .public)")
+            return
+        }
+
+        let postUri = fvp.post.uri.uriString()
         let currentlyReposted = isReposted
         let newRepostedState = !currentlyReposted
         
@@ -338,15 +374,20 @@ final class FeedPostViewModel {
     func toggleBookmark() async {
         guard let appState = appState,
               !isBookmarkInProgress else { return }
-        
+
         isBookmarkInProgress = true
         defer { isBookmarkInProgress = false }
-        
+
         trackInteraction()
-        
+
         // Perform actual bookmark operation
-        let postUri = post.feedViewPost.post.uri
-        let postCid = post.feedViewPost.post.cid
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when toggling bookmark for: \(self.post.id, privacy: .public)")
+            return
+        }
+
+        let postUri = fvp.post.uri
+        let postCid = fvp.post.cid
         let currentlyBookmarked = isBookmarked
         let newBookmarkState = !currentlyBookmarked
         
@@ -387,53 +428,71 @@ final class FeedPostViewModel {
     /// Mutes the post author
     @MainActor
     func muteAuthor() async {
-        guard let appState = appState,
+        guard appState != nil,
               !isMuteInProgress else { return }
-        
+
         isMuteInProgress = true
         defer { isMuteInProgress = false }
-        
+
         trackInteraction()
-        
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when muting author for: \(self.post.id, privacy: .public)")
+            return
+        }
         do {
             try await performMuteAuthor()
-            logger.debug("Successfully muted author: \(self.post.feedViewPost.post.author.handle)")
+            logger.debug("Successfully muted author: \(fvp.post.author.handle)")
         } catch {
             logger.error("Mute operation failed: \(error.localizedDescription)")
         }
     }
-    
+
     /// Blocks the post author
     @MainActor
     func blockAuthor() async {
-        guard let appState = appState,
+        guard appState != nil,
               !isBlockInProgress else { return }
-        
+
         isBlockInProgress = true
         defer { isBlockInProgress = false }
-        
+
         trackInteraction()
-        
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when blocking author for: \(self.post.id, privacy: .public)")
+            return
+        }
         do {
             try await performBlockAuthor()
-            logger.debug("Successfully blocked author: \(self.post.feedViewPost.post.author.handle)")
+            logger.debug("Successfully blocked author: \(fvp.post.author.handle)")
         } catch {
             logger.error("Block operation failed: \(error.localizedDescription)")
         }
     }
-    
+
     // MARK: - Navigation
-    
+
     /// Navigates to the post detail view
     func navigateToPost(navigationPath: Binding<NavigationPath>) {
-        navigationPath.wrappedValue.append(NavigationDestination.post(post.feedViewPost.post.uri))
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when navigating to post for: \(self.post.id, privacy: .public)")
+            return
+        }
+
+        navigationPath.wrappedValue.append(NavigationDestination.post(fvp.post.uri))
         logger.debug("Navigating to post: \(self.post.id)")
     }
-    
+
     /// Navigates to the author's profile
     func navigateToProfile(navigationPath: Binding<NavigationPath>) {
-        navigationPath.wrappedValue.append(NavigationDestination.profile(post.feedViewPost.post.author.did.didString()))
-        logger.debug("Navigating to profile: \(self.post.feedViewPost.post.author.handle)")
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost when navigating to profile for: \(self.post.id, privacy: .public)")
+            return
+        }
+
+        navigationPath.wrappedValue.append(NavigationDestination.profile(fvp.post.author.did.didString()))
+        logger.debug("Navigating to profile: \(fvp.post.author.handle)")
     }
     
     // MARK: - Cleanup
@@ -463,59 +522,62 @@ final class FeedPostViewModel {
     // MARK: - Helper Methods
     
     /// Extracts text from AT Protocol record
-    private func extractTextFromRecord(_ record: ATProtocolValueContainer) -> String {
-            if case let .knownType(aTProtocolValue) = record {
-                if let postRecord = aTProtocolValue as? AppBskyFeedPost {
-                    // Return text content if available
-                    return postRecord.text
-                }
-            }
+    private func extractTextFromRecord(_ record: ATProtocolValueContainer?) -> String {
+        guard let record else { return "" }
+
+        if case let .knownType(value) = record,
+           let postRecord = value as? AppBskyFeedPost {
+            return postRecord.text
+        }
+
         return ""
     }
     
     /// Checks the current bookmark state from viewer state and shadow manager
     private func checkBookmarkState() -> Bool {
+        guard let fvp = feedViewPost else { return false }
+
         // Check viewer state first (server state)
-        if let bookmarked = post.feedViewPost.post.viewer?.bookmarked {
+        if let bookmarked = fvp.post.viewer?.bookmarked {
             return bookmarked
         }
-        
+
         // No shadow state fallback needed since we use optimistic updates elsewhere
         return false
     }
-    
+
     /// Detects if the post has content warnings based on labels
     private func detectContentWarning() -> Bool {
+        guard let fvp = feedViewPost else { return false }
+
         // Check post labels
-        if let labels = post.feedViewPost.post.labels,
+        if let labels = fvp.post.labels,
            !labels.isEmpty {
             return ContentLabelManager<AnyView>.getContentVisibility(labels: labels) == .warn
         }
-        
+
         // Check embedded content labels
-        if let embed = post.feedViewPost.post.embed {
+        if let embed = fvp.post.embed {
             switch embed {
             case .appBskyEmbedImagesView(let imageEmbed):
                 let images = imageEmbed.images
                 for image in images {
                     if !image.alt.isEmpty,
-                       ContentLabelManager<AnyView>.shouldInitiallyBlur(labels: []) { // Would need actual label parsing
+                       ContentLabelManager<AnyView>.shouldInitiallyBlur(labels: []) { // TODO: label parsing
                         return true
                     }
                 }
             case .appBskyEmbedExternalView(_):
-                // Check external content for sensitive labels
                 break
             case .appBskyEmbedRecordView(_):
-                // These could contain sensitive content but need deeper inspection
                 break
             case .appBskyEmbedRecordWithMediaView(_):
-                // These could contain sensitive content but need deeper inspection
                 break
             case .appBskyEmbedVideoView(_):
-                // These could contain sensitive content but need deeper inspection
                 break
-            case .unexpected(_):
+            case .unexpected:
+                break
+            case .pending:
                 break
             }
         }
@@ -558,10 +620,15 @@ final class FeedPostViewModel {
         guard let client = appState?.atProtoClient else {
             throw PostInteractionError.clientUnavailable
         }
-        
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost while performing like for: \(self.post.id, privacy: .public)")
+            throw PostInteractionError.clientUnavailable
+        }
+
         let postRef = ComAtprotoRepoStrongRef(
-            uri: post.feedViewPost.post.uri,
-            cid: post.feedViewPost.post.cid
+            uri: fvp.post.uri,
+            cid: fvp.post.cid
         )
         
         let like = AppBskyFeedLike(
@@ -581,14 +648,22 @@ final class FeedPostViewModel {
         guard responseCode >= 200 && responseCode < 300 else {
             throw PostInteractionError.serverError(responseCode)
         }
-        
-        logger.debug("Successfully liked post: \(self.post.feedViewPost.post.uri.uriString())")
+
+        logger.debug("Successfully liked post: \(self.post.id)")
     }
-    
+
     /// Performs the actual unlike operation on the server
     private func performUnlike() async throws {
-        guard let client = appState?.atProtoClient,
-              let likeUri = post.feedViewPost.post.viewer?.like else {
+        guard let client = appState?.atProtoClient else {
+            throw PostInteractionError.clientUnavailable
+        }
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost while performing unlike for: \(self.post.id, privacy: .public)")
+            throw PostInteractionError.clientUnavailable
+        }
+
+        guard let likeUri = fvp.post.viewer?.like else {
             throw PostInteractionError.clientUnavailable
         }
         
@@ -609,19 +684,24 @@ final class FeedPostViewModel {
         guard responseCode >= 200 && responseCode < 300 else {
             throw PostInteractionError.serverError(responseCode)
         }
-        
-        logger.debug("Successfully unliked post: \(self.post.feedViewPost.post.uri.uriString())")
+
+        logger.debug("Successfully unliked post: \(self.post.id)")
     }
-    
+
     /// Performs the actual repost operation on the server
     private func performRepost() async throws {
         guard let client = appState?.atProtoClient else {
             throw PostInteractionError.clientUnavailable
         }
-        
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost while performing repost for: \(self.post.id, privacy: .public)")
+            throw PostInteractionError.clientUnavailable
+        }
+
         let postRef = ComAtprotoRepoStrongRef(
-            uri: post.feedViewPost.post.uri,
-            cid: post.feedViewPost.post.cid
+            uri: fvp.post.uri,
+            cid: fvp.post.cid
         )
         
         let repost = AppBskyFeedRepost(
@@ -642,13 +722,21 @@ final class FeedPostViewModel {
             throw PostInteractionError.serverError(responseCode)
         }
         
-        logger.debug("Successfully reposted post: \(self.post.feedViewPost.post.uri.uriString())")
+        logger.debug("Successfully reposted post: \(self.post.id)")
     }
-    
+
     /// Performs the actual unrepost operation on the server
     private func performUnrepost() async throws {
-        guard let client = appState?.atProtoClient,
-              let repostUri = post.feedViewPost.post.viewer?.repost else {
+        guard let client = appState?.atProtoClient else {
+            throw PostInteractionError.clientUnavailable
+        }
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost while performing unrepost for: \(self.post.id, privacy: .public)")
+            throw PostInteractionError.clientUnavailable
+        }
+
+        guard let repostUri = fvp.post.viewer?.repost else {
             throw PostInteractionError.clientUnavailable
         }
         
@@ -669,8 +757,8 @@ final class FeedPostViewModel {
         guard responseCode >= 200 && responseCode < 300 else {
             throw PostInteractionError.serverError(responseCode)
         }
-        
-        logger.debug("Successfully unreposted post: \(self.post.feedViewPost.post.uri.uriString())")
+
+        logger.debug("Successfully unreposted post: \(self.post.id)")
     }
     
     /// Performs the actual mute operation on the server
@@ -678,18 +766,23 @@ final class FeedPostViewModel {
         guard let client = appState?.atProtoClient else {
             throw PostInteractionError.clientUnavailable
         }
-        
-        let authorDID = post.feedViewPost.post.author.did
-        
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost while muting author for: \(self.post.id, privacy: .public)")
+            throw PostInteractionError.clientUnavailable
+        }
+
+        let authorDID = fvp.post.author.did
+
         let (responseCode) = try await client.app.bsky.graph.muteActor(
             input: AppBskyGraphMuteActor.Input(actor: ATIdentifier.did(authorDID))
         )
-        
+
         guard responseCode >= 200 && responseCode < 300 else {
             throw PostInteractionError.serverError(responseCode)
         }
-        
-        logger.debug("Successfully muted author: \(self.post.feedViewPost.post.author.handle)")
+
+        logger.debug("Successfully muted author: \(fvp.post.author.handle)")
     }
     
     /// Performs the actual block operation on the server
@@ -697,13 +790,17 @@ final class FeedPostViewModel {
         guard let client = appState?.atProtoClient else {
             throw PostInteractionError.clientUnavailable
         }
-        
-        let authorDID = post.feedViewPost.post.author.did
+
+        guard let fvp = feedViewPost else {
+            logger.error("Missing feedViewPost while blocking author for: \(self.post.id, privacy: .public)")
+            throw PostInteractionError.clientUnavailable
+        }
+
         let blockRecord = AppBskyGraphBlock(
-            subject: authorDID,
+            subject: fvp.post.author.did,
             createdAt: ATProtocolDate(date: Date())
         )
-        
+
         let (responseCode, _) = try await client.com.atproto.repo.createRecord(
             input: ComAtprotoRepoCreateRecord.Input(
                 repo: ATIdentifier(string: try client.getDid()),
@@ -711,12 +808,12 @@ final class FeedPostViewModel {
                 record: ATProtocolValueContainer.knownType(blockRecord)
             )
         )
-        
+
         guard responseCode >= 200 && responseCode < 300 else {
             throw PostInteractionError.serverError(responseCode)
         }
-        
-        logger.debug("Successfully blocked author: \(self.post.feedViewPost.post.author.handle)")
+
+        logger.debug("Successfully blocked author: \(fvp.post.author.handle)")
     }
 }
 

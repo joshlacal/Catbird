@@ -16,7 +16,17 @@ struct RecordWithMediaView: View {
                 .layoutPriority(1)
             
             // Then the record embed
-            RecordEmbedView(record: recordWithMedia.record.record, labels: labels, path: $path)
+            // Extract labels from the embedded record itself, not the parent post
+            let embedLabels: [ComAtprotoLabelDefs.Label]? = {
+                switch recordWithMedia.record.record {
+                case .appBskyEmbedRecordViewRecord(let viewRecord):
+                    return viewRecord.labels
+                default:
+                    return nil
+                }
+            }()
+
+            RecordEmbedView(record: recordWithMedia.record.record, labels: embedLabels, path: $path)
                 .layoutPriority(1)
         }
         // Use fixed sizing to prevent layout jumps

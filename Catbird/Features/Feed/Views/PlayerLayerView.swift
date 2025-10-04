@@ -49,6 +49,8 @@ struct PlayerLayerView: UIViewRepresentable {
     let view = PlayerContainer(frame: .zero)
     view.backgroundColor = .black
     view.playerLayer.videoGravity = gravity
+    // Hint to the compositor: no blending needed for video layer
+    view.playerLayer.isOpaque = true
     view.coordinator = context.coordinator
 
     // Set player and loop configuration asynchronously to prevent main thread blocking
@@ -88,15 +90,15 @@ struct PlayerLayerView: UIViewRepresentable {
     // Configure player asynchronously to avoid main thread blocking
     func configurePlayerAsync(for view: PlayerContainer, player: AVPlayer, shouldLoop: Bool) {
       Task {
-        // Ensure we don't block the main thread with property access
-        await preparePlayer(player)
+        // Lightweight defaults only; skip heavy asset key preloads here
+        await setLightweightDefaults(on: player)
 
         // Update the view on the main thread
         await MainActor.run {
           view.player = player
           view.shouldLoop = shouldLoop
           
-          // NOW notify that the layer is ready for PiP setup (after player is assigned)
+          // NOW notify that the layer is ready (after player is assigned)
           parent.onLayerReady?(view.playerLayer)
         }
       }
@@ -121,6 +123,15 @@ struct PlayerLayerView: UIViewRepresentable {
         player.currentItem?.preferredForwardBufferDuration = 5.0
       } catch {
         logger.debug("Error pre-loading asset properties: \(error)")
+      }
+    }
+
+    // Minimal, non-blocking defaults to improve startup without heavy background work
+    private func setLightweightDefaults(on player: AVPlayer) async {
+      await MainActor.run {
+        player.currentItem?.preferredForwardBufferDuration = 2.0
+        // Avoid explicit pause at end; loop handler will decide what to do
+        player.actionAtItemEnd = .none
       }
     }
   }
@@ -207,9 +218,9 @@ final class PlayerContainer: UIView {
       queue: .main
     ) { [weak self] _ in
       guard let self = self, !self.isCleanedUp else { return }
-      // This is essential for GIFs and looping videos
-      self.player?.seek(to: .zero)
-      if self.player?.rate == 0 { self.player?.safePlay() }
+      // Seamless loop: seek with zero tolerance then resume
+      self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+      self.player?.safePlay()
     }
   }
 
@@ -297,6 +308,7 @@ struct PlayerLayerView: NSViewRepresentable {
     view.wantsLayer = true
     view.layer?.backgroundColor = NSColor.black.cgColor
     view.playerLayer.videoGravity = gravity
+    view.playerLayer.isOpaque = true
     view.coordinator = context.coordinator
 
     // Set player and loop configuration asynchronously
@@ -331,9 +343,9 @@ struct PlayerLayerView: NSViewRepresentable {
 
     func configurePlayerAsync(for view: PlayerContainerMac, player: AVPlayer, shouldLoop: Bool) {
       Task {
-        await preparePlayer(player)
-
+        // Lightweight defaults only; skip heavy asset key preloads here
         await MainActor.run {
+          player.currentItem?.preferredForwardBufferDuration = 2.0
           view.player = player
           view.shouldLoop = shouldLoop
           
@@ -424,7 +436,7 @@ final class PlayerContainerMac: NSView {
       queue: .main
     ) { [weak self] _ in
       guard let self = self, !self.isCleanedUp else { return }
-      self.player?.seek(to: .zero)
+      self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
       self.player?.safePlay()
     }
   }

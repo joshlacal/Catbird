@@ -194,27 +194,41 @@ struct LoginView: View {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                                     .symbolEffect(.pulse)
-                                Text("Login Error")
+                                Text(appState.authManager.expiredAccountInfo != nil ? "Session Expired" : "Login Error")
                                     .appFont(AppTextRole.headline)
                                 Spacer()
-                                Button(action: { error = nil }) {
+                                Button(action: {
+                                    error = nil
+                                    // Clear expired account info when dismissing error
+                                    appState.authManager.clearExpiredAccountInfo()
+                                }) {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundStyle(.secondary)
                                         .imageScale(.large)
                                 }
                                 .buttonStyle(.plain)
                             }
-                            
-                            Text(errorMessage)
+
+                            Text(appState.authManager.expiredAccountInfo != nil ?
+                                 "Your session for \(appState.authManager.expiredAccountInfo?.handle ?? "this account") has expired." :
+                                 errorMessage)
                                 .appFont(AppTextRole.callout)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            
-                            Button("Try Again") {
-                                // Reset error state
-                                error = nil
-                                appState.authManager.resetError()
+
+                            Button(appState.authManager.expiredAccountInfo != nil ? "Sign In Again" : "Try Again") {
+                                // Check if we have an expired account to re-authenticate
+                                if let expiredAccount = appState.authManager.expiredAccountInfo {
+                                    // Automatically start OAuth flow for the expired account
+                                    Task {
+                                        await startReAuthenticationForExpiredAccount(expiredAccount)
+                                    }
+                                } else {
+                                    // Reset error state and go back to selection
+                                    error = nil
+                                    appState.authManager.resetError()
+                                }
                             }
                             .buttonStyle(.bordered)
                             .padding(.top, 4)
@@ -344,6 +358,12 @@ struct LoginView: View {
         .task {
             // Check biometric authentication availability
             biometricAuthAvailable = (appState.authManager.biometricType != .none)
+
+            // If there's an expired account, automatically start re-authentication
+            if let expiredAccount = appState.authManager.expiredAccountInfo {
+                logger.info("Expired account detected, automatically starting re-authentication")
+                await startReAuthenticationForExpiredAccount(expiredAccount)
+            }
         }
     }
     
@@ -677,10 +697,10 @@ struct LoginView: View {
     private func catbirdTitleFont(geometry: GeometryProxy) -> Font {
         let size = adaptiveSize(geometry, base: 34, min: 28)
         return .customSystemFont(
-            size: size, 
-            weight: .bold, 
-            width: 120, 
-            design: .default, 
+            size: size,
+            weight: .bold,
+            width: 120,
+            design: .default,
             relativeTo: .largeTitle
         )
     }
@@ -688,10 +708,10 @@ struct LoginView: View {
     private func catbirdSubtitleFont(geometry: GeometryProxy) -> Font {
         let size = adaptiveSize(geometry, base: 20, min: 16)
         return .customSystemFont(
-            size: size, 
-            weight: .medium, 
-            width: 120, 
-            design: .default, 
+            size: size,
+            weight: .medium,
+            width: 120,
+            design: .default,
             relativeTo: .title
         )
     }
@@ -935,7 +955,7 @@ struct LoginView: View {
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
                     
-                    // Update progress  
+                    // Update progress
                     loginProgress = .completing
                     
                     // Success is handled via onChange of authState
@@ -983,6 +1003,118 @@ struct LoginView: View {
         }
     }
     
+    private func startReAuthenticationForExpiredAccount(_ expiredAccount: AuthenticationManager.AccountInfo) async {
+        logger.info("Starting re-authentication for expired account: \(expiredAccount.handle ?? expiredAccount.did)")
+
+        // Cancel any existing authentication task
+        authenticationTask?.cancel()
+
+        // Update state
+        isLoggingIn = true
+        loginProgress = .startingAuth
+        error = nil
+
+        // Start timeout countdown
+        startTimeoutCountdown()
+
+        // Create and store the authentication task
+        authenticationTask = Task { @MainActor in
+            do {
+                // Get auth URL for the expired account
+                let authURL = try await appState.authManager.startOAuthFlowForExpiredAccount()
+
+                guard let authURL else {
+                    logger.error("Failed to get auth URL for expired account re-authentication")
+                    error = "Failed to get authentication URL for expired account"
+                    isLoggingIn = false
+                    showTimeoutCountdown = false
+                    return
+                }
+
+                // Check for cancellation after getting auth URL
+                try Task.checkCancellation()
+
+                // Update progress
+                loginProgress = .authenticating
+
+                // Open web authentication session
+                do {
+                    let callbackURL: URL
+                    if #available(iOS 17.4, *) {
+                        callbackURL = try await webAuthenticationSession.authenticate(
+                          using: authURL,
+                          callback: .https(host: "catbird.blue", path: "/oauth/callback"),
+                          preferredBrowserSession: .shared,
+                          additionalHeaderFields: [:]
+                        )
+                    } else {
+                        // Fallback on earlier versions
+                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
+                          )
+                    }
+
+                    // Check for cancellation after web authentication
+                    try Task.checkCancellation()
+
+                    logger.info("Re-authentication session completed successfully")
+
+                    // Update progress
+                    loginProgress = .processingCallback
+
+                    // Process callback
+                    try await appState.authManager.handleCallback(callbackURL)
+
+                    // Check for cancellation after callback processing
+                    try Task.checkCancellation()
+
+                    // Update progress
+                    loginProgress = .completing
+
+                    // Success is handled via onChange of authState
+
+                } catch let authSessionError as ASWebAuthenticationSessionError {
+                    // User cancelled authentication
+                    logger.notice("Re-authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
+                    authenticationCancelled = true
+                    isLoggingIn = false
+                    loginProgress = .idle
+                    showTimeoutCountdown = false
+                    // Reset auth state to prevent getting stuck
+                    appState.authManager.resetError()
+                } catch {
+                    // Other authentication errors (including timeout and cancellation)
+                    logger.error("Re-authentication error: \(error.localizedDescription)")
+                    self.error = error.localizedDescription
+                    isLoggingIn = false
+                    loginProgress = .idle
+                    showTimeoutCountdown = false
+                }
+
+            } catch {
+                // Error starting re-authentication flow (including timeout and cancellation)
+                logger.error("Error starting re-authentication: \(error.localizedDescription)")
+
+                // Check for specific cancellation errors
+                let isCancellationError = error is CancellationError ||
+                    (error as NSError).code == NSURLErrorCancelled ||
+                    error.localizedDescription.contains("cancelled") ||
+                    error.localizedDescription.contains("canceled")
+
+                // Don't show cancellation errors as user-facing errors
+                if !isCancellationError {
+                    self.error = error.localizedDescription
+                }
+
+                isLoggingIn = false
+                loginProgress = .idle
+                showTimeoutCountdown = false
+            }
+
+            // Clean up the task reference
+            authenticationTask = nil
+        }
+    }
+
     private func startSignup(pdsURL: URL) async {
         logger.info("Starting signup with PDS URL: \(pdsURL.absoluteString)")
         

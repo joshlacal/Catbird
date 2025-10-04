@@ -276,28 +276,37 @@ final class FeedStateManager: StateInvalidationSubscriber {
     @MainActor
     func loadInitialData() async {
         guard case .idle = loadingState else { return }
-        
+
         // Only load if posts are empty or this is a user-initiated action
         guard posts.isEmpty || isUserInitiatedAction else {
             logger.debug("Skipping initial load - posts exist and not user-initiated")
             return
         }
-        
+
         markUserAction()
-        
+
         loadingState = .loading
         errorMessage = nil
         hasReachedEnd = false  // Reset when loading fresh data
-        
+
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+
+        // Check if feed load encountered an error
+        if let error = feedModel.error {
+            logger.error("Initial load failed: \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+            loadingState = .error(error)
+            return
+        }
+
         await updatePostsFromModel()
-        
+
         // Check if feed has more data after initial load
         if !feedModel.hasMore {
             hasReachedEnd = true
             logger.debug("Initial load indicates no more data available")
         }
-        
+
         loadingState = .idle
         logger.debug("Initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
     }
@@ -305,23 +314,32 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Load initial data with system flag - bypasses user-initiated check for post-authentication loading
     func loadInitialDataWithSystemFlag() async {
         guard case .idle = loadingState else { return }
-        
+
         logger.debug("Loading initial data with system flag - post-authentication")
-        
+
         loadingState = .loading
         errorMessage = nil
         hasReachedEnd = false  // Reset when loading fresh data
-        
+
         // For system-initiated loads (like post-auth), always force refresh even if posts exist
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+
+        // Check if feed load encountered an error
+        if let error = feedModel.error {
+            logger.error("System initial load failed: \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+            loadingState = .error(error)
+            return
+        }
+
         await updatePostsFromModel()
-        
+
         // Check if feed has more data after initial load
         if !feedModel.hasMore {
             hasReachedEnd = true
             logger.debug("Initial load indicates no more data available")
         }
-        
+
         loadingState = .idle
         logger.debug("System-initiated initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
     }
@@ -334,46 +352,84 @@ final class FeedStateManager: StateInvalidationSubscriber {
             logger.debug("Skipping refresh - app is in background")
             return
         }
-        
+
+        // Validate account state before attempting refresh
+        guard let client = appState.atProtoClient else {
+            logger.error("❌ Cannot refresh: No ATProto client available")
+            errorMessage = "Authentication required. Please restart the app."
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No client available"]))
+            return
+        }
+
+        // Check if account is available (with retry for transient state issues)
+        var accountAvailable = false
+        for attempt in 1...3 {
+            let validSession = await client.hasValidSession()
+            if validSession {
+                if let handle = try? await client.getHandle() {
+                    logger.debug("✅ Account validation passed: \(validSession) \(handle)") }
+                accountAvailable = true
+                break
+            } else {
+                logger.warning("⚠️ Account not available on attempt \(attempt)/3, waiting 100ms...")
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            }
+        }
+
+        guard accountAvailable else {
+            logger.error("❌ Cannot refresh: Account manager state is inconsistent after 3 attempts")
+            errorMessage = "Account session lost. Please try again or restart the app."
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
+            return
+        }
+
         // Mark this as a user-initiated action
         markUserAction()
-        
+
         // Store posts before refresh to track new posts
         postsBeforeRefresh = posts
         isTrackingNewPosts = false // Reset tracking flag for new refresh
         logger.debug("🔍 NEW_POSTS_DEBUG: Stored \(self.postsBeforeRefresh.count) posts before refresh for comparison")
         logger.debug("🔍 NEW_POSTS_DEBUG: First 3 post IDs before refresh: \(self.postsBeforeRefresh.prefix(3).map { $0.id })")
-        
+
         // Cancel any existing refresh task
         refreshTask?.cancel()
-        
+
         refreshTask = Task {
             guard !Task.isCancelled && !isAppInBackground else { return }
-            
+
             loadingState = .refreshing
             errorMessage = nil
             hasReachedEnd = false
-            
+
             // Capture scroll anchor before refresh
             captureScrollAnchor()
-            
+
             await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
-            
+
             guard !Task.isCancelled && !isAppInBackground else { return }
-            
+
+            // Check if feed load encountered an error
+            if let error = feedModel.error {
+                logger.error("Feed refresh failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+                loadingState = .error(error)
+                return
+            }
+
             await updatePostsFromModel()
-            
+
             // Track new posts after refresh
             await trackNewPostsAfterRefresh()
-            
+
             // Debug: Print current indicator state after tracking
             logger.debug("🔍 POST_TRACKING_FINAL: After trackNewPosts - hasNewPosts=\(self.hasNewPosts), count=\(self.newPostsCount), avatars=\(self.newPostsAuthorAvatars.count)")
-            
+
             loadingState = .idle
-            
+
             logger.debug("Feed refreshed successfully")
         }
-        
+
         try? await refreshTask?.value
     }
     
@@ -586,35 +642,43 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         refreshTask = Task {
             guard !Task.isCancelled && !isAppInBackground else { return }
-            
+
             // Capture current scroll position before refresh
             captureScrollAnchor()
-            
+
             // Use background refresh strategy to preserve UI continuity
             loadingState = .refreshing
             errorMessage = nil
             hasReachedEnd = false
-            
+
             logger.debug("Starting smart refresh for feed: \(self.feedType.identifier)")
-            
+
             // Load fresh data using the feed model
             await feedModel.loadFeed(fetch: feedType, forceRefresh: true, strategy: .backgroundRefresh)
-            
-            guard !Task.isCancelled && !isAppInBackground else { 
+
+            guard !Task.isCancelled && !isAppInBackground else {
                 loadingState = .idle
-                return 
+                return
             }
-            
+
+            // Check if feed load encountered an error
+            if let error = feedModel.error {
+                logger.error("Smart refresh failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription
+                loadingState = .error(error)
+                return
+            }
+
             // Update posts from the model
             await updatePostsFromModel()
-            
+
             // Reset pagination state if needed
             if !feedModel.hasMore {
                 hasReachedEnd = true
             }
-            
+
             logger.debug("Smart refresh completed successfully for feed: \(self.feedType.identifier)")
-            
+
             if !Task.isCancelled {
                 loadingState = .idle
             }
@@ -688,7 +752,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // FIXED: Instead of comparing IDs, compare timestamps to find genuinely newer posts
         // Get the timestamp of the most recent post before refresh
         // Note: indexedAt is never nil - it's an ATProtocolDate, not optional
-        let mostRecentTimestampBefore: Date = postsBeforeRefresh.first?.feedViewPost.post.indexedAt.date ?? Date.distantPast
+        let mostRecentTimestampBefore: Date = (try? postsBeforeRefresh.first?.feedViewPost)?.post.indexedAt.date ?? Date.distantPast
         
         // If we couldn't find any timestamps, fallback to ID comparison
         if mostRecentTimestampBefore == Date.distantPast {
@@ -706,10 +770,11 @@ final class FeedStateManager: StateInvalidationSubscriber {
                 var authorAvatars: [String] = []
                 var seenAuthors: Set<String> = []
                 for post in newPosts.prefix(10) {
-                    let authorDid = post.feedViewPost.post.author.did.didString()
+                    guard let feedPost = try? post.feedViewPost else { continue }
+                    let authorDid = feedPost.post.author.did.didString()
                     if !seenAuthors.contains(authorDid) {
                         seenAuthors.insert(authorDid)
-                        if let avatarURL = post.feedViewPost.post.author.avatar?.uriString() {
+                        if let avatarURL = feedPost.post.author.avatar?.uriString() {
                             authorAvatars.append(avatarURL)
                         }
                         if authorAvatars.count >= 3 { break }
@@ -732,14 +797,15 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // Also check that they're at the beginning of the feed (first 20 posts)
         let topPosts = Array(posts.prefix(20))
         let newPosts = topPosts.filter { post in
-            return post.feedViewPost.post.indexedAt.date > mostRecentTimestampBefore
+            guard let feedPost = try? post.feedViewPost else { return false }
+            return feedPost.post.indexedAt.date > mostRecentTimestampBefore
         }
         
         logger.debug("🔍 NEW_POSTS_DEBUG: Found \(newPosts.count) posts newer than \(mostRecentTimestampBefore)")
         logger.debug("🔍 NEW_POSTS_DEBUG: Current feed has \(self.posts.count) total posts")
         
         if !newPosts.isEmpty {
-            logger.debug("🔍 NEW_POSTS_DEBUG: New posts timestamps: \(newPosts.prefix(3).compactMap { $0.feedViewPost.post.indexedAt })")
+            logger.debug("🔍 NEW_POSTS_DEBUG: New posts timestamps: \(newPosts.prefix(3).compactMap { try? $0.feedViewPost.post.indexedAt })")
         }
         
         // Only show indicator if:
@@ -758,10 +824,11 @@ final class FeedStateManager: StateInvalidationSubscriber {
             var seenAuthors: Set<String> = []
             
             for post in newPosts.prefix(10) { // Check first 10 new posts
-                let authorDid = post.feedViewPost.post.author.did.didString()
+                guard let feedPost = try? post.feedViewPost else { continue }
+                let authorDid = feedPost.post.author.did.didString()
                 if !seenAuthors.contains(authorDid) {
                     seenAuthors.insert(authorDid)
-                    if let avatarURL = post.feedViewPost.post.author.avatar?.uriString() {
+                    if let avatarURL = feedPost.post.author.avatar?.uriString() {
                         authorAvatars.append(avatarURL)
                     }
                     if authorAvatars.count >= 3 {
@@ -831,10 +898,11 @@ final class FeedStateManager: StateInvalidationSubscriber {
         var avatars: [String] = []
         var seenAuthors: Set<String> = []
         for post in posts.prefix(5) {
-            let authorDid = post.feedViewPost.post.author.did.didString()
+            guard let feedPost = try? post.feedViewPost else { continue }
+            let authorDid = feedPost.post.author.did.didString()
             if !seenAuthors.contains(authorDid) {
                 seenAuthors.insert(authorDid)
-                if let avatarURL = post.feedViewPost.post.author.avatar?.uriString() {
+                if let avatarURL = feedPost.post.author.avatar?.uriString() {
                     avatars.append(avatarURL)
                 }
                 if avatars.count >= 3 { break }

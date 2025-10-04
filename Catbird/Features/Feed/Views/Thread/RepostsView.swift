@@ -34,6 +34,12 @@ struct RepostsView: View {
                 List {
                     ForEach(reposts, id: \.did) { profile in
                         ProfileRowView(profile: profile, path: $path)
+                            .mainContentFrame()
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
+                            .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
+                            .listRowSeparator(.visible)
+                            .listRowInsets(EdgeInsets())
+
                     }
                     
                     if let cursor = cursor {

@@ -23,18 +23,30 @@ import OSLog
     
     /// Scale factor based on font size preference
     var sizeScale: CGFloat {
+        let baseScale: CGFloat
         switch fontSize {
         case "small":
-            return 0.85
+            baseScale = 0.85
         case "default":
-            return 1.0
+            baseScale = 1.0
         case "large":
-            return 1.15
+            baseScale = 1.15
         case "extraLarge":
-            return 1.3
+            baseScale = 1.3
         default:
-            return 1.0
+            baseScale = 1.0
         }
+
+        // Apply additional scaling for Mac Catalyst
+        #if os(iOS)
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            // Mac Catalyst needs larger base scaling due to display differences
+            let catalystScale = baseScale * 1.2
+            return catalystScale
+        }
+        #endif
+
+        return baseScale
     }
     
     /// Font design based on style preference

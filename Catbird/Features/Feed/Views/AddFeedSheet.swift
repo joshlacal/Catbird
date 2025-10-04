@@ -26,6 +26,10 @@ struct AddFeedSheet: View {
     @State private var viewModel: FeedsStartPageViewModel?
     @State private var subscriptionStatus: [String: Bool] = [:]
 //    @State private var showSwipeableCards = false
+    // Preview state for feed discovery cards
+    @State private var isShowingPreview = false
+    @State private var previewURI: ATProtocolURI? = nil
+    @State private var previewPath = NavigationPath()
     
     private let logger = Logger(subsystem: "blue.catbird", category: "AddFeedSheet")
     
@@ -217,6 +221,28 @@ struct AddFeedSheet: View {
 //                FeedDiscoveryCardsView()
 //            }
         }
+        .sheet(isPresented: $isShowingPreview, onDismiss: {
+            previewURI = nil
+            previewPath = NavigationPath()
+        }) {
+            if let uri = previewURI {
+                NavigationStack(path: $previewPath) {
+                    FeedScreen(path: $previewPath, uri: uri)
+                        .environment(appState)
+                        .navigationTitle("Preview")
+                    #if os(iOS)
+                        .toolbarTitleDisplayMode(.inline)
+                    #endif
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { isShowingPreview = false }
+                            }
+                        }
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+                }
+            }
+        }
     }
     
     private func initViewModel() {
@@ -227,22 +253,38 @@ struct AddFeedSheet: View {
     
     // Grid of feeds
     private func feedsGrid(feeds: [AppBskyFeedDefs.GeneratorView]) -> some View {
-        LazyVStack(spacing: 16) {
+        LazyVStack(spacing: 20) {
             ForEach(feeds, id: \.uri) { feed in
-                FeedDiscoveryHeaderView(
-                    feed: feed,
-                    isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-                    onSubscriptionToggle: {
-                        await toggleFeedSubscription(feed)
-                        await updateSubscriptionStatus(for: feed.uri)
+                VStack(spacing: 12) {
+                    FeedDiscoveryHeaderView(
+                        feed: feed,
+                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                        onSubscriptionToggle: {
+                            await toggleFeedSubscription(feed)
+                            await updateSubscriptionStatus(for: feed.uri)
+                        }
+                    )
+                    .task { await updateSubscriptionStatus(for: feed.uri) }
+
+                    HStack {
+                        Spacer()
+                        Button {
+                            previewURI = feed.uri
+                            isShowingPreview = true
+                        } label: {
+                            Label("Preview", systemImage: "eye")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.accentColor)
+                        .accessibilityLabel("Preview \(feed.displayName)")
                     }
-                )
-                .task {
-                    await updateSubscriptionStatus(for: feed.uri)
+                    .padding(.horizontal, 4)
                 }
+                .padding(.horizontal)
             }
         }
-        .padding()
+        .padding(.vertical)
     }
     
     // Individual feed card
@@ -367,7 +409,7 @@ struct AddFeedSheet: View {
                 
                 // Buttons
                 HStack(spacing: 16) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         selectedFeedForPinning = nil
                     }
                     .buttonStyle(.bordered)

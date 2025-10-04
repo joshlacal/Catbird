@@ -30,6 +30,8 @@ final class FeedStateStore {
   
   func setModelContext(_ context: ModelContext) {
     self.modelContext = context
+    logger.debug("ModelContext set for FeedStateStore")
+    // Note: PersistentFeedStateManager is now a @ModelActor and manages its own ModelContext
   }
   
   func stateManager(for feedType: FetchType, appState: AppState) -> FeedStateManager {
@@ -81,13 +83,13 @@ final class FeedStateStore {
   
   private func restorePersistedData(for stateManager: FeedStateManager, feedIdentifier: String) async {
     // Try to load persisted feed data
-    if let cachedPosts = PersistentFeedStateManager.shared.loadFeedData(for: feedIdentifier),
+    if let cachedPosts = await PersistentFeedStateManager.shared.loadFeedData(for: feedIdentifier),
        !cachedPosts.isEmpty {
       logger.debug("Restored \(cachedPosts.count) cached posts for \(feedIdentifier)")
-      
+
       // Update the state manager's posts directly
       await stateManager.restorePersistedPosts(cachedPosts)
-      
+
     }
   }
   
@@ -122,41 +124,41 @@ final class FeedStateStore {
   // iOS 18+: Enhanced state saving with batch operations and pixel-perfect scroll positions
   private func saveAllStatesEnhanced() async {
     logger.debug("Enhanced state saving for iOS 18+ backgrounding")
-    
+
     guard !stateManagers.isEmpty else { return }
-    
+
     // Collect all feed data for batch saving
     var feedDataBatch: [(identifier: String, posts: [CachedFeedViewPost])] = []
-    
+
     for (identifier, stateManager) in stateManagers {
       let posts = stateManager.posts
       if !posts.isEmpty {
         feedDataBatch.append((identifier: identifier, posts: posts))
-        
+
       }
     }
-    
+
     // Save individual feeds (remove iOS 18 batch saving since method doesn't exist)
     for (identifier, posts) in feedDataBatch {
-      PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier)
+      await PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier)
     }
-    
+
     logger.debug("Enhanced state saving completed for \(feedDataBatch.count) feeds")
   }
   
   
-  private func saveAllStates() {
+  private func saveAllStates() async {
     logger.debug("Saving all feed states before backgrounding")
-    
+
     for (identifier, stateManager) in stateManagers {
       // Save feed data
       let posts = stateManager.posts
       if !posts.isEmpty {
-        PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier)
-        
+        await PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier)
+
         // Save scroll position
         if let firstVisiblePost = posts.first {
-          PersistentFeedStateManager.shared.saveScrollPosition(
+          await PersistentFeedStateManager.shared.saveScrollPosition(
             postId: firstVisiblePost.id,
             offsetFromPost: 0,
             feedIdentifier: identifier
@@ -210,15 +212,15 @@ final class FeedStateStore {
   
   // iOS 18+: Determine if a feed should be refreshed
   private func shouldRefreshFeed(_ feedIdentifier: String) async -> Bool {
-    return PersistentFeedStateManager.shared.shouldRefreshFeed(
+    return await PersistentFeedStateManager.shared.shouldRefreshFeed(
       feedIdentifier: feedIdentifier,
       lastUserRefresh: nil, // Could track user-initiated refreshes
       appBecameActiveTime: Date(timeIntervalSince1970: lastBackgroundTime)
     )
   }
   
-  private func cleanupStaleData() {
-    PersistentFeedStateManager.shared.cleanupStaleData()
+  private func cleanupStaleData() async {
+    await PersistentFeedStateManager.shared.cleanupStaleData()
   }
   
   func clearStateManager(for feedIdentifier: String) {
@@ -262,7 +264,7 @@ final class FeedStateStore {
     }
     
     // Clean up any stale data (but don't remove recent cache)
-    cleanupStaleData()
+    await cleanupStaleData()
   }
   
   // iOS 18+: Prepare for potential backgrounding

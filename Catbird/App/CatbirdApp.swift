@@ -1,4 +1,6 @@
 import AVFoundation
+import Sentry
+
 import CoreText
 import OSLog
 import Petrel
@@ -14,6 +16,9 @@ import AppKit
 import UserNotifications
 import WidgetKit
 import Darwin // For sysctl constants
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
@@ -29,6 +34,9 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Initialize Sentry through SentryService for proper configuration
+        SentryService.start()
+        
       // BGTask registration moved to CatbirdApp.init() to ensure it happens before SwiftUI rendering
       
       // FaultOrdering debugging and setup for physical devices
@@ -94,9 +102,10 @@ struct CatbirdApp: App {
       // Tell UIKit that state restoration setup is complete
       application.completeStateRestoration()
 
-      // Schedule BGTask now that registration happened at the beginning
+      // Schedule BGTasks now that registration happened at the beginning
       if #available(iOS 13.0, *) {
         BGTaskSchedulerManager.schedule()
+        ChatBackgroundRefreshManager.schedule()
       }
       
       return true
@@ -136,8 +145,14 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
+      let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
+      logger.info("📱 Received device token from APNS, length: \(deviceToken.count) bytes")
+
       // Forward the device token to our notification manager
-      guard let appState = self.appState else { return }
+      guard let appState = self.appState else {
+        logger.error("❌ Cannot handle device token - appState is nil")
+        return
+      }
 
       Task {
         await appState.notificationManager.handleDeviceToken(deviceToken)
@@ -180,10 +195,16 @@ struct CatbirdApp: App {
   init() {
     logger.info("🚀 CatbirdApp initializing")
 
+    // Bridge Petrel logs into Sentry (Sentry is initialized in AppDelegate)
+    PetrelSentryBridge.enable()
+    // Bridge Petrel auth incidents to UI to prevent silent auto-switching UX
+    PetrelAuthUIBridge.enable()
+
     // Register BGTask IMMEDIATELY - must be before any SwiftUI rendering
     #if os(iOS)
     if #available(iOS 13.0, *) {
       BGTaskSchedulerManager.registerIfNeeded()
+      ChatBackgroundRefreshManager.registerIfNeeded()
     }
     #endif
 
@@ -202,17 +223,11 @@ struct CatbirdApp: App {
       // to avoid conflicts between initial setup and dynamic theme changes
     }
 
-    // Configure audio session at app launch (iOS only)
-    // Always set to .ambient with .mixWithOthers so inline, muted videos
-    // never interrupt other apps' audio (e.g., Music/Podcasts), regardless of mode.
+    // Don't configure audio session at app launch - let it remain in default state
+    // This prevents interrupting music or other audio apps when the app starts
+    // AudioSessionManager will configure it only when needed (explicit unmute)
     #if os(iOS)
-    do {
-      let audioSession = AVAudioSession.sharedInstance()
-      try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-      logger.debug("✅ Audio session configured at app launch (.ambient + mixWithOthers)")
-    } catch {
-      logger.error("❌ Failed to configure audio session: \(error)")
-    }
+    logger.debug("✅ Skipping audio session configuration at launch to preserve music")
     #endif
 
     // Initialize model container with error recovery (simplified for FaultOrdering)
@@ -232,7 +247,8 @@ struct CatbirdApp: App {
       } else {
         // Full model container for normal use
         self.modelContainer = try ModelContainer(
-          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,               configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
+          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self,
+          configurations: ModelConfiguration("Catbird", schema: nil, url: storeURL)
         )
         logger.debug("✅ Model container initialized successfully")
       }
@@ -268,7 +284,7 @@ struct CatbirdApp: App {
             
             // Retry initialization
             self.modelContainer = try ModelContainer(
-              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
+              for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self,
               configurations: ModelConfiguration("Catbird", schema: nil, url: dbURL)
             )
             logger.debug("✅ Model container recreated successfully after recovery")
@@ -277,7 +293,7 @@ struct CatbirdApp: App {
             // Fallback to in-memory storage instead of crashing
             logger.warning("⚠️ Using in-memory storage as final fallback")
             self.modelContainer = try! ModelContainer(
-              for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
+              for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self,
               configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
             )
           }
@@ -285,7 +301,7 @@ struct CatbirdApp: App {
           // Fallback to in-memory storage instead of crashing
           logger.warning("⚠️ Using in-memory storage as fallback")
           self.modelContainer = try! ModelContainer(
-            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self,
+            for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self,
             configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
           )
         }
@@ -297,6 +313,14 @@ struct CatbirdApp: App {
       if !isFaultOrderingMode {
         setupDebugTools()
       }
+    #endif
+
+    #if canImport(FoundationModels)
+    if #available(iOS 26.0, macOS 15.0, *), !isFaultOrderingMode {
+      Task(priority: .background) {
+        await TopicSummaryService.shared.prepareModelWarmupIfNeeded()
+      }
+    }
     #endif
   }
 
@@ -364,10 +388,10 @@ struct CatbirdApp: App {
         setupBackgroundNotification()
         #endif
         
-        // Initialize FeedStateStore with model context for persistence
+        // Initialize persistence with model context
+        PersistentFeedStateManager.initialize(with: modelContainer)
         Task { @MainActor in
           FeedStateStore.shared.setModelContext(modelContext)
-          
         }
 
         // Import shared drafts from the Share Extension, if any
@@ -384,6 +408,11 @@ struct CatbirdApp: App {
           if newPhase == .background {
             saveApplicationState()
             
+            #if os(iOS)
+            if #available(iOS 13.0, *) {
+              ChatBackgroundRefreshManager.schedule()
+            }
+            #endif
           }
         }
       }
@@ -505,6 +534,14 @@ struct CatbirdApp: App {
         
         // Check biometric authentication on app launch
         await performInitialBiometricCheck()
+
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, macOS 15.0, *) {
+          Task(priority: .background) {
+            await TopicSummaryService.shared.prepareLaunchWarmup(appState: appState)
+          }
+        }
+        #endif
 
           // Only fix timeline feed issues when needed
           Task {

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftUI
 
 struct FAB: View {
     let composeAction: () -> Void
@@ -14,6 +15,8 @@ struct FAB: View {
     let hasMinimizedComposer: Bool
     let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
+    // Namespace for matched zoom transitions to the composer (provided by ContentView)
+    @Environment(\.composerTransitionNamespace) private var composerNamespace
 
     private let circleSize: CGFloat = 62
     
@@ -105,6 +108,9 @@ struct FAB: View {
 //            )
             .contentShape(Circle())
             .buttonStyle(.glassProminent)
+            // Mark the actual compose button as the matched transition source
+            // instead of tagging the entire FAB container from the outside.
+            .composerMatchedSource(namespace: composerNamespace)
             } else {
                 ZStack {
                     symbolWithBadge

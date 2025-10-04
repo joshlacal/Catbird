@@ -51,7 +51,7 @@ struct AgeVerificationView: View {
                 }
                 
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
                     .disabled(isLoading)

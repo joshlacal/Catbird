@@ -14,6 +14,7 @@ import OSLog
 struct BookmarksView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
   @Binding var path: NavigationPath
   
   // State
@@ -27,6 +28,8 @@ struct BookmarksView: View {
   // Performance
   private let logger = Logger(subsystem: "blue.catbird", category: "BookmarksView")
   
+    private static let baseUnit: CGFloat = 3
+
   // MARK: - Body
   var body: some View {
     Group {
@@ -36,6 +39,7 @@ struct BookmarksView: View {
         bookmarksListView
       }
     }
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
     .navigationTitle("Bookmarks")
     .navigationBarTitleDisplayMode(.large)
     .toolbar {
@@ -83,8 +87,11 @@ struct BookmarksView: View {
   // MARK: - Bookmarks List
   private var bookmarksListView: some View {
     List {
-      ForEach(bookmarks, id: \.subject.uri) { bookmarkView in
+      ForEach(Array(bookmarks.enumerated()), id: \.element.subject.uri) { index, bookmarkView in
         bookmarkRowView(bookmarkView)
+              .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+
+          // Hide only the very top separator
       }
       
       // Load more content
@@ -96,11 +103,14 @@ struct BookmarksView: View {
           Spacer()
         }
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+
         .task {
           await loadMoreBookmarks()
         }
       }
     }
+    .listRowInsets(EdgeInsets()) 
     .listStyle(.plain)
   }
   
@@ -117,9 +127,19 @@ struct BookmarksView: View {
         path: $path,
         appState: appState
       )
-      .listRowSeparator(.hidden)
+      .padding(.top, BookmarksView.baseUnit * 3)
+      .padding(.horizontal, BookmarksView.baseUnit * 1.5)
+      .fixedSize(horizontal: false, vertical: true)
+      .contentShape(Rectangle())
+      .allowsHitTesting(true)
+      .frame(maxWidth: 600, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .center)
+      .onTapGesture { path.append(NavigationDestination.post(postView.uri)) }
+      .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
+      .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
+      .listRowSeparator(.visible)
       .listRowInsets(EdgeInsets())
-      
+
     case .appBskyFeedDefsBlockedPost, .appBskyFeedDefsNotFoundPost:
       VStack {
         HStack {
@@ -137,7 +157,9 @@ struct BookmarksView: View {
       
     case .unexpected:
       EmptyView()
-    }
+    case .pending(_):
+        EmptyView()
+}
   }
   
   // MARK: - Data Loading

@@ -105,7 +105,7 @@ struct CustomEmojiPickerView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Button("Cancel") {
+                Button("Cancel", systemImage: "xmark") {
                     isPresented = false
                 }
                 
@@ -196,5 +196,11 @@ struct CustomEmojiPickerView: View {
         #if os(iOS)
         .navigationBarHidden(true)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { isPresented = false }
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+        }
     }
 }

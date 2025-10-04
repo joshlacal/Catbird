@@ -37,17 +37,17 @@ struct PostStatsView: View {
                         HStack(spacing: 4) {
                             Text("\(replyCount)")
                                 .fontWeight(.semibold)
-                            Text("replies")
+                            Text(statLabel(for: replyCount, singular: "reply", plural: "replies"))
                                 .foregroundColor(.secondary)
                         }
                     }
-                    
+
                     // Reposts stat with tap gesture
                     if let repostCount = post.repostCount, repostCount > 0 {
                         HStack(spacing: 4) {
                             Text("\(repostCount)")
                                 .fontWeight(.semibold)
-                            Text("reposts")
+                            Text(statLabel(for: repostCount, singular: "repost"))
                                 .foregroundColor(.secondary)
                         }
                         .contentShape(Rectangle())
@@ -61,7 +61,7 @@ struct PostStatsView: View {
                         HStack(spacing: 4) {
                             Text("\(likeCount)")
                                 .fontWeight(.semibold)
-                            Text("likes")
+                            Text(statLabel(for: likeCount, singular: "like"))
                                 .foregroundColor(.secondary)
                         }
                         .contentShape(Rectangle())
@@ -75,7 +75,7 @@ struct PostStatsView: View {
                         HStack(spacing: 4) {
                             Text("\(quoteCount)")
                                 .fontWeight(.semibold)
-                            Text("quotes")
+                            Text(statLabel(for: quoteCount, singular: "quote"))
                                 .foregroundColor(.secondary)
                         }
                         .contentShape(Rectangle())
@@ -100,110 +100,186 @@ struct PostStatsView: View {
     }
 }
 
-/// A layout that arranges views in a horizontal flow, wrapping to the next line when needed
+private extension PostStatsView {
+    /// Returns a localized-friendly stat label given the count and base word.
+    func statLabel(for count: Int, singular: String, plural: String? = nil) -> String {
+        let resolvedPlural = plural ?? singular + "s"
+        return count == 1 ? singular : resolvedPlural
+    }
+}
+
+/// A layout that arranges views in a horizontal flow, wrapping to the next line when needed.
 struct FlowLayout: Layout {
     var horizontalSpacing: CGFloat
     var verticalSpacing: CGFloat
     var alignment: FlowAlignment = .leading
-    
+
     enum FlowAlignment {
         case leading, center, trailing
     }
-    
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        return calculateSize(sizes: sizes, proposal: proposal)
+
+     struct Cache {
+        var sizes: [CGSize] = []
+        var maxItemWidth: CGFloat = 0
+        fileprivate var metrics: FlowMetrics?
+        var lastResolvedWidth: CGFloat?
     }
-    
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
-        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-        
-        var lineSubviews: [(subview: LayoutSubview, size: CGSize)] = []
-        var lineWidth: CGFloat = 0
-        var lineHeight: CGFloat = 0
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache()
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        let measuredSizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        if cache.sizes != measuredSizes {
+            cache.sizes = measuredSizes
+            cache.maxItemWidth = measuredSizes.map { $0.width }.max() ?? 0
+            cache.metrics = nil
+        }
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        updateCache(&cache, subviews: subviews)
+
+        guard !cache.sizes.isEmpty else { return .zero }
+
+        let resolvedWidth = resolveWidth(from: proposal, cache: &cache)
+        let metrics = metrics(forWidth: resolvedWidth, cache: &cache)
+        return metrics.size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        updateCache(&cache, subviews: subviews)
+
+        guard !cache.sizes.isEmpty else { return }
+
+        let targetWidth = max(bounds.width, cache.maxItemWidth)
+        let metrics = metrics(forWidth: targetWidth, cache: &cache)
+
         var y = bounds.minY
-        
-        // Function to place a line of subviews with proper alignment
-        func placeLine() {
-            guard !lineSubviews.isEmpty else { return }
-            
-            // Calculate x position based on alignment
-            var x = bounds.minX
-            let totalWidth = lineWidth - horizontalSpacing  // Remove trailing space
-            
-            if alignment == .center {
-                x = bounds.minX + (bounds.width - totalWidth) / 2
-            } else if alignment == .trailing {
-                x = bounds.minX + (bounds.width - totalWidth)
-            }
-            
-            // Place each subview in the line
-            for (subview, size) in lineSubviews {
+
+        for (lineIndex, line) in metrics.lines.enumerated() {
+            var x = bounds.minX + horizontalOffset(for: line.width, in: bounds.width)
+
+            for index in line.range {
+                let subview = subviews[index]
+                let size = cache.sizes[index]
+                let proposal = ProposedViewSize(width: size.width, height: size.height)
+
                 subview.place(
                     at: CGPoint(x: x, y: y),
                     anchor: .topLeading,
-                    proposal: .unspecified
+                    proposal: proposal
                 )
+
                 x += size.width + horizontalSpacing
             }
-            
-            // Move to next line
-            y += lineHeight + verticalSpacing
-            
-            // Reset line tracking
-            lineSubviews.removeAll()
-            lineWidth = 0
-            lineHeight = 0
-        }
-        
-        // Process all subviews
-        for (index, subview) in subviews.enumerated() {
-            let size = sizes[index]
-            
-            // If adding this view would exceed the line width, place the current line and start a new one
-            let wouldExceedWidth = lineWidth + size.width > bounds.width
-            let notFirstInLine = !lineSubviews.isEmpty
-            
-            if wouldExceedWidth && notFirstInLine {
-                placeLine()
+
+            y += line.height
+            if lineIndex != metrics.lines.indices.last {
+                y += verticalSpacing
             }
-            
-            // Add the current view to the line
-            lineSubviews.append((subview, size))
-            lineWidth += size.width + horizontalSpacing
-            lineHeight = max(lineHeight, size.height)
         }
-        
-        // Place the final line
-        placeLine()
     }
-    
-    private func calculateSize(sizes: [CGSize], proposal: ProposedViewSize) -> CGSize {
-        let containerWidth = proposal.width ?? .infinity
-        
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var maxWidth: CGFloat = 0
-        
-        // Calculate required size
-        for size in sizes {
-            // If this view doesn't fit on the current line, move to the next
-            if currentX + size.width > containerWidth && currentX > 0 {
-                currentX = 0
-                currentY += lineHeight + verticalSpacing
-                lineHeight = 0
+
+    private func resolveWidth(from proposal: ProposedViewSize, cache: inout Cache) -> CGFloat {
+        if let width = proposal.width, width.isFinite {
+            let minimum = max(cache.maxItemWidth, 0)
+            cache.lastResolvedWidth = max(width, minimum)
+            return cache.lastResolvedWidth ?? width
+        }
+
+        if let cachedWidth = cache.lastResolvedWidth, cachedWidth.isFinite {
+            return max(cachedWidth, cache.maxItemWidth)
+        }
+
+        let fallback = max(cache.maxItemWidth, 0)
+        cache.lastResolvedWidth = fallback
+        return fallback
+    }
+
+    private func metrics(forWidth width: CGFloat, cache: inout Cache) -> FlowMetrics {
+        if let metrics = cache.metrics, metrics.width == width {
+            return metrics
+        }
+
+        let adjustedWidth = max(width, cache.maxItemWidth)
+        let sizes = cache.sizes
+
+        var lines: [FlowMetrics.Line] = []
+        var lineStart = sizes.startIndex
+        var currentLineWidth: CGFloat = 0
+        var currentLineHeight: CGFloat = 0
+
+        func appendLine(endingAt endIndex: Int) {
+            guard endIndex > lineStart else { return }
+            let line = FlowMetrics.Line(
+                range: lineStart..<endIndex,
+                width: currentLineWidth,
+                height: currentLineHeight
+            )
+            lines.append(line)
+            lineStart = endIndex
+            currentLineWidth = 0
+            currentLineHeight = 0
+        }
+
+        for (index, size) in sizes.enumerated() {
+            let exceedsLine = currentLineWidth > 0 && currentLineWidth + horizontalSpacing + size.width > adjustedWidth
+            if exceedsLine {
+                appendLine(endingAt: index)
             }
-            
-            // Update position and line height
-            currentX += size.width + horizontalSpacing
-            lineHeight = max(lineHeight, size.height)
-            maxWidth = max(maxWidth, currentX)
+
+            let spacing = currentLineWidth == 0 ? 0 : horizontalSpacing
+            currentLineWidth += spacing + size.width
+            currentLineHeight = max(currentLineHeight, size.height)
         }
-        
-        // Calculate final height including the last line
-        let totalHeight = currentY + lineHeight
-        
-        return CGSize(width: maxWidth - horizontalSpacing, height: totalHeight)
+
+        appendLine(endingAt: sizes.endIndex)
+
+        let maxLineWidth = lines.map { $0.width }.max() ?? 0
+        let totalHeight = lines.reduce(0) { $0 + $1.height } + verticalSpacing * CGFloat(max(lines.count - 1, 0))
+
+        let metrics = FlowMetrics(
+            width: adjustedWidth,
+            lines: lines,
+            size: CGSize(width: maxLineWidth, height: totalHeight)
+        )
+
+        cache.metrics = metrics
+        cache.lastResolvedWidth = adjustedWidth
+        return metrics
     }
+
+    private func horizontalOffset(for lineWidth: CGFloat, in containerWidth: CGFloat) -> CGFloat {
+        switch alignment {
+        case .leading:
+            return 0
+        case .center:
+            return max((containerWidth - lineWidth) / 2, 0)
+        case .trailing:
+            return max(containerWidth - lineWidth, 0)
+        }
+    }
+}
+
+private struct FlowMetrics {
+    struct Line {
+        let range: Range<Int>
+        let width: CGFloat
+        let height: CGFloat
+    }
+
+    let width: CGFloat
+    let lines: [Line]
+    let size: CGSize
 }

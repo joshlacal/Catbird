@@ -691,7 +691,7 @@ struct CreateAppPasswordView: View {
     #endif
             .toolbar(content: {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
                 }

@@ -50,6 +50,36 @@ struct HelpSettingsView: View {
                     .appFont(AppTextRole.headline)
                     .padding(.top, 4)
                 
+                if let contactURL = LegalConfig.supportURL {
+                    Link(destination: contactURL) {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                                .foregroundStyle(.tint)
+                            Text("Contact Catbird Support")
+                                .fontWeight(.medium)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.accentColor.opacity(0.1))
+                        .foregroundStyle(.tint)
+                        .cornerRadius(8)
+                    }
+                } else if let email = LegalConfig.supportEmail, let mailURL = URL(string: "mailto:\(email)") {
+                    Link(destination: mailURL) {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                                .foregroundStyle(.tint)
+                            Text("Contact Catbird Support")
+                                .fontWeight(.medium)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.accentColor.opacity(0.1))
+                        .foregroundStyle(.tint)
+                        .cornerRadius(8)
+                    }
+                }
+
                 Link(destination: URL(string: "https://blueskyweb.zendesk.com/hc/en-us")!) {
                     HStack {
                         Image(systemName: "envelope.fill")

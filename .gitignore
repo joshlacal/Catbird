@@ -226,3 +226,5 @@ PUBLIC_RELEASE_CHECKLIST.md
 PUBLIC_RELEASE_SUMMARY.md
 # Keep only essential public docs
 .aider*
+
+.sentryclirc
