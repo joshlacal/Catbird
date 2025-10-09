@@ -325,23 +325,11 @@ struct EnhancedFeedPost: View, Equatable {
   @ViewBuilder
   private func mainPostContent(_ feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
     let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = {
-      guard case .appBskyFeedDefsReasonRepost = feedViewPost.reason else {
-        return nil
-      }
-
-      guard
-        case .knownType(let record) = feedViewPost.post.record,
-        let originalPost = record as? AppBskyFeedPost,
-        originalPost.reply != nil
-      else {
-        return nil
-      }
-
-      if let replyContext = feedViewPost.reply,
-         case let .appBskyFeedDefsPostView(parentPost) = replyContext.parent {
+      // If this is a repost and the reposted post is a reply, get the parent author
+      if case .appBskyFeedDefsReasonRepost = feedViewPost.reason,
+         case let .appBskyFeedDefsPostView(parentPost) = feedViewPost.reply?.parent {
         return parentPost.author
       }
-
       return nil
     }()
 

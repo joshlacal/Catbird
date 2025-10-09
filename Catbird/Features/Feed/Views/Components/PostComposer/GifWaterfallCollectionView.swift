@@ -115,13 +115,52 @@ struct GifWaterfallCollectionView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UICollectionView, context: Context) {
-        context.coordinator.gifs = gifs
+        let oldGifs = context.coordinator.gifs
+        let oldCount = oldGifs.count
+        let newCount = gifs.count
+        
+        // Debug: Check if data actually changed
+        let dataChanged = oldGifs != gifs
+        
+        // Always update the loading state immediately  
         context.coordinator.isLoadingMore = isLoadingMore
-
-        if let layout = uiView.collectionViewLayout as? WaterfallLayout {
-            layout.invalidateLayout()
+        
+        // Skip update if data hasn't changed
+        guard dataChanged || oldCount != newCount else {
+            return
         }
-        uiView.reloadData()
+        
+        // Check if this is a simple append operation (load more scenario)
+        // Conditions: more items than before, had items before, and first oldCount items match exactly
+        let isAppendOperation = newCount > oldCount && 
+                                oldCount > 0 && 
+                                Array(gifs.prefix(oldCount)) == oldGifs
+        
+        if isAppendOperation {
+            // This is a load more - use batch insert for smooth animation
+            // Update coordinator FIRST so it has the new data when cells are requested
+            context.coordinator.gifs = gifs
+            
+            // Invalidate layout AFTER updating coordinator data
+            if let layout = uiView.collectionViewLayout as? WaterfallLayout {
+                layout.invalidateLayout()
+            }
+            
+            let newIndexPaths = (oldCount..<newCount).map { IndexPath(item: $0, section: 0) }
+            
+            uiView.performBatchUpdates({
+                uiView.insertItems(at: newIndexPaths)
+            }, completion: nil)
+        } else {
+            // For any other change, update coordinator and do full reload
+            context.coordinator.gifs = gifs
+            
+            if let layout = uiView.collectionViewLayout as? WaterfallLayout {
+                layout.invalidateLayout()
+            }
+            
+            uiView.reloadData()
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -204,6 +243,7 @@ final class GifCollectionViewCell: UICollectionViewCell {
     static let reuseIdentifier = "GifCollectionViewCell"
 
     private let hostingController = UIHostingController(rootView: AnyView(EmptyView()))
+    private var currentGifId: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -228,14 +268,30 @@ final class GifCollectionViewCell: UICollectionViewCell {
     }
 
     func configure(with gif: TenorGif) {
+        // Only update if the GIF actually changed
+        guard currentGifId != gif.id else { return }
+        
+        currentGifId = gif.id
+        
         let gifView = GifVideoView(gif: gif, onTap: {})
             .disabled(true) // Disable tap since we handle it at cell level
+            .opacity(1.0) // Explicit opacity to prevent fade issues
+            .id(gif.id) // Force SwiftUI to recreate view when GIF changes
 
         hostingController.rootView = AnyView(gifView)
+        
+        // Ensure cell visibility is always full
+        contentView.alpha = 1.0
+        alpha = 1.0
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        currentGifId = nil
         hostingController.rootView = AnyView(EmptyView())
+        
+        // Reset opacity to prevent artifacts
+        contentView.alpha = 1.0
+        alpha = 1.0
     }
 }

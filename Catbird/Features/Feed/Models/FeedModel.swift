@@ -814,15 +814,26 @@ final class FeedModel: StateInvalidationSubscriber {
       let mutedUsers = await appState.graphManager.muteCache
       let blockedUsers = await appState.graphManager.blockCache
       
+      // Get quick filter settings from FeedFilterSettings (these override preferences)
+      let hideRepostsQuick = appState.feedFilterSettings.isFilterEnabled(name: "Hide Reposts")
+      let hideRepliesQuick = appState.feedFilterSettings.isFilterEnabled(name: "Hide Replies")
+      let hideQuotePostsQuick = appState.feedFilterSettings.isFilterEnabled(name: "Hide Quote Posts")
+      let hideLinks = appState.feedFilterSettings.isFilterEnabled(name: "Hide Link Posts")
+      let onlyTextPosts = appState.feedFilterSettings.isFilterEnabled(name: "Only Text Posts")
+      let onlyMediaPosts = appState.feedFilterSettings.isFilterEnabled(name: "Only Media Posts")
+      
       return FeedTunerSettings(
-        hideReplies: feedPref?.hideReplies ?? false,
+        hideReplies: hideRepliesQuick || (feedPref?.hideReplies ?? false),
         hideRepliesByUnfollowed: feedPref?.hideRepliesByUnfollowed ?? false,
-        hideReposts: feedPref?.hideReposts ?? false,
-        hideQuotePosts: feedPref?.hideQuotePosts ?? false,
+        hideReposts: hideRepostsQuick || (feedPref?.hideReposts ?? false),
+        hideQuotePosts: hideQuotePostsQuick || (feedPref?.hideQuotePosts ?? false),
         hideNonPreferredLanguages: appState.appSettings.hideNonPreferredLanguages,
         preferredLanguages: appState.appSettings.contentLanguages,
         mutedUsers: mutedUsers,
-        blockedUsers: blockedUsers
+        blockedUsers: blockedUsers,
+        hideLinks: hideLinks,
+        onlyTextPosts: onlyTextPosts,
+        onlyMediaPosts: onlyMediaPosts
       )
     } catch {
       logger.warning("Failed to get feed preferences, using defaults: \(error)")

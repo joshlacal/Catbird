@@ -34,13 +34,13 @@ struct Post: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showLanguageSelection = false
-    @State private var textSize: CGFloat?
-    @State private var textStyle: Font.TextStyle
-    @State private var textDesign: Font.Design
-    @State private var textWeight: Font.Weight
-    @State private var fontWidth: CGFloat?
-    @State private var lineSpacing: CGFloat
-    @State private var letterSpacing: CGFloat
+    private let textSize: CGFloat?
+    private let textStyle: Font.TextStyle
+    private let textDesign: Font.Design
+    private let textWeight: Font.Weight
+    private let fontWidth: CGFloat?
+    private let lineSpacing: CGFloat
+    private let letterSpacing: CGFloat
 
     // public initalizer
     public init(post: AppBskyFeedPost, isSelectable: Bool, path: Binding<NavigationPath>,

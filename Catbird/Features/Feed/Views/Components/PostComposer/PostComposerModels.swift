@@ -54,6 +54,8 @@ struct ThreadEntry: Identifiable {
     var selectedGif: TenorGif?
     var detectedURLs: [String] = []
     var urlCards: [String: URLCardResponse] = [:]
+    var selectedEmbedURL: String?
+    var urlsKeptForEmbed: Set<String> = []
     var facets: [AppBskyRichtextFacet]?
     var hashtags: [String] = []
 }
@@ -169,6 +171,8 @@ struct CodableThreadEntry: Codable {
   let selectedGif: TenorGif?
   let detectedURLs: [String]
   let urlCards: [String: URLCardResponse]
+  let selectedEmbedURL: String?
+  let urlsKeptForEmbed: Set<String>
   let hashtags: [String]
   let parentPostURI: String?
   let quotedPostURI: String?
@@ -180,6 +184,8 @@ struct CodableThreadEntry: Codable {
     self.selectedGif = threadEntry.selectedGif
     self.detectedURLs = threadEntry.detectedURLs
     self.urlCards = threadEntry.urlCards
+    self.selectedEmbedURL = threadEntry.selectedEmbedURL
+    self.urlsKeptForEmbed = threadEntry.urlsKeptForEmbed
     self.hashtags = threadEntry.hashtags
     self.parentPostURI = parentPost?.uri.uriString()
     self.quotedPostURI = quotedPost?.uri.uriString()
@@ -193,6 +199,8 @@ struct CodableThreadEntry: Codable {
     entry.selectedGif = selectedGif
     entry.detectedURLs = detectedURLs
     entry.urlCards = urlCards
+    entry.selectedEmbedURL = selectedEmbedURL
+    entry.urlsKeptForEmbed = urlsKeptForEmbed
     entry.hashtags = hashtags
     return entry
   }

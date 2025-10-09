@@ -154,8 +154,16 @@ final class FeedStateManager: StateInvalidationSubscriber {
     // MARK: - Setup
     
     private func setupObservers() {
-        // Note: With @Observable, we don't need explicit observers
-        // The SwiftUI view will automatically observe changes
+        // Observe filter changes and reapply immediately
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FeedFiltersChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.reapplyFilters()
+            }
+        }
     }
     
     /// Setup app lifecycle observers (legacy support - main lifecycle now handled via SwiftUI scene phase)
@@ -532,6 +540,24 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
         
         try? await updateTask?.value
+    }
+    
+    /// Re-applies current filter settings to existing posts
+    /// This allows filters to take effect immediately without needing to refresh from server
+    @MainActor
+    func reapplyFilters() async {
+        logger.debug("Reapplying filters to \(self.feedModel.posts.count) posts")
+        
+        // Trigger FeedModel to re-process its posts with current filter settings
+        let filteredPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
+        
+        // Update our display
+        posts = filteredPosts
+        
+        // Clean up ViewModels for posts no longer visible
+        cleanupViewModels()
+        
+        logger.debug("Filter reapplication complete - now showing \(self.posts.count) posts")
     }
     
     // MARK: - Scroll Position Management

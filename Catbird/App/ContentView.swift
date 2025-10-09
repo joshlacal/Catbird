@@ -121,6 +121,7 @@ struct ContentView: View {
     .fontManager(appState.fontManager)
 //    .themedNavigationBar(appState.themeManager)
     // Theme and font changes are handled efficiently by the modifiers above
+    .environment(\.toastManager, appState.toastManager)
   }
 }
 
@@ -556,6 +557,7 @@ struct MainContentView18: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
+      .toastContainer()
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
@@ -1096,6 +1098,7 @@ struct MainContentView17: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
+      .toastContainer()
       .toolbar { // Native toolbar items shown while drawer is open (iOS)
         if isDrawerOpen && selectedTab == 0 {
           ToolbarItem(placement: .topBarTrailing) {

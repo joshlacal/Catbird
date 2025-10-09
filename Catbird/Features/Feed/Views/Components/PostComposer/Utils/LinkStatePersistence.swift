@@ -446,6 +446,8 @@ extension PostComposerViewModel {
         threadEntries[currentThreadIndex].selectedGif = selectedGif
         threadEntries[currentThreadIndex].detectedURLs = detectedURLs
         threadEntries[currentThreadIndex].urlCards = urlCards
+        threadEntries[currentThreadIndex].selectedEmbedURL = selectedEmbedURL
+        threadEntries[currentThreadIndex].urlsKeptForEmbed = urlsKeptForEmbed
         threadEntries[currentThreadIndex].hashtags = outlineTags
         
         // Note: Attributed text and link facets are not persisted for thread entries yet.
@@ -489,6 +491,8 @@ extension PostComposerViewModel {
         selectedGif = entry.selectedGif
         detectedURLs = entry.detectedURLs
         urlCards = entry.urlCards
+        selectedEmbedURL = entry.selectedEmbedURL
+        urlsKeptForEmbed = entry.urlsKeptForEmbed
         outlineTags = entry.hashtags
         
         // Restore attributed text with proper font attributes

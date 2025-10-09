@@ -149,6 +149,82 @@ struct FeedFilter: Identifiable, Hashable {
         filterBlock: { _ in true }
       ),
       FeedFilter(
+        name: "Only Text Posts",
+        description: "Show only posts with text (no images, videos, or links)",
+        isEnabled: false,
+        filterBlock: { post in
+          return post.post.embed == nil
+        }
+      ),
+      FeedFilter(
+        name: "Only Media Posts",
+        description: "Show only posts with images or videos",
+        isEnabled: false,
+        filterBlock: { post in
+          // Check the main post's embed
+          if let embed = post.post.embed {
+            switch embed {
+            case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+              return true
+            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+              // Quote post with media - check the media part
+              switch recordWithMedia.media {
+              case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+                return true
+              default:
+                return false
+              }
+            default:
+              return false
+            }
+          }
+          return false
+        }
+      ),
+      FeedFilter(
+        name: "Hide Link Posts",
+        description: "Hide posts with external links",
+        isEnabled: false,
+        filterBlock: { post in
+          // Check the main post for external links in embeds
+          if let embed = post.post.embed {
+            switch embed {
+            case .appBskyEmbedExternalView:
+              return false
+            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+              // Quote post with media - check if media is external
+              switch recordWithMedia.media {
+              case .appBskyEmbedExternalView:
+                return false
+              default:
+                break
+              }
+            default:
+              break
+            }
+          }
+          
+          // Also check for links in the post text via facets
+          guard case .knownType(let record) = post.post.record,
+                let feedPost = record as? AppBskyFeedPost else {
+            return true
+          }
+          
+          // Check facets for links
+          if let facets = feedPost.facets {
+            for facet in facets {
+              for feature in facet.features {
+                if case .appBskyRichtextFacetLink = feature {
+                  return false
+                }
+              }
+            }
+          }
+          
+          return true
+        }
+      ),
+      FeedFilter(
         name: "Filter by Language",
         description: "Only show posts in your selected content languages",
         isEnabled: false,
@@ -156,6 +232,53 @@ struct FeedFilter: Identifiable, Hashable {
         filterBlock: { _ in true }
       )
     ]
+  }
+
+  // Convenience methods for quick filter access
+  func isFilterEnabled(name: String) -> Bool {
+    return filters.first(where: { $0.name == name })?.isEnabled ?? false
+  }
+
+  func enableOnlyFilter(name: String) {
+    // Disable all filters first
+    for index in filters.indices {
+      let filter = filters[index]
+      filters[index] = FeedFilter(
+        name: filter.name,
+        description: filter.description,
+        isEnabled: false,
+        filterBlock: filter.filterBlock
+      )
+    }
+    // Enable the specified filter
+    if let index = filters.firstIndex(where: { $0.name == name }) {
+      let filter = filters[index]
+      filters[index] = FeedFilter(
+        name: filter.name,
+        description: filter.description,
+        isEnabled: true,
+        filterBlock: filter.filterBlock
+      )
+      activeFilterIds.insert(name)
+    }
+    saveSettings()
+  }
+
+  func clearAllFilters() {
+    for index in filters.indices {
+      let filter = filters[index]
+      // Skip "Hide Duplicate Posts" which should stay enabled
+      if filter.name == "Hide Duplicate Posts" { continue }
+      filters[index] = FeedFilter(
+        name: filter.name,
+        description: filter.description,
+        isEnabled: false,
+        filterBlock: filter.filterBlock
+      )
+    }
+    activeFilterIds.removeAll()
+    activeFilterIds.insert("Hide Duplicate Posts")
+    saveSettings()
   }
 
   func toggleFilter(id: String) {

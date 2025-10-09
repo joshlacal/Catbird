@@ -28,6 +28,10 @@ struct UnifiedProfileView: View {
   @State private var isBlocking = false
   @State private var isMuting = false
   @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
+  @State private var hasAttemptedLoad = false
+  @State private var hasAttemptedLoadPosts = false
+  @State private var hasAttemptedLoadReplies = false
+  @State private var hasAttemptedLoadMedia = false
     
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
   #if DEBUG
@@ -48,7 +52,7 @@ struct UnifiedProfileView: View {
         currentUserDID: nil,
         stateInvalidationBus: nil
       )
-      _viewModel = State(wrappedValue: viewModel)
+      self._viewModel = State(initialValue: viewModel)
       self._selectedTab = selectedTab
       self._lastTappedTab = lastTappedTab
       _navigationPath = path
@@ -63,30 +67,24 @@ struct UnifiedProfileView: View {
       stateInvalidationBus: appState.stateInvalidationBus
     )
     
-    _viewModel = State(wrappedValue: viewModel)
+    self._viewModel = State(initialValue: viewModel)
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
     _navigationPath = path
   }
 
   init(did: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>) {
-    self.init(userDID: did, selectedTab: selectedTab, appState: appState, path: path)
-  }
-
-  private init(
-    userDID: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>
-  ) {
     // Create ProfileViewModel with unique identity to prevent metadata cache conflicts
     let viewModel = ProfileViewModel(
       client: appState.atProtoClient,
-      userDID: userDID,
+      userDID: did,
       currentUserDID: appState.currentUserDID,
       stateInvalidationBus: appState.stateInvalidationBus
     )
     
-    _viewModel = State(wrappedValue: viewModel)
+    self._viewModel = State(initialValue: viewModel)
     self._selectedTab = selectedTab
-    self._lastTappedTab = .constant(nil)
+    self._lastTappedTab = Binding.constant(nil)
     _navigationPath = path
   }
 
@@ -171,6 +169,7 @@ struct UnifiedProfileView: View {
   
   @ViewBuilder
   private func tabSelectorSection() -> some View {
+    @Bindable var viewModel = viewModel
     ProfileTabSelector(
       path: $navigationPath,
       selectedTab: $viewModel.selectedProfileTab,
@@ -182,10 +181,13 @@ struct UnifiedProfileView: View {
     Task {
       switch tab {
       case .posts:
+        hasAttemptedLoadPosts = true
         if viewModel.posts.isEmpty { await viewModel.loadPosts() }
       case .replies:
+        hasAttemptedLoadReplies = true
         if viewModel.replies.isEmpty { await viewModel.loadReplies() }
       case .media:
+        hasAttemptedLoadMedia = true
         if viewModel.postsWithMedia.isEmpty { await viewModel.loadMediaPosts() }
       case .more:
         break
@@ -208,9 +210,15 @@ struct UnifiedProfileView: View {
     
     // Then refresh current tab content
     switch viewModel.selectedProfileTab {
-    case .posts: await viewModel.loadPosts()
-    case .replies: await viewModel.loadReplies()
-    case .media: await viewModel.loadMediaPosts()
+    case .posts: 
+      hasAttemptedLoadPosts = true
+      await viewModel.loadPosts()
+    case .replies: 
+      hasAttemptedLoadReplies = true
+      await viewModel.loadReplies()
+    case .media: 
+      hasAttemptedLoadMedia = true
+      await viewModel.loadMediaPosts()
     case .more: break
     default: break
     }
@@ -224,18 +232,21 @@ struct UnifiedProfileView: View {
             postContentSection(
                 posts: viewModel.posts,
                 emptyMessage: "No posts",
+                hasAttemptedLoad: hasAttemptedLoadPosts,
                 loadAction: viewModel.loadPosts
             )
         case .replies:
             postContentSection(
                 posts: viewModel.replies,
                 emptyMessage: "No replies",
+                hasAttemptedLoad: hasAttemptedLoadReplies,
                 loadAction: viewModel.loadReplies
             )
         case .media:
             postContentSection(
                 posts: viewModel.postsWithMedia,
                 emptyMessage: "No media posts",
+                hasAttemptedLoad: hasAttemptedLoadMedia,
                 loadAction: viewModel.loadMediaPosts
             )
         case .more:
@@ -251,10 +262,11 @@ struct UnifiedProfileView: View {
   private func postContentSection(
     posts: [AppBskyFeedDefs.FeedViewPost],
     emptyMessage: String,
+    hasAttemptedLoad: Bool,
     loadAction: @escaping () async -> Void
   ) -> some View {
     LazyVStack(spacing: 0) {
-      if viewModel.isLoading && posts.isEmpty {
+      if !hasAttemptedLoad || (viewModel.isLoading && posts.isEmpty) {
         ProgressView("Loading...")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
@@ -265,9 +277,6 @@ struct UnifiedProfileView: View {
           .padding(.top, 40)
           .frame(maxWidth: 600, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
-          .onAppear {
-            Task { await loadAction() }
-          }
       } else {
         // Use cached SwiftData objects and EnhancedFeedPost for consistency
         ProfileCachedPostsList(
@@ -565,6 +574,7 @@ struct UnifiedProfileView: View {
   }
 
   private func initialLoad() async {
+    hasAttemptedLoad = true
     do {
       await viewModel.loadProfile()
       
@@ -588,14 +598,17 @@ struct UnifiedProfileView: View {
   private func refreshCurrentTabContent() async {
     switch viewModel.selectedProfileTab {
     case .posts:
+      hasAttemptedLoadPosts = true
       if viewModel.posts.isEmpty {
         await viewModel.loadPosts()
       }
     case .replies:
+      hasAttemptedLoadReplies = true
       if viewModel.replies.isEmpty {
         await viewModel.loadReplies()
       }
     case .media:
+      hasAttemptedLoadMedia = true
       if viewModel.postsWithMedia.isEmpty {
         await viewModel.loadMediaPosts()
       }
@@ -839,7 +852,7 @@ struct UnifiedProfileView: View {
   @ViewBuilder
   private var profileViewConfiguration: some View {
     Group {
-      if viewModel.isLoading && viewModel.profile == nil {
+      if !hasAttemptedLoad || (viewModel.isLoading && viewModel.profile == nil) {
         loadingView
       } else if let profile = viewModel.profile {
         profileContentView(profile: profile)

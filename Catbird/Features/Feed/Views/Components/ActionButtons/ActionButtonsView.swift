@@ -298,6 +298,7 @@ struct InteractionButton: View {
   let action: () -> Void
   
   @Environment(AppState.self) private var appState
+  @Environment(\.fontManager) private var fontManager
 
   // Pre-calculated widths for efficiency
   private static let smallWidths: [Bool: CGFloat] = [true: 46, false: 36]  // true: has count > 0, false: no count or count == 0
@@ -314,6 +315,7 @@ struct InteractionButton: View {
     Button(action: action) {
       HStack(spacing: 4) {
         Image(systemName: iconName)
+              .appFont(Font.TextStyle.callout)
               .fontWeight(isBig ? .medium : .semibold)
           // Use identity transition on first appear to prevent initial animation
           .contentTransition(isFirstAppear ? .identity : .symbolEffect(.replace))
@@ -323,7 +325,8 @@ struct InteractionButton: View {
 
         if let count = count, count > 0 {
           Text(count.formatted)
-            .font(Font.system(.caption).monospacedDigit())
+                .appFont(Font.TextStyle.caption)
+            .monospacedDigit()
             .fontWeight(.bold)
             .contentTransition(.numericText(countsDown: false))
             .lineLimit(1)

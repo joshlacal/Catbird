@@ -105,6 +105,8 @@ struct AppearanceSettingsView: View {
             
             // Accessibility Section
             Section("Accessibility") {
+                #if !targetEnvironment(macCatalyst)
+                // Dynamic Type is iOS-specific; on Mac Catalyst it conflicts with app preferences
                 Toggle("Dynamic Type", isOn: dynamicTypeEnabled)
                 
                 if dynamicTypeEnabled.wrappedValue {
@@ -118,6 +120,7 @@ struct AppearanceSettingsView: View {
                         Text("Accessibility Extra Extra Extra Large").tag("accessibility5")
                     }
                 }
+                #endif
                 
                 AccessibilityQuickActionsRow()
             }
@@ -366,7 +369,9 @@ struct AccessibilityQuickActionsRow: View {
                     // Apply settings for optimal reading experience
                     appState.appSettings.fontSize = "large"
                     appState.appSettings.lineSpacing = "relaxed"
+                    #if !targetEnvironment(macCatalyst)
                     appState.appSettings.dynamicTypeEnabled = true
+                    #endif
                     // Force immediate font manager update
                     // Force font update
                     appState.fontManager.applyFontSettings(
@@ -385,8 +390,10 @@ struct AccessibilityQuickActionsRow: View {
                     // Apply settings for maximum accessibility
                     appState.appSettings.fontSize = "extraLarge"
                     appState.appSettings.lineSpacing = "relaxed"
+                    #if !targetEnvironment(macCatalyst)
                     appState.appSettings.dynamicTypeEnabled = true
                     appState.appSettings.maxDynamicTypeSize = "accessibility3"
+                    #endif
                     // Force immediate font manager update
                     // Force font update
                     appState.fontManager.applyFontSettings(

@@ -530,6 +530,11 @@ extension Font {
         relativeTo textStyle: Font.TextStyle,
         maxContentSizeCategory: CrossPlatformContentSizeCategory? = nil
     ) -> Font {
+        #if targetEnvironment(macCatalyst)
+        // On Mac Catalyst, use fixed-size font to respect app's custom sizing
+        // System Dynamic Type behaves differently on Catalyst and conflicts with app preferences
+        return .system(size: baseSize, weight: weight, design: design)
+        #else
         // Map SwiftUI text style to UIFont text style
         let uiTextStyle: UIFont.TextStyle
         switch textStyle {
@@ -589,6 +594,7 @@ extension Font {
             let scaledFont = metrics.scaledFont(for: customBaseFont)
             return Font(scaledFont)
         }
+        #endif
     }
     
     /// Creates a custom system font that supports width variants and dynamic type scaling.

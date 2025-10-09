@@ -80,7 +80,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   let placeholder: String
   let onImagePasted: (UIImage) -> Void
   let onGenmojiDetected: ([String]) -> Void
-  let onTextChanged: (NSAttributedString) -> Void
+  let onTextChanged: (NSAttributedString, Int) -> Void
   let onLinkCreationRequested: (String, NSRange) -> Void
   var focusOnAppear: Bool = false
   // When this value changes, we explicitly request first responder again
@@ -97,8 +97,12 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   var onThreadAction: (() -> Void)?
   var onLinkAction: (() -> Void)?
   var allowTenor: Bool = false
-  
-  
+
+  // Optional callback to receive the created UITextView
+  // Used to wire up activeRichTextView reference in PostComposerViewModel
+  var onTextViewCreated: ((UITextView) -> Void)?
+
+
   func makeUIView(context: Context) -> UITextView {
     let textView = LinkEditableTextView()
     textView.delegate = context.coordinator
@@ -124,11 +128,23 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     ]
     
     // Set up custom keyboard accessory view with Liquid Glass toolbar
+    #if targetEnvironment(macCatalyst)
+    // On Mac Catalyst, anchor the toolbar at the bottom of the sheet/content instead of inputAccessoryView
+    DispatchQueue.main.async { [weak coord = context.coordinator, weak tv = textView] in
+      guard let coord, let tv else { return }
+      coord.installCatalystBottomToolbar(for: tv)
+    }
+    #else
     textView.inputAccessoryView = context.coordinator.createKeyboardAccessoryView()
+    #endif
     
     // Debug: Creation log removed to avoid noisy repeated logs during re-render cycles
     // Set focus request flag - the textView will handle this in didMoveToWindow
     textView.requestFocusOnAttach = focusOnAppear
+
+    // Notify the callback that the text view was created
+    onTextViewCreated?(textView)
+
     return textView
   }
   
@@ -188,6 +204,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // Clear the request so it only applies once
       DispatchQueue.main.async {
         self.pendingSelectionRange = nil
+
       }
     }
   }
@@ -199,7 +216,55 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   
   class Coordinator: NSObject, UITextViewDelegate, LinkCreationDelegate {
     let parent: EnhancedRichTextEditor
+  #if targetEnvironment(macCatalyst)
+  // Stored on coordinator to keep UIKit ownership semantics
+  private weak var catalystToolbarContainer: UIView?
+  #endif
+
     private var placeholderLabel: UILabel?
+  #if targetEnvironment(macCatalyst)
+  fileprivate func installCatalystBottomToolbar(for textView: UITextView) {
+    if catalystToolbarContainer != nil { return }
+    guard let accessory = makeCatalystAccessoryView() else { return }
+
+    // Prefer attaching to the window to avoid adding subviews to UIHostingController.view
+    guard let hostWindow = textView.window else { return }
+
+    accessory.translatesAutoresizingMaskIntoConstraints = false
+    let container = UIView()
+    container.translatesAutoresizingMaskIntoConstraints = false
+    container.backgroundColor = .clear
+    hostWindow.addSubview(container)
+    container.addSubview(accessory)
+
+    // Size using fitting height
+    let targetSize = accessory.systemLayoutSizeFitting(
+      CGSize(width: hostWindow.bounds.width, height: UIView.layoutFittingCompressedSize.height),
+      withHorizontalFittingPriority: .required,
+      verticalFittingPriority: .fittingSizeLevel
+    )
+    let heightConstraint = container.heightAnchor.constraint(equalToConstant: max(44, targetSize.height))
+    heightConstraint.priority = .required
+
+    NSLayoutConstraint.activate([
+      container.leadingAnchor.constraint(equalTo: hostWindow.safeAreaLayoutGuide.leadingAnchor),
+      container.trailingAnchor.constraint(equalTo: hostWindow.safeAreaLayoutGuide.trailingAnchor),
+      container.bottomAnchor.constraint(equalTo: hostWindow.safeAreaLayoutGuide.bottomAnchor),
+      heightConstraint,
+      accessory.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      accessory.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      accessory.topAnchor.constraint(equalTo: container.topAnchor),
+      accessory.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+    ])
+
+    catalystToolbarContainer = container
+  }
+
+  private func makeCatalystAccessoryView() -> UIView? {
+    createKeyboardAccessoryView()
+  }
+  #endif
+
     private var isSanitizing = false
     private let rtLogger = Logger(subsystem: "blue.catbird", category: "RichText.Legacy")
     var lastFocusID: UUID? = nil
@@ -231,6 +296,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
         CGSize(width: UIScreen.main.bounds.width, height: UIView.layoutFittingCompressedSize.height),
         withHorizontalFittingPriority: .required,
         verticalFittingPriority: .defaultLow
+    
       )
       
       hostingController.view.frame = CGRect(origin: .zero, size: targetSize)
@@ -261,14 +327,33 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       let counts = summarizeNS(textView.attributedText)
       rtLogger.debug("Legacy change: len=\(textView.text.count), runs=\(counts.runs), linkRuns=\(counts.linkRuns)")
 
+      // Get cursor position for both typing attributes reset and mention detection
+      let cursorPosition = textView.selectedRange.location
+      
+      // CRITICAL FIX: Reset typing attributes after sanitization to prevent link color inheritance
+      // Check if the cursor is at the end or after a character without a link
+      if cursorPosition > 0 && cursorPosition <= textView.attributedText.length {
+        let checkPosition = min(cursorPosition - 1, textView.attributedText.length - 1)
+        if checkPosition >= 0 {
+          let attrs = textView.attributedText.attributes(at: checkPosition, effectiveRange: nil)
+          // If there's no link at the cursor position, reset typing attributes to default
+          if attrs[.link] == nil {
+            textView.typingAttributes = [
+                .font: textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
+              .foregroundColor: UIColor.label
+            ]
+          }
+        }
+      }
+
       // Update attributed text binding (already sanitized)
       parent.attributedText = textView.attributedText
       
       // Update link facets based on text changes
       updateLinkFacetsForTextChange(in: textView)
       
-      // Call text changed callback
-      parent.onTextChanged(textView.attributedText)
+      // Call text changed callback with cursor position
+      parent.onTextChanged(textView.attributedText, cursorPosition)
       
       // Update placeholder visibility
       updatePlaceholder(parent.placeholder, in: textView)
@@ -455,8 +540,8 @@ struct KeyboardToolbarView: View {
 
   var body: some View {
     if #available(iOS 26.0, *) {
-      GlassEffectContainer(spacing: 8) {
-        HStack(spacing: 8) {
+      GlassEffectContainer(spacing: 6) {
+        HStack(spacing: 6) {
           // Left side: Individual media buttons
           HStack(spacing: 6) {
             Button(action: { onPhotos?() }) {
@@ -464,16 +549,20 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 18))
                 .frame(width: 36, height: 36)
             }
+            .padding(6)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
-
+            .catalystPlainButtons()
+              
             Button(action: { onVideo?() }) {
               Image(systemName: "video")
                 .font(.system(size: 18))
                 .frame(width: 36, height: 36)
             }
+            .padding(6)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
+            .catalystPlainButtons()
 
             if allowTenor {
               Button(action: { onGif?() }) {
@@ -485,8 +574,11 @@ struct KeyboardToolbarView: View {
                         .stroke(Color.accentColor, lineWidth: 1.0)
                   )
               }
+              .padding(6)
               .glassEffect(.regular.interactive())
               .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
+              .catalystPlainButtons()
+
             }
 
             Button(action: { onAudio?() }) {
@@ -494,14 +586,18 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 18))
                 .frame(width: 36, height: 36)
             }
+            .padding(6)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
+            .catalystPlainButtons()
+
           }
+          .padding(6)
 
           Spacer()
 
           // Right side: Settings menu, Thread, and Link
-          HStack(spacing: 6) {
+          HStack(spacing: 12) {
             Menu {
               Button(action: { onLabels?() }) {
                 Label("Labels", systemImage: "tag")
@@ -519,6 +615,7 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 18))
                 .frame(width: 36, height: 36)
             }
+            .padding(6)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
 
@@ -527,17 +624,25 @@ struct KeyboardToolbarView: View {
                 .font(.system(size: 18))
                 .frame(width: 36, height: 36)
             }
+            .padding(6)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
+            .catalystPlainButtons()
+
 
             Button(action: { onLink?() }) {
               Image(systemName: "link")
                 .font(.system(size: 18))
                 .frame(width: 36, height: 36)
             }
+            .padding(6)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
+            .catalystPlainButtons()
+
           }
+          .padding(6)
+
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -636,7 +741,7 @@ struct EnhancedRichTextEditor: View {
   let placeholder: String
   let onImagePasted: (NSImage) -> Void
   let onGenmojiDetected: ([String]) -> Void
-  let onTextChanged: (NSAttributedString) -> Void
+  let onTextChanged: (NSAttributedString, Int) -> Void
   let onLinkCreationRequested: (String, NSRange) -> Void
   
   var body: some View {
@@ -651,7 +756,7 @@ struct EnhancedRichTextEditor: View {
 
 private extension NSAttributedString {
   /// Returns a copy of the receiver where only essential attributes are preserved:
-  /// `.link`, `.font`, and `.foregroundColor`. All other attributes are stripped.
+  /// `.link`, `.font`, and `.foregroundColor` (only when a link is present). All other attributes are stripped.
   func ctb_keepOnlyLinkAttribute() -> NSAttributedString {
     let mutable = NSMutableAttributedString(attributedString: self)
     var location = 0
@@ -661,6 +766,7 @@ private extension NSAttributedString {
       var preservedAttrs: [NSAttributedString.Key: Any] = [:]
       
       // Preserve link attribute
+      let hasLink = attrs[.link] != nil
       if let link = attrs[.link] {
         preservedAttrs[.link] = link
       }
@@ -670,8 +776,9 @@ private extension NSAttributedString {
         preservedAttrs[.font] = font
       }
       
-      // Preserve text color attribute
-      if let color = attrs[.foregroundColor] {
+      // CRITICAL FIX: Only preserve text color when a link is present
+      // This prevents blue text from persisting after link deletion
+      if hasLink, let color = attrs[.foregroundColor] {
         preservedAttrs[.foregroundColor] = color
       }
       
@@ -691,3 +798,4 @@ private func summarizeNS(_ ns: NSAttributedString) -> (runs: Int, linkRuns: Int)
   }
   return (runs, linkRuns)
 }
+

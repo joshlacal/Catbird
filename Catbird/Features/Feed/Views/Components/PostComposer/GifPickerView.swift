@@ -354,7 +354,9 @@ struct GifPickerView: View {
     }
     
     private func loadMoreGifs() async {
-        guard let cursor = nextCursor, !isLoadingMore, let query = currentQuery else { return }
+        guard let cursor = nextCursor, !isLoadingMore, let query = currentQuery else { 
+            return 
+        }
         
         await MainActor.run {
             isLoadingMore = true

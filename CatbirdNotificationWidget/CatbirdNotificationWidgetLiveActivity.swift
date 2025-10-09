@@ -5,7 +5,8 @@
 //  Created by Josh LaCalamito on 4/30/25.
 //
 
-#if os(iOS)
+// Live Activities are only available on iOS, not Mac Catalyst
+#if os(iOS) && !targetEnvironment(macCatalyst)
 import ActivityKit
 import WidgetKit
 import SwiftUI

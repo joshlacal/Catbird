@@ -26,7 +26,9 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     
     var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
+    #if !targetEnvironment(macCatalyst)
     private var refreshControl: UIRefreshControl!
+    #endif
     
     /// State management
     var stateManager: FeedStateManager
@@ -276,16 +278,17 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             
             let viewModel = self.stateManager.viewModel(for: post)
             
-            // Configure cell with UIHostingConfiguration
+            // Configure cell with UIHostingConfiguration and inject required environment
+            let appState = self.stateManager.appState
             cell.contentConfiguration = UIHostingConfiguration {
-                AnyView(
-                    FeedPostRow(
-                        viewModel: viewModel,
-                        navigationPath: self.navigationPath
-                    )
-                    .padding(0)
-                    .background(Color.clear)
+                FeedPostRow(
+                    viewModel: viewModel,
+                    navigationPath: self.navigationPath
                 )
+                .environment(appState)
+                .environment(\.fontManager, appState.fontManager)
+                .padding(0)
+                .background(Color.clear)
             }
             .margins(.all, 0)
             
@@ -340,9 +343,12 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
     }
     
     private func setupRefreshControl() {
+        // UIRefreshControl is not supported on Mac Catalyst
+        #if !targetEnvironment(macCatalyst)
         refreshControl = UIRefreshControl()
         refreshControl.addTarget(self, action: #selector(handleRefresh), for: .valueChanged)
         collectionView.refreshControl = refreshControl
+        #endif
     }
     
     @objc private func handleRefresh() {
@@ -366,7 +372,9 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
 
         // Always end refreshing, even on error
         if isRefreshing {
+            #if !targetEnvironment(macCatalyst)
             refreshControl.endRefreshing()
+            #endif
             isRefreshing = false
         }
 

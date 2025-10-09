@@ -116,6 +116,7 @@ struct FeedCollectionViewWrapper: View {
             onScrollOffsetChanged: onScrollOffsetChanged,
             headerView: headerView
         )
+        .catalystPlainButtons()
     }
 }
 #else
@@ -192,6 +193,7 @@ struct FeedCollectionViewWrapper: View {
                 }
             }
         }
+        .catalystPlainButtons()
         .task {
             // Always try to load initial data if posts are empty
             if stateManager.posts.isEmpty {

@@ -63,8 +63,11 @@ struct ThreadViewMainPostView: View, Equatable {
                     //            )
                 } else {
                     Image(systemName: "person.circle.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: Self.avatarSize, height: Self.avatarSize)
                         .foregroundColor(.gray)
-                        .appFont(size: 60)
+                        .contentShape(Circle())
                 }
             }
             .onTapGesture {
@@ -163,32 +166,10 @@ struct ThreadViewMainPostView: View, Equatable {
                             //                  .padding(.trailing, 6)
                             //              }
                             if let embed = post.embed {
-                                // In the thread main post view, render quoted posts in full style
-                                switch embed {
-                                case .appBskyEmbedRecordView(let recordView):
-                                    RecordEmbedView(
-                                        record: recordView.record,
-                                        labels: post.labels,
-                                        path: $path,
-                                        useFullPostStyle: true
-                                    )
-                                    .padding(.vertical, 6)
-                                    .padding(.leading, 6)
-                                    .padding(.trailing, 6)
-                                case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-                                    // Still show as unified embed (media + record), but render record with full style
-                                    VStack(spacing: 8) {
-                                        PostEmbed(embed: .appBskyEmbedRecordWithMediaView(recordWithMedia), labels: post.labels, path: $path)
-                                    }
-                                    .padding(.vertical, 6)
-                                    .padding(.leading, 6)
-                                    .padding(.trailing, 6)
-                                default:
                                     PostEmbed(embed: embed, labels: post.labels, path: $path)
                                         .padding(.vertical, 6)
                                         .padding(.leading, 6)
                                         .padding(.trailing, 6)
-                                }
                             }
                             
                             Text(Self.dateTimeFormatter.string(from: feedPost.createdAt.date))

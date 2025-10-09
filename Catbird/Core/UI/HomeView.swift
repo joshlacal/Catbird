@@ -18,6 +18,7 @@ struct HomeView: View {
   // Local state
   @State private var showingSettings = false
   
+  @State private var showingQuickFilter = false
 
   // For logging
   let id = UUID().uuidString.prefix(6)
@@ -31,6 +32,10 @@ struct HomeView: View {
         .sheet(isPresented: $showingSettings) {
           SettingsView()
                 .environment(appState)
+        }
+        .sheet(isPresented: $showingQuickFilter) {
+          QuickFilterSheet()
+            .environment(appState)
         }
     }
       .onAppear {
@@ -60,7 +65,7 @@ struct HomeView: View {
         .ensureNavigationFonts()
         .toolbar {
           leadingToolbarContent
-          centerToolbarContent
+//          centerToolbarContent
           trailingToolbarContent
           #if targetEnvironment(macCatalyst)
           // Add a refresh button for Mac Catalyst and bind Cmd-R
@@ -107,7 +112,7 @@ struct HomeView: View {
   
   
   private var leadingToolbarContent: some ToolbarContent {
-    ToolbarItem(placement: .cancellationAction) {
+      ToolbarItem(placement: .topBarLeading) {
       Button(action: {
         isDrawerOpen = true
       }) {
@@ -120,10 +125,33 @@ struct HomeView: View {
     }
   }
   
-  private var centerToolbarContent: some ToolbarContent {
-    ToolbarItem(placement: .principal) {
-      EmptyView()
-    }
+//  private var centerToolbarContent: some ToolbarContent {
+//    Group {
+      // Filter button to the left of the trailing avatar
+//      ToolbarItem(placement: .primaryAction) {
+//        Button {
+//          showingQuickFilter = true
+//        } label: {
+//          Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+//            .foregroundStyle(hasActiveFilters ? Color.accentColor : Color.secondary)
+//        }
+//        .accessibilityLabel("Filter feed")
+//        .accessibilityHint("Opens quick filter options")
+//      }
+//    }
+//  }
+//
+    
+  private var hasActiveFilters: Bool {
+    let quickFilters = [
+      "Only Text Posts",
+      "Only Media Posts",
+      "Hide Reposts",
+      "Hide Replies",
+      "Hide Quote Posts",
+      "Hide Link Posts"
+    ]
+    return quickFilters.contains { appState.feedFilterSettings.isFilterEnabled(name: $0) }
   }
   
   private var trailingToolbarContent: some ToolbarContent {

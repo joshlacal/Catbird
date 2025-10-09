@@ -48,11 +48,14 @@ extension PostComposerViewModel {
         }
     }
     
-    func updateFromAttributedText(_ nsAttributedText: NSAttributedString) {
+    func updateFromAttributedText(_ nsAttributedText: NSAttributedString, cursorPosition: Int = 0) {
         let counts = summarizeNS(nsAttributedText)
-        logger.debug("RT: updateFromAttributedText len=\(nsAttributedText.string.count) runs=\(counts.runs) linkRuns=\(counts.linkRuns)")
+        logger.debug("RT: updateFromAttributedText len=\(nsAttributedText.string.count) runs=\(counts.runs) linkRuns=\(counts.linkRuns) cursor=\(cursorPosition)")
         // Extract plain text from attributed text
         let newText = nsAttributedText.string
+        
+        // Store cursor position for mention detection
+        self.cursorPosition = cursorPosition
         
         // Only update if text actually changed to avoid infinite loops
         if newText != postText && !isUpdatingText {
@@ -226,31 +229,74 @@ extension PostComposerViewModel {
     
     private func handleDetectedURLsOptimized(_ urls: [String]) {
         logger.debug("RT: handleDetectedURLsOptimized count=\(urls.count)")
-        
+
+        // Track which URLs were removed (for manual deletion detection)
+        let previousURLs = Set(detectedURLs)
+        let currentURLs = Set(urls)
+        let removedURLs = previousURLs.subtracting(currentURLs).subtracting(urlsKeptForEmbed)
+
         // Update detected URLs immediately
         detectedURLs = urls
-        
-        // Remove cards for URLs no longer in text
+
+        // CRITICAL FIX: Clear manual link facets for URLs that were manually deleted
+        // This prevents orphaned facets when users delete URLs from text
+        if !removedURLs.isEmpty {
+            manualLinkFacets.removeAll { facet in
+                facet.features.contains { feature in
+                    if case .appBskyRichtextFacetLink(let link) = feature {
+                        return removedURLs.contains(link.uri.uriString())
+                    }
+                    return false
+                }
+            }
+            logger.debug("RT: Cleared manual link facets for \(removedURLs.count) manually deleted URLs")
+
+            // Reset typing attributes to prevent blue text inheritance
+            resetTypingAttributes()
+        }
+
+        // Set the first URL as the selected embed URL if none is set and we have URLs
+        if selectedEmbedURL == nil && !urls.isEmpty {
+            selectedEmbedURL = urls.first
+            logger.debug("RT: Set first URL as selected embed: \(urls.first ?? "none")")
+        }
+
+        // If the selected embed URL is no longer in the detected URLs,
+        // only clear it if it's not in the kept-for-embed set
+        if let selectedURL = selectedEmbedURL, !urls.contains(selectedURL) {
+            if !urlsKeptForEmbed.contains(selectedURL) {
+                // URL was manually deleted - keep it for embed automatically
+                // This makes cards "sticky" - they persist unless explicitly removed via X button
+                urlsKeptForEmbed.insert(selectedURL)
+                logger.debug("RT: Automatically kept selected embed URL after manual text deletion: \(selectedURL)")
+            } else {
+                logger.debug("RT: Kept selected embed URL even though it's not in text (user removed text but kept card)")
+            }
+        }
+
+        // STICKY CARDS FIX: Keep ALL existing cards regardless of text state
+        // Cards are only removed when user explicitly clicks the X button (via removeURLCard)
+        // This prevents cards from disappearing when users edit text around the URL
+        // The filter is now a no-op since we keep all cards, but we'll keep it for clarity
         let urlsSet = Set(urls)
-        urlCards = urlCards.filter { urlsSet.contains($0.key) }
-        
-        // Use performance optimizer for debounced URL card loading
-        if let optimizer = performanceOptimizer {
-            let newUrls = urls.filter { urlCards[$0] == nil }
-            if !newUrls.isEmpty {
-                optimizer.debounceURLDetection(urls: newUrls) { urlsToProcess in
+        // Note: We keep ALL cards now - urlCards.filter would remove them, so we skip filtering
+        // Cards are only removed explicitly via removeURLCard() method
+        logger.debug("RT: Maintaining \(self.urlCards.count) existing URL cards (sticky behavior)")
+
+        // Only load card for the first detected URL (which will be the embed)
+        // This prevents multiple cards from being loaded and displayed
+        if let firstURL = urls.first, urlCards[firstURL] == nil {
+            // Use performance optimizer for debounced URL card loading
+            if let optimizer = performanceOptimizer {
+                optimizer.debounceURLDetection(urls: [firstURL]) { urlsToProcess in
                     Task {
                         await self.loadURLCardsOptimized(urlsToProcess)
                     }
                 }
-            }
-        } else {
-            // Fallback to original behavior
-            for url in urls {
-                if urlCards[url] == nil {
-                    Task {
-                        await loadURLCard(for: url)
-                    }
+            } else {
+                // Fallback to original behavior
+                Task {
+                    await loadURLCard(for: firstURL)
                 }
             }
         }
@@ -283,7 +329,7 @@ extension PostComposerViewModel {
     }
     
     @MainActor
-    private func loadURLCard(for urlString: String) async {
+    func loadURLCard(for urlString: String) async {
         guard let url = URL(string: urlString),
               let client = appState.atProtoClient else { return }
         
@@ -315,16 +361,33 @@ extension PostComposerViewModel {
     }
     
     private func getCurrentTypingMention() -> String? {
-        // Find the last @ symbol and check if it's part of an incomplete mention
-        guard let lastAtIndex = postText.lastIndex(of: "@") else { return nil }
+        // Use cursor position to detect mention at current typing location
+        guard cursorPosition <= postText.count else { return nil }
         
-        let mentionStartIndex = postText.index(after: lastAtIndex)
-        let mentionText = String(postText[mentionStartIndex...])
+        let textUpToCursor = String(postText.prefix(cursorPosition))
         
-        // Check if the mention is still being typed (no spaces)
-        if mentionText.contains(" ") || mentionText.contains("\n") {
-            return nil
+        // Find the last @ symbol before the cursor
+        guard let lastAtIndex = textUpToCursor.lastIndex(of: "@") else { return nil }
+        
+        let atPosition = textUpToCursor.distance(from: textUpToCursor.startIndex, to: lastAtIndex)
+        
+        // Check if @ is at the beginning or preceded by whitespace
+        let isValidMentionStart: Bool
+        if atPosition == 0 {
+            isValidMentionStart = true
+        } else {
+            let characterBeforeAt = textUpToCursor[textUpToCursor.index(textUpToCursor.startIndex, offsetBy: atPosition - 1)]
+            isValidMentionStart = characterBeforeAt.isWhitespace
         }
+        
+        guard isValidMentionStart else { return nil }
+        
+        // Extract text after @ up to cursor
+        let mentionStart = textUpToCursor.index(after: lastAtIndex)
+        let mentionText = String(textUpToCursor[mentionStart...])
+        
+        // Check if mention text contains whitespace (which would invalidate the mention)
+        guard !mentionText.contains(where: { $0.isWhitespace }) else { return nil }
         
         return mentionText
     }

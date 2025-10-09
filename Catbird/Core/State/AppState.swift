@@ -183,6 +183,9 @@ final class AppState {
   /// Composer draft manager for handling minimized post composer drafts
   let composerDraftManager = ComposerDraftManager()
   
+  /// Toast manager for displaying temporary notifications
+  @ObservationIgnored let toastManager = ToastManager()
+  
   /// List manager for handling list operations
   @ObservationIgnored var listManager: ListManager
   

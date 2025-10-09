@@ -58,8 +58,9 @@ struct RichTextEditor: UIViewRepresentable {
         
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        
-        textView.dataDetectorTypes = .all
+
+        // CRITICAL FIX: Disable automatic data detectors (consistent with RichTextView setup)
+        textView.dataDetectorTypes = []
         textView.onImagePasted = onImagePasted
         textView.onGenmojiDetected = onGenmojiDetected
         
@@ -129,11 +130,14 @@ class RichTextView: UITextView {
         allowsEditingTextAttributes = true
         isEditable = true
         isSelectable = true
-        
+
         textContainer.lineFragmentPadding = 0
         textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        
-        dataDetectorTypes = .all
+
+        // CRITICAL FIX: Disable automatic data detectors to prevent interference
+        // with manual facet management. URL detection is handled by PostParser
+        // which provides more reliable and consistent detection.
+        dataDetectorTypes = []
     }
     
     override func paste(_ sender: Any?) {

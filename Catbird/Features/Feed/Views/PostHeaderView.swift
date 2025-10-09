@@ -19,9 +19,9 @@ struct PostHeaderView: View {
     private let handleCharacterLimit: Int = 15
     
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .top) {
             // Main Content
-            HStack(spacing: spacing) {
+            HStack(alignment: .top, spacing: spacing) {
                 // DisplayName with potential truncation
                 if displayName != "" {
                     Text(displayName)
@@ -40,16 +40,22 @@ struct PostHeaderView: View {
             }
             .layoutPriority(1) // Gives priority to this HStack
                                // Separator and Time
-            HStack(spacing: spacing) {
+            HStack(alignment: .top, spacing: spacing) {
                 Text("·")
                     .foregroundStyle(.gray)
                     .accessibilityHidden(true)
-                
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+
                 Text(formatTimeAgo(from: timeAgo))
                     .appBody()
                     .foregroundStyle(.gray)
                     .accessibilityLabel(formatTimeAgo(from: timeAgo, forAccessibility: true))
-                
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+
             }
             .layoutPriority(1)
             

@@ -38,12 +38,9 @@ import OSLog
         }
 
         // Apply additional scaling for Mac Catalyst
-        #if os(iOS)
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            // Mac Catalyst needs larger base scaling due to display differences
-            let catalystScale = baseScale * 1.2
-            return catalystScale
-        }
+        #if targetEnvironment(macCatalyst)
+        let catalystScale = baseScale * 1.2
+        return catalystScale
         #endif
 
         return baseScale

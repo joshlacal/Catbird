@@ -376,10 +376,8 @@ private struct TypographyPreviewView: View {
         }
 
         // Apply additional scaling for Mac Catalyst to match FontManager behavior
-        #if os(iOS)
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            return baseScale * 1.2
-        }
+        #if targetEnvironment(macCatalyst)
+        return baseScale * 1.2
         #endif
 
         return baseScale

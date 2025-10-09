@@ -13,6 +13,37 @@ This guide gives prescriptive, production-focused instructions for agents workin
 - Test (CLI): `xcodebuild -project Catbird.xcodeproj -scheme Catbird -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=latest' test`.
 - Fast diagnostics: `./quick-error-check.sh` (analyze), `./swift-check.sh all` (parse + dry-run + lint), `swiftlint`.
 
+## Headless Task Automation (Copilot CLI)
+Run multiple tasks in parallel or sequence without manual interaction using GitHub Copilot CLI:
+
+### Quick Start
+```bash
+# Single task
+./copilot-runner.sh single "syntax" "Check Swift files" "--allow-tool 'shell(swift)'"
+
+# Parallel tasks (runs simultaneously)
+./copilot-runner.sh parallel \
+  "build-ios|Build iOS|--allow-all-tools" \
+  "build-macos|Build macOS|--allow-all-tools"
+
+# Sequential tasks (runs in order)
+./copilot-runner.py from-file copilot-tasks.example.json --workflow ci-pipeline
+```
+
+### Features
+- **Parallel execution**: Run independent tasks simultaneously
+- **Sequential execution**: Chain dependent operations
+- **Headless operation**: Auto-approval with security controls
+- **Task definitions**: Reusable JSON/YAML configurations
+- **Result logging**: All outputs saved to `copilot-results/`
+
+### Available Tools
+- `copilot-runner.sh` - Bash version (simple, portable)
+- `copilot-runner.py` - Python version (advanced, JSON/YAML support)
+- `copilot-tasks.example.json` - Example task definitions
+
+See `COPILOT_RUNNER_README.md` for full documentation.
+
 ## Code Style & Architecture
 - Swift API Design Guidelines; 2-space indent; `// MARK:` sectioning.
 - Concurrency first: async/await throughout; use Actors for shared mutable state.

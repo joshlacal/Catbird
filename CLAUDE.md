@@ -64,6 +64,159 @@ Apple introduced a major change to OS naming at WWDC 2025, moving from sequentia
 - **Full typecheck with macOS SDK**: `swiftc -typecheck -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk -target arm64-apple-macos13.0 [filename]`
 - **Linting**: SwiftLint configuration in `.swiftlint.yml`
 
+### Headless Task Automation (Copilot CLI)
+
+Run multiple development tasks in parallel or sequence without manual interaction using the GitHub Copilot CLI task runners.
+
+#### Quick Start Examples
+
+**Single Task Execution:**
+```bash
+# Syntax check with specific approval
+./copilot-runner.sh single "syntax-check" \
+  "Check all Swift files for syntax errors" \
+  "--allow-tool 'shell(swift)'"
+```
+
+**Parallel Task Execution (runs simultaneously):**
+```bash
+# Build for both platforms at once
+./copilot-runner.sh parallel \
+  "build-ios|Build for iOS simulator|--allow-all-tools" \
+  "build-macos|Build for macOS|--allow-all-tools" \
+  "lint|Run SwiftLint|--allow-tool 'shell(swiftlint)'"
+```
+
+**Sequential Task Execution (runs in order):**
+```bash
+# CI/CD pipeline - stop on failure
+./copilot-runner.py from-file copilot-tasks.example.json \
+  --workflow ci-pipeline \
+  --sequential \
+  --stop-on-failure
+```
+
+**Workflow Execution from Config:**
+```bash
+# Pre-commit checks
+./copilot-runner.py from-file copilot-tasks.example.json \
+  --workflow pre-commit
+
+# Full multi-platform build
+./copilot-runner.py from-file copilot-tasks.example.json \
+  --workflow full-build
+```
+
+#### Available Tools
+
+- **`copilot-runner.sh`** - Bash version (simple, portable, no dependencies)
+- **`copilot-runner.py`** - Python version (advanced features, JSON/YAML support)
+- **`copilot-tasks.example.json`** - Example task definitions with workflows
+
+#### Key Features
+
+- **Parallel execution**: Run independent tasks simultaneously for faster completion
+- **Sequential execution**: Chain dependent operations in order
+- **Headless operation**: Auto-approval with configurable security controls
+- **Task definitions**: Reusable JSON/YAML task configurations
+- **Result logging**: All outputs saved to `copilot-results/` with timestamps
+- **Workflow support**: Pre-defined task sequences (pre-commit, ci-pipeline, full-build)
+- **Security controls**: Granular approval flags for safe automation
+
+#### Security & Approval Flags
+
+Control what Copilot can do without manual approval:
+
+```bash
+# Safe: Only allow specific commands
+--allow-tool 'shell(swift)'        # Allow Swift compiler only
+--allow-tool 'shell(git status)'   # Allow read-only git
+--deny-tool 'shell(rm)'            # Block dangerous commands
+
+# Moderate: Allow builds but deny destructive operations
+--allow-tool 'shell(xcodebuild)' --deny-tool 'shell(rm)' --deny-tool 'write'
+
+# Full automation (⚠️ use in containers/VMs only)
+--allow-all-tools
+```
+
+#### Common Development Workflows
+
+**Pre-commit Validation:**
+```bash
+./copilot-runner.py from-file copilot-tasks.example.json \
+  --tasks swift-syntax-check swiftlint git-status \
+  --sequential
+```
+
+**Multi-platform CI Build:**
+```bash
+./copilot-runner.py from-file copilot-tasks.example.json \
+  --workflow ci-pipeline \
+  --stop-on-failure \
+  --results-dir ./ci-results
+```
+
+**Parallel Quality Checks:**
+```bash
+./copilot-runner.sh parallel \
+  "swiftlint|Run SwiftLint|--allow-tool 'shell(swiftlint)'" \
+  "todos|Check for TODOs|--allow-tool 'shell(rg)'" \
+  "prints|Find print statements|--allow-tool 'shell(rg)'"
+```
+
+#### Integration Examples
+
+**Makefile Integration:**
+```makefile
+.PHONY: copilot-check
+copilot-check:
+	./copilot-runner.py from-file copilot-tasks.json --workflow pre-commit
+
+.PHONY: copilot-build-all
+copilot-build-all:
+	./copilot-runner.py from-file copilot-tasks.json --workflow full-build
+```
+
+**Git Pre-commit Hook:**
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit
+./copilot-runner.sh sequential \
+  "syntax|Check Swift syntax|--allow-tool 'shell(swift)'" \
+  "lint|Run SwiftLint|--allow-tool 'shell(swiftlint)'" \
+  || exit 1
+```
+
+**GitHub Actions:**
+```yaml
+- name: Run Copilot CI Tasks
+  run: |
+    ./copilot-runner.py from-file copilot-tasks.json \
+      --workflow ci-pipeline \
+      --sequential \
+      --stop-on-failure
+```
+
+#### Output & Results
+
+All task execution generates timestamped log files:
+- `copilot-results/run_TIMESTAMP.log` - Main execution log
+- `copilot-results/task_TASKNAME_TIMESTAMP.log` - Individual task logs
+
+Exit codes:
+- `0` - All tasks succeeded
+- `1` - One or more tasks failed
+
+#### Full Documentation
+
+See **`COPILOT_RUNNER_README.md`** for:
+- Complete task definition format (JSON/YAML)
+- Advanced features and options
+- Security best practices
+- Troubleshooting guide
+- More integration examples
+
 ## Architecture
 
 ### State Management

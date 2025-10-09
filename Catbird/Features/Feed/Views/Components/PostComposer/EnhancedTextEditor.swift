@@ -672,8 +672,87 @@ struct ModernTextEditor: View {
                 out[range].backgroundColor = Color.secondary.opacity(0.1)
             }
         }
+        // Ensure links never include whitespace characters
+        removeLinkFromWhitespace(&out)
+        // Ensure that auto-detected http(s) links don't extend past detected ranges
+        restrictHTTPLinksToDetectedRanges(&out)
         return out
     }
+
+    // Remove .link and its styling from any whitespace characters
+    private func removeLinkFromWhitespace(_ s: inout AttributedString) {
+        var runRanges: [Range<AttributedString.Index>] = []
+        for run in s.runs { runRanges.append(run.range) }
+        for range in runRanges {
+            if s[range].link == nil { continue }
+            var idx = range.lowerBound
+            while idx < range.upperBound {
+                let next = s.index(afterCharacter: idx)
+                let ch = String(s[idx..<next].characters)
+                if ch.rangeOfCharacter(from: .whitespacesAndNewlines) != nil {
+                    var sub = s[idx..<next]
+                    sub.link = nil
+                    sub.foregroundColor = nil
+                    sub.underlineStyle = nil
+                    sub.backgroundColor = nil
+                    s.replaceSubrange(idx..<next, with: sub)
+                }
+                idx = next
+            }
+        }
+    }
+
+    // Ensure that auto-detected http(s) links don't extend past whitespace unless created explicitly
+    private func restrictHTTPLinksToDetectedRanges(_ s: inout AttributedString) {
+        // Convert to NSString for range math
+        let plain = String(s.characters) as NSString
+        // Build a set of ranges that were linkified by our detectors (strict URL regex)
+        var allowedNSRanges: [NSRange] = []
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            let all = NSRange(location: 0, length: plain.length)
+            detector.enumerateMatches(in: plain as String, options: [], range: all) { m, _, _ in
+                guard let m = m, let url = m.url else { return }
+                if let scheme = url.scheme, scheme.lowercased().hasPrefix("http") {
+                    allowedNSRanges.append(m.range)
+                }
+            }
+        }
+        // Also include our bare-domain regex matches
+        let pattern = "(?i)\\b(?:(?:[a-z0-9-]+\\.)+[a-z]{2,})(?:/[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]*)?"
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let all = NSRange(location: 0, length: plain.length)
+            regex.enumerateMatches(in: plain as String, options: [], range: all) { m, _, _ in
+                guard let m = m else { return }
+                allowedNSRanges.append(m.range)
+            }
+        }
+
+        // Walk through current link runs; if linked range extends beyond any allowed range into whitespace, trim link attributes there
+        var runRanges: [Range<AttributedString.Index>] = []
+        for run in s.runs { runRanges.append(run.range) }
+        for range in runRanges where s[range].link != nil {
+            // Iterate characters and clear link on characters not within any allowed range or that are whitespace
+            var idx = range.lowerBound
+            var offset = s.characters.distance(from: s.startIndex, to: idx)
+            while idx < range.upperBound {
+                let next = s.index(afterCharacter: idx)
+                let ch = String(s[idx..<next].characters)
+                let inAllowed = allowedNSRanges.contains { NSLocationInRange(offset, $0) }
+                let isWS = ch.rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+                if isWS || !inAllowed {
+                    var sub = s[idx..<next]
+                    sub.link = nil
+                    sub.foregroundColor = nil
+                    sub.underlineStyle = nil
+                    sub.backgroundColor = nil
+                    s.replaceSubrange(idx..<next, with: sub)
+                }
+                offset += 1
+                idx = next
+            }
+        }
+    }
+
 
     private func summarizeNS(_ ns: NSAttributedString) -> (runs: Int, linkRuns: Int) {
         var runs = 0

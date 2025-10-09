@@ -889,16 +889,19 @@ struct PostComposerView: View {
     
     private var urlCardsSection: some View {
         Group {
-            ForEach(viewModel.detectedURLs, id: \.self) { url in
-                if let card = viewModel.urlCards[url] {
-                    ComposeURLCardView(
-                        card: card,
-                        onRemove: {
-                            viewModel.removeURLCard(for: url)
-                        }, willBeUsedAsEmbed: viewModel.willBeUsedAsEmbed(for: url)
-                    )
-                    .padding(.vertical, 4)
-                }
+            // Only show the card for the selected embed URL (first URL detected)
+            if let embedURL = viewModel.selectedEmbedURL, let card = viewModel.urlCards[embedURL] {
+                ComposeURLCardView(
+                    card: card,
+                    onRemove: {
+                        viewModel.removeURLCard(for: embedURL)
+                    },
+                    willBeUsedAsEmbed: viewModel.willBeUsedAsEmbed(for: embedURL),
+                    onRemoveURLFromText: {
+                        viewModel.removeURLFromText(for: embedURL)
+                    }
+                )
+                .padding(.vertical, 4)
             }
             
             if viewModel.isLoadingURLCard {

@@ -164,7 +164,7 @@ final class CachedFeedViewPost: Identifiable {
         // Create a FeedViewPost from the slice data
         let feedViewPost = AppBskyFeedDefs.FeedViewPost(
             post: mainItem.post,
-            reply: Self.createReplyRefFromSlice(slice),
+            reply: slice.originalReply ?? Self.createReplyRefFromSlice(slice),
             reason: slice.reason,
             feedContext: slice.feedContext,
             reqId: nil

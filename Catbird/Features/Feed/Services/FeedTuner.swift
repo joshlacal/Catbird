@@ -14,6 +14,11 @@ struct FeedTunerSettings {
     let mutedUsers: Set<String>
     let blockedUsers: Set<String>
     
+    // Quick filter settings from QuickFilterSheet
+    let hideLinks: Bool
+    let onlyTextPosts: Bool
+    let onlyMediaPosts: Bool
+    
     static let `default` = FeedTunerSettings(
         hideReplies: false,
         hideRepliesByUnfollowed: false,
@@ -22,7 +27,10 @@ struct FeedTunerSettings {
         hideNonPreferredLanguages: false,
         preferredLanguages: [],
         mutedUsers: [],
-        blockedUsers: []
+        blockedUsers: [],
+        hideLinks: false,
+        onlyTextPosts: false,
+        onlyMediaPosts: false
     )
 }
 
@@ -39,6 +47,7 @@ struct FeedSlice: Identifiable, Sendable {
   let feedPostUri: String
   let reason: AppBskyFeedDefs.FeedViewPostReasonUnion?
   let feedContext: String?
+  let originalReply: AppBskyFeedDefs.ReplyRef?  // Preserve original reply context for reposts
   
   init(
     items: [FeedSliceItem],
@@ -48,7 +57,8 @@ struct FeedSlice: Identifiable, Sendable {
     rootUri: String,
     feedPostUri: String,
     reason: AppBskyFeedDefs.FeedViewPostReasonUnion? = nil,
-    feedContext: String? = nil
+    feedContext: String? = nil,
+    originalReply: AppBskyFeedDefs.ReplyRef? = nil
   ) {
     self.id = feedPostUri
     self.items = items
@@ -59,6 +69,7 @@ struct FeedSlice: Identifiable, Sendable {
     self.feedPostUri = feedPostUri
     self.reason = reason
     self.feedContext = feedContext
+    self.originalReply = originalReply
   }
   
   // React Native: slice.isReply, slice.isRepost, etc.
@@ -147,7 +158,10 @@ final class FeedTuner {
     for (rootUri, postsInGroup) in rootGroups {
       // Create only ONE slice per thread group to prevent duplicates
       if let threadSlice = createThreadSlice(from: postsInGroup, rootUri: rootUri) {
-        allSlices.append(threadSlice)
+        // Apply slice-level filtering to handle individual items within threads
+        if let filteredSlice = filterSliceItems(threadSlice, settings: filterSettings) {
+          allSlices.append(filteredSlice)
+        }
       }
     }
     
@@ -157,6 +171,119 @@ final class FeedTuner {
     logger.debug("🧵 FeedTuner completed: \(rawPosts.count) posts → \(filteredPosts.count) filtered → \(dedupedSlices.count) slices (fixed duplicates & order)")
     
     return dedupedSlices
+  }
+  
+  // MARK: - Slice Item Filtering
+  
+  /// Filter individual items within a slice based on quick filter settings
+  /// Returns nil if all items are filtered out, otherwise returns a new slice with filtered items
+  private func filterSliceItems(_ slice: FeedSlice, settings: FeedTunerSettings) -> FeedSlice? {
+    // If no quick filters are active, return original slice
+    if !settings.hideLinks && !settings.onlyTextPosts && !settings.onlyMediaPosts {
+      return slice
+    }
+    
+    var filteredItems: [FeedSliceItem] = []
+    
+    for item in slice.items {
+      var shouldInclude = true
+      
+      // Check for links
+      if settings.hideLinks {
+        var hasLink = false
+        
+        // Check embed for external links
+        if let embed = item.post.embed {
+          switch embed {
+          case .appBskyEmbedExternalView:
+            hasLink = true
+          case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+            if case .appBskyEmbedExternalView = recordWithMedia.media {
+              hasLink = true
+            }
+          default:
+            break
+          }
+        }
+        
+        // Check facets for links
+        if !hasLink, let facets = item.record.facets {
+          for facet in facets {
+            for feature in facet.features {
+              if case .appBskyRichtextFacetLink = feature {
+                hasLink = true
+                break
+              }
+            }
+            if hasLink { break }
+          }
+        }
+        
+        if hasLink {
+          shouldInclude = false
+        }
+      }
+      
+      // Check for text-only posts
+      if settings.onlyTextPosts && shouldInclude {
+        if item.post.embed != nil {
+          shouldInclude = false
+        }
+      }
+      
+      // Check for media posts
+      if settings.onlyMediaPosts && shouldInclude {
+        var hasMedia = false
+        
+        if let embed = item.post.embed {
+          switch embed {
+          case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+            hasMedia = true
+          case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+            switch recordWithMedia.media {
+            case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+              hasMedia = true
+            default:
+              break
+            }
+          default:
+            break
+          }
+        }
+        
+        if !hasMedia {
+          shouldInclude = false
+        }
+      }
+      
+      if shouldInclude {
+        filteredItems.append(item)
+      }
+    }
+    
+    // If all items were filtered out, return nil to remove the entire slice
+    guard !filteredItems.isEmpty else {
+      logger.debug("Filtered out entire slice (all items removed): \(slice.id)")
+      return nil
+    }
+    
+    // If some items were filtered, create a new slice with remaining items
+    if filteredItems.count != slice.items.count {
+      logger.debug("Filtered slice from \(slice.items.count) to \(filteredItems.count) items")
+      return FeedSlice(
+        items: filteredItems,
+        isIncompleteThread: slice.isIncompleteThread || filteredItems.count < slice.items.count,
+        isFallbackMarker: slice.isFallbackMarker,
+        isOrphan: slice.isOrphan,
+        rootUri: slice.rootUri,
+        feedPostUri: slice.feedPostUri,
+        reason: slice.reason,
+        feedContext: slice.feedContext,
+        originalReply: slice.originalReply
+      )
+    }
+    
+    return slice
   }
   
   // MARK: - Thread Slice Creation
@@ -234,7 +361,8 @@ final class FeedTuner {
         rootUri: rootUri,
         feedPostUri: feedPostUri,
         reason: feedPost.reason,
-        feedContext: feedPost.feedContext
+        feedContext: feedPost.feedContext,
+        originalReply: feedPost.reply  // Preserve reply context for reposts
       )
     }
     
@@ -553,6 +681,145 @@ final class FeedTuner {
         
         if !isFollowing {
           logger.debug("Filtering out reply from unfollowed user: \(post.post.author.handle)")
+          continue
+        }
+      }
+      
+      // Quick filter: Hide Link Posts
+      if settings.hideLinks {
+        var hasLink = false
+        
+        // Helper function to check if a PostView has links
+        let checkPostForLinks: (AppBskyFeedDefs.PostView) -> Bool = { postView in
+          var foundLink = false
+          
+          // Check embed for external links
+          if let embed = postView.embed {
+            switch embed {
+            case .appBskyEmbedExternalView:
+              foundLink = true
+            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+              if case .appBskyEmbedExternalView = recordWithMedia.media {
+                foundLink = true
+              }
+            default:
+              break
+            }
+          }
+          
+          // Also check post record for link facets
+          if !foundLink {
+            if case .knownType(let record) = postView.record,
+               let feedPost = record as? AppBskyFeedPost,
+               let facets = feedPost.facets {
+              for facet in facets {
+                for feature in facet.features {
+                  if case .appBskyRichtextFacetLink = feature {
+                    foundLink = true
+                    break
+                  }
+                }
+                if foundLink { break }
+              }
+            }
+          }
+          
+          return foundLink
+        }
+        
+        // Check main post
+        hasLink = checkPostForLinks(post.post)
+        
+        // Also check parent and root posts if they exist (for thread filtering)
+        if !hasLink, let reply = post.reply {
+          if case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
+            hasLink = checkPostForLinks(parentPost)
+          }
+          
+          if !hasLink, case .appBskyFeedDefsPostView(let rootPost) = reply.root {
+            hasLink = checkPostForLinks(rootPost)
+          }
+        }
+        
+        if hasLink {
+          logger.debug("Filtering out link post or thread with links: \(post.post.uri.uriString())")
+          continue
+        }
+      }
+      
+      // Quick filter: Only Text Posts (no embeds at all)
+      if settings.onlyTextPosts {
+        var hasEmbed = false
+        
+        // Check main post
+        if post.post.embed != nil {
+          hasEmbed = true
+        }
+        
+        // Also check parent and root posts
+        if !hasEmbed, let reply = post.reply {
+          if case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
+            if parentPost.embed != nil {
+              hasEmbed = true
+            }
+          }
+          
+          if !hasEmbed, case .appBskyFeedDefsPostView(let rootPost) = reply.root {
+            if rootPost.embed != nil {
+              hasEmbed = true
+            }
+          }
+        }
+        
+        if hasEmbed {
+          logger.debug("Filtering out non-text post or thread: \(post.post.uri.uriString())")
+          continue
+        }
+      }
+      
+      // Quick filter: Only Media Posts (must have images or videos)
+      if settings.onlyMediaPosts {
+        var hasMedia = false
+        
+        // Helper function to check if a PostView has media
+        let checkPostForMedia: (AppBskyFeedDefs.PostView) -> Bool = { postView in
+          var foundMedia = false
+          
+          if let embed = postView.embed {
+            switch embed {
+            case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+              foundMedia = true
+            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+              switch recordWithMedia.media {
+              case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+                foundMedia = true
+              default:
+                break
+              }
+            default:
+              break
+            }
+          }
+          
+          return foundMedia
+        }
+        
+        // Check main post
+        hasMedia = checkPostForMedia(post.post)
+        
+        // For "Only Media", we want to show threads if ANY post has media
+        if !hasMedia, let reply = post.reply {
+          if case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
+            hasMedia = checkPostForMedia(parentPost)
+          }
+          
+          if !hasMedia, case .appBskyFeedDefsPostView(let rootPost) = reply.root {
+            hasMedia = checkPostForMedia(rootPost)
+          }
+        }
+        
+        if !hasMedia {
+          logger.debug("Filtering out non-media post or thread: \(post.post.uri.uriString())")
           continue
         }
       }

@@ -29,6 +29,9 @@ struct LoginView: View {
     @State private var timeoutCountdown: Int = 60
     @State private var showTimeoutCountdown = false
     
+    // Track if we've already started re-authentication to prevent multiple OAuth prompts
+    @State private var hasStartedReAuthentication = false
+    
     enum LoginProgress {
         case idle
         case startingAuth
@@ -359,9 +362,12 @@ struct LoginView: View {
             // Check biometric authentication availability
             biometricAuthAvailable = (appState.authManager.biometricType != .none)
 
-            // If there's an expired account, automatically start re-authentication
-            if let expiredAccount = appState.authManager.expiredAccountInfo {
+            // If there's an expired account, automatically start re-authentication (only once and not if already authenticating)
+            if let expiredAccount = appState.authManager.expiredAccountInfo,
+               !hasStartedReAuthentication,
+               !isLoggingIn {
                 logger.info("Expired account detected, automatically starting re-authentication")
+                hasStartedReAuthentication = true
                 await startReAuthenticationForExpiredAccount(expiredAccount)
             }
         }
@@ -1028,6 +1034,7 @@ struct LoginView: View {
                     error = "Failed to get authentication URL for expired account"
                     isLoggingIn = false
                     showTimeoutCountdown = false
+                    hasStartedReAuthentication = false
                     return
                 }
 
@@ -1079,6 +1086,7 @@ struct LoginView: View {
                     isLoggingIn = false
                     loginProgress = .idle
                     showTimeoutCountdown = false
+                    hasStartedReAuthentication = false
                     // Reset auth state to prevent getting stuck
                     appState.authManager.resetError()
                 } catch {
@@ -1088,6 +1096,7 @@ struct LoginView: View {
                     isLoggingIn = false
                     loginProgress = .idle
                     showTimeoutCountdown = false
+                    hasStartedReAuthentication = false
                 }
 
             } catch {
@@ -1108,6 +1117,7 @@ struct LoginView: View {
                 isLoggingIn = false
                 loginProgress = .idle
                 showTimeoutCountdown = false
+                hasStartedReAuthentication = false
             }
 
             // Clean up the task reference

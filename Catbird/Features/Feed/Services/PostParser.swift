@@ -85,9 +85,21 @@ struct PostParser {
         let mentionStart = currentIndex
         currentIndex = content.index(after: currentIndex)
 
-        while currentIndex < content.endIndex
-          && (content[currentIndex].isLetter || content[currentIndex].isNumber
-            || content[currentIndex] == ".") {
+        // Parse mention handle - only consume valid handle characters
+        // Handles can contain letters, numbers, dots, and hyphens
+        // BUT must be terminated by whitespace, punctuation, or end of string
+        while currentIndex < content.endIndex {
+          let char = content[currentIndex]
+          
+          // Valid handle characters: alphanumeric, dot, hyphen
+          let isValidHandleChar = char.isLetter || char.isNumber || char == "." || char == "-"
+          
+          // Check if next character would break the mention
+          // Whitespace, punctuation (except . and -), or special chars terminate mentions
+          if !isValidHandleChar {
+            break
+          }
+          
           currentIndex = content.index(after: currentIndex)
         }
 

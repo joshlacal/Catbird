@@ -29,6 +29,8 @@ extension PostComposerViewModel {
         selectedGif = nil
         detectedURLs.removeAll()
         urlCards.removeAll()
+        selectedEmbedURL = nil
+        urlsKeptForEmbed.removeAll()
         thumbnailCache.removeAll()
         mentionSuggestions.removeAll()
         resolvedProfiles.removeAll()
@@ -116,12 +118,95 @@ extension PostComposerViewModel {
     func removeURLCard(for url: String) {
         urlCards.removeValue(forKey: url)
         detectedURLs.removeAll { $0 == url }
+        urlsKeptForEmbed.remove(url)
+        
+        // If this was the selected embed URL, try to select the next available URL
+        if selectedEmbedURL == url {
+            selectedEmbedURL = nil
+            logger.debug("Cleared selected embed URL after card removal")
+            
+            // Try to create an embed for the next URL in the array
+            if let nextURL = detectedURLs.first {
+                selectedEmbedURL = nextURL
+                logger.debug("Set next URL as selected embed: \(nextURL)")
+                
+                // Load card for the next URL if not already loaded
+                if urlCards[nextURL] == nil {
+                    Task {
+                        await loadURLCard(for: nextURL)
+                    }
+                }
+            }
+        }
     }
     
     func willBeUsedAsEmbed(for url: String) -> Bool {
-        // Return true if this URL will be used as an embed in the post
-        // For now, return true for all URLs with valid cards
-        return urlCards[url] != nil
+        // Return true if this URL is the selected embed URL
+        return selectedEmbedURL == url && urlCards[url] != nil
+    }
+    
+    func removeURLFromText(for url: String) {
+        // Remove the URL from the text but keep the card for embedding
+        // This allows users to post just the embed card without the URL text
+
+        // First check if URL is currently in detected URLs
+        guard let urlToRemove = detectedURLs.first(where: { $0 == url }) else {
+            logger.debug("Cannot remove URL from text - not found in detectedURLs: \(url)")
+            return
+        }
+
+        // Mark this URL as one to keep for embedding even when not in text
+        urlsKeptForEmbed.insert(url)
+        logger.debug("Marked URL as kept for embed: \(url)")
+
+        // Find and remove the URL from the text
+        if let range = postText.range(of: urlToRemove) {
+            isUpdatingText = true
+            postText.removeSubrange(range)
+            // Clean up any extra whitespace
+            postText = postText.replacingOccurrences(of: "  ", with: " ")
+            postText = postText.trimmingCharacters(in: .whitespacesAndNewlines)
+            isUpdatingText = false
+
+            // CRITICAL FIX: Clear manual link facets that reference the removed URL
+            // This prevents stale facets with invalid byte ranges from persisting
+            manualLinkFacets.removeAll { facet in
+                facet.features.contains { feature in
+                    if case .appBskyRichtextFacetLink(let link) = feature {
+                        return link.uri.uriString() == url
+                    }
+                    return false
+                }
+            }
+            logger.debug("Cleared manual link facets for removed URL: \(url)")
+
+            // Update content to regenerate facets without this URL
+            updatePostContent()
+
+            // Reset typing attributes to prevent blue text inheritance
+            resetTypingAttributes()
+
+            logger.debug("Removed URL from text but kept card for embedding: \(url)")
+        }
+    }
+
+    /// Reset UITextView typing attributes to default to prevent link styling inheritance
+    func resetTypingAttributes() {
+        #if os(iOS)
+        // Access the active RichTextView and reset its typing attributes
+        // This prevents newly typed text from inheriting link color/styling
+        guard let activeView = activeRichTextView else {
+            logger.debug("No active RichTextView to reset typing attributes")
+            return
+        }
+
+        // Reset to default text attributes
+        activeView.typingAttributes = [
+            .font: UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
+            .foregroundColor: UIColor.label
+        ]
+        logger.debug("Reset typing attributes to default")
+        #endif
     }
     
     // MARK: - Thread Management
@@ -170,6 +255,8 @@ extension PostComposerViewModel {
             selectedGif = firstEntry.selectedGif
             detectedURLs = firstEntry.detectedURLs
             urlCards = firstEntry.urlCards
+            selectedEmbedURL = firstEntry.selectedEmbedURL
+            urlsKeptForEmbed = firstEntry.urlsKeptForEmbed
             outlineTags = firstEntry.hashtags
             
             // Preserve font attributes when exiting thread mode
@@ -313,10 +400,12 @@ extension PostComposerViewModel {
                 self.videoItem = videoItem // Temporarily set for createVideoEmbed
                 embed = try await createVideoEmbed()
                 self.videoItem = nil // Clear it
-            } else if let urlCard = entry.urlCards.values.first {
-                // Attach external embed when the card is still present. If the user dismissed
-                // it via the UI, the card will have been removed from `urlCards`.
-                embed = await createExternalEmbedWithThumbnail(urlCard)
+            } else if !entry.urlCards.isEmpty {
+                // Use the first URL card from the entry for the embed
+                // In thread mode, each entry tracks its own URL cards
+                if let urlCard = entry.urlCards.values.first {
+                    embed = await createExternalEmbedWithThumbnail(urlCard)
+                }
             }
             allEmbeds.append(embed)
         }
@@ -420,8 +509,8 @@ extension PostComposerViewModel {
             logger.debug("Creating quote post embed")
             // Handle quote post embed
             embed = createQuoteEmbed(quotedPost)
-        } else if let urlCard = urlCards.values.first {
-            logger.debug("Creating external link embed")
+        } else if let embedURL = selectedEmbedURL, let urlCard = urlCards[embedURL] {
+            logger.debug("Creating external link embed for selected URL: \(embedURL)")
             embed = await createExternalEmbedWithThumbnail(urlCard)
         } else {
             logger.debug("No embed needed")
@@ -590,6 +679,8 @@ extension PostComposerViewModel {
         threadEntries[currentThreadIndex].selectedGif = selectedGif
         threadEntries[currentThreadIndex].detectedURLs = detectedURLs
         threadEntries[currentThreadIndex].urlCards = urlCards
+        threadEntries[currentThreadIndex].selectedEmbedURL = selectedEmbedURL
+        threadEntries[currentThreadIndex].urlsKeptForEmbed = urlsKeptForEmbed
         threadEntries[currentThreadIndex].hashtags = outlineTags
     }
     
@@ -625,6 +716,8 @@ extension PostComposerViewModel {
         selectedGif = entry.selectedGif
         detectedURLs = entry.detectedURLs
         urlCards = entry.urlCards
+        selectedEmbedURL = entry.selectedEmbedURL
+        urlsKeptForEmbed = entry.urlsKeptForEmbed
         outlineTags = entry.hashtags
         
         // Sync attributed text with proper font attributes

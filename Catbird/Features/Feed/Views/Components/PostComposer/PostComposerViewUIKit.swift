@@ -50,7 +50,7 @@ struct PostComposerViewUIKit: View {
   @State private var currentAudioDuration: TimeInterval = 0
   // Visualizer generation progress
   @State private var isGeneratingVisualizerVideo = false
-  @State private var visualizerService = AudioVisualizerService()
+  @State private var visualizerService: AudioVisualizerService? = nil
   @State private var showingAccountSwitcher = false
   @State private var showingLanguagePicker = false
   @State private var showingDismissAlert = false
@@ -291,9 +291,15 @@ struct PostComposerViewUIKit: View {
         VStack(spacing: 24) {
           Spacer()
           VStack(spacing: 16) {
-            ProgressView(value: visualizerService.progress, total: 1.0)
-              .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
-              .scaleEffect(1.4)
+            if let service = visualizerService {
+              ProgressView(value: service.progress, total: 1.0)
+                .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+                .scaleEffect(1.4)
+            } else {
+              ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+                .scaleEffect(1.4)
+            }
             Text("Generating Video…")
               .font(.title3)
               .fontWeight(.semibold)
@@ -336,8 +342,8 @@ struct PostComposerViewUIKit: View {
         }
       }
     }
-    let onTextChanged: (NSAttributedString) -> Void = { ns in
-      viewModel.updateFromAttributedText(ns)
+    let onTextChanged: (NSAttributedString, Int) -> Void = { ns, cursorPos in
+      viewModel.updateFromAttributedText(ns, cursorPosition: cursorPos)
       // Keep manual link facets in sync for legacy inline links
       viewModel.updateManualLinkFacets(from: linkFacets)
     }
@@ -378,6 +384,7 @@ struct PostComposerViewUIKit: View {
           }
           .accessibilityLabel("Switch account")
           .accessibilityHint("Tap to switch between accounts")
+          .catalystPlainButtons()
 
           // UIKit-based text editor with link selection + creation
           EnhancedRichTextEditor(
@@ -417,7 +424,13 @@ struct PostComposerViewUIKit: View {
               selectedRangeForLink = NSRange(location: viewModel.postText.count, length: 0)
               showingLinkCreation = true
             },
-            allowTenor: appState.appSettings.allowTenor
+            allowTenor: appState.appSettings.allowTenor,
+            onTextViewCreated: { textView in
+              #if os(iOS)
+              // Wire up the active UITextView reference for typing attributes reset
+              viewModel.activeRichTextView = textView
+              #endif
+            }
           )
           .frame(minHeight: 140)
           .frame(maxWidth: .infinity)
@@ -426,25 +439,6 @@ struct PostComposerViewUIKit: View {
         .padding(.top, 12)
         .onDrop(of: dropTypes, isTargeted: nil) { providers in
           handleDrop(providers)
-        }
-
-        // @-mention suggestions below the editor (parity with SwiftUI composer)
-        if !viewModel.mentionSuggestions.isEmpty {
-          UserMentionSuggestionViewResolver(
-            suggestions: viewModel.mentionSuggestions.map { MentionSuggestion(profile: $0) },
-            onSuggestionSelected: { suggestion in
-              viewModel.insertMention(suggestion.profile)
-              // Move caret to end of inserted mention + ensure typing continues after it
-              pendingSelectionRange = NSRange(location: viewModel.postText.count, length: 0)
-              activeEditorFocusID = UUID()
-            },
-            onDismiss: {
-              // Clear suggestions if needed; viewModel clears on insert/update already
-              viewModel.mentionSuggestions = []
-            }
-          )
-          .padding(.horizontal, 16)
-          .padding(.top, 8)
         }
 
         // Thread list shown inline only on compact width - now in scrollable area
@@ -538,6 +532,29 @@ struct PostComposerViewUIKit: View {
         
         // Add some bottom padding for scrolling
         Spacer(minLength: 100)
+      }
+    }
+    .overlay(alignment: .top) {
+      // @-mention suggestions overlay (appears on top of ScrollView content)
+      if !viewModel.mentionSuggestions.isEmpty {
+        VStack {
+          Spacer().frame(height: 220) // Offset to position below text editor
+          UserMentionSuggestionViewResolver(
+            suggestions: viewModel.mentionSuggestions.map { MentionSuggestion(profile: $0) },
+            onSuggestionSelected: { suggestion in
+              viewModel.insertMention(suggestion.profile)
+              // Move caret to end of inserted mention + ensure typing continues after it
+              pendingSelectionRange = NSRange(location: viewModel.postText.count, length: 0)
+              activeEditorFocusID = UUID()
+            },
+            onDismiss: {
+              // Clear suggestions if needed; viewModel clears on insert/update already
+              viewModel.mentionSuggestions = []
+            }
+          )
+          .padding(.horizontal, 16)
+          Spacer()
+        }
       }
     }
   }
@@ -874,8 +891,8 @@ struct PostComposerViewUIKit: View {
     let onGenmojiDetected: ([String]) -> Void = { genmojiStrings in
       Task { for s in genmojiStrings { if let d = s.data(using: .utf8) { await viewModel.processDetectedGenmoji(d) } } }
     }
-    let onTextChanged: (NSAttributedString) -> Void = { ns in
-      viewModel.updateFromAttributedText(ns)
+    let onTextChanged: (NSAttributedString, Int) -> Void = { ns, cursorPos in
+      viewModel.updateFromAttributedText(ns, cursorPosition: cursorPos)
       viewModel.updateManualLinkFacets(from: linkFacets)
     }
     let onLinkCreationRequested: (String, NSRange) -> Void = { selectedText, range in
@@ -1001,6 +1018,29 @@ struct PostComposerViewUIKit: View {
 
         // Bottom spacer for comfortable scrolling above keyboard
         Spacer(minLength: 80)
+      }
+    }
+    .overlay(alignment: .top) {
+      // @-mention suggestions overlay (appears on top of ScrollView content)
+      if !viewModel.mentionSuggestions.isEmpty {
+        VStack {
+          Spacer().frame(height: 220) // Offset to position below text editor
+          UserMentionSuggestionViewResolver(
+            suggestions: viewModel.mentionSuggestions.map { MentionSuggestion(profile: $0) },
+            onSuggestionSelected: { suggestion in
+              viewModel.insertMention(suggestion.profile)
+              // Move caret to end of inserted mention + ensure typing continues after it
+              pendingSelectionRange = NSRange(location: viewModel.postText.count, length: 0)
+              activeEditorFocusID = UUID()
+            },
+            onDismiss: {
+              // Clear suggestions if needed; viewModel clears on insert/update already
+              viewModel.mentionSuggestions = []
+            }
+          )
+          .padding(.horizontal, 16)
+          Spacer()
+        }
       }
     }
   }
@@ -1156,23 +1196,29 @@ struct PostComposerViewUIKit: View {
   // MARK: - URL Cards
   private var urlCardsSection: some View {
     Group {
-      ForEach(viewModel.detectedURLs, id: \.self) { url in
-        if let card = viewModel.urlCards[url] {
-          VStack(alignment: .leading, spacing: 6) {
-            ComposeURLCardView(card: card, onRemove: { viewModel.removeURLCard(for: url) }, willBeUsedAsEmbed: viewModel.willBeUsedAsEmbed(for: url))
-            // Retry thumbnail upload helper
-            if !viewModel.hasThumbnail(for: url) {
-              Button(action: { Task { await viewModel.retryThumbnailUpload(for: url) } }) {
-                Label("Retry thumbnail upload", systemImage: "arrow.clockwise")
-                  .appFont(AppTextRole.caption)
-              }
-              .buttonStyle(.borderless)
-              .padding(.leading, 8)
+      // Only show the card for the selected embed URL (first URL detected)
+      if let embedURL = viewModel.selectedEmbedURL, let card = viewModel.urlCards[embedURL] {
+        VStack(alignment: .leading, spacing: 6) {
+          ComposeURLCardView(
+            card: card,
+            onRemove: { viewModel.removeURLCard(for: embedURL) },
+            willBeUsedAsEmbed: viewModel.willBeUsedAsEmbed(for: embedURL),
+            onRemoveURLFromText: {
+              viewModel.removeURLFromText(for: embedURL)
             }
+          )
+          // Retry thumbnail upload helper
+          if !viewModel.hasThumbnail(for: embedURL) {
+            Button(action: { Task { await viewModel.retryThumbnailUpload(for: embedURL) } }) {
+              Label("Retry thumbnail upload", systemImage: "arrow.clockwise")
+                .appFont(AppTextRole.caption)
+            }
+            .buttonStyle(.borderless)
+            .padding(.leading, 8)
           }
-          .padding(.horizontal)
-          .padding(.vertical, 4)
         }
+        .padding(.horizontal)
+        .padding(.vertical, 4)
       }
 
       if viewModel.isLoadingURLCard {
@@ -1289,6 +1335,18 @@ struct PostComposerViewUIKit: View {
         dismissReason = .submit
         appState.composerDraftManager.clearDraft()
         dismiss()
+        
+        // Show success toast after dismissing
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(300))
+          appState.toastManager.show(
+            ToastItem(
+              message: viewModel.isThreadMode ? "Thread posted" : "Post shared",
+              icon: "checkmark.circle.fill",
+              duration: 3.0
+            )
+          )
+        }
       } catch {
         isSubmitting = false
         viewModel.alertItem = PostComposerViewModel.AlertItem(title: "Failed to Create Post", message: error.localizedDescription)
@@ -1425,7 +1483,8 @@ struct PostComposerViewUIKit: View {
   }
 
   private func generateVisualizerVideoDirectly(from audioURL: URL, duration: TimeInterval) async {
-    let service = visualizerService
+    if visualizerService == nil { visualizerService = AudioVisualizerService() }
+    guard let service = visualizerService else { return }
     await MainActor.run { isGeneratingVisualizerVideo = true }
     let username = appState.currentUserProfile?.handle.description ?? "user"
     let avatarURL = appState.currentUserProfile?.avatar?.description
@@ -1443,8 +1502,6 @@ struct PostComposerViewUIKit: View {
         self.isGeneratingVisualizerVideo = false
       }
     } catch {
-      // If generation fails, leave audio in place and optionally notify user
-      // For now, we simply reset the temporary audio state
       await MainActor.run {
         self.currentAudioURL = nil
         self.currentAudioDuration = 0

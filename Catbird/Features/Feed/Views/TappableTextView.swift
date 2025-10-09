@@ -64,35 +64,66 @@ struct TappableTextView: View {
         Group {
             if containsOnlyEmojis {
                 // If the string contains only emojis, use a larger font size with accessibility support
-                Text(attributedString)
-                    .appFont(size: effectiveTextSize ?? 24, weight: textWeight, relativeTo: textStyle)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-                    .tracking(fontManager.letterSpacingValue)
-                    .lineSpacing(fontManager.getLineSpacing(for: effectiveTextSize ?? 24))
-                    .lineLimit(nil)
-                    .allowsTightening(true)
-                    .minimumScaleFactor(0.9)
+                if let effectiveSize = effectiveTextSize {
+                    Text(attributedString)
+                        .appFont(size: effectiveSize, weight: textWeight, relativeTo: textStyle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                        .tracking(fontManager.letterSpacingValue)
+                        .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
+                        .lineLimit(nil)
+                        .allowsTightening(true)
+                        .minimumScaleFactor(0.9)
+                } else {
+                    Text(attributedString)
+                        .appFont(textStyle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                        .tracking(fontManager.letterSpacingValue)
+                        .lineLimit(nil)
+                        .allowsTightening(true)
+                        .minimumScaleFactor(0.9)
+                }
             } else {
                 // Regular text handling with FontManager integration
-                Text(attributedString)
-                    .appFont(size: effectiveTextSize ?? Typography.Size.body, weight: textWeight, relativeTo: textStyle)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-                    .tracking(fontManager.letterSpacingValue)
-                    .lineSpacing(fontManager.getLineSpacing(for: effectiveTextSize ?? Typography.Size.body))
-                    .lineLimit(nil)
-                    .allowsTightening(true)
-                    .minimumScaleFactor(0.9)
-                    .textSelectionAffinity(.automatic)
-                    .textSelection(.disabled)
-                    // Disable animations to prevent any fly-in or size-change animations
-                    .transaction { $0.animation = nil }
-                    .environment(
-                        \.openURL,
-                         OpenURLAction { url in
-                             return appState.urlHandler.handle(url)
-                         })
+                if let effectiveSize = effectiveTextSize {
+                    Text(attributedString)
+                        .appFont(size: effectiveSize, weight: textWeight, relativeTo: textStyle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                        .tracking(fontManager.letterSpacingValue)
+                        .lineSpacing(fontManager.getLineSpacing(for: effectiveSize))
+                        .lineLimit(nil)
+                        .allowsTightening(true)
+                        .minimumScaleFactor(0.9)
+                        .textSelectionAffinity(.automatic)
+                        .textSelection(.disabled)
+                        // Disable animations to prevent any fly-in or size-change animations
+                        .transaction { $0.animation = nil }
+                        .environment(
+                            \.openURL,
+                             OpenURLAction { url in
+                                 return appState.urlHandler.handle(url)
+                             })
+                } else {
+                    Text(attributedString)
+                        .appFont(textStyle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                        .tracking(fontManager.letterSpacingValue)
+                        .lineLimit(nil)
+                        .allowsTightening(true)
+                        .minimumScaleFactor(0.9)
+                        .textSelectionAffinity(.automatic)
+                        .textSelection(.disabled)
+                        // Disable animations to prevent any fly-in or size-change animations
+                        .transaction { $0.animation = nil }
+                        .environment(
+                            \.openURL,
+                             OpenURLAction { url in
+                                 return appState.urlHandler.handle(url)
+                             })
+                }
             }
         }
         .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
@@ -123,8 +154,8 @@ struct TappableTextView: View {
   // Computed property for text size that increases size for emoji-only strings
   private var effectiveTextSize: CGFloat? {
       if containsOnlyEmojis {
-          // Return a larger size for emoji-only strings
-          return textSize != nil ? textSize! * 3 : 27
+          // For emoji-only, scale up if explicit size provided, otherwise return nil to use role-based
+          return textSize != nil ? textSize! * 3 : nil
       }
       return textSize
   }

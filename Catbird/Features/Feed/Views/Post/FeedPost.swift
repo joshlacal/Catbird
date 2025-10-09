@@ -141,44 +141,47 @@ struct FeedPost: View, Equatable {
   /// Renders the main post content
   @ViewBuilder
   private var mainPostContent: some View {
+    // Determine grandparent author and whether this is a reply with deleted/blocked parent
+    let (grandparentAuthor, isReplyWithMissingParent) = computeReplyContext()
+    
+    PostView(
+      post: post.post,
+      grandparentAuthor: grandparentAuthor,
+      isParentPost: false,
+      isSelectable: false,
+      path: $path,
+      appState: appState,
+      isToYou: isReplyWithMissingParent
+    )
+    .environment(\.feedPostID, post.id)
+    .id("\(post.id)-main-\(post.post.uri.uriString())")
+    .contentShape(Rectangle())
+    // Make sure all interactions pass through properly
+    .allowsHitTesting(true)
+    .onTapGesture {
+      path.append(NavigationDestination.post(post.post.uri))
+    }
+  }
+  
+  /// Computes the reply context: grandparent author and whether this is a reply to a deleted/blocked post
+  private func computeReplyContext() -> (grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?, isReplyWithMissingParent: Bool) {
+    // If this is a repost with a parent reply that exists
     if case .appBskyFeedDefsReasonRepost = post.reason,
-      case let .appBskyFeedDefsPostView(parentReply) = post.reply?.parent {
-      // This is a repost with a parent reply
-      PostView(
-        post: post.post,
-        grandparentAuthor: parentReply.author,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .environment(\.feedPostID, post.id)
-      .id("\(post.id)-main-\(post.post.uri.uriString())")
-      .contentShape(Rectangle())
-      // Make sure all interactions pass through properly
-      .allowsHitTesting(true)
-      .onTapGesture {
-        path.append(NavigationDestination.post(post.post.uri))
-      }
-    } else {
-      // Regular post or reply
-      PostView(
-        post: post.post,
-        grandparentAuthor: nil,
-        isParentPost: false,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .environment(\.feedPostID, post.id)
-      .id("\(post.id)-main-\(post.post.uri.uriString())")
-      .contentShape(Rectangle())
-      // Make sure all interactions pass through properly
-      .allowsHitTesting(true)
-      .onTapGesture {
-        path.append(NavigationDestination.post(post.post.uri))
+       case let .appBskyFeedDefsPostView(parentReply) = post.reply?.parent {
+      return (parentReply.author, false)
+    }
+    
+    // If this is a reply to a deleted or blocked post, show the indicator
+    if let reply = post.reply {
+      switch reply.parent {
+      case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost:
+        return (nil, true)
+      default:
+        return (nil, false)
       }
     }
+    
+    return (nil, false)
   }
 }
 

@@ -524,7 +524,7 @@ struct NotificationCard: View {
 
         }
 
-        TappableTextView(attributedString: notificationText)
+        Text(notificationText)
           .lineLimit(nil)
           .fixedSize(horizontal: false, vertical: true)
           .padding(.top, 4)
@@ -553,55 +553,84 @@ struct NotificationCard: View {
     }
 
     var attributedText = AttributedString()
-    attributedText.font = Font.body
     var authorPart = AttributedString(authorDisplayName)
-    authorPart.font = Font.body.bold()
+    // Use FontManager to get properly scaled body font with bold weight
+    authorPart.font = appState.fontManager.fontForTextRole(.body).bold()
 
     attributedText.append(authorPart)
 
+    // Get base body font from FontManager for consistency
+    let bodyFont = appState.fontManager.fontForTextRole(.body)
+    
     switch (group.type, count) {
     case (.like, 1):
-      attributedText.append(AttributedString(" liked your post"))
+      var text = AttributedString(" liked your post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.like, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") liked your post"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") liked your post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.repost, 1):
-      attributedText.append(AttributedString(" reposted your post"))
+      var text = AttributedString(" reposted your post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.repost, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") reposted your post"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") reposted your post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.likeViaRepost, 1):
-      attributedText.append(AttributedString(" liked your repost"))
+      var text = AttributedString(" liked your repost")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.likeViaRepost, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") liked your repost"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") liked your repost")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.repostViaRepost, 1):
-      attributedText.append(AttributedString(" reposted your repost"))
+      var text = AttributedString(" reposted your repost")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.repostViaRepost, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") reposted your repost"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") reposted your repost")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.follow, 1):
-      attributedText.append(AttributedString(" followed you"))
+      var text = AttributedString(" followed you")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.follow, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") followed you"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") followed you")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.mention, 1):
-      attributedText.append(AttributedString(" mentioned you in a post"))
+      var text = AttributedString(" mentioned you in a post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.mention, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") mentioned you"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") mentioned you")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.reply, 1):
-      attributedText.append(AttributedString(" replied to your post"))
+      var text = AttributedString(" replied to your post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.reply, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") replied"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") replied")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.quote, 1):
-      attributedText.append(AttributedString(" quoted your post"))
+      var text = AttributedString(" quoted your post")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.quote, _):
-      attributedText.append(
-        AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") quoted"))
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") quoted")
+      text.font = bodyFont
+      attributedText.append(text)
     case (.activitySubscription, _):
-      attributedText.append(AttributedString(" shared a new post"))
+      var text = AttributedString(" shared a new post")
+      text.font = bodyFont
+      attributedText.append(text)
     }
 
     return attributedText

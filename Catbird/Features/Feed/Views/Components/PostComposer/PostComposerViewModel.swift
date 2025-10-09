@@ -75,6 +75,15 @@ final class PostComposerViewModel {
   var urlCards: [String: URLCardResponse] = [:]
   var isLoadingURLCard: Bool = false
   
+  // MARK: - URL Embed Selection
+  /// The first URL pasted/detected will be used as the embed (if no other embed type is set)
+  /// This tracks which URL should be featured as the embed card
+  var selectedEmbedURL: String?
+  
+  /// URLs that should be kept as embeds even when removed from text
+  /// This allows users to paste a URL, generate preview, then delete the URL text
+  var urlsKeptForEmbed: Set<String> = []
+  
   // MARK: - Thumbnail Cache
   
   /// Cache for uploaded thumbnail blobs by URL
@@ -84,13 +93,22 @@ final class PostComposerViewModel {
   
   var mentionSuggestions: [AppBskyActorDefs.ProfileViewBasic] = []
   var resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:]
+  var cursorPosition: Int = 0
   
   // MARK: - Manual Link Facets (legacy inline links)
   /// Facets derived from inline link attributes when using legacy NSAttributedString path.
   /// These are merged into the facets used for posting so inline links survive even when
   /// the visible text does not contain the raw URL.
   var manualLinkFacets: [AppBskyRichtextFacet] = []
-  
+
+  // MARK: - Active RichTextView Reference
+  #if os(iOS)
+  /// Weak reference to the active UITextView for resetting typing attributes
+  /// This is set by the UIKit bridge when the view is created/updated
+  /// Can be either RichTextView or LinkEditableTextView depending on composer mode
+  weak var activeRichTextView: UITextView?
+  #endif
+
   // MARK: - State Properties
   
   var isPosting: Bool = false
