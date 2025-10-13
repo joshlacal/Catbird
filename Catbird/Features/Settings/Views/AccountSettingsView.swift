@@ -176,9 +176,10 @@ struct AccountSettingsView: View {
                     Section("Account Information") {
                         emailSection
                         
-                        Button("Update Email") {
-                            isShowingEmailSheet = true
-                        }
+                        // Update Email requires OAuth scope not available with current auth flow
+                        // Button("Update Email") {
+                        //     isShowingEmailSheet = true
+                        // }
                     }
                     
                     Section("Handle Management") {
@@ -201,26 +202,28 @@ struct AccountSettingsView: View {
                             .padding(.vertical, 4)
                         }
                         
-                        Button("Change Handle") {
-                            isShowingHandleSheet = true
-                        }
+                        // Change Handle requires OAuth scope not available with current auth flow
+                        // Button("Change Handle") {
+                        //     isShowingHandleSheet = true
+                        // }
                     }
                     
                     // Data backup functionality removed
                     
                     // Migration functionality removed
                     
-                    Section("Danger Zone") {
-                        Button("Deactivate Account") {
-                            isShowingDeactivateAlert = true
-                        }
-                        .foregroundStyle(.orange)
-                        
-                        Button("Delete Account") {
-                            isShowingDeleteAlert = true
-                        }
-                        .foregroundStyle(.red)
-                    }
+                    // Danger Zone section removed - requires OAuth scopes not available
+                    // Section("Danger Zone") {
+                    //     Button("Deactivate Account") {
+                    //         isShowingDeactivateAlert = true
+                    //     }
+                    //     .foregroundStyle(.orange)
+                    //     
+                    //     Button("Delete Account") {
+                    //         isShowingDeleteAlert = true
+                    //     }
+                    //     .foregroundStyle(.red)
+                    // }
                 }
             }
             .navigationTitle("Account Settings")

@@ -300,6 +300,8 @@ struct MuteWordsSettingsView: View {
         removal: .opacity
       ))
     }
+    .frame(maxHeight: .infinity, alignment: .bottom)
+    .allowsHitTesting(false)
     .onAppear {
       DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
         withAnimation(.easeInOut(duration: DesignTokens.Duration.normal)) {

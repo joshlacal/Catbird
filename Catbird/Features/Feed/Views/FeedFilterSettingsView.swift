@@ -6,24 +6,22 @@ struct FeedFilterSettingsView: View {
   var body: some View {
     List {
       
-      Section(header: Text("Sort")) {
-        Picker("Feed Order", selection: Binding(
-          get: { appState.feedFilterSettings.sortMode },
-          set: { newValue in
-            appState.feedFilterSettings.sortMode = newValue
-            // Persist immediately
-            // saveSettings() is internal; toggling a dummy filter would be hacky.
-            // Instead, rely on FeedFilterSettings.saveSettings() to be called via property didSet flows.
-            // Here we'll post a small notification if needed later.
-          }
-        )) {
-          ForEach(FeedFilterSettings.FeedSortMode.allCases) { mode in
-            Text(mode == .latest ? "Latest" : "Relevant")
-              .tag(mode)
-          }
-        }
-        .pickerStyle(.segmented)
-      }
+      // Sort section removed - only "Latest" is supported, no need to show picker
+      // Section(header: Text("Sort")) {
+      //   Picker("Feed Order", selection: Binding(
+      //     get: { appState.feedFilterSettings.sortMode },
+      //     set: { newValue in
+      //       appState.feedFilterSettings.sortMode = newValue
+      //     }
+      //   )) {
+      //     ForEach(FeedFilterSettings.FeedSortMode.allCases) { mode in
+      //       Text(mode == .latest ? "Latest" : "Relevant")
+      //         .tag(mode)
+      //     }
+      //   }
+      //   .pickerStyle(.segmented)
+      // }
+      
       Section(header: Text("Filter Settings")) {
         ForEach(appState.feedFilterSettings.filters.indices, id: \.self) { index in
           Toggle(

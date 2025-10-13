@@ -1,5 +1,8 @@
 import UIKit
 import UniformTypeIdentifiers
+import OSLog
+
+private let logger = Logger(subsystem: "blue.catbird", category: "ShareExtension")
 
 struct SharedIncomingPayload: Codable {
   let text: String?
@@ -118,8 +121,10 @@ final class ShareViewController: UIViewController {
   }
 
   private func collectProviders() -> [NSItemProvider] {
-    let contextItems = extensionContext?.inputItems as? [NSExtensionItem] ?? []
-    return contextItems.flatMap { $0.attachments ?? [] }
+    guard let contextItems = extensionContext?.inputItems as? [NSExtensionItem] else {
+      return []
+    }
+    return contextItems.compactMap { $0.attachments }.flatMap { $0 }
   }
 
   private func loadAll() async -> (String?, [URL], [URL], [URL]) {
@@ -172,7 +177,16 @@ final class ShareViewController: UIViewController {
       images: nil,
       videoURLs: videos.map { $0.absoluteString }
     )
-    return try? JSONEncoder().encode(payload)
+    guard let data = try? JSONEncoder().encode(payload) else { return nil }
+    
+    // Validate payload size (max 1MB to avoid UserDefaults issues)
+    let maxSize = 1_024 * 1_024 // 1MB
+    guard data.count <= maxSize else {
+      logger.warning("SharedDraftImporter: Payload too large (\(data.count) bytes), max is \(maxSize)")
+      return nil
+    }
+    
+    return data
   }
 
   private func notifyContainerApp() {

@@ -115,33 +115,34 @@ struct PrivacySecuritySettingsView: View {
                 .disabled(true)
             }
             
-            Section("App Passwords") {
-                NavigationLink {
-                    AppPasswordsView()
-                        .environment(appState)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("App Passwords")
-                                .fontWeight(.medium)
-                            
-                            Text("Create passwords for third-party apps")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if isLoadingAppPasswords {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("\(appPasswords.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
+            // App Passwords section removed - requires OAuth scopes not available
+            // Section("App Passwords") {
+            //     NavigationLink {
+            //         AppPasswordsView()
+            //             .environment(appState)
+            //     } label: {
+            //         HStack {
+            //             VStack(alignment: .leading, spacing: 4) {
+            //                 Text("App Passwords")
+            //                     .fontWeight(.medium)
+            //                 
+            //                 Text("Create passwords for third-party apps")
+            //                     .appFont(AppTextRole.caption)
+            //                     .foregroundStyle(.secondary)
+            //             }
+            //             
+            //             Spacer()
+            //             
+            //             if isLoadingAppPasswords {
+            //                 ProgressView()
+            //                     .controlSize(.small)
+            //             } else {
+            //                 Text("\(appPasswords.count)")
+            //                     .foregroundStyle(.secondary)
+            //             }
+            //         }
+            //     }
+            // }
             
             Section("Account Privacy") {
                 Toggle("Logged-Out Visibility", isOn: $loggedOutVisibility)
@@ -218,11 +219,12 @@ struct PrivacySecuritySettingsView: View {
                 }
             }
             
-            Section("About App Passwords") {
-                Text("App passwords let you securely use third-party apps with your Bluesky account without sharing your main password.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-            }
+            // About App Passwords section removed - feature unavailable with current OAuth scopes
+            // Section("About App Passwords") {
+            //     Text("App passwords let you securely use third-party apps with your Bluesky account without sharing your main password.")
+            //         .appFont(AppTextRole.caption)
+            //         .foregroundStyle(.secondary)
+            // }
             
             Section("About Privacy Controls") {
                 Text("Blocking prevents an account from interacting with you, including following you or seeing your content in their feeds.")
