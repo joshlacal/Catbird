@@ -1258,10 +1258,53 @@ final class NotificationManager: NSObject {
     client: ATProtoClient,
     type: String
   ) async throws -> [(uri: String, purpose: String, name: String?)] {
-    // This would use the actual AT Protocol API
-    // For now, return empty array - implement based on Petrel's available APIs
-    // TODO: Implement using app.bsky.graph.getListMutes and app.bsky.graph.getListBlocks
-    return []
+    var allLists: [(uri: String, purpose: String, name: String?)] = []
+    var cursor: String?
+    
+    // Fetch all pages of lists
+    repeat {
+      let params: Any
+      let result: (responseCode: Int, data: Any?)
+      
+      if type == "block" {
+        params = AppBskyGraphGetListBlocks.Parameters(limit: 100, cursor: cursor)
+        result = try await client.app.bsky.graph.getListBlocks(input: params as! AppBskyGraphGetListBlocks.Parameters)
+        
+        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output {
+          for list in output.lists {
+            allLists.append((
+              uri: list.uri,
+              purpose: list.purpose.rawValue,
+              name: list.name
+            ))
+          }
+          cursor = output.cursor
+        } else {
+          break
+        }
+      } else if type == "mute" {
+        params = AppBskyGraphGetListMutes.Parameters(limit: 100, cursor: cursor)
+        result = try await client.app.bsky.graph.getListMutes(input: params as! AppBskyGraphGetListMutes.Parameters)
+        
+        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output {
+          for list in output.lists {
+            allLists.append((
+              uri: list.uri,
+              purpose: list.purpose.rawValue,
+              name: list.name
+            ))
+          }
+          cursor = output.cursor
+        } else {
+          break
+        }
+      } else {
+        break
+      }
+    } while cursor != nil
+    
+    notificationLogger.info("Fetched \(allLists.count) \(type) lists from AT Protocol")
+    return allLists
   }
 
   /// Mutes a thread for push notifications
