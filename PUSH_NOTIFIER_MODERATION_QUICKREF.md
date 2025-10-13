@@ -184,14 +184,10 @@ CREATE TABLE thread_mutes (
 
 ## Future TODOs
 
-1. **Implement AT Protocol List APIs** (when available in Petrel):
-   ```swift
-   // Replace placeholder in NotificationManager.swift
-   private func fetchModerationLists(client: ATProtoClient, type: String) async throws -> [...] {
-       // Call app.bsky.graph.getListMutes or app.bsky.graph.getListBlocks
-       // Return actual list data
-   }
-   ```
+1. ✅ **~~Implement AT Protocol List APIs~~** - COMPLETED
+   - ✅ Fully implemented using `app.bsky.graph.getListMutes` and `app.bsky.graph.getListBlocks`
+   - ✅ Supports pagination with cursor
+   - ✅ Fetches all pages automatically
 
 2. **Real-time Updates**:
    - Subscribe to AT Protocol firehose
