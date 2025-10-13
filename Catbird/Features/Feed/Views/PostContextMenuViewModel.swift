@@ -94,6 +94,27 @@ final class PostContextMenuViewModel {
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)
             if responseCode == 200 {
                 logger.debug("Thread muted successfully")
+                
+                // Also mute the thread in push notifications
+                let threadRootURI: String
+                if let reply = post.record.appBskyFeedPost, 
+                   let replyRef = reply.reply,
+                   let rootURI = replyRef.root.uri {
+                    // This is a reply, use the thread root
+                    threadRootURI = rootURI
+                } else {
+                    // This is the thread root
+                    threadRootURI = post.uri
+                }
+                
+                Task {
+                    do {
+                        try await appState.notificationManager.muteThreadNotifications(threadRootURI: threadRootURI)
+                        logger.debug("Thread also muted for push notifications")
+                    } catch {
+                        logger.error("Failed to mute thread for push notifications: \(error.localizedDescription)")
+                    }
+                }
             }
         } catch {
             logger.debug("Error muting thread: \(error)")
@@ -118,6 +139,41 @@ final class PostContextMenuViewModel {
 
     func summarizeThread() {
         onSummarizeThread?()
+    }
+    
+    /// Send "show more like this" feedback
+    func sendShowMore() {
+        guard appState.feedFeedbackManager.isEnabled else { return }
+        appState.feedFeedbackManager.sendShowMore(postURI: post.uri)
+        logger.debug("Sent 'show more' feedback for post: \(self.post.uri.uriString())")
+        
+        // Show confirmation toast
+        appState.toastManager.show(
+            ToastItem(
+                message: "Feedback sent to feed operator",
+                icon: "checkmark.circle.fill"
+            )
+        )
+    }
+    
+    /// Send "show less like this" feedback
+    func sendShowLess() {
+        guard appState.feedFeedbackManager.isEnabled else { return }
+        appState.feedFeedbackManager.sendShowLess(postURI: post.uri)
+        logger.debug("Sent 'show less' feedback for post: \(self.post.uri.uriString())")
+        
+        // Show confirmation toast
+        appState.toastManager.show(
+            ToastItem(
+                message: "Feedback sent to feed operator",
+                icon: "checkmark.circle.fill"
+            )
+        )
+    }
+    
+    /// Whether feed feedback is available for the current feed
+    var isFeedbackEnabled: Bool {
+        appState.feedFeedbackManager.isEnabled
     }
     
     /// Creates a report subject for this post

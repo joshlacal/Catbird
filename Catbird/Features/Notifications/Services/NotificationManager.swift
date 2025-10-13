@@ -1162,7 +1162,220 @@ final class NotificationManager: NSObject {
     // Sync relationships
     await syncRelationships()
 
+    // Sync moderation lists
+    await syncModerationLists()
+
     notificationLogger.info("Completed full user data sync with notification server")
+  }
+
+  // MARK: - Moderation Lists & Thread Mutes
+
+  /// Synchronizes moderation lists with the notification server
+  func syncModerationLists() async {
+    guard notificationsEnabled else {
+      notificationLogger.info("Not syncing moderation lists - notifications are disabled")
+      return
+    }
+
+    guard let client = client else {
+      notificationLogger.warning("Cannot sync moderation lists - no client available")
+      return
+    }
+
+    guard let deviceToken = deviceToken else {
+      notificationLogger.warning("Cannot sync moderation lists - no device token")
+      return
+    }
+
+    do {
+      let did = try await client.getDid()
+
+      // Fetch user's moderation lists from AT Protocol
+      let blockLists = try await fetchModerationLists(client: client, type: "block")
+      let muteLists = try await fetchModerationLists(client: client, type: "mute")
+      let allLists = blockLists + muteLists
+
+      notificationLogger.info("Fetched \(allLists.count) moderation lists for sync")
+
+      // Prepare request
+      var request = URLRequest(url: serviceBaseURL.appendingPathComponent("sync-moderation-lists"))
+      request.httpMethod = "POST"
+      request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+      // Create payload
+      struct ModerationListPayload: Codable {
+        let did: String
+        let deviceToken: String
+        let lists: [ModerationListDTO]
+      }
+
+      struct ModerationListDTO: Codable {
+        let uri: String
+        let purpose: String
+        let name: String?
+      }
+
+      let payload = ModerationListPayload(
+        did: did,
+        deviceToken: hexString(from: deviceToken),
+        lists: allLists.map {
+          ModerationListDTO(uri: $0.uri, purpose: $0.purpose, name: $0.name)
+        }
+      )
+
+      let body = try makeJSONEncoder().encode(payload)
+      request.httpBody = body
+
+      try await attachAppAttestAssertion(
+        to: &request,
+        did: did,
+        deviceToken: deviceToken,
+        bindBody: body
+      )
+
+      // Send request
+      let (data, response) = try await URLSession.shared.data(for: request)
+
+      guard let httpResponse = response as? HTTPURLResponse else {
+        throw NotificationServiceError.invalidServerResponse
+      }
+
+      if httpResponse.statusCode == 200 {
+        notificationLogger.info("Successfully synced moderation lists with notification server")
+        if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
+          await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
+        }
+      } else {
+        notificationLogger.error("Failed to sync moderation lists: HTTP \(httpResponse.statusCode)")
+      }
+    } catch {
+      notificationLogger.error("Error syncing moderation lists: \(error.localizedDescription)")
+    }
+  }
+
+  /// Fetches moderation lists from AT Protocol
+  private func fetchModerationLists(
+    client: ATProtoClient,
+    type: String
+  ) async throws -> [(uri: String, purpose: String, name: String?)] {
+    // This would use the actual AT Protocol API
+    // For now, return empty array - implement based on Petrel's available APIs
+    // TODO: Implement using app.bsky.graph.getListMutes and app.bsky.graph.getListBlocks
+    return []
+  }
+
+  /// Mutes a thread for push notifications
+  func muteThreadNotifications(threadRootURI: String) async throws {
+    guard let client = client else {
+      throw NotificationServiceError.clientNotConfigured
+    }
+
+    guard let deviceToken = deviceToken else {
+      throw NotificationServiceError.deviceTokenNotAvailable
+    }
+
+    let did = try await client.getDid()
+
+    var request = URLRequest(url: serviceBaseURL.appendingPathComponent("mute-thread"))
+    request.httpMethod = "POST"
+    request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    struct MuteThreadPayload: Codable {
+      let did: String
+      let deviceToken: String
+      let threadRootUri: String
+
+      enum CodingKeys: String, CodingKey {
+        case did
+        case deviceToken = "device_token"
+        case threadRootUri = "thread_root_uri"
+      }
+    }
+
+    let payload = MuteThreadPayload(
+      did: did,
+      deviceToken: hexString(from: deviceToken),
+      threadRootUri: threadRootURI
+    )
+
+    let body = try makeJSONEncoder().encode(payload)
+    request.httpBody = body
+
+    try await attachAppAttestAssertion(
+      to: &request,
+      did: did,
+      deviceToken: deviceToken,
+      bindBody: body
+    )
+
+    let (_, response) = try await URLSession.shared.data(for: request)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw NotificationServiceError.invalidServerResponse
+    }
+
+    if httpResponse.statusCode == 200 {
+      notificationLogger.info("Successfully muted thread: \(threadRootURI)")
+    } else {
+      throw NotificationServiceError.serverError("HTTP \(httpResponse.statusCode)")
+    }
+  }
+
+  /// Unmutes a thread for push notifications
+  func unmuteThreadNotifications(threadRootURI: String) async throws {
+    guard let client = client else {
+      throw NotificationServiceError.clientNotConfigured
+    }
+
+    guard let deviceToken = deviceToken else {
+      throw NotificationServiceError.deviceTokenNotAvailable
+    }
+
+    let did = try await client.getDid()
+
+    var request = URLRequest(url: serviceBaseURL.appendingPathComponent("unmute-thread"))
+    request.httpMethod = "POST"
+    request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    struct UnmuteThreadPayload: Codable {
+      let did: String
+      let deviceToken: String
+      let threadRootUri: String
+
+      enum CodingKeys: String, CodingKey {
+        case did
+        case deviceToken = "device_token"
+        case threadRootUri = "thread_root_uri"
+      }
+    }
+
+    let payload = UnmuteThreadPayload(
+      did: did,
+      deviceToken: hexString(from: deviceToken),
+      threadRootUri: threadRootURI
+    )
+
+    let body = try makeJSONEncoder().encode(payload)
+    request.httpBody = body
+
+    try await attachAppAttestAssertion(
+      to: &request,
+      did: did,
+      deviceToken: deviceToken,
+      bindBody: body
+    )
+
+    let (_, response) = try await URLSession.shared.data(for: request)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw NotificationServiceError.invalidServerResponse
+    }
+
+    if httpResponse.statusCode == 200 {
+      notificationLogger.info("Successfully unmuted thread: \(threadRootURI)")
+    } else {
+      throw NotificationServiceError.serverError("HTTP \(httpResponse.statusCode)")
+    }
   }
 
   // MARK: - Private Methods
@@ -2835,12 +3048,12 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     let conversationID = uriString
 
     await MainActor.run {
-      // Navigate to the chat tab (assuming it's index 1) and open the conversation
-      appState.navigationManager.updateCurrentTab(1) // Switch to chat tab
+      // Navigate to the chat tab (index 4) and open the conversation
+      appState.navigationManager.updateCurrentTab(4) // Switch to chat tab
 
       // Navigate to the specific conversation
       let destination = NavigationDestination.conversation(conversationID)
-      appState.navigationManager.navigate(to: destination, in: 1)
+      appState.navigationManager.navigate(to: destination, in: 4)
 
       notificationLogger.info("Successfully navigated to chat conversation \(conversationID)")
     }
