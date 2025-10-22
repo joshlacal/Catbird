@@ -9,6 +9,7 @@ enum ContainerFactory {
   ) throws -> ModelContainer {
     let cloudConfig: ModelConfiguration
     if let id = cloudContainerIdentifier {
+      // Explicitly enable CloudKit only when identifier is provided
       cloudConfig = ModelConfiguration(
         _ : "Cloud",
         schema: Schema([AppSettings.self, Draft.self, DraftAttachment.self]),
@@ -17,10 +18,8 @@ enum ContainerFactory {
         cloudKitDatabase: .private(id)
       )
     } else {
-      cloudConfig = ModelConfiguration(
-        for: [AppSettings.self, Draft.self, DraftAttachment.self],
-        isStoredInMemoryOnly: false
-      )
+      // Opt out of automatic CloudKit detection by default to avoid schema constraints
+      cloudConfig = ModelConfiguration(cloudKitDatabase: .none)
     }
 
     let container = try ModelContainer(
