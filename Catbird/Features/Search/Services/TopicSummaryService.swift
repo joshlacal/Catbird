@@ -50,6 +50,125 @@ actor TopicSummaryService {
     """
     #endif
 
+    /// Streams a concise one-sentence description for a trending topic, yielding partial results as they arrive.
+    /// - Parameters:
+    ///   - topic: Trend view from Petrel.
+    ///   - appState: App state for accessing ATProto client.
+    /// - Returns: An async stream of partial summary text, or nil if unavailable.
+    func streamSummary(for topic: AppBskyUnspeccedDefs.TrendView, appState: AppState) async -> AsyncThrowingStream<String, Error>? {
+        let key = topic.link
+        
+        // Return cached summary immediately if available
+        if let cachedEntry = cache[key], cachedEntry.displayName == topic.displayName {
+            return AsyncThrowingStream { continuation in
+                continuation.yield(cachedEntry.summary)
+                continuation.finish()
+            }
+        }
+        
+        logger.info("[Summary] Begin streaming for topic: \(topic.displayName, privacy: .public)")
+
+        guard let client = appState.atProtoClient else {
+            logger.info("[Summary] No ATProto client; skip")
+            return nil
+        }
+
+        // Resolve feed URI from topic.link
+        guard let feedURI = await resolveFeedURI(from: topic.link, appState: appState) else {
+            logger.info("[Summary] Could not resolve feed URI for link: \(topic.link, privacy: .public)")
+            return nil
+        }
+
+        // Fetch a small sample of posts from the feed.
+        let sampleTexts: [String]
+        do {
+            sampleTexts = try await fetchSamplePostTexts(from: feedURI, client: client, limit: 24)
+        } catch {
+            logger.error("[Summary] Failed to fetch posts: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+
+        guard !sampleTexts.isEmpty else {
+            logger.info("[Summary] No sample texts for topic: \(topic.displayName, privacy: .public)")
+            return nil
+        }
+        logger.info("[Summary] Sample texts count: \(sampleTexts.count, privacy: .public)")
+
+        // Generate the short description using Foundation Models if available.
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, macOS 15.0, *) {
+            guard let model = prepareLanguageModel() else { return nil }
+
+            // Construct a compact prompt from sampled posts.
+            let joined = sampleTexts
+                .map { "- \($0.replacingOccurrences(of: "<", with: "‹").replacingOccurrences(of: ">", with: "›"))" }
+                .joined(separator: "\n")
+
+            let prompt = """
+            Topic: \(topic.displayName)
+
+            Recent Posts:
+            \(joined)
+
+            \(Self.summarizerInstructions)
+            """
+
+            do {
+                let session = LanguageModelSession(
+                    model: model,
+                    instructions: { Instructions { Self.summarizerInstructions } }
+                )
+                
+                let options = GenerationOptions(
+                    temperature: 1.0,
+                    maximumResponseTokens: 150
+                )
+                
+                let rawStream = session.streamResponse(options: options, prompt: { Prompt(prompt) })
+                
+                // Process the stream to accumulate content and cache when complete
+                return AsyncThrowingStream { continuation in
+                    Task {
+                        var latestContent = ""
+                        do {
+                            for try await snapshot in rawStream {
+                                // Each snapshot contains cumulative content, not a delta
+                                latestContent = snapshot.content
+                                
+                                // Strip output tags during streaming for clean display
+                                let displayText = Self.stripOutputTagsForDisplay(latestContent)
+                                continuation.yield(displayText)
+                            }
+                            
+                            // Post-process the final accumulated text
+                            let cleaned = Self.cleanupOutput(latestContent)
+                            let final = Self.clampToSingleSentence(cleaned)
+                            
+                            // Cache the final result
+                            await self.cacheResult(key: key, displayName: topic.displayName, summary: final)
+                            
+                            // Yield final cleaned version
+                            continuation.yield(final)
+                            continuation.finish()
+                            
+                            self.logger.info("[Summary] Streaming complete for: \(topic.displayName, privacy: .public)")
+                        } catch {
+                            self.logger.error("[Summary] Stream error: \(error.localizedDescription, privacy: .public)")
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                }
+            } catch {
+                logger.error("[Summary] Failed to create stream: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }
+        #endif
+
+        logger.info("[Summary] Foundation Models not available; skip streaming summary")
+        return nil
+    }
+
     /// Returns a concise one-sentence description for a trending topic, or nil if unavailable.
     /// - Parameters:
     ///   - topic: Trend view from Petrel.
@@ -139,6 +258,11 @@ actor TopicSummaryService {
     }
 
     // MARK: - Helpers
+
+    /// Helper to cache results in a thread-safe way
+    private func cacheResult(key: String, displayName: String, summary: String) async {
+        cache[key] = CacheEntry(displayName: displayName, summary: summary)
+    }
 
     #if canImport(FoundationModels)
     @available(iOS 26.0, macOS 15.0, *)
@@ -367,6 +491,41 @@ actor TopicSummaryService {
 @available(iOS 26.0, *)
 extension TopicSummaryService {
 
+    /// Cleanup output from streaming - combines extractOneSentence and sanitizeSummary logic
+    private static func cleanupOutput(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+
+        // Prefer extracting between <output>...</output> tags
+        if let tagged = extractBetweenTags("output", in: trimmed), !tagged.isEmpty {
+            return sanitizeSummary(tagged, topic: "")
+        }
+
+        // Fall back to using the raw text
+        return sanitizeSummary(trimmed, topic: "")
+    }
+
+    /// Strip output tags for clean streaming display without breaking final parsing
+    private static func stripOutputTagsForDisplay(_ text: String) -> String {
+        var result = text
+        
+        // Remove opening tag: <output> or <output ...>
+        result = result.replacingOccurrences(
+            of: #"<output[^>]*>"#,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Remove closing tag: </output>
+        result = result.replacingOccurrences(
+            of: #"</output>"#,
+            with: "",
+            options: .regularExpression
+        )
+        
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Basic sanitization to ensure output quality and handle edge cases.
     /// Ensures no XML-like tags such as <output> appear in the final text.
     static func sanitizeSummary(_ s: String, topic: String) -> String {
@@ -528,3 +687,4 @@ extension TopicSummaryService {
         return words.prefix(22).joined(separator: " ")
     }
 }
+

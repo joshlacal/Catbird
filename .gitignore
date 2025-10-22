@@ -228,3 +228,12 @@ PUBLIC_RELEASE_SUMMARY.md
 .aider*
 
 .sentryclirc
+
+# Parallel agents and automation results
+parallel-agents-results/
+agent_*.log
+
+# Session notes and temporary documentation
+docs/session-notes/
+
+Makefile

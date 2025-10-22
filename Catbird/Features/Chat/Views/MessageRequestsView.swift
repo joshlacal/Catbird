@@ -347,8 +347,6 @@ struct MessagePreviewView: View {
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
           .italic()
-      case .pending(_):
-          EmptyView()
       }
     }
   }

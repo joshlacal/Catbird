@@ -21,6 +21,9 @@ final class FeedsStartPageViewModel {
   private var _cachedPinnedFeeds: [String] = []
   private var _cachedSavedFeeds: [String] = []
   private var _cachedPinnedFeedsSet: Set<String> = Set()
+  
+  // List metadata cache
+  var listDetails: [ATProtocolURI: AppBskyGraphDefs.ListView] = [:]
 
   // Synchronous accessors for cached data
   var cachedPinnedFeeds: [String] { _cachedPinnedFeeds }
@@ -141,6 +144,11 @@ final class FeedsStartPageViewModel {
       feedGeneratorDisplayNames[uri.uriString()] = generator.displayName
     }
     
+    // Include list names as well
+    for (uri, list) in listDetails {
+      feedGeneratorDisplayNames[uri.uriString()] = list.name
+    }
+    
     // Add system feeds
     feedGeneratorDisplayNames["timeline"] = "Home Timeline"
     feedGeneratorDisplayNames["following"] = "Following"
@@ -172,8 +180,9 @@ final class FeedsStartPageViewModel {
       // Update caches
       await updateCaches()
 
-      // Fetch feed generators based on the preferences
-      await fetchFeedGenerators()
+      // Fetch feed generators and list details based on the preferences
+      await self.fetchFeedGenerators()
+      await self.fetchListDetails()
 
       errorMessage = nil
 
@@ -182,77 +191,109 @@ final class FeedsStartPageViewModel {
       logger.debug(
         "Successfully loaded feeds, hasLoadedFeedsAtLeastOnce=\(self.hasLoadedFeedsAtLeastOnce)")
     } catch {
-      errorMessage = "Failed to fetch preferences: \(error.localizedDescription)"
+      // Don't show alerts for transient client/context initialization issues during account switches
+      let isTransientError = (error as? PreferencesManagerError) == .clientNotInitialized
+        || (error as? PreferencesManagerError) == .modelContextNotInitialized
+      
+      if !isTransientError {
+        errorMessage = "Failed to fetch preferences: \(error.localizedDescription)"
+      }
       logger.error("Error loading feeds: \(error.localizedDescription)")
     }
     isLoading = false
   }
 
-  func fetchFeedGenerators() async {
+    func fetchFeedGenerators() async {
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            
+            // Start with all unique feeds
+            let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
+            //      logger.debug("All feeds: \(allUniqueFeeds)")
+            
+            // Filter out system feeds before trying to convert to URIs
+            let customFeeds = allUniqueFeeds.filter { !SystemFeedTypes.isTimelineFeed($0) }
+            //      logger.debug("Custom feeds to fetch: \(customFeeds)")
+            
+            // If we already have generators and nothing to fetch, just keep them
+            if customFeeds.isEmpty && !feedGenerators.isEmpty {
+                logger.info(
+                    "No custom feeds to fetch, but keeping existing \(self.feedGenerators.count) generators")
+                return
+            }
+            
+            // Only convert custom FEED GENERATORS to URIs (exclude lists to avoid API errors)
+            let generatorFeeds = customFeeds.filter { $0.contains("/app.bsky.feed.generator/") }
+            let feedURIs = generatorFeeds.compactMap { try? ATProtocolURI(uriString: $0) }
+            
+            // It's normal to have no custom generator feeds
+            if feedURIs.isEmpty {
+                logger.info("No custom feed generators to fetch (only system feeds and/or lists)")
+                // Don't clear existing feed generators if we have them
+                if !feedGenerators.isEmpty {
+                    logger.info("Keeping existing \(self.feedGenerators.count) feed generators")
+                }
+                return
+            }
+            
+            // Safely unwrap the client
+            guard let client = appState.atProtoClient else {
+                errorMessage = "ATProto client is not initialized"
+                logger.error("ATProto client not available for feed generator fetch")
+                return
+            }
+            
+            logger.info("Attempting to fetch \(feedURIs.count) feed generators")
+            let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
+            let (responseCode, output) = try await client.app.bsky.feed.getFeedGenerators(input: input)
+            
+            if responseCode == 200, let generators = output?.feeds {
+                logger.info("Successfully fetched \(generators.count) feed generators")
+                // IMPORTANT: Don't completely replace feedGenerators - update it
+                for generator in generators {
+                    feedGenerators[generator.uri] = generator
+                }
+            } else {
+                errorMessage = "Failed to fetch feed generators. Response code: \(responseCode)"
+                logger.error("Feed generator fetch failed with code: \(responseCode)")
+            }
+        } catch {
+            // Check if it's a cancellation error
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == -999 {
+                // This is a cancellation error, don't update UI
+                logger.debug("Feed generator fetch cancelled")
+                
+                errorMessage = "Error fetching feed generators: \(error.localizedDescription)"
+                logger.error("Exception in fetchFeedGenerators: \(error.localizedDescription)")
+            }
+        }
+    }
+      // Only set error message for non-cancellation errors
+  func fetchListDetails() async {
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
-
-      // Start with all unique feeds
       let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
-      //      logger.debug("All feeds: \(allUniqueFeeds)")
+      let listURIs = allUniqueFeeds
+        .filter { $0.contains("/app.bsky.graph.list/") }
+        .compactMap { try? ATProtocolURI(uriString: $0) }
 
-      // Filter out system feeds before trying to convert to URIs
-      let customFeeds = allUniqueFeeds.filter { !SystemFeedTypes.isTimelineFeed($0) }
-      //      logger.debug("Custom feeds to fetch: \(customFeeds)")
+      guard !listURIs.isEmpty else { return }
 
-      // If we already have generators and nothing to fetch, just keep them
-      if customFeeds.isEmpty && !feedGenerators.isEmpty {
-        logger.info(
-          "No custom feeds to fetch, but keeping existing \(self.feedGenerators.count) generators")
-        return
-      }
-
-      // Only convert custom feeds to URIs
-      let feedURIs = customFeeds.compactMap { try? ATProtocolURI(uriString: $0) }
-
-      // It's normal to have no custom feeds for new users
-      if feedURIs.isEmpty {
-        logger.info("No custom feeds to fetch generators for (only system feeds)")
-        // Don't clear existing feed generators if we have them
-        if !feedGenerators.isEmpty {
-          logger.info("Keeping existing \(self.feedGenerators.count) feed generators")
+      for uri in listURIs {
+        let uriString = uri.uriString()
+        do {
+          let details = try await appState.listManager.getListDetails(uriString)
+          listDetails[uri] = details
+        } catch {
+          logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
         }
-        return
       }
 
-      // Safely unwrap the client
-      guard let client = appState.atProtoClient else {
-        errorMessage = "ATProto client is not initialized"
-        logger.error("ATProto client not available for feed generator fetch")
-        return
-      }
-
-      logger.info("Attempting to fetch \(feedURIs.count) feed generators")
-      let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
-      let (responseCode, output) = try await client.app.bsky.feed.getFeedGenerators(input: input)
-
-      if responseCode == 200, let generators = output?.feeds {
-        logger.info("Successfully fetched \(generators.count) feed generators")
-        // IMPORTANT: Don't completely replace feedGenerators - update it
-        for generator in generators {
-          feedGenerators[generator.uri] = generator
-        }
-      } else {
-        errorMessage = "Failed to fetch feed generators. Response code: \(responseCode)"
-        logger.error("Feed generator fetch failed with code: \(responseCode)")
-      }
+      // After fetching, update widget mapping
+      await updateWidgetFeedPreferences()
     } catch {
-      // Check if it's a cancellation error
-      let nsError = error as NSError
-      if nsError.domain == NSURLErrorDomain && nsError.code == -999 {
-        // This is a cancellation error, don't update UI
-        logger.debug("Feed generator fetch cancelled")
-        return
-      }
-
-      // Only set error message for non-cancellation errors
-      errorMessage = "Error fetching feed generators: \(error.localizedDescription)"
-      logger.error("Exception in fetchFeedGenerators: \(error.localizedDescription)")
+      logger.error("Error fetching list details: \(error.localizedDescription)")
     }
   }
 

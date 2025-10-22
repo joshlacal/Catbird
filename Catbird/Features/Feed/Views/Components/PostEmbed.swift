@@ -45,8 +45,6 @@ struct PostEmbed: View {
                 
             case .unexpected:
                 EmptyView()
-            case .pending(_):
-                EmptyView()
             }
         }
         // Force calculated height to prevent layout jumps

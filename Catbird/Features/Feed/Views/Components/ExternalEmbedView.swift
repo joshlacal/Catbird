@@ -130,9 +130,7 @@ struct ExternalEmbedView: View {
                     userTappedToShowEmbed = true
                 }
             } else if let url = URL(string: external.uri.uriString()) {
-                Task {
-                    _ = await appState.urlHandler.handleURL(url)
-                }
+                _ = appState.urlHandler.handle(url)
             }
         }
     }
@@ -580,9 +578,7 @@ struct ExternalEmbedView: View {
             }
         } else if let url = URL(string: external.uri.uriString()) {
             // Handle URL tap when content is visible
-            Task {
-                _ = await appState.urlHandler.handleURL(url)
-            }
+            _ = appState.urlHandler.handle(url)
         }
     }
     
@@ -680,9 +676,7 @@ struct ExternalEmbedView: View {
                 
                 Button("Open Link") {
                     if let url = URL(string: external.uri.uriString()) {
-                        Task {
-                            _ = await appState.urlHandler.handleURL(url)
-                        }
+                        _ = appState.urlHandler.handle(url)
                     }
                 }
                 .appFont(AppTextRole.caption)

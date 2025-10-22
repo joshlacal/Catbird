@@ -12,12 +12,13 @@ import os
 import SwiftData
 
 @MainActor @Observable
-final class FeedStateStore {
+final class FeedStateStore: StateInvalidationSubscriber {
   static let shared = FeedStateStore()
   
   private var stateManagers: [String: FeedStateManager] = [:]
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedStateStore")
   private var modelContext: ModelContext?
+  private weak var appState: AppState?
   
   // iOS 18+: Track app lifecycle state
   private var currentScenePhase: ScenePhase = .active
@@ -26,8 +27,18 @@ final class FeedStateStore {
   private init() {
     // Modern lifecycle management will be handled via @Environment(\.scenePhase)
     // No more UIKit notifications needed
+    
+    // Note: AppState will be set via setAppState() when first accessed
   }
   
+  /// Set the AppState reference for state invalidation subscription
+  func setAppState(_ appState: AppState) {
+    guard self.appState == nil else { return }
+    self.appState = appState
+    appState.stateInvalidationBus.subscribe(self)
+    logger.debug("FeedStateStore subscribed to StateInvalidationBus")
+  }
+    
   func setModelContext(_ context: ModelContext) {
     self.modelContext = context
     logger.debug("ModelContext set for FeedStateStore")
@@ -35,6 +46,9 @@ final class FeedStateStore {
   }
   
   func stateManager(for feedType: FetchType, appState: AppState) -> FeedStateManager {
+    // Set appState reference on first access for state invalidation subscription
+    setAppState(appState)
+    
     let identifier = feedType.identifier
     
     if let existing = stateManagers[identifier] {
@@ -229,13 +243,11 @@ final class FeedStateStore {
   }
   
   func clearAllStateManagers() {
-    Task {
-      for (_, stateManager) in stateManagers {
-         stateManager.cleanup()
-      }
-      stateManagers.removeAll()
-      logger.debug("Cleared all state managers")
+    for (_, stateManager) in stateManagers {
+       stateManager.cleanup()
     }
+    stateManagers.removeAll()
+    logger.debug("Cleared all state managers")
   }
   
   // iOS 18+: Handle app becoming active after backgrounding with intelligent refresh logic
@@ -325,6 +337,33 @@ final class FeedStateStore {
       // Ensure each state manager maintains its current state exactly as is
       // This is important for preventing state loss during app switching, control center, etc.
       logger.debug("Preserved existing state for \(identifier)")
+    }
+  }
+}
+
+// MARK: - StateInvalidationSubscriber
+
+extension FeedStateStore {
+  /// Handle state invalidation events
+  func handleStateInvalidation(_ event: StateInvalidationEvent) async {
+    switch event {
+    case .accountSwitched:
+      logger.debug("🔄 Account switched - clearing all feed state managers")
+      clearAllStateManagers()
+      
+    default:
+      // Other events are handled by individual FeedStateManagers
+      break
+    }
+  }
+  
+  /// Check if this store is interested in specific events
+  nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    switch event {
+    case .accountSwitched:
+      return true
+    default:
+      return false
     }
   }
 }

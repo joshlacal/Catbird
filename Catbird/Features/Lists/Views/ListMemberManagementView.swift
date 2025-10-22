@@ -251,6 +251,7 @@ struct ListMemberManagementView: View {
           loadingView
         }
       }
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Manage Members")
 #if os(iOS)
       .toolbarTitleDisplayMode(.inline)

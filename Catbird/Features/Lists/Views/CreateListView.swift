@@ -136,6 +136,7 @@ struct CreateListView: View {
   var body: some View {
     NavigationStack {
       formContent
+        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
         .navigationTitle("Create List")
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)

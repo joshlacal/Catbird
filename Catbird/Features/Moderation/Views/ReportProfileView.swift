@@ -149,9 +149,9 @@ struct ReportProfileView: View {
             
             // If no labelers found, try to get the default Bluesky moderation service
             if availableLabelers.isEmpty {
-                if let bskyLabeler = try await reportingService.getBlueskyModerationService() {
+                let bskyLabeler = try await reportingService.getBlueskyModerationService()
                     availableLabelers = [bskyLabeler]
-                }
+                
             }
             
             // Default to Bluesky moderation service if available

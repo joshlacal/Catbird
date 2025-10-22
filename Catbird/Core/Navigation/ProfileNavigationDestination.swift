@@ -6,4 +6,5 @@ enum ProfileNavigationDestination: Hashable {
   case section(ProfileTab)
   case followers(String)
   case following(String)
+  case knownFollowers(String)
 }

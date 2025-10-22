@@ -133,8 +133,6 @@ struct FeedPost: View, Equatable {
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, FeedPost.baseUnit * 2)
-    case .pending(_):
-        EmptyView()
 }
   }
 

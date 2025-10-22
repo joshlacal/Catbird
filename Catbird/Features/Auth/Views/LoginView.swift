@@ -4,11 +4,20 @@ import Petrel
 import SwiftUI
 
 struct LoginView: View {
+    // MARK: - Properties
+    /// Indicates if this LoginView is being used to add a new account (vs initial login or re-authentication)
+    let isAddingNewAccount: Bool
+    
     // MARK: - Environment
     @Environment(AppState.self) private var appState
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var colorScheme
+    
+    // MARK: - Initialization
+    init(isAddingNewAccount: Bool = false) {
+        self.isAddingNewAccount = isAddingNewAccount
+    }
     
     // MARK: - State
     @State private var handle = ""
@@ -23,6 +32,11 @@ struct LoginView: View {
     @State private var loginProgress: LoginProgress = .idle
     @State private var showDebugInfo = false
     @State private var biometricAuthAvailable = false
+    
+    // Advanced AppView configuration
+    @State private var customAppViewDID = "did:web:api.bsky.app#bsky_appview"
+    @State private var customChatDID = "did:web:api.bsky.chat#bsky_chat"
+    @State private var showAppViewAdvancedOptions = false
     
     // Task cancellation support
     @State private var authenticationTask: Task<Void, Never>?
@@ -50,6 +64,8 @@ struct LoginView: View {
     enum Field: Hashable {
         case username
         case pdsurl
+        case appviewdid
+        case chatdid
     }
     @FocusState private var focusedField: Field?
 
@@ -158,6 +174,27 @@ struct LoginView: View {
                                 .padding(.bottom, 4)
                             
                             validatingTextFieldWithBackground(geometry: geometry)
+                            
+                            // Advanced AppView options toggle for login
+                            Button {
+                                withAnimation(.spring(duration: 0.4)) {
+                                    showAppViewAdvancedOptions.toggle()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: showAppViewAdvancedOptions ? "chevron.down" : "chevron.right")
+                                        .imageScale(.small)
+                                    Text("Advanced Service Configuration")
+                                        .appFont(AppTextRole.footnote)
+                                }
+                                .foregroundStyle(.secondary)
+                            }
+                            .padding(.top, 8)
+                            
+                            // Advanced AppView fields
+                            if showAppViewAdvancedOptions {
+                                appViewAdvancedFields(geometry: geometry)
+                            }
                         }
                         
                         // PDS URL field (for advanced mode)
@@ -362,10 +399,14 @@ struct LoginView: View {
             // Check biometric authentication availability
             biometricAuthAvailable = (appState.authManager.biometricType != .none)
 
-            // If there's an expired account, automatically start re-authentication (only once and not if already authenticating)
+            // If there's an expired account, automatically start re-authentication
+            // BUT: Skip this if we're explicitly adding a new account (not re-authenticating)
+            // ALSO: Skip if already authenticating to prevent loops
             if let expiredAccount = appState.authManager.expiredAccountInfo,
                !hasStartedReAuthentication,
-               !isLoggingIn {
+               !isLoggingIn,
+               !isAddingNewAccount,
+               !appState.authManager.state.isAuthenticating {
                 logger.info("Expired account detected, automatically starting re-authentication")
                 hasStartedReAuthentication = true
                 await startReAuthenticationForExpiredAccount(expiredAccount)
@@ -594,6 +635,109 @@ struct LoginView: View {
             .frame(maxWidth: min(geometry.size.width * 0.9, 400))
             .transition(AnyTransition.opacity.combined(with: AnyTransition.move(edge: .top)))
         }
+    }
+    
+    private func appViewAdvancedFields(geometry: GeometryProxy) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Configure custom service endpoints")
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
+            
+            // AppView DID field
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Bluesky AppView DID")
+                    .appFont(AppTextRole.caption2)
+                    .foregroundStyle(.secondary)
+                
+                Group {
+#if os(iOS)
+                    ValidatingTextField(
+                        text: $customAppViewDID,
+                        prompt: "did:web:api.bsky.app#bsky_appview",
+                        icon: "server.rack",
+                        validationError: nil,
+                        isDisabled: isLoggingIn,
+                        keyboardType: .URL,
+                        submitLabel: .next,
+                        onSubmit: {
+                            focusedField = .chatdid
+                        }
+                    )
+#elseif os(macOS)
+                    ValidatingTextField(
+                        text: $customAppViewDID,
+                        prompt: "did:web:api.bsky.app#bsky_appview",
+                        icon: "server.rack",
+                        validationError: nil,
+                        isDisabled: isLoggingIn,
+                        submitLabel: .next,
+                        onSubmit: {
+                            focusedField = .chatdid
+                        }
+                    )
+#endif
+                }
+                .focused($focusedField, equals: .appviewdid)
+                .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+            }
+            
+            // Chat DID field
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Bluesky Chat DID")
+                    .appFont(AppTextRole.caption2)
+                    .foregroundStyle(.secondary)
+                
+                Group {
+#if os(iOS)
+                    ValidatingTextField(
+                        text: $customChatDID,
+                        prompt: "did:web:api.bsky.chat#bsky_chat",
+                        icon: "bubble.left.and.bubble.right",
+                        validationError: nil,
+                        isDisabled: isLoggingIn,
+                        keyboardType: .URL,
+                        submitLabel: .go,
+                        onSubmit: {
+                            handleLogin()
+                        }
+                    )
+#elseif os(macOS)
+                    ValidatingTextField(
+                        text: $customChatDID,
+                        prompt: "did:web:api.bsky.chat#bsky_chat",
+                        icon: "bubble.left.and.bubble.right",
+                        validationError: nil,
+                        isDisabled: isLoggingIn,
+                        submitLabel: .go,
+                        onSubmit: {
+                            handleLogin()
+                        }
+                    )
+#endif
+                }
+                .focused($focusedField, equals: .chatdid)
+                .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+            }
+            
+            // Reset to defaults button
+            Button {
+                withAnimation {
+                    customAppViewDID = "did:web:api.bsky.app#bsky_appview"
+                    customChatDID = "did:web:api.bsky.chat#bsky_chat"
+                }
+            } label: {
+                Text("Reset to Defaults")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+        .background(.quaternary.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(maxWidth: min(geometry.size.width * 0.9, 400))
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
     
     private func actionButtonView(geometry: GeometryProxy) -> some View {
@@ -912,6 +1056,14 @@ struct LoginView: View {
         loginProgress = .startingAuth
         error = nil
         
+        // Configure custom service DIDs if advanced options are enabled
+        if showAppViewAdvancedOptions {
+            appState.authManager.customAppViewDID = customAppViewDID
+            appState.authManager.customChatDID = customChatDID
+            logger.info("Using custom AppView DID: \(customAppViewDID)")
+            logger.info("Using custom Chat DID: \(customChatDID)")
+        }
+        
         // Start timeout countdown
         startTimeoutCountdown()
         
@@ -1087,6 +1239,10 @@ struct LoginView: View {
                     loginProgress = .idle
                     showTimeoutCountdown = false
                     hasStartedReAuthentication = false
+                    
+                    // Clear expired account info to prevent automatic retry loop
+                    await appState.authManager.clearExpiredAccountInfo()
+                    
                     // Reset auth state to prevent getting stuck
                     appState.authManager.resetError()
                 } catch {

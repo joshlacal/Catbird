@@ -35,8 +35,6 @@ struct RecordEmbedView: View {
                     .padding(.vertical, 4)
         case .unexpected:
             unsupportedView
-        case .pending(_):
-            EmptyView()
         }
     }
     
@@ -171,10 +169,10 @@ struct RecordEmbedView: View {
     // MARK: - Embedded Content
     
     /// Displays embedded content within a quoted post with proper content warnings
-    /// 
+    ///
     /// This method wraps all embedded media (images, videos, external links) with ContentLabelManager
     /// to ensure proper content moderation based on user preferences and content labels.
-    /// 
+    ///
     /// - Parameter post: The record containing embeds to display
     /// - Returns: A view containing the embedded content with appropriate content warnings
     @ViewBuilder
@@ -349,8 +347,6 @@ struct RecordEmbedView: View {
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 6)
-                case .pending(_):
-                    EmptyView()
 
                 }
             }

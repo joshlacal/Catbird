@@ -1,0 +1,46 @@
+{
+  "tasks": {
+    "task1-false-positive-warnings": {
+      "prompt": "Fix false positive content warnings in ContentLabelView.swift (lines 78-92). Problem: ALL labels show as badges without severity filtering. Solution: Add label severity classification - only show badges for moderation labels (nsfw, gore, violence, nudity, suggestive). Skip informational labels (bot-account, !hide, !warn). Filter the labels array before displaying badges.",
+      "approval": "--allow-all-tools"
+    },
+    "task2-warning-ui-sizing": {
+      "prompt": "Fix content warning UI sizing in ContentLabelView.swift (lines 159-203). Problem: strongBlurOverlay is huge and fixed-size. Solution: Make overlay adaptive based on available geometry. Create compact version for small posts (<200pt), standard for normal. Use GeometryReader to respect parent constraints. Reduce padding for compact mode.",
+      "approval": "--allow-all-tools"
+    },
+    "task3-redundant-layers": {
+      "prompt": "Eliminate redundant label layers in PostView.swift (lines 195-202) and PostEmbed.swift. Problem: Post-level ContentLabelManager wraps entire post including embeds, then embeds wrap again. Solution: Only wrap post in ContentLabelManager when NO embed exists OR post has text-specific labels. Let embeds handle their own labels exclusively. Check if postState.currentPost.embed exists before wrapping.",
+      "approval": "--allow-all-tools"
+    },
+    "task4-feed-level-filtering": {
+      "prompt": "Implement feed-level label filtering in FeedTuner.swift and FeedModel.swift. Problem: No label filtering - adult content shows as placeholder boxes. Solution: 1) Add 'contentLabelPreferences: [ContentLabelPreference]' and 'hideAdultContent: Bool' to FeedTunerSettings struct. 2) In applyContentFiltering() method (line 530), after mute/block checks, add label filtering logic - check post.post.labels against preferences, filter out posts with .hide visibility. 3) In FeedModel.swift, pass appState.preferencesManager preferences to FeedTuner via settings.",
+      "approval": "--allow-all-tools"
+    },
+    "task5-labeler-settings-ui": {
+      "prompt": "Create LabelerSettingsView.swift in Features/Settings/Views/. Requirements: 1) List all subscribed labelers from ReportingService.getSubscribedLabelers(). 2) For each labeler, show name and per-labeler content visibility controls (adult, suggestive, violent, nudity using ContentVisibilitySelector). 3) Save preferences with labelerDid scope via PreferencesManager.updateContentLabelPreferences(). 4) Add navigation link in ModerationSettingsView.swift. Use @Observable pattern and AppState environment.",
+      "approval": "--allow-all-tools"
+    },
+    "task6-labeler-profile": {
+      "prompt": "Create LabelerProfileView.swift in Features/Profile/Views/. Requirements: 1) Accept labelerDID parameter. 2) Fetch labeler details using ATProtoClient.app.bsky.labeler.getServices(). 3) Display labeler name, description, creator handle, policies. 4) Subscribe/unsubscribe button that updates user preferences via PreferencesManager. 5) Show labeler stats if available. 6) Use standard SwiftUI profile view pattern with @Observable ViewModel. Make it navigable from labeler mentions.",
+      "approval": "--allow-all-tools"
+    },
+    "task7-reporting-fix": {
+      "prompt": "Fix reporting with custom labelers in ReportingService.swift (lines 68-96). Problem: Bluesky moderation service not guaranteed in labeler list. Solution: 1) In getSubscribedLabelers(), always append Bluesky moderation service (did:plc:ar7c4by46qjdydhdevvrndac) to results even if not subscribed. 2) Place it first in the array. 3) Ensure getBlueskyModerationService() is called and result is added. 4) Update ReportFormView.swift to show 'Official Bluesky Moderation' label and make it default selection.",
+      "approval": "--allow-all-tools"
+    }
+  },
+  "workflows": {
+    "all-label-fixes": {
+      "description": "Execute all label system fixes in parallel",
+      "tasks": [
+        "task1-false-positive-warnings",
+        "task2-warning-ui-sizing", 
+        "task3-redundant-layers",
+        "task4-feed-level-filtering",
+        "task5-labeler-settings-ui",
+        "task6-labeler-profile",
+        "task7-reporting-fix"
+      ]
+    }
+  }
+}

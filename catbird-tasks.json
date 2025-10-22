@@ -1,0 +1,441 @@
+{
+  "version": "1.0",
+  "description": "Catbird Development Tasks - Grouped by Priority",
+  "meta": {
+    "repo": "catbird",
+    "platform": "iOS 26+ (Swift 6, SwiftUI)",
+    "libs": ["Petrel", "os_log/Logger"],
+    "style": "pragmatic, testable, minimal regressions",
+    "build_targets": ["Catbird (iOS)", "CatbirdKit"]
+  },
+  "tasks": {
+    "ui-001-muted-toast": {
+      "id": "UI-001",
+      "name": "Fix Muted Words Toast Size",
+      "area": "UI",
+      "priority": "P0",
+      "prompt": "Fix the muted-words toast to wrap content and avoid full-screen takeover. Adjust MutedWordsToast to use intrinsic size and never exceed 40% screen height. Code paths: Catbird/Components/Toasts/MutedWordsToast*",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": [],
+      "code_paths": ["Catbird/Components/Toasts/MutedWordsToast*"],
+      "acceptance": [
+        "Toast uses intrinsic size",
+        "Never exceeds 40% screen height"
+      ]
+    },
+    "set-001-oauth-buttons": {
+      "id": "SET-001",
+      "name": "Hide Unsupported OAuth Actions",
+      "area": "Settings",
+      "priority": "P0",
+      "prompt": "Hide or disable buttons in Settings for unsupported OAuth actions: update email, delete/deactivate account, change handle, app passwords. Ensure no action leads to scope error surfaces. Code paths: Catbird/Features/Settings/*",
+      "approval": "--allow-all-tools",
+      "timeout": 90,
+      "deps": [],
+      "code_paths": ["Catbird/Features/Settings/*"],
+      "acceptance": [
+        "Unsupported OAuth actions hidden or disabled",
+        "No scope errors shown to users"
+      ]
+    },
+    "feed-001-reply-flood": {
+      "id": "FEED-001",
+      "name": "Suppress Reply Flood in Following Feed",
+      "area": "Feeds",
+      "priority": "P0",
+      "prompt": "Fix the Following feed to exclude replies unless: (a) reply is to a followed user, (b) author is the user, or (c) reply is explicitly expanded in-thread. Code paths: Catbird/Features/Feed/FollowingFeed*, Petrel/Sources/FeedManager/*. Add Logger category: blue.catbird.feed",
+      "approval": "--allow-all-tools",
+      "timeout": 180,
+      "deps": [],
+      "code_paths": [
+        "Catbird/Features/Feed/FollowingFeed*",
+        "Petrel/Sources/FeedManager/*"
+      ],
+      "acceptance": [
+        "Replies to non-followed parents hidden by default",
+        "Thread expansion loads parent/children correctly",
+        "No change to home/latest custom feeds"
+      ],
+      "tests": [
+        "Unit test feed filtering rules for reply visibility",
+        "UI test: thread expansion"
+      ]
+    },
+    "comp-001-share-crash": {
+      "id": "COMP-001",
+      "name": "Fix Share-to Importer Crash",
+      "area": "Composer",
+      "priority": "P0",
+      "prompt": "Fix crash path when sharing to composer. Handle nil attachments and oversized payloads. Code paths: Extensions/ShareExtension/*, Catbird/Features/Compose/*. No crash on text-only, URL, or image shares.",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": [],
+      "code_paths": [
+        "Extensions/ShareExtension/*",
+        "Catbird/Features/Compose/*"
+      ],
+      "acceptance": [
+        "No crash on text-only shares",
+        "No crash on URL shares",
+        "No crash on image shares"
+      ]
+    },
+    "ui-002-glass-toast": {
+      "id": "UI-002",
+      "name": "Liquid Glass Toast Alignment",
+      "area": "UI",
+      "priority": "P1",
+      "prompt": "Align Liquid Glass toast to leading edge and match FAB baseline. Coordinates should match FAB baseline across compact/regular width. Code paths: Catbird/Components/Toasts/LiquidGlassToast*",
+      "approval": "--allow-all-tools",
+      "timeout": 90,
+      "deps": [],
+      "code_paths": ["Catbird/Components/Toasts/LiquidGlassToast*"],
+      "acceptance": [
+        "Toast aligned to leading edge",
+        "Matches FAB baseline across all widths"
+      ]
+    },
+    "ui-004-sort-options": {
+      "id": "UI-004",
+      "name": "Remove Unused Sort Options",
+      "area": "UX",
+      "priority": "P0",
+      "prompt": "Hide/strip sort modes not meaningfully supported by current feeds. Only show supported sort modes; no dead options. Code paths: Catbird/Features/Feed/Filters/*",
+      "approval": "--allow-all-tools",
+      "timeout": 60,
+      "deps": [],
+      "code_paths": ["Catbird/Features/Feed/Filters/*"],
+      "acceptance": [
+        "Only supported sort modes visible",
+        "No dead/unsupported options shown"
+      ]
+    },
+    "nav-001-messages-deeplink": {
+      "id": "NAV-001",
+      "name": "Fix Messages Deep-link Navigation",
+      "area": "Messages",
+      "priority": "P0",
+      "prompt": "Fix NavigationSplitView stack when opening a conversation from outside the app (scene phase or URL). Deep link should open exactly one conversation with sane back stack. Code paths: Catbird/Features/Messages/*, Catbird/App/AppNavigation/*. Add UI test with openURL(_:).",
+      "approval": "--allow-all-tools",
+      "timeout": 150,
+      "deps": [],
+      "code_paths": [
+        "Catbird/Features/Messages/*",
+        "Catbird/App/AppNavigation/*"
+      ],
+      "acceptance": [
+        "Deep link opens exactly one conversation",
+        "Back stack is sane/correct"
+      ],
+      "tests": [
+        "UI test with openURL(_:)"
+      ]
+    },
+    "srch-001-plan": {
+      "id": "SRCH-001",
+      "name": "Search Overhaul Plan",
+      "area": "Search",
+      "priority": "P0",
+      "prompt": "Write a Phase 0-2 plan for Search overhaul: data sources, ranking, UI flows, caching, pagination. Create design doc with tickets. This should be a planning task that produces documentation.",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": [],
+      "deliverable": "Design doc + tickets"
+    },
+    "feed-002-filters": {
+      "id": "FEED-002",
+      "name": "Apply Feed Filters Consistently",
+      "area": "Feeds",
+      "priority": "P1",
+      "prompt": "Ensure user-defined filters (muted words, content labels, sorting) apply in post cells, thread expansions, profile feeds, and search result lists. Same filter results across FeedPostView, profile posts, and expanded threads. No duplicate posts after filtering. Code paths: Catbird/Features/Feed/Components/FeedPostView*, Petrel/Sources/Filters/*. Add snapshot tests for filtered states.",
+      "approval": "--allow-all-tools",
+      "timeout": 180,
+      "deps": ["feed-001-reply-flood"],
+      "code_paths": [
+        "Catbird/Features/Feed/Components/FeedPostView*",
+        "Petrel/Sources/Filters/*"
+      ],
+      "acceptance": [
+        "Same filter results across all views",
+        "No duplicate posts after filtering"
+      ],
+      "tests": [
+        "Snapshot tests for filtered states"
+      ]
+    },
+    "feed-003-parents": {
+      "id": "FEED-003",
+      "name": "Parent Post Correctness",
+      "area": "Feeds",
+      "priority": "P1",
+      "prompt": "Fix parent post resolution and prevent duplicates across slices (profile, thread, following). Parent resolves once and de-duped across containers. Code paths: Petrel/Sources/ThreadManager/*, Catbird/Features/Feed/ThreadView*",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": ["feed-001-reply-flood"],
+      "code_paths": [
+        "Petrel/Sources/ThreadManager/*",
+        "Catbird/Features/Feed/ThreadView*"
+      ],
+      "acceptance": [
+        "Parent resolves once",
+        "De-duped across containers"
+      ]
+    },
+    "comp-002-drafts": {
+      "id": "COMP-002",
+      "name": "Drafts in Post Composer",
+      "area": "Composer",
+      "priority": "P1",
+      "prompt": "Implement auto-save and manual save drafts with local persistence in PostComposerViewUIKit. Draft autosaves every 5s and on background; support list/restore. Code paths: Catbird/Features/Compose/PostComposerViewUIKit*, Catbird/Storage/DraftsStore*",
+      "approval": "--allow-all-tools",
+      "timeout": 180,
+      "deps": ["comp-001-share-crash"],
+      "code_paths": [
+        "Catbird/Features/Compose/PostComposerViewUIKit*",
+        "Catbird/Storage/DraftsStore*"
+      ],
+      "acceptance": [
+        "Draft autosaves every 5s",
+        "Autosaves on background",
+        "Can list and restore drafts"
+      ]
+    },
+    "acc-001-reorder": {
+      "id": "ACC-001",
+      "name": "Account Reordering",
+      "area": "Accounts",
+      "priority": "P1",
+      "prompt": "Add drag-reorder for accounts in AccountSwitcherView and persist order. Reorder persists across relaunch. Code paths: Catbird/Features/Accounts/AccountSwitcherView*",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": [],
+      "code_paths": ["Catbird/Features/Accounts/AccountSwitcherView*"],
+      "acceptance": [
+        "Drag to reorder accounts",
+        "Order persists across relaunch"
+      ]
+    },
+    "acc-002-stale-shadow": {
+      "id": "ACC-002",
+      "name": "Fix Stale Post Shadow on Account Switch",
+      "area": "Accounts",
+      "priority": "P1",
+      "prompt": "Clear/rebind per-account caches to avoid stale shadows when switching accounts. Switching accounts never shows previous account's shadow. Code paths: Petrel/Sources/Cache/*, Catbird/App/AppState/*",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": ["acc-001-reorder"],
+      "code_paths": [
+        "Petrel/Sources/Cache/*",
+        "Catbird/App/AppState/*"
+      ],
+      "acceptance": [
+        "No stale shadows when switching accounts",
+        "Per-account caches properly cleared/rebound"
+      ]
+    },
+    "msg-002-polish": {
+      "id": "MSG-002",
+      "name": "Messages Experience Polish",
+      "area": "Messages",
+      "priority": "P2",
+      "prompt": "Stabilize state lifetimes, scrolling, and unread markers in Messages. General polish pass for consistency and UX.",
+      "approval": "--allow-all-tools",
+      "timeout": 180,
+      "deps": ["nav-001-messages-deeplink"]
+    },
+    "feed-004-smooth-switch": {
+      "id": "FEED-004",
+      "name": "Smoother Feed Switch on Account Swap",
+      "area": "Feeds/Accounts",
+      "priority": "P2",
+      "prompt": "Implement crossfade and data pre-warm for initial above-the-fold posts when switching accounts.",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": ["acc-002-stale-shadow"]
+    },
+    "ui-003-zoom": {
+      "id": "UI-003",
+      "name": "Zoom Transitions for Liquid Glass",
+      "area": "UI",
+      "priority": "P2",
+      "prompt": "Add zoom transitions to Liquid Glass buttons and sheets using matchedGeometryEffect where safe. Zoom-in on present; zoom-out on dismiss; 120-180ms. Code paths: Catbird/Components/LiquidGlass/*",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "code_paths": ["Catbird/Components/LiquidGlass/*"],
+      "acceptance": [
+        "Zoom-in on present",
+        "Zoom-out on dismiss",
+        "120-180ms duration"
+      ]
+    },
+    "mod-001-hide-posts": {
+      "id": "MOD-001",
+      "name": "Post Hiding with Bluesky Prefs Sync",
+      "area": "Moderation",
+      "priority": "P2",
+      "prompt": "Add per-post hide functionality. Sync to server if supported; fallback to local storage.",
+      "approval": "--allow-all-tools",
+      "timeout": 150
+    },
+    "mod-002-content-labels": {
+      "id": "MOD-002",
+      "name": "Content Labeling & Adult Content Audit",
+      "area": "Moderation",
+      "priority": "P1",
+      "prompt": "Audit label mapping and UI toggles for content labeling and adult content settings. Ensure consistency in all views.",
+      "approval": "--allow-all-tools",
+      "timeout": 150
+    },
+    "mod-003-hide-replies": {
+      "id": "MOD-003",
+      "name": "Hide Replies from Non-Followed Parents Rule",
+      "area": "Moderation/Feeds",
+      "priority": "P1",
+      "prompt": "Implement refined rule for hiding replies from non-followed parents. Make it configurable.",
+      "approval": "--allow-all-tools",
+      "timeout": 120,
+      "deps": ["feed-001-reply-flood"]
+    },
+    "feeds-ui-001-start-page": {
+      "id": "FEEDS-UI-001",
+      "name": "Feeds Start Page Improvements",
+      "area": "UI/Feeds",
+      "priority": "P1",
+      "prompt": "Add bottom toolbar buttons for Lists on Feeds Start Page. Support pin/save/edit Lists in-app. Redesign header and add offline indicator.",
+      "approval": "--allow-all-tools",
+      "timeout": 180
+    },
+    "perf-001-profile": {
+      "id": "PERF-001",
+      "name": "Profile Feeds with Instruments",
+      "area": "Performance",
+      "priority": "P1",
+      "prompt": "Profile feeds with Instruments for time-to-first-post, scroll hitches, and allocation spikes. Produce report and follow-up issues.",
+      "approval": "--allow-all-tools",
+      "timeout": 240,
+      "deliverable": "Instruments report + follow-up issues"
+    },
+    "notif-001-moderation": {
+      "id": "NOTIF-001",
+      "name": "Push Notifier Moderation Lists",
+      "area": "Server (Rust)",
+      "priority": "P0",
+      "prompt": "In bluesky-push-notifier: Sync moderation lists via public.api.bsky.app and filter delivery for muted threads.",
+      "approval": "--allow-all-tools",
+      "timeout": 180,
+      "repo": "bluesky-push-notifier"
+    },
+    "appview-001-config": {
+      "id": "APPVIEW-001",
+      "name": "Configurable AppView",
+      "area": "Integration",
+      "priority": "P1",
+      "prompt": "Add toggle and persistence for AppView selection with graceful fallbacks.",
+      "approval": "--allow-all-tools",
+      "timeout": 120
+    },
+    "tool-001-mcp": {
+      "id": "TOOL-001",
+      "name": "MCP for Bluesky + App Store Connect",
+      "area": "Tooling",
+      "priority": "P2",
+      "prompt": "Add MCP tools for XRPC and App Store Connect APIs. Auth scaffolding; read-only first.",
+      "approval": "--allow-all-tools",
+      "timeout": 180
+    },
+    "repo-001-cleanup": {
+      "id": "REPO-001",
+      "name": "Repo Documentation Cleanup",
+      "area": "Hygiene",
+      "priority": "P2",
+      "prompt": "Cull outdated 'Claude fix' notes. Move remaining docs to /docs/notes/ and create index.",
+      "approval": "--allow-all-tools",
+      "timeout": 60
+    }
+  },
+  "workflows": {
+    "p0-quick-wins": {
+      "description": "P0 Quick Wins - High impact, low effort",
+      "mode": "sequential",
+      "stop_on_failure": true,
+      "tasks": [
+        "ui-001-muted-toast",
+        "set-001-oauth-buttons",
+        "feed-001-reply-flood",
+        "comp-001-share-crash",
+        "ui-004-sort-options",
+        "nav-001-messages-deeplink",
+        "srch-001-plan"
+      ]
+    },
+    "p1-core-features": {
+      "description": "P1 Core Features - Essential functionality",
+      "mode": "sequential",
+      "tasks": [
+        "ui-002-glass-toast",
+        "feed-002-filters",
+        "feed-003-parents",
+        "comp-002-drafts",
+        "acc-001-reorder",
+        "acc-002-stale-shadow",
+        "mod-002-content-labels",
+        "mod-003-hide-replies",
+        "feeds-ui-001-start-page",
+        "perf-001-profile",
+        "appview-001-config"
+      ]
+    },
+    "p2-polish": {
+      "description": "P2 Polish - Nice to have improvements",
+      "mode": "parallel",
+      "tasks": [
+        "msg-002-polish",
+        "feed-004-smooth-switch",
+        "ui-003-zoom",
+        "mod-001-hide-posts",
+        "tool-001-mcp",
+        "repo-001-cleanup"
+      ]
+    },
+    "feeds-complete": {
+      "description": "Complete Feed System Fixes",
+      "mode": "sequential",
+      "stop_on_failure": true,
+      "tasks": [
+        "feed-001-reply-flood",
+        "feed-002-filters",
+        "feed-003-parents",
+        "feed-004-smooth-switch",
+        "feeds-ui-001-start-page"
+      ]
+    },
+    "accounts-complete": {
+      "description": "Complete Account System Fixes",
+      "mode": "sequential",
+      "tasks": [
+        "acc-001-reorder",
+        "acc-002-stale-shadow",
+        "feed-004-smooth-switch"
+      ]
+    },
+    "composer-complete": {
+      "description": "Complete Composer Fixes",
+      "mode": "sequential",
+      "tasks": [
+        "comp-001-share-crash",
+        "comp-002-drafts"
+      ]
+    },
+    "ui-polish-complete": {
+      "description": "Complete UI Polish",
+      "mode": "parallel",
+      "tasks": [
+        "ui-001-muted-toast",
+        "ui-002-glass-toast",
+        "ui-003-zoom",
+        "ui-004-sort-options"
+      ]
+    }
+  }
+}

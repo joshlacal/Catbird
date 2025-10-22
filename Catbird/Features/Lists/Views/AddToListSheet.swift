@@ -129,6 +129,7 @@ struct AddToListSheet: View {
   var body: some View {
     NavigationStack {
       contentView
+        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
         .navigationTitle("Add to List")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)

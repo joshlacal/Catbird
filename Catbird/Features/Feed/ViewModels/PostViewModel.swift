@@ -287,6 +287,12 @@ final class PostViewModel {
                 await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
                     shadow.likeUri = response.uri
                 }
+                
+                // Track interaction for feed feedback
+                if let postURI = try? ATProtocolURI(uriString: postId) {
+                    appState.feedFeedbackManager.trackLike(postURI: postURI)
+                }
+                
                 return true
                 
             } else { // Deleting an existing like
@@ -406,6 +412,12 @@ final class PostViewModel {
                 await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
                     shadow.repostUri = response.uri
                 }
+                
+                // Track interaction for feed feedback
+                if let postURI = try? ATProtocolURI(uriString: postId) {
+                    appState.feedFeedbackManager.trackRepost(postURI: postURI)
+                }
+                
                 return true
                 
             } else { // Deleting an existing repost

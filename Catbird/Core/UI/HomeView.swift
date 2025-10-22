@@ -164,6 +164,8 @@ struct HomeView: View {
           client: appState.atProtoClient,
           size: 30
         )
+        .frame(width: 30, height: 30)
+        .aspectRatio(1, contentMode: .fit)
       }
       .accessibilityLabel("Profile and settings")
       .accessibilityHint("Opens your profile and app settings")

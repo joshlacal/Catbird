@@ -9,13 +9,14 @@ import SwiftUI
 
 /// Defines notification types
 enum NotificationType: String, CaseIterable {
-  case like, repost, follow, mention, reply, quote, likeViaRepost, repostViaRepost, activitySubscription
+  case like, repost, follow, followBack, mention, reply, quote, likeViaRepost, repostViaRepost, activitySubscription
 
   var icon: String {
     switch self {
     case .like: return "heart.fill"
     case .repost: return "arrow.2.squarepath"
     case .follow: return "person.fill.badge.plus"
+    case .followBack: return "person.2.fill"
     case .mention: return "at"
     case .reply: return "arrowshape.turn.up.left.fill"
     case .quote: return "quote.bubble"
@@ -30,6 +31,7 @@ enum NotificationType: String, CaseIterable {
     case .like: return .red
     case .repost: return .green
     case .follow: return .blue
+    case .followBack: return .cyan
     case .mention: return .purple
     case .reply: return .orange
     case .quote: return .cyan
@@ -42,7 +44,7 @@ enum NotificationType: String, CaseIterable {
   /// Determines if this notification type should be grouped
   var isGroupable: Bool {
     switch self {
-    case .like, .repost, .follow, .likeViaRepost, .repostViaRepost:
+    case .like, .repost, .follow, .followBack, .likeViaRepost, .repostViaRepost:
       return true
     case .mention, .reply, .quote, .activitySubscription:
       // Don't group replies and quotes per requirement
@@ -69,6 +71,37 @@ struct GroupedNotification: Identifiable {
   /// Determines if this group contains any unread notifications
   var hasUnreadNotifications: Bool {
     return notifications.contains { !$0.isRead }
+  }
+}
+
+// MARK: - Thread-safe Post Cache Actor
+
+private actor PostCacheActor {
+  private var cache: [ATProtocolURI: (post: AppBskyFeedDefs.PostView, timestamp: Date)] = [:]
+  private let expirationInterval: TimeInterval = 300 // 5 minutes
+  
+  func get(_ uri: ATProtocolURI) -> (post: AppBskyFeedDefs.PostView, timestamp: Date)? {
+    return cache[uri]
+  }
+  
+  func set(_ uri: ATProtocolURI, post: AppBskyFeedDefs.PostView, timestamp: Date) {
+    cache[uri] = (post: post, timestamp: timestamp)
+  }
+  
+  func getCachedPosts(for uris: [ATProtocolURI], now: Date) -> [ATProtocolURI: AppBskyFeedDefs.PostView] {
+    var result: [ATProtocolURI: AppBskyFeedDefs.PostView] = [:]
+    for uri in uris {
+      if let cached = cache[uri], now.timeIntervalSince(cached.timestamp) < expirationInterval {
+        result[uri] = cached.post
+      }
+    }
+    return result
+  }
+  
+  func cleanup(now: Date) {
+    cache = cache.filter { _, entry in
+      now.timeIntervalSince(entry.timestamp) < expirationInterval
+    }
   }
 }
 
@@ -121,10 +154,8 @@ struct GroupedNotification: Identifiable {
     }
   }
 
-  // Add a cache for posts to avoid refetching
-  private var postCache: [ATProtocolURI: (post: AppBskyFeedDefs.PostView, timestamp: Date)] = [:]
-  // Cache expiration time (5 minutes)
-  private let cacheExpirationInterval: TimeInterval = 300
+  // Thread-safe post cache using actor
+  private let postCache = PostCacheActor()
 
   private let client: ATProtoClient?
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsViewModel")
@@ -176,7 +207,7 @@ struct GroupedNotification: Identifiable {
     error = nil
 
     // Clean up cache on refresh
-    cleanupCache()
+    await cleanupCache()
 
     await fetchNotifications(resetCursor: true)
     await ensureEnoughNotifications()
@@ -257,11 +288,9 @@ struct GroupedNotification: Identifiable {
   // MARK: - Private Methods
 
   /// Clears expired entries from the post cache
-  private func cleanupCache() {
+  private func cleanupCache() async {
     let now = Date()
-    postCache = postCache.filter { _, entry in
-      now.timeIntervalSince(entry.timestamp) < cacheExpirationInterval
-    }
+    await postCache.cleanup(now: now)
   }
 
   /// Fetches notifications from the API
@@ -402,7 +431,7 @@ struct GroupedNotification: Identifiable {
     var notificationGroups: [String: [AppBskyNotificationListNotifications.Notification]] = [:]
 
     for notification in notifications {
-      let type = mapReasonToNotificationType(notification.reason)
+      let type = mapReasonToNotificationType(notification.reason, notification: notification)
 
       // Only group notification types that are groupable
       if let type = type, type.isGroupable {
@@ -413,6 +442,8 @@ struct GroupedNotification: Identifiable {
           key = "\(notification.reason)_\(notification.reasonSubject?.uriString() ?? "")"
         case .follow:
           key = notification.reason
+        case .followBack:
+          key = "followBack"
         default:
           // For non-groupable types, use unique ID to prevent grouping
           key = "\(notification.reason)_\(notification.uri.uriString())_\(notification.cid)"
@@ -439,7 +470,7 @@ struct GroupedNotification: Identifiable {
       }
 
       let typeStr = firstNotification.reason
-      guard let type = mapReasonToNotificationType(typeStr) else {
+        guard let type = mapReasonToNotificationType(typeStr, notification: firstNotification) else {
         continue
       }
 
@@ -476,7 +507,7 @@ struct GroupedNotification: Identifiable {
            let replyRef = feedPost.reply {
           parentPost = fetchedParentPosts[replyRef.parent.uri]
         }
-      case .follow:
+      case .follow, .followBack:
         // No subject post needed
         break
       case .activitySubscription:
@@ -509,11 +540,16 @@ struct GroupedNotification: Identifiable {
   }
 
   /// Maps API reason strings to our NotificationType enum
-  private func mapReasonToNotificationType(_ reason: String) -> NotificationType? {
+  private func mapReasonToNotificationType(_ reason: String, notification: AppBskyNotificationListNotifications.Notification) -> NotificationType? {
     switch reason {
     case "like": return .like
     case "repost": return .repost
-    case "follow": return .follow
+    case "follow":
+      // Check if this is a follow-back (they followed you, and you follow them)
+        if notification.author.viewer?.following != nil {
+        return .followBack
+      }
+      return .follow
     case "mention": return .mention
     case "reply": return .reply
     case "quote": return .quote
@@ -528,22 +564,13 @@ struct GroupedNotification: Identifiable {
   private func fetchPosts(uris: [ATProtocolURI]) async -> [ATProtocolURI: AppBskyFeedDefs.PostView] {
     guard !uris.isEmpty, let client = client else { return [:] }
 
-    // Filter out URIs that are already in the cache and still valid
+    // Get cached posts in a thread-safe way
     let now = Date()
-    let cachedPosts = uris.reduce(into: [ATProtocolURI: AppBskyFeedDefs.PostView]()) {
-      result, uri in
-      if let cachedEntry = postCache[uri],
-        now.timeIntervalSince(cachedEntry.timestamp) < cacheExpirationInterval {
-        result[uri] = cachedEntry.post
-      }
-    }
+    let cachedPosts = await postCache.getCachedPosts(for: uris, now: now)
 
     // Only fetch URIs that aren't in the cache or expired
     let urisToFetch = uris.filter { uri in
-      if let cachedEntry = postCache[uri] {
-        return now.timeIntervalSince(cachedEntry.timestamp) >= cacheExpirationInterval
-      }
-      return true
+      cachedPosts[uri] == nil
     }
 
     // If all posts are in cache, return them immediately
@@ -573,10 +600,10 @@ struct GroupedNotification: Identifiable {
           continue
         }
 
-        // Update cache with newly fetched posts
+        // Update cache with newly fetched posts in a thread-safe way
         let fetchTime = Date()
         for post in posts {
-          postCache[post.uri] = (post: post, timestamp: fetchTime)
+          await postCache.set(post.uri, post: post, timestamp: fetchTime)
           allFetchedPosts[post.uri] = post
         }
 

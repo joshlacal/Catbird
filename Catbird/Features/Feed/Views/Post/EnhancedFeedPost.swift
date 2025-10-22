@@ -44,6 +44,7 @@ struct EnhancedFeedPost: View, Equatable {
     Group {
       if let feedViewPost {
         content(for: feedViewPost)
+              .id(appState.feedFeedbackManager.currentFeedType?.identifier ?? "unknown-feed-\(id)")
       } else {
         EmptyView()
       }
@@ -317,8 +318,6 @@ struct EnhancedFeedPost: View, Equatable {
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, Self.baseUnit * 2)
-    case .pending:
-      EmptyView()
     }
   }
 
@@ -359,7 +358,7 @@ struct EnhancedFeedPost: View, Equatable {
       did: blockedAuthor.did,
       handle: placeholderHandle,
       displayName: nil,
-      avatar: nil,
+      pronouns: nil, avatar: nil,
       associated: nil,
       viewer: blockedAuthor.viewer,
       labels: nil,
@@ -378,7 +377,7 @@ struct EnhancedFeedPost: View, Equatable {
       did: placeholderDID,
       handle: placeholderHandle,
       displayName: nil,
-      avatar: nil,
+      pronouns: nil, avatar: nil,
       associated: nil,
       viewer: nil,
       labels: nil,

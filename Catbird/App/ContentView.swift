@@ -101,16 +101,12 @@ struct ContentView: View {
     )
     .onChange(of: appState.authState) { _, newValue in
       if case .authenticated = newValue {
-        DispatchQueue.main.async {
-          Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.1))
-            
-            // Trigger feed loading immediately after authentication
-            await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
-            
-            // Check for onboarding after successful authentication
-            appState.onboardingManager.checkForWelcomeOnboarding()
-          }
+        Task { @MainActor in
+          // Trigger feed loading immediately after authentication
+          await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
+          
+          // Check for onboarding after successful authentication
+          appState.onboardingManager.checkForWelcomeOnboarding()
         }
       } else if case .error(let message) = newValue {
         // Log authentication errors for debugging
@@ -309,12 +305,100 @@ struct MainContentView18: View {
   @State private var hasInitializedFeed = false
   @State private var showingOnboarding = false
   @State private var hasRestoredState = false
+  @State private var isRestoringFeed = false // Prevent saving during account switch
   // Namespace for iOS 26 matched transitions
   @Namespace private var composeTransitionNamespace
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
     appState.navigationManager
+  }
+  
+  // MARK: - Per-Account Feed Memory
+  
+  /// Save the currently selected feed for the current account
+  private func saveLastFeedForAccount() {
+    // Don't save if we're in the middle of restoring/switching accounts
+    guard !isRestoringFeed else { return }
+    guard let userDID = appState.currentUserDID else { return }
+    let key = "lastSelectedFeed_\(userDID)"
+    UserDefaults.standard.set(selectedFeed.identifier, forKey: key)
+    logger.debug("💾 Saved last feed for account \(userDID): \(selectedFeed.identifier)")
+  }
+  
+  /// Restore the last selected feed for the current account
+  private func restoreLastFeedForAccount() async {
+    isRestoringFeed = true
+    defer { isRestoringFeed = false }
+    
+    guard let userDID = appState.currentUserDID else {
+      // No user logged in, default to timeline
+      selectedFeed = .timeline
+      currentFeedName = "Timeline"
+      return
+    }
+    
+    let key = "lastSelectedFeed_\(userDID)"
+    guard let savedFeedIdentifier = UserDefaults.standard.string(forKey: key) else {
+      // No saved feed for this account, use first pinned feed or timeline
+      await loadDefaultFeed()
+      return
+    }
+    
+    logger.debug("📂 Restoring last feed for account \(userDID): \(savedFeedIdentifier)")
+    
+    // Parse the saved feed identifier and restore it
+    if savedFeedIdentifier == "timeline" {
+      selectedFeed = .timeline
+      currentFeedName = "Timeline"
+    } else if savedFeedIdentifier.hasPrefix("feed:") {
+      // Saved as "feed:<at-uri>"
+      let uriString = String(savedFeedIdentifier.dropFirst("feed:".count))
+      if let uri = try? ATProtocolURI(uriString: uriString) {
+        selectedFeed = .feed(uri)
+        currentFeedName = "Feed" // Will be updated by task(id: selectedFeed)
+      } else {
+        await loadDefaultFeed()
+      }
+    } else if savedFeedIdentifier.hasPrefix("list:") {
+      // Saved as "list:<at-uri>" (compat: may include trailing name suffix in older formats)
+      let remainder = String(savedFeedIdentifier.dropFirst("list:".count))
+      let candidate: String
+      if let range = remainder.range(of: "at://") {
+        candidate = String(remainder[range.lowerBound...])
+      } else {
+        candidate = remainder
+      }
+      if let uri = try? ATProtocolURI(uriString: candidate) {
+        selectedFeed = .list(uri)
+        currentFeedName = "List" // Will be updated elsewhere if needed
+      } else {
+        await loadDefaultFeed()
+      }
+    } else {
+      // Unknown format, fall back to default
+      await loadDefaultFeed()
+    }
+  }
+  
+  /// Load the default feed (first pinned feed or timeline)
+  private func loadDefaultFeed() async {
+    // First check for a pinned feed to use as default
+    if let preferences = try? await appState.preferencesManager.getPreferences(),
+       let firstPinnedFeed = preferences.pinnedFeeds.first,
+       let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
+      if firstPinnedFeed.contains("/app.bsky.graph.list/") {
+        selectedFeed = .list(uri)
+        currentFeedName = "List"
+      } else {
+        selectedFeed = .feed(uri)
+        currentFeedName = "Feed" // Will be updated by .task(id: selectedFeed)
+      }
+    } else {
+      // Fallback to timeline
+      selectedFeed = .timeline
+      currentFeedName = "Timeline"
+    }
   }
 
   var body: some View {
@@ -531,13 +615,21 @@ struct MainContentView18: View {
           }
         }
       } drawer: {
-          NavigationStack {
+          NavigationStack(path: appState.navigationManager.pathBinding(for: 0)) {
               FeedsStartPage(
                 appState: appState,
                 selectedFeed: $selectedFeed,
                 currentFeedName: $currentFeedName,
                 isDrawerOpen: $isDrawerOpen
               )
+              .navigationDestination(for: NavigationDestination.self) { destination in
+                NavigationHandler.viewForDestination(
+                  destination,
+                  path: appState.navigationManager.pathBinding(for: 0),
+                  appState: appState,
+                  selectedTab: $selectedTab
+                )
+              }
               .toolbar { // Native toolbar items shown while drawer is open (iOS)
                   if isDrawerOpen && selectedTab == 0 {
                       ToolbarItem(placement: .topBarTrailing) {
@@ -550,6 +642,13 @@ struct MainContentView18: View {
                               isDrawerOpen = false
                           } label: { Label("Bookmarks", systemImage: "bookmark") }
                               .accessibilityLabel("Bookmarks")
+                      }
+                      ToolbarItem(placement: .bottomBar) {
+                          Button {
+                              appState.navigationManager.navigate(to: .listManager)
+                              isDrawerOpen = false
+                          } label: { Label("My Lists", systemImage: "list.bullet") }
+                              .accessibilityLabel("My Lists")
                       }
                   }
               }
@@ -588,29 +687,8 @@ struct MainContentView18: View {
           if !hasInitializedFeed {
             hasInitializedFeed = true
             
-            // First check for a pinned feed to use as default
-            if let preferences = try? await appState.preferencesManager.getPreferences(),
-               let firstPinnedFeed = preferences.pinnedFeeds.first,
-               let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
-                
-              let feedInfo = try? await appState.atProtoClient?.app.bsky.feed.getFeedGenerator(input: .init(feed: uri)).data
-                
-              // Use the first pinned feed as default
-              DispatchQueue.main.async {
-                selectedFeed = .feed(uri)
-                if let displayName = feedInfo?.view.displayName {
-                  currentFeedName = displayName
-                } else {
-                  currentFeedName = "Feed"
-                }
-              }
-            } else {
-              // Fallback to timeline
-              DispatchQueue.main.async {
-                selectedFeed = .timeline
-                currentFeedName = "Timeline"
-              }
-            }
+            // Restore last feed for current account
+            await restoreLastFeedForAccount()
           }
         }
           
@@ -657,6 +735,76 @@ struct MainContentView18: View {
         if !newValue && appState.onboardingManager.showWelcomeSheet {
           Task { @MainActor in
             appState.onboardingManager.completeWelcomeOnboarding()
+          }
+        }
+      }
+      .onChange(of: appState.currentUserDID) { oldDID, newDID in
+        // Account switched - restore last feed for this account
+        guard oldDID != newDID else { return }
+        logger.debug("🔄 Account switched from \(oldDID ?? "nil") to \(newDID ?? "nil") - restoring last feed")
+        
+        // Set flag to prevent saving during restoration
+        isRestoringFeed = true
+        
+        // IMMEDIATELY reset feed synchronously to prevent overlay
+        selectedFeed = .timeline
+        currentFeedName = "Timeline"
+        
+        // Reset initialization flag
+        hasInitializedFeed = false
+        
+        // Clear drawer state
+        isDrawerOpen = false
+        
+        // THEN restore last feed for new account asynchronously
+        Task {
+          await restoreLastFeedForAccount()
+        }
+      }
+      .onChange(of: selectedFeed) { oldFeed, newFeed in
+        // Save the selected feed for the current account whenever it changes
+        if oldFeed.identifier != newFeed.identifier {
+          saveLastFeedForAccount()
+        }
+      }
+      .task(id: selectedFeed) {
+        // Fetch feed name when selectedFeed changes to a custom feed
+        if case .feed(let uri) = selectedFeed {
+          // Fetch feed generator info to get display name
+          if let client = appState.atProtoClient {
+            do {
+              let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
+              if result.responseCode == 200, let data = result.data {
+                await MainActor.run {
+                  currentFeedName = data.view.displayName ?? "Feed"
+                }
+              } else {
+                await MainActor.run {
+                  currentFeedName = "Feed"
+                }
+              }
+            } catch {
+              logger.error("Failed to fetch feed name: \(error.localizedDescription)")
+              await MainActor.run {
+                currentFeedName = "Feed"
+              }
+            }
+          }
+        } else if case .timeline = selectedFeed {
+          await MainActor.run {
+            currentFeedName = "Timeline"
+          }
+        } else if case .list(let uri) = selectedFeed {
+          do {
+            let listDetails = try await appState.listManager.getListDetails(uri.uriString())
+            await MainActor.run {
+              currentFeedName = listDetails.name
+            }
+          } catch {
+            logger.error("Failed to fetch list name: \(error.localizedDescription)")
+            await MainActor.run {
+              currentFeedName = uri.recordKey ?? "List"
+            }
           }
         }
       }
@@ -760,29 +908,8 @@ struct MainContentView18: View {
           if !hasInitializedFeed {
             hasInitializedFeed = true
             
-            // First check for a pinned feed to use as default
-            if let preferences = try? await appState.preferencesManager.getPreferences(),
-               let firstPinnedFeed = preferences.pinnedFeeds.first,
-               let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
-                
-              let feedInfo = try? await appState.atProtoClient?.app.bsky.feed.getFeedGenerator(input: .init(feed: uri)).data
-                
-              // Use the first pinned feed as default
-              DispatchQueue.main.async {
-                selectedFeed = .feed(uri)
-                if let displayName = feedInfo?.view.displayName {
-                  currentFeedName = displayName
-                } else {
-                  currentFeedName = "Feed"
-                }
-              }
-            } else {
-              // Fallback to timeline
-              DispatchQueue.main.async {
-                selectedFeed = .timeline
-                currentFeedName = "Timeline"
-              }
-            }
+            // Restore last feed for current account
+            await restoreLastFeedForAccount()
           }
         }
           
@@ -826,6 +953,64 @@ struct MainContentView18: View {
         if !newValue && appState.onboardingManager.showWelcomeSheet {
           Task { @MainActor in
             appState.onboardingManager.completeWelcomeOnboarding()
+          }
+        }
+      }
+      .onChange(of: appState.currentUserDID) { oldDID, newDID in
+        // Account switched - restore last feed for this account (macOS version)
+        guard oldDID != newDID else { return }
+        logger.debug("🔄 Account switched from \(oldDID ?? "nil") to \(newDID ?? "nil") - restoring last feed")
+        
+        // Set flag to prevent saving during restoration
+        isRestoringFeed = true
+        
+        // IMMEDIATELY reset feed synchronously to prevent overlay
+        selectedFeed = .timeline
+        currentFeedName = "Timeline"
+        
+        hasInitializedFeed = false
+        isDrawerOpen = false
+        
+        // THEN restore last feed for new account asynchronously
+        Task {
+          await restoreLastFeedForAccount()
+        }
+      }
+      .onChange(of: selectedFeed) { oldFeed, newFeed in
+        if oldFeed.identifier != newFeed.identifier {
+          saveLastFeedForAccount()
+        }
+      }
+      .task(id: selectedFeed) {
+        // Fetch feed name when selectedFeed changes to a custom feed (macOS version)
+        if case .feed(let uri) = selectedFeed {
+          // Fetch feed generator info to get display name
+          if let client = appState.atProtoClient {
+            do {
+              let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
+              if result.responseCode == 200, let data = result.data {
+                await MainActor.run {
+                  currentFeedName = data.view.displayName ?? "Feed"
+                }
+              } else {
+                await MainActor.run {
+                  currentFeedName = "Feed"
+                }
+              }
+            } catch {
+              logger.error("Failed to fetch feed name: \(error.localizedDescription)")
+              await MainActor.run {
+                currentFeedName = "Feed"
+              }
+            }
+          }
+        } else if case .timeline = selectedFeed {
+          await MainActor.run {
+            currentFeedName = "Timeline"
+          }
+        } else if case .list(_, let name) = selectedFeed {
+          await MainActor.run {
+            currentFeedName = name
           }
         }
       }
@@ -875,124 +1060,219 @@ struct MainContentView17: View {
   @State private var showingNewMessageSheet = false
   @State private var hasInitializedFeed = false
   @State private var showingOnboarding = false
+  @State private var isRestoringFeed = false // Prevent saving during account switch
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
     appState.navigationManager
+  }
+  
+  // Helper for notification tab icon
+  private var notificationIcon: some View {
+    Group {
+      if notificationBadgeCount > 0 {
+        ZStack {
+          Image(systemName: "bell")
+        }
+      } else {
+        Image(systemName: "bell")
+      }
+    }
+  }
+  
+  // Helper for tab selection binding
+  private var tabSelectionBinding: Binding<Int> {
+    Binding(
+      get: { selectedTab },
+      set: { newValue in
+        if selectedTab == newValue {
+          logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+          lastTappedTab = newValue
+        }
+        selectedTab = newValue
+        
+        // Update the navigation manager with the new tab index
+        navigationManager.updateCurrentTab(newValue)
+      }
+    )
+  }
+  
+  // iOS TabView content
+  @ViewBuilder
+  private var iOSTabViewContent: some View {
+    TabView(selection: tabSelectionBinding) {
+      // Home Tab
+      HomeView(
+        selectedTab: $selectedTab,
+        lastTappedTab: $lastTappedTab,
+        selectedFeed: $selectedFeed,
+        currentFeedName: $currentFeedName,
+        isDrawerOpen: $isDrawerOpen,
+        isRootView: $isRootView
+      )
+      .id(appState.currentUserDID)
+      .tabItem {
+        Label("Home", systemImage: "house")
+      }
+      .tag(0)
+
+      // Search Tab
+      RefinedSearchView(
+        appState: appState,
+        selectedTab: $selectedTab,
+        lastTappedTab: $lastTappedTab
+      )
+      .id(appState.currentUserDID)
+      .tabItem {
+        Label("Search", systemImage: "magnifyingglass")
+      }
+      .tag(1)
+
+      // Notifications Tab
+      ZStack(alignment: .topTrailing) {
+        NotificationsView(
+          appState: appState,
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab
+        )
+        .id(appState.currentUserDID)
+      }
+      .tabItem {
+        Label {
+          Text("Notifications")
+        } icon: {
+          notificationIcon
+        }
+      }
+      .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
+      .tag(2)
+
+      // Profile Tab - Hidden on iPhone to save space
+      if !PlatformDeviceInfo.isPhone {
+        NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+          UnifiedProfileView(
+            appState: appState,
+            selectedTab: $selectedTab,
+            lastTappedTab: $lastTappedTab,
+            path: appState.navigationManager.pathBinding(for: 3)
+          )
+          .id(appState.currentUserDID)
+          .navigationDestination(for: NavigationDestination.self) { destination in
+            NavigationHandler.viewForDestination(
+              destination,
+              path: appState.navigationManager.pathBinding(for: 3),
+              appState: appState,
+              selectedTab: $selectedTab
+            )
+          }
+        }
+        .tabItem {
+          Label("Profile", systemImage: "person")
+        }
+        .tag(3)
+      }
+
+      #if os(iOS)
+      // Chat Tab (iOS only)
+      ChatTabView(
+        selectedTab: $selectedTab,
+        lastTappedTab: $lastTappedTab
+      )
+      .id(appState.currentUserDID)
+      .tabItem {
+        Label("Messages", systemImage: "envelope")
+      }
+      .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
+      .tag(4)
+      #endif
+    }
+  }
+  
+  // MARK: - Per-Account Feed Memory
+  
+  /// Save the currently selected feed for the current account
+  private func saveLastFeedForAccount() {
+    // Don't save if we're in the middle of restoring/switching accounts
+    guard !isRestoringFeed else { return }
+    guard let userDID = appState.currentUserDID else { return }
+    let key = "lastSelectedFeed_\(userDID)"
+    UserDefaults.standard.set(selectedFeed.identifier, forKey: key)
+    logger.debug("💾 Saved last feed for account \(userDID): \(selectedFeed.identifier)")
+  }
+  
+  /// Restore the last selected feed for the current account
+  private func restoreLastFeedForAccount() async {
+    isRestoringFeed = true
+    defer { isRestoringFeed = false }
+    
+    guard let userDID = appState.currentUserDID else {
+      selectedFeed = .timeline
+      currentFeedName = "Timeline"
+      return
+    }
+    
+    let key = "lastSelectedFeed_\(userDID)"
+    guard let savedFeedIdentifier = UserDefaults.standard.string(forKey: key) else {
+      await loadDefaultFeed()
+      return
+    }
+    
+    logger.debug("📂 Restoring last feed for account \(userDID): \(savedFeedIdentifier)")
+    
+    if savedFeedIdentifier == "timeline" {
+      selectedFeed = .timeline
+      currentFeedName = "Timeline"
+    } else if savedFeedIdentifier.hasPrefix("feed:") {
+      let uriString = String(savedFeedIdentifier.dropFirst("feed:".count))
+      if let uri = try? ATProtocolURI(uriString: uriString) {
+        selectedFeed = .feed(uri)
+        currentFeedName = "Feed"
+      } else {
+        await loadDefaultFeed()
+      }
+    } else if savedFeedIdentifier.hasPrefix("list:") {
+      // Saved as "list:<at-uri>" (older formats may append a name)
+      let remainder = String(savedFeedIdentifier.dropFirst("list:".count))
+      let candidate: String
+      if let range = remainder.range(of: "at://") {
+        candidate = String(remainder[range.lowerBound...])
+      } else {
+        candidate = remainder
+      }
+      if let uri = try? ATProtocolURI(uriString: candidate) {
+        selectedFeed = .list(uri)
+        currentFeedName = "List"
+      } else {
+        await loadDefaultFeed()
+      }
+    } else {
+      await loadDefaultFeed()
+    }
+  }
+  
+  /// Load the default feed (first pinned feed or timeline)
+  private func loadDefaultFeed() async {
+    if let preferences = try? await appState.preferencesManager.getPreferences(),
+       let firstPinnedFeed = preferences.pinnedFeeds.first,
+       let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
+      if firstPinnedFeed.contains("/app.bsky.graph.list/") {
+        selectedFeed = .list(uri)
+        currentFeedName = "List"
+      } else {
+        selectedFeed = .feed(uri)
+        currentFeedName = "Feed"
+      }
+    } else {
+      selectedFeed = .timeline
+      currentFeedName = "Timeline"
+    }
   }
 
   var body: some View {
     ZStack(alignment: .top) {
       #if os(iOS)
       SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
-        TabView(
-          selection: Binding(
-            get: { selectedTab },
-            set: { newValue in
-              if selectedTab == newValue {
-                logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-                lastTappedTab = newValue
-              }
-              selectedTab = newValue
-
-              // Update the navigation manager with the new tab index
-              navigationManager.updateCurrentTab(newValue)
-            }
-          )
-        ) {
-        // Home Tab
-        HomeView(
-          selectedTab: $selectedTab,
-          lastTappedTab: $lastTappedTab,
-          selectedFeed: $selectedFeed,
-          currentFeedName: $currentFeedName,
-          isDrawerOpen: $isDrawerOpen,
-          isRootView: $isRootView
-        )
-        .id(appState.currentUserDID)
-        .tabItem {
-          Label("Home", systemImage: "house")
-        }
-        .tag(0)
-
-        // Search Tab
-        RefinedSearchView(
-          appState: appState,
-          selectedTab: $selectedTab,
-          lastTappedTab: $lastTappedTab
-        )
-        .id(appState.currentUserDID)
-        .tabItem {
-          Label("Search", systemImage: "magnifyingglass")
-        }
-        .tag(1)
-
-        // Notifications Tab
-        ZStack(alignment: .topTrailing) {
-          NotificationsView(
-            appState: appState,
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab
-          )
-          .id(appState.currentUserDID)
-          
-        }
-        .tabItem {
-          // Custom badge is done in the tabItem
-          Label {
-            Text("Notifications")
-          } icon: {
-            if notificationBadgeCount > 0 {
-              ZStack {
-                Image(systemName: "bell")
-              }
-            } else {
-              Image(systemName: "bell")
-            }
-          }
-        }
-        .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
-        .tag(2)
-
-        // Profile Tab - Hidden on iPhone to save space
-        if !PlatformDeviceInfo.isPhone {
-          NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-            UnifiedProfileView(
-              appState: appState,
-              selectedTab: $selectedTab,
-              lastTappedTab: $lastTappedTab,
-              path: appState.navigationManager.pathBinding(for: 3)
-            )
-            .id(appState.currentUserDID)
-            .navigationDestination(for: NavigationDestination.self) { destination in
-              NavigationHandler.viewForDestination(
-                destination,
-                path: appState.navigationManager.pathBinding(for: 3),
-                appState: appState,
-                selectedTab: $selectedTab
-              )
-            }
-          }
-          .tabItem {
-            Label("Profile", systemImage: "person")
-          }
-          .tag(3)
-        }
-
-        #if os(iOS)
-        // Chat Tab (iOS only)
-        ChatTabView(
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab
-        )
-        .id(appState.currentUserDID) // Ensure view identity on user change
-        .tabItem {
-            Label("Messages", systemImage: "envelope")
-        }
-        .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
-        .tag(4)
-        #endif
-      }
+        iOSTabViewContent
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
 
@@ -1018,23 +1298,8 @@ struct MainContentView17: View {
           if !hasInitializedFeed {
             hasInitializedFeed = true
             
-            // First check for a pinned feed to use as default
-            if let preferences = try? await appState.preferencesManager.getPreferences(),
-               let firstPinnedFeed = preferences.pinnedFeeds.first,
-               let uri = try? ATProtocolURI(uriString: firstPinnedFeed) {
-              // Use the first pinned feed as default
-              DispatchQueue.main.async {
-                selectedFeed = .feed(uri)
-                // Use a simple default name that will be updated when FeedsStartPage loads
-                currentFeedName = "Feed"
-              }
-            } else {
-              // Fallback to timeline
-              DispatchQueue.main.async {
-                selectedFeed = .timeline
-                currentFeedName = "Timeline"
-              }
-            }
+            // Restore last feed for current account
+            await restoreLastFeedForAccount()
           }
         }
           
@@ -1088,29 +1353,109 @@ struct MainContentView17: View {
           }
         }
       }
-      } drawer: {
-        FeedsStartPage(
-          appState: appState,
-          selectedFeed: $selectedFeed,
-          currentFeedName: $currentFeedName,
-          isDrawerOpen: $isDrawerOpen
-        )
+      .onChange(of: appState.currentUserDID) { oldDID, newDID in
+        // Account switched - restore last feed for this account (iOS 17 version)
+        guard oldDID != newDID else { return }
+        logger.debug("🔄 Account switched from \(oldDID ?? "nil") to \(newDID ?? "nil") - restoring last feed")
+        
+        // Set flag to prevent saving during restoration
+        isRestoringFeed = true
+        
+        // IMMEDIATELY reset feed synchronously to prevent overlay
+        selectedFeed = .timeline
+        currentFeedName = "Timeline"
+        
+        hasInitializedFeed = false
+        isDrawerOpen = false
+        
+        // THEN restore last feed for new account asynchronously
+        Task {
+          await restoreLastFeedForAccount()
+        }
       }
-      .platformIgnoresSafeArea()
-      .scrollDismissesKeyboard(.interactively)
-      .toastContainer()
-      .toolbar { // Native toolbar items shown while drawer is open (iOS)
-        if isDrawerOpen && selectedTab == 0 {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button { isDrawerOpen = false } label: { Image(systemName: "xmark") }
-              .accessibilityLabel("Close Feeds Menu")
+      .onChange(of: selectedFeed) { oldFeed, newFeed in
+        if oldFeed.identifier != newFeed.identifier {
+          saveLastFeedForAccount()
+        }
+      }
+      .task(id: selectedFeed) {
+        // Fetch feed name when selectedFeed changes to a custom feed (iOS 17 version)
+        if case .feed(let uri) = selectedFeed {
+          // Fetch feed generator info to get display name
+          if let client = appState.atProtoClient {
+            do {
+              let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
+              if result.responseCode == 200, let data = result.data {
+                await MainActor.run {
+                  currentFeedName = data.view.displayName ?? "Feed"
+                }
+              } else {
+                await MainActor.run {
+                  currentFeedName = "Feed"
+                }
+              }
+            } catch {
+              logger.error("Failed to fetch feed name: \(error.localizedDescription)")
+              await MainActor.run {
+                currentFeedName = "Feed"
+              }
+            }
           }
-          ToolbarItem(placement: .bottomBar) {
-            Button {
-              appState.navigationManager.navigate(to: .bookmarks)
-              isDrawerOpen = false
-            } label: { Label("Bookmarks", systemImage: "bookmark") }
-              .accessibilityLabel("Bookmarks")
+        } else if case .timeline = selectedFeed {
+          await MainActor.run {
+            currentFeedName = "Timeline"
+          }
+        } else if case .list(let uri) = selectedFeed {
+          do {
+            let listDetails = try await appState.listManager.getListDetails(uri.uriString())
+            await MainActor.run {
+              currentFeedName = listDetails.name
+            }
+          } catch {
+            logger.error("Failed to fetch list name: \(error.localizedDescription)")
+            await MainActor.run {
+              currentFeedName = uri.recordKey ?? "List"
+            }
+          }
+        }
+      }
+      } drawer: {
+        NavigationStack(path: appState.navigationManager.pathBinding(for: 0)) {
+          FeedsStartPage(
+            appState: appState,
+            selectedFeed: $selectedFeed,
+            currentFeedName: $currentFeedName,
+            isDrawerOpen: $isDrawerOpen
+          )
+          .navigationDestination(for: NavigationDestination.self) { destination in
+            NavigationHandler.viewForDestination(
+              destination,
+              path: appState.navigationManager.pathBinding(for: 0),
+              appState: appState,
+              selectedTab: $selectedTab
+            )
+          }
+          .toolbar { // Native toolbar items shown while drawer is open (iOS)
+            if isDrawerOpen && selectedTab == 0 {
+              ToolbarItem(placement: .topBarTrailing) {
+                Button { isDrawerOpen = false } label: { Image(systemName: "xmark") }
+                  .accessibilityLabel("Close Feeds Menu")
+              }
+              ToolbarItem(placement: .bottomBar) {
+                Button {
+                  appState.navigationManager.navigate(to: .bookmarks)
+                  isDrawerOpen = false
+                } label: { Label("Bookmarks", systemImage: "bookmark") }
+                  .accessibilityLabel("Bookmarks")
+              }
+              ToolbarItem(placement: .bottomBar) {
+                Button {
+                  appState.navigationManager.navigate(to: .listManager)
+                  isDrawerOpen = false
+                } label: { Label("My Lists", systemImage: "list.bullet") }
+                  .accessibilityLabel("My Lists")
+              }
+            }
           }
         }
       }
@@ -1191,10 +1536,6 @@ struct MainContentView17: View {
               )
             }
           }
-          .tabItem {
-            Label("Profile", systemImage: "person")
-          }
-          .tag(3)
         }
       }
       .onAppear {

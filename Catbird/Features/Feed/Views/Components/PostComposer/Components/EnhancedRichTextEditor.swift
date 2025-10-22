@@ -55,9 +55,12 @@ class LinkEditableTextView: UITextView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if requestFocusOnAttach, window != nil {
+        if requestFocusOnAttach, window != nil, !isFirstResponder {
             DispatchQueue.main.async { [weak self] in
-                _ = self?.becomeFirstResponder()
+                guard let self = self, !self.isFirstResponder else { return }
+                _ = self.becomeFirstResponder()
+                // Only request focus once on attach; avoid repeated "relaunch" effects
+                self.requestFocusOnAttach = false
             }
         }
     }
@@ -101,6 +104,48 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   // Optional callback to receive the created UITextView
   // Used to wire up activeRichTextView reference in PostComposerViewModel
   var onTextViewCreated: ((UITextView) -> Void)?
+  
+  // Public method to sanitize text (call before submission)
+  static func sanitizeTextView(_ textView: UITextView) {
+    let sanitized = textView.attributedText.ctb_keepOnlyLinkAttribute()
+    if sanitized != textView.attributedText {
+      let previousSelectedRange = textView.selectedRange
+      let font = textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+      let withFont = applyDefaultFontIfMissing(sanitized, defaultFont: font)
+      textView.attributedText = withFont
+      if previousSelectedRange.location <= textView.text.count {
+        textView.selectedRange = previousSelectedRange
+      }
+    }
+  }
+  
+  private static func applyDefaultFontIfMissing(_ source: NSAttributedString, defaultFont: UIFont) -> NSAttributedString {
+    let mutable = NSMutableAttributedString(attributedString: source)
+    var location = 0
+    while location < mutable.length {
+      var range = NSRange(location: 0, length: 0)
+      let attrs = mutable.attributes(at: location, effectiveRange: &range)
+      var needsUpdate = false
+      var newAttrs = attrs
+      
+      if attrs[.font] == nil {
+        newAttrs[.font] = defaultFont
+        needsUpdate = true
+      }
+      
+      if attrs[.foregroundColor] == nil {
+        newAttrs[.foregroundColor] = UIColor.label
+        needsUpdate = true
+      }
+      
+      if needsUpdate {
+        mutable.setAttributes(newAttrs, range: range)
+      }
+      
+      location = range.location + range.length
+    }
+    return mutable
+  }
 
 
   func makeUIView(context: Context) -> UITextView {
@@ -126,6 +171,40 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       .foregroundColor: UIColor.systemBlue,
       .underlineStyle: NSUnderlineStyle.single.rawValue
     ]
+    
+    // iOS text input configuration for better UX
+    textView.autocorrectionType = .yes
+    textView.spellCheckingType = .yes
+    textView.smartQuotesType = .yes
+    textView.smartDashesType = .yes
+    textView.smartInsertDeleteType = .yes
+    textView.keyboardType = .default
+    textView.returnKeyType = .default
+    textView.textContentType = nil  // No specific content type for social posts
+    
+    // iOS 18+: Enable Writing Tools for AI-powered text editing
+    if #available(iOS 18.0, *) {
+      textView.writingToolsBehavior = .complete
+      textView.allowedWritingToolsResultOptions = [
+        .plainText, // Plain text formatting
+        .richText,  // Rich text with links (important for Bluesky posts!)
+        .list       // Bullet/numbered lists
+      ]
+      
+      // Enable Genmoji support
+      textView.supportsAdaptiveImageGlyph = true
+      
+      // Configure paste behavior for social media posts
+      let pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [
+        "public.plain-text",
+        "public.html",
+        "public.url",
+        "public.image",
+        "com.apple.adaptive-image-glyph"
+      ])
+      textView.pasteConfiguration = pasteConfiguration
+      textView.pasteDelegate = context.coordinator
+    }
     
     // Set up custom keyboard accessory view with Liquid Glass toolbar
     #if targetEnvironment(macCatalyst)
@@ -158,42 +237,71 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     let newFont = getAppropriateFont()
     if uiView.font != newFont {
       uiView.font = newFont
-      uiView.typingAttributes[.font] = newFont
-      uiView.typingAttributes[.foregroundColor] = UIColor.label
       context.coordinator.updateFontRelatedSettings(in: uiView)
     }
     
-    if uiView.attributedText != attributedText {
+    // CRITICAL: Skip ALL updates during IME composition (markedTextRange != nil)
+    // IME is used by Chinese, Japanese, Korean, and other input methods that require
+    // multi-keystroke character composition. Modifying attributedText during composition
+    // forces premature character confirmation and breaks the input experience.
+    // iOS 18+ best practice: Always check markedTextRange before text modifications.
+    if uiView.markedTextRange != nil {
+      return
+    }
+    
+    // Only update if text actually changed
+    let textChanged = uiView.attributedText.string != attributedText.string
+    let needsFullUpdate = textChanged || context.coordinator.needsAttributeSync
+    
+    if needsFullUpdate && !uiView.isFirstResponder {
+      // Only do full update when not editing to avoid disrupting typing
       let previousSelectedRange = uiView.selectedRange
-      // Ensure displayed text has a font attribute; UITextView.font is ignored
-      // when setting attributedText, so we apply a default font to ranges missing it.
       let displayText = context.coordinator.applyingDefaultFontIfMissing(
         attributedText,
         defaultFont: newFont
       )
       uiView.attributedText = displayText
       
-      // Restore prior selection by default; will be overridden by pendingSelectionRange below
-      if previousSelectedRange.location <= uiView.text.count {
-        uiView.selectedRange = previousSelectedRange
+      // Restore selection only if no pending selection
+      if pendingSelectionRange == nil {
+        if previousSelectedRange.location <= (uiView.text as NSString).length {
+          uiView.selectedRange = previousSelectedRange
+        }
       }
+      context.coordinator.needsAttributeSync = false
     }
-    
+
     // Update placeholder
     context.coordinator.updatePlaceholder(placeholder, in: uiView)
+
+    // While typing (first responder), avoid wholesale text replacement to
+    // keep IME + cursor stable, but do copy visual attributes (links, colors)
+    // from the source attributed text when strings match.
+    // This restores facet-based highlighting (mentions, hashtags, links)
+    // without resetting selection.
+    if uiView.isFirstResponder,
+       uiView.markedTextRange == nil,
+       uiView.text == attributedText.string {
+      context.coordinator.applyVisualAttributes(from: attributedText, to: uiView)
+    }
 
     // Handle explicit focus re-activation
     if context.coordinator.lastFocusID != focusActivationID, let _ = focusActivationID {
       context.coordinator.lastFocusID = focusActivationID
-      DispatchQueue.main.async {
-        _ = uiView.becomeFirstResponder()
+      if !uiView.isFirstResponder {
+        DispatchQueue.main.async {
+          _ = uiView.becomeFirstResponder()
+        }
       }
     }
 
     // Apply any requested selection change (e.g., after inserting a link or mention)
     if let requested = pendingSelectionRange {
-      let safeLoc = max(0, min(requested.location, uiView.text.count))
-      let safeLen = max(0, min(requested.length, uiView.text.count - safeLoc))
+      // IME Guard: Prevent selection changes during multi-keystroke character composition
+      guard uiView.markedTextRange == nil else { return }
+      let total = (uiView.text as NSString).length
+      let safeLoc = max(0, min(requested.location, total))
+      let safeLen = max(0, min(requested.length, total - safeLoc))
       uiView.selectedRange = NSRange(location: safeLoc, length: safeLen)
       // Ensure typing attributes are reset to standard (non-link) after moving the caret
       let font = uiView.font ?? getAppropriateFont()
@@ -204,7 +312,6 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // Clear the request so it only applies once
       DispatchQueue.main.async {
         self.pendingSelectionRange = nil
-
       }
     }
   }
@@ -214,7 +321,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   }
   
   
-  class Coordinator: NSObject, UITextViewDelegate, LinkCreationDelegate {
+  class Coordinator: NSObject, UITextViewDelegate, LinkCreationDelegate, UITextPasteDelegate {
     let parent: EnhancedRichTextEditor
   #if targetEnvironment(macCatalyst)
   // Stored on coordinator to keep UIKit ownership semantics
@@ -222,6 +329,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   #endif
 
     private var placeholderLabel: UILabel?
+    var needsAttributeSync = false
+    var lastTextSnapshot: String = ""
+    
   #if targetEnvironment(macCatalyst)
   fileprivate func installCatalystBottomToolbar(for textView: UITextView) {
     if catalystToolbarContainer != nil { return }
@@ -304,62 +414,69 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     }
     
     func textViewDidChange(_ textView: UITextView) {
-      // Sanitize to keep only link attributes
-      if !isSanitizing {
-        let sanitized = textView.attributedText.ctb_keepOnlyLinkAttribute()
-        if sanitized != textView.attributedText {
-          // Prevent recursion
-          isSanitizing = true
-          let previousSelectedRange = textView.selectedRange
-          // Ensure the displayed text maintains the default font
-            let font = textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
-          let withFont = applyingDefaultFontIfMissing(sanitized, defaultFont: font)
-          textView.attributedText = withFont
-          // Restore selection if possible
-          if previousSelectedRange.location <= textView.text.count {
-            textView.selectedRange = previousSelectedRange
-          }
-          isSanitizing = false
-        }
+      // CRITICAL: Skip ALL modifications during IME composition (markedTextRange != nil)
+      // This is essential for proper Chinese/Japanese/Korean/etc. input method support.
+      // Modifying attributedText during composition forces premature character confirmation.
+      if textView.markedTextRange != nil {
+        rtLogger.debug("IME active - skipping all updates to preserve composition")
+        updatePlaceholder(parent.placeholder, in: textView)
+        return
       }
-
+      
+      // Store current state without modifying textView
+      let previousSelectedRange = textView.selectedRange
+      guard let currentText = textView.attributedText else { return }
+      
       // Debug summary
-      let counts = summarizeNS(textView.attributedText)
+      let counts = summarizeNS(currentText)
       rtLogger.debug("Legacy change: len=\(textView.text.count), runs=\(counts.runs), linkRuns=\(counts.linkRuns)")
 
-      // Get cursor position for both typing attributes reset and mention detection
-      let cursorPosition = textView.selectedRange.location
-      
-      // CRITICAL FIX: Reset typing attributes after sanitization to prevent link color inheritance
-      // Check if the cursor is at the end or after a character without a link
-      if cursorPosition > 0 && cursorPosition <= textView.attributedText.length {
-        let checkPosition = min(cursorPosition - 1, textView.attributedText.length - 1)
-        if checkPosition >= 0 {
-          let attrs = textView.attributedText.attributes(at: checkPosition, effectiveRange: nil)
-          // If there's no link at the cursor position, reset typing attributes to default
-          if attrs[.link] == nil {
-            textView.typingAttributes = [
-                .font: textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
-              .foregroundColor: UIColor.label
-            ]
-          }
-        }
-      }
-
-      // Update attributed text binding (already sanitized)
-      parent.attributedText = textView.attributedText
+      // Update parent binding WITHOUT modifying textView
+      parent.attributedText = currentText
       
       // Update link facets based on text changes
       updateLinkFacetsForTextChange(in: textView)
       
       // Call text changed callback with cursor position
-      parent.onTextChanged(textView.attributedText, cursorPosition)
+      parent.onTextChanged(currentText, previousSelectedRange.location)
       
       // Update placeholder visibility
       updatePlaceholder(parent.placeholder, in: textView)
       
-      // Detect genmoji
-      detectGenmoji(in: textView.text)
+      // Detect Genmoji (adaptive image glyphs) and traditional emoji patterns
+      if !textView.isFirstResponder {
+        detectAdaptiveImageGlyphs(in: currentText)
+      }
+      
+      // Reset typing attributes if needed (doesn't modify content)
+      resetTypingAttributesIfNeeded(textView, at: previousSelectedRange.location)
+    }
+    
+    private func resetTypingAttributesIfNeeded(_ textView: UITextView, at cursorPosition: Int) {
+      guard cursorPosition >= 0 && cursorPosition <= textView.attributedText.length else { return }
+      
+      let defaultTyping: [NSAttributedString.Key: Any] = [
+        .font: textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
+        .foregroundColor: UIColor.label
+      ]
+      
+      // Check if we're at a link boundary
+      if cursorPosition > 0 {
+        let prevIndex = cursorPosition - 1
+        var effectiveRange = NSRange(location: 0, length: 0)
+        let attrs = textView.attributedText.attributes(at: prevIndex, effectiveRange: &effectiveRange)
+        
+        if attrs[.link] != nil {
+          // At end of link run?
+          if cursorPosition == effectiveRange.location + effectiveRange.length {
+            textView.typingAttributes = defaultTyping
+          }
+        } else {
+          textView.typingAttributes = defaultTyping
+        }
+      } else {
+        textView.typingAttributes = defaultTyping
+      }
     }
     
     // MARK: - LinkCreationDelegate
@@ -401,6 +518,71 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
         // Text is selected - menu will appear on appropriate gesture
       } else {
         logger.debug("📝 No text selected")
+      }
+    }
+    
+    func textViewDidEndEditing(_ textView: UITextView) {
+      // Safe to sanitize when user is done editing
+      sanitizeTextViewIfNeeded(textView)
+    }
+    
+    private func sanitizeTextViewIfNeeded(_ textView: UITextView) {
+      guard !isSanitizing else { return }
+      
+      let sanitized = textView.attributedText.ctb_keepOnlyLinkAttribute()
+      if sanitized != textView.attributedText {
+        isSanitizing = true
+        let previousSelectedRange = textView.selectedRange
+        let font = textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+        let withFont = applyingDefaultFontIfMissing(sanitized, defaultFont: font)
+        textView.attributedText = withFont
+        if previousSelectedRange.location <= textView.text.count {
+          textView.selectedRange = previousSelectedRange
+        }
+        // Update the binding after sanitization
+        parent.attributedText = textView.attributedText
+        updateLinkFacetsForTextChange(in: textView)
+        isSanitizing = false
+        rtLogger.debug("Sanitized text after editing ended")
+      }
+    }
+    
+    // MARK: - UITextPasteDelegate (iOS 18+)
+    
+    @available(iOS 18.0, *)
+    func textPasteConfigurationSupporting(
+      _ textPasteConfigurationSupporting: UITextPasteConfigurationSupporting,
+      transform item: UITextPasteItem
+    ) {
+      // Allow default handling for most paste operations
+      // This includes proper NSAdaptiveImageGlyph (Genmoji) support
+      item.setDefaultResult()
+    }
+    
+    // MARK: - Genmoji Detection
+    
+    private func detectAdaptiveImageGlyphs(in attributedText: NSAttributedString) {
+      guard #available(iOS 18.0, *) else {
+        // Fallback to legacy string-based detection
+        detectGenmoji(in: attributedText.string)
+        return
+      }
+      
+      var glyphs: [String] = []
+      
+      attributedText.enumerateAttribute(
+        .adaptiveImageGlyph,
+        in: NSRange(location: 0, length: attributedText.length)
+      ) { value, range, stop in
+        if let glyph = value as? NSAdaptiveImageGlyph {
+          // Use content description for accessibility and logging
+          glyphs.append(glyph.contentDescription)
+        }
+      }
+      
+      if !glyphs.isEmpty {
+        parent.onGenmojiDetected(glyphs)
+        rtLogger.debug("Detected \(glyphs.count) adaptive image glyphs: \(glyphs)")
       }
     }
     
@@ -469,11 +651,10 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // Simple genmoji detection - look for :emoji_name: patterns
       let pattern = ":[a-zA-Z0-9_]+:"
       let regex = try? NSRegularExpression(pattern: pattern)
-      let matches = regex?.matches(in: text, range: NSRange(location: 0, length: text.count)) ?? []
-      
-      let genmojis = matches.compactMap { match in
-        (text as NSString).substring(with: match.range)
-      }
+      let ns = text as NSString
+      let full = NSRange(location: 0, length: ns.length)
+      let matches = regex?.matches(in: text, range: full) ?? []
+      let genmojis = matches.map { ns.substring(with: $0.range) }
       
       if !genmojis.isEmpty {
         parent.onGenmojiDetected(genmojis)
@@ -487,6 +668,60 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       if let font = textView.font {
         textView.typingAttributes[.font] = font
         textView.typingAttributes[.foregroundColor] = UIColor.label
+      }
+    }
+
+    // Apply visual attributes (links, colors, underline) from a source
+    // NSAttributedString to the current UITextView without changing characters.
+    // This preserves IME/composition and prevents cursor jumps while restoring
+    // facet-driven highlighting for mentions, hashtags, and links.
+    func applyVisualAttributes(from source: NSAttributedString, to textView: UITextView) {
+      // If strings differ, a full replace will (and should) occur elsewhere.
+      guard textView.text == source.string else { return }
+      guard textView.markedTextRange == nil else { return }
+
+      let storage = textView.textStorage
+      let nsLen = storage.length
+      let full = NSRange(location: 0, length: nsLen)
+
+      storage.beginEditing()
+      // Reset attributes we manage; keep font as-is to avoid font churn.
+      storage.removeAttribute(.link, range: full)
+      storage.removeAttribute(.underlineStyle, range: full)
+      storage.removeAttribute(.foregroundColor, range: full)
+      storage.addAttribute(.foregroundColor, value: UIColor.label, range: full)
+
+      // Copy selected attributes from the source attributed text.
+      source.enumerateAttributes(in: NSRange(location: 0, length: source.length)) { attrs, range, _ in
+        guard range.location >= 0, range.location + range.length <= nsLen else { return }
+
+        var newAttrs: [NSAttributedString.Key: Any] = [:]
+        if let url = attrs[.link] as? URL {
+          newAttrs[.link] = url
+          newAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+          newAttrs[.foregroundColor] = UIColor.systemBlue
+        } else if let fg = attrs[.foregroundColor] {
+          // Mentions/hashtags are colored in the Petrel-generated styled text;
+          // mirror that here for visual parity while editing.
+          newAttrs[.foregroundColor] = fg
+        }
+        if !newAttrs.isEmpty {
+          storage.addAttributes(newAttrs, range: range)
+        }
+      }
+      storage.endEditing()
+
+      // Keep caret and typing attributes stable (default typing outside links)
+      let cursor = textView.selectedRange.location
+      if cursor > 0 && cursor <= nsLen {
+        let idx = min(max(cursor - 1, 0), nsLen - 1)
+        let attrs = storage.attributes(at: idx, effectiveRange: nil)
+        if attrs[.link] == nil {
+          textView.typingAttributes = [
+            .font: textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
+            .foregroundColor: UIColor.label
+          ]
+        }
       }
     }
 
@@ -505,7 +740,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
           needsUpdate = true
         }
         
-        if attrs[.foregroundColor] == nil {
+        // Always ensure we have a foreground color for dark mode support
+        // Only skip if it's a link (which has its own color)
+        if attrs[.foregroundColor] == nil && attrs[.link] == nil {
           newAttrs[.foregroundColor] = UIColor.label
           needsUpdate = true
         }
@@ -756,7 +993,7 @@ struct EnhancedRichTextEditor: View {
 
 private extension NSAttributedString {
   /// Returns a copy of the receiver where only essential attributes are preserved:
-  /// `.link`, `.font`, and `.foregroundColor` (only when a link is present). All other attributes are stripped.
+  /// `.link`, `.font`, and `.foregroundColor`. All other attributes are stripped.
   func ctb_keepOnlyLinkAttribute() -> NSAttributedString {
     let mutable = NSMutableAttributedString(attributedString: self)
     var location = 0
@@ -776,10 +1013,13 @@ private extension NSAttributedString {
         preservedAttrs[.font] = font
       }
       
-      // CRITICAL FIX: Only preserve text color when a link is present
-      // This prevents blue text from persisting after link deletion
-      if hasLink, let color = attrs[.foregroundColor] {
+      // Always preserve foreground color to maintain dark mode compatibility
+      // For links, this will be the blue link color; for regular text, it's UIColor.label
+      if let color = attrs[.foregroundColor] {
         preservedAttrs[.foregroundColor] = color
+      } else if !hasLink {
+        // If no color is set and it's not a link, ensure we use the dynamic label color
+        preservedAttrs[.foregroundColor] = UIColor.label
       }
       
       mutable.setAttributes(preservedAttrs, range: range)
@@ -798,4 +1038,3 @@ private func summarizeNS(_ ns: NSAttributedString) -> (runs: Int, linkRuns: Int)
   }
   return (runs, linkRuns)
 }
-

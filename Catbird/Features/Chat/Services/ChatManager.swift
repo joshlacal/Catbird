@@ -297,15 +297,14 @@ final class ChatManager: StateInvalidationSubscriber {
          let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error loading conversations: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "loadConversations")
         loadingConversations = false
         return
       }
 
       guard let convosData = response else {
         logger.error("No data returned from conversations request")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "loadConversations")
         loadingConversations = false
         return
       }
@@ -353,7 +352,8 @@ final class ChatManager: StateInvalidationSubscriber {
       return
     }
     
-      // TODO: async fetch getProfiles for all members in conversations to cache display names
+    // Batch fetch all conversation member profiles for caching (replaces TODO)
+    await prefetchConversationProfiles()
 
     for conversation in conversations {
       // Skip if the conversation is muted
@@ -526,15 +526,14 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.getMessages(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error loading messages for \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "loadMessages(\(convoId))")
         loadingMessages[convoId] = false
         return
       }
 
       guard let messagesData = response else {
         logger.error("No data returned from messages request for \(convoId)")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "loadMessages((convoId))")
         loadingMessages[convoId] = false
         return
       }
@@ -618,8 +617,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, _) = try await client.chat.bsky.convo.leaveConvo(input: leaveInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error leaving conversation \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "leaveConversation(\(convoId))")
         return
       }
 
@@ -655,8 +653,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, _) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error muting conversation \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "muteConversation(\(convoId))")
         return
       }
 
@@ -686,8 +683,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, _) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error unmuting conversation \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "unmuteConversation(\(convoId))")
         return
       }
 
@@ -716,8 +712,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, _) = try await client.chat.bsky.convo.acceptConvo(input: acceptInput)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error accepting conversation \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "acceptConversation((convoId))")
         return false
       }
 
@@ -746,14 +741,13 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.getConvo(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error getting conversation \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "getConversation((convoId))")
         return nil
       }
 
       guard let convoData = response else {
         logger.error("No data returned from get conversation request")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "getConversation")
         return nil
       }
 
@@ -782,14 +776,13 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.getConvoAvailability(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error checking conversation availability: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "checkConversationAvailability")
         return (false, nil)
       }
 
       guard let availability = response else {
         logger.error("No data returned from conversation availability request")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "checkConversationAvailability")
         return (false, nil)
       }
 
@@ -818,9 +811,10 @@ final class ChatManager: StateInvalidationSubscriber {
       return false
     }
 
-    // Basic validation
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      logger.warning("Attempted to send empty message to \(convoId)")
+    // Basic validation - allow empty text only if there's an embed (e.g., sharing a post)
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedText.isEmpty || embed != nil else {
+      logger.warning("Attempted to send empty message to \(convoId) without embed")
       return false
     }
 
@@ -828,10 +822,10 @@ final class ChatManager: StateInvalidationSubscriber {
     // This prevents message duplication where both ExyteChat and ChatManager create optimistic messages
 
     do {
-      // Build mention facets for @handles in chat
-      let facets = await buildChatMentionFacets(for: text)
+      // Build mention facets for @handles in chat (skip if text is empty)
+      let facets = trimmedText.isEmpty ? [] : await buildChatMentionFacets(for: trimmedText)
       let messageInput = ChatBskyConvoDefs.MessageInput(
-        text: text,
+        text: trimmedText,
         facets: facets.isEmpty ? nil : facets,
         embed: embed
       )
@@ -846,8 +840,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
  
       guard responseCode >= 200 && responseCode < 300, let messageView = response else {
-        logger.error("Error sending message to \(convoId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "sendMessage((convoId))")
         return false
       }
 
@@ -1001,14 +994,13 @@ final class ChatManager: StateInvalidationSubscriber {
          let (responseCode, response) = try await client.chat.bsky.convo.sendMessageBatch(input: input)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error sending message batch: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "sendMessageBatch")
         return Array(repeating: nil, count: items.count)
       }
 
       guard let batchResponse = response else {
         logger.error("No response returned from message batch")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "sendMessageBatch")
         return Array(repeating: nil, count: items.count)
       }
 
@@ -1059,8 +1051,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, _) = try await client.chat.bsky.convo.deleteMessageForSelf(input: input)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error deleting message \(messageId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "deleteMessageForSelf((messageId))")
         return false
       }
 
@@ -1097,8 +1088,7 @@ final class ChatManager: StateInvalidationSubscriber {
         let (responseCode, _) = try await client.chat.bsky.convo.updateAllRead(input: .init())
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error marking all conversations as read: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "markAllConversationsAsRead")
         return false
       }
 
@@ -1132,14 +1122,13 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.getLog(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error getting conversation log: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "getConversationLog")
         return (nil, nil)
       }
 
       guard let logData = response else {
         logger.error("No data returned from conversation log request")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "getConversationLog")
         return (nil, nil)
       }
 
@@ -1365,6 +1354,73 @@ final class ChatManager: StateInvalidationSubscriber {
       return nil
     }
   }
+  
+  /// Batch fetch profiles for multiple DIDs to populate cache (more efficient than individual calls)
+  @MainActor
+  private func batchFetchProfiles(dids: [String]) async {
+    guard let client = client else { return }
+    guard !dids.isEmpty else { return }
+    
+    // Filter out already cached DIDs
+    let uncachedDIDs = dids.filter { profileCache[$0] == nil }
+    guard !uncachedDIDs.isEmpty else {
+      logger.debug("All \(dids.count) profiles already cached")
+      return
+    }
+    
+    logger.info("Batch fetching \(uncachedDIDs.count) profiles")
+    
+    do {
+      // Batch API supports up to 25 profiles per request
+      let batchSize = 25
+      let batches = stride(from: 0, to: uncachedDIDs.count, by: batchSize).map {
+        Array(uncachedDIDs[$0..<min($0 + batchSize, uncachedDIDs.count)])
+      }
+      
+      for batch in batches {
+        let actors = try batch.map { try ATIdentifier(string: $0) }
+        let params = AppBskyActorGetProfiles.Parameters(actors: actors)
+        let (responseCode, response) = try await client.app.bsky.actor.getProfiles(input: params)
+        
+        guard responseCode >= 200 && responseCode < 300 else {
+          logger.error("Batch profile fetch failed: HTTP \(responseCode)")
+          continue
+        }
+        
+        // Cache all fetched profiles
+        if let response = response {
+          for profile in response.profiles {
+            self.profileCache[profile.did.didString()] = profile
+          }
+          
+          logger.debug("Cached \(response.profiles.count) profiles from batch")
+        }
+      }
+      
+      logger.info("Batch fetch complete: \(self.profileCache.count) total cached profiles")
+      
+    } catch {
+      logger.error("Error batch fetching profiles: \(error.localizedDescription)")
+    }
+  }
+  
+  /// Prefetch profiles for all conversation members for better performance
+  @MainActor
+  private func prefetchConversationProfiles() async {
+    // Extract all unique DIDs from conversations
+    var allDIDs = Set<String>()
+    
+    for conversation in conversations {
+      for member in conversation.members {
+        allDIDs.insert(member.did.didString())
+      }
+    }
+    
+    guard !allDIDs.isEmpty else { return }
+    
+    logger.debug("Prefetching profiles for \(allDIDs.count) unique conversation members")
+    await batchFetchProfiles(dids: Array(allDIDs))
+  }
 
   /// Creates an optimistic message for immediate UI feedback
   private func createOptimisticMessage(tempId: String, text: String, convoId: String) async -> Message {
@@ -1475,8 +1531,6 @@ final class ChatManager: StateInvalidationSubscriber {
         
       case .unexpected(let data):
         logger.debug("Unexpected embed type: \(String(describing: data))")
-      case .pending(let data):
-          logger.debug("Pending type: \(String(describing: data))")
 
       }
     }
@@ -1572,8 +1626,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, output) = try await client.chat.bsky.actor.exportAccountData()
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error exporting chat account data: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "exportChatAccountData")
         return nil
       }
 
@@ -1603,8 +1656,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, output) = try await client.chat.bsky.actor.deleteAccount()
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error deleting chat account: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "deleteChatAccount")
         return (false, nil)
       }
 
@@ -1655,8 +1707,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.moderation.getActorMetadata(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error getting actor metadata for \(actor): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "getActorMetadata((actor))")
         return nil
       }
 
@@ -1688,8 +1739,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.moderation.getMessageContext(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error getting message context for \(messageId): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "getMessageContext((messageId))")
         return nil
       }
 
@@ -1721,8 +1771,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let responseCode = try await client.chat.bsky.moderation.updateActorAccess(input: input)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error updating actor access for \(actor): HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "updateActorAccess((actor))")
         return false
       }
 
@@ -1773,15 +1822,14 @@ final class ChatManager: StateInvalidationSubscriber {
          let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
-        logger.error("Error loading message requests: HTTP \(responseCode)")
-        errorState = .networkError(code: responseCode)
+        setNetworkError(code: responseCode, context: "loadMessageRequests")
         loadingConversations = false
         return
       }
 
       guard let convosData = response else {
         logger.error("No data returned from message requests request")
-        errorState = .emptyResponse
+        setEmptyResponseError(context: "loadMessageRequests")
         loadingConversations = false
         return
       }
@@ -2008,17 +2056,63 @@ final class ChatManager: StateInvalidationSubscriber {
       return false
     }
     
-    // Check if the error description contains "cancelled" (case insensitive)
+    // Filter out transient network errors that occur during background polling
+    if let urlError = error as? URLError {
+      switch urlError.code {
+      case .timedOut, .networkConnectionLost, .notConnectedToInternet,
+           .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+        logger.debug("Ignoring transient network error during polling: \(error.localizedDescription)")
+        return false
+      default:
+        break
+      }
+    }
+    
+    // Check if the error description contains transient error indicators (case insensitive)
     let errorDescription = error.localizedDescription.lowercased()
     if errorDescription.contains("cancelled") || errorDescription.contains("canceled") {
       logger.debug("Ignoring cancellation-related error: \(error.localizedDescription)")
       return false
     }
     
+    // Filter out retry-related errors - these are transient and will recover
+    if errorDescription.contains("retry") || errorDescription.contains("timeout") {
+      logger.debug("Ignoring transient error during polling: \(error.localizedDescription)")
+      return false
+    }
+    
     return true
   }
   
-  /// Helper method to safely set error state, filtering out cancellation errors
+  /// Helper method to safely set error state for network errors, filtering transient issues
+  private func setNetworkError(code: Int, context: String) {
+    // Only show errors that require user action
+    // Auth errors (401, 403) need user to re-authenticate
+    if code == 401 || code == 403 {
+      logger.error("\(context): Authentication error (HTTP \(code))")
+      errorState = .networkError(code: code)
+      return
+    }
+    
+    // Server errors (5xx) and other errors are transient during polling
+    // Log them for debugging but don't spam the user
+    if code >= 500 {
+      logger.warning("\(context): Transient server error (HTTP \(code)), will retry on next poll")
+    } else {
+      logger.warning("\(context): Network error (HTTP \(code)), will retry on next poll")
+    }
+    // Don't set errorState for transient errors during background polling
+  }
+  
+  /// Helper method to safely set error state for empty responses during polling
+  private func setEmptyResponseError(context: String) {
+    // Empty responses during polling are transient - server may be temporarily overloaded
+    // Log for debugging but don't spam user
+    logger.warning("\(context): Empty response from server, will retry on next poll")
+    // Don't set errorState for transient empty responses during background polling
+  }
+  
+  /// Helper method to safely set error state, filtering out cancellation and transient errors
   private func setErrorState(_ error: Error) {
     if shouldShowError(error) {
       errorState = .generalError(error)
@@ -2026,3 +2120,5 @@ final class ChatManager: StateInvalidationSubscriber {
   }
 }
 #endif
+
+

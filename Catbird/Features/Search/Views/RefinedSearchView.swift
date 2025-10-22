@@ -26,6 +26,9 @@ struct RefinedSearchView: View {
     @State private var isShowingFilters = false
     @State private var isShowingAdvancedFilters = false
     @State private var isShowingAllTrendingTopics = false
+    @State private var isShowingSaveSearchSheet = false  // SRCH-015: Save search UI
+    @State private var isShowingSuggestedProfiles = false
+    @State private var isShowingAddFeedSheet = false
     @FocusState private var isSearchFieldFocused: Bool
     @State private var lastHandledSearchRequestID: UUID?
     @State private var isApplyingPendingSearchRequest = false
@@ -81,6 +84,42 @@ struct RefinedSearchView: View {
                 onSelect: handleTopicSelection
             )
         }
+        .sheet(isPresented: $isShowingSaveSearchSheet) {
+            // SRCH-015: Save search sheet
+            SaveSearchSheet(
+                query: viewModel.searchQuery,
+                filters: viewModel.advancedParams,
+                onSave: { name in
+                    let savedSearch = SavedSearch(
+                        name: name,
+                        query: viewModel.searchQuery,
+                        filters: viewModel.advancedParams
+                    )
+                    viewModel.saveSearch(savedSearch)
+                }
+            )
+        }
+        .sheet(isPresented: $isShowingSuggestedProfiles) {
+            SuggestedProfilesSheet(
+                profiles: viewModel.suggestedProfiles,
+                onSelect: { profile in
+                    isShowingSuggestedProfiles = false
+                    navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
+                },
+                onRefresh: {
+                    Task {
+                        guard let client = appState.atProtoClient else { return }
+                        await viewModel.refreshSuggestedProfiles(client: client)
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $isShowingAddFeedSheet) {
+            AddFeedSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.thinMaterial)
+        }
     }
     
     // MARK: - Computed Properties
@@ -111,6 +150,7 @@ struct RefinedSearchView: View {
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Profiles, posts, or feeds"
         )
+        .searchPresentationToolbarBehavior(.avoidHidingContent)
         .searchScopes($bindableViewModel.selectedContentType) {
             ForEach(ContentType.allCases, id: \.self) { scope in
                 Text(scope.title).tag(scope)
@@ -246,7 +286,9 @@ struct RefinedSearchView: View {
         DiscoveryView(
             viewModel: viewModel,
             path: navigationPath,
-            showAllTrendingTopics: $isShowingAllTrendingTopics
+            showAllTrendingTopics: $isShowingAllTrendingTopics,
+            showSuggestedProfiles: $isShowingSuggestedProfiles,
+            showAddFeedSheet: $isShowingAddFeedSheet
         )
     }
     
@@ -275,6 +317,17 @@ struct RefinedSearchView: View {
     
     private var searchMenuButton: some View {
         Menu {
+            // SRCH-015: Save Search option
+            if viewModel.isCommittedSearch && !viewModel.searchQuery.isEmpty {
+                Button {
+                    isShowingSaveSearchSheet = true
+                } label: {
+                    Label("Save Search", systemImage: "bookmark")
+                }
+                
+                Divider()
+            }
+            
             // Sort options
             Menu("Sort") {
                 ForEach(SearchSort.allCases, id: \.self) { option in
@@ -412,6 +465,10 @@ struct RefinedSearchView: View {
                         viewModel.searchQuery = search
                         viewModel.commitSearch(client: client)
                     },
+                    onDelete: { search in
+                        // SRCH-008: Delete individual search
+                        viewModel.deleteRecentSearch(search)
+                    },
                     onClear: {
                         viewModel.clearRecentSearches()
                     }
@@ -426,7 +483,7 @@ struct RefinedSearchView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile.displayName ?? "@\(profile.handle)")
                     .appHeadline()
-                Text("@\(profile.handle)")
+                Text(verbatim: "@\(profile.handle)")
                     .appSubheadline()
                     .foregroundStyle(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
             }

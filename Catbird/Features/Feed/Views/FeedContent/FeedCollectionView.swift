@@ -175,9 +175,12 @@ struct SimpleFeedCollectionWrapper: View {
                     await stateManager.loadInitialData()
                 }
             }
-            .onChange(of: feedType) {
+            .onChange(of: feedType) { oldFeedType, newFeedType in
+                // Disable feedback for the old feed before switching
+                appState.feedFeedbackManager.disable()
+                
                 // Switch to a dedicated manager per feed to keep per-feed scroll state
-                let newManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
                 stateManager = newManager
                 Task { @MainActor in
                     if newManager.posts.isEmpty { await newManager.loadInitialData() }
@@ -216,9 +219,12 @@ struct FeedCollectionWrapper: View {
                     await stateManager.loadInitialData()
                 }
             }
-            .onChange(of: feedType) {
+            .onChange(of: feedType) { oldFeedType, newFeedType in
+                // Disable feedback for the old feed before switching
+                appState.feedFeedbackManager.disable()
+                
                 // Switch to the store-managed manager for the new feed
-                let newManager = FeedStateStore.shared.stateManager(for: feedType, appState: appState)
+                let newManager = FeedStateStore.shared.stateManager(for: newFeedType, appState: appState)
                 stateManager = newManager
                 Task { @MainActor in
                     if newManager.posts.isEmpty { await newManager.loadInitialData() }

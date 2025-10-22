@@ -64,7 +64,7 @@ final class PostContextMenuViewModel {
             )
 
             let result = try await appState.atProtoClient?.com.atproto.repo.createRecord(input: input)
-            if let (responseCode, data) = result {
+            if let (responseCode, _) = result {
                 if responseCode == 200 {
                     
                     logger.debug("User blocked successfully")
@@ -97,14 +97,14 @@ final class PostContextMenuViewModel {
                 
                 // Also mute the thread in push notifications
                 let threadRootURI: String
-                if let reply = post.record.appBskyFeedPost, 
-                   let replyRef = reply.reply,
-                   let rootURI = replyRef.root.uri {
-                    // This is a reply, use the thread root
-                    threadRootURI = rootURI
+                if case let .knownType(replyRecord) = post.record,
+                   let reply = replyRecord as? AppBskyFeedPost,
+                   let replyRef = reply.reply {
+                    let rootURI = replyRef.root.uri
+                    threadRootURI = rootURI.uriString()
                 } else {
                     // This is the thread root
-                    threadRootURI = post.uri
+                    threadRootURI = post.uri.uriString()
                 }
                 
                 Task {
@@ -119,6 +119,32 @@ final class PostContextMenuViewModel {
         } catch {
             logger.debug("Error muting thread: \(error)")
         }
+    }
+    
+    func hidePost() async {
+        let postURI = post.uri.uriString()
+        await appState.postHidingManager.hidePost(postURI)
+        logger.debug("Post hidden: \(postURI)")
+        
+        // Show confirmation toast
+        await MainActor.run {
+            appState.toastManager.show(ToastItem(message: "Post hidden", icon: "checkmark.circle.fill"))
+        }
+    }
+    
+    func unhidePost() async {
+        let postURI = post.uri.uriString()
+        await appState.postHidingManager.unhidePost(postURI)
+        logger.debug("Post unhidden: \(postURI)")
+        
+        // Show confirmation toast
+        await MainActor.run {
+            appState.toastManager.show(ToastItem(message: "Post unhidden", icon: "checkmark.circle.fill"))
+        }
+    }
+    
+    @MainActor var isPostHidden: Bool {
+        appState.postHidingManager.isHidden(post.uri.uriString())
     }
 
     func reportPost() {
@@ -150,7 +176,7 @@ final class PostContextMenuViewModel {
         // Show confirmation toast
         appState.toastManager.show(
             ToastItem(
-                message: "Feedback sent to feed operator",
+                message: "Feedback sent",
                 icon: "checkmark.circle.fill"
             )
         )
@@ -165,7 +191,7 @@ final class PostContextMenuViewModel {
         // Show confirmation toast
         appState.toastManager.show(
             ToastItem(
-                message: "Feedback sent to feed operator",
+                message: "Feedback sent",
                 icon: "checkmark.circle.fill"
             )
         )

@@ -21,6 +21,9 @@ import SwiftUI
     // Track the current tab index
     private(set) var currentTabIndex: Int = 0
     var tabSelection: ((Int) -> Void)?
+    
+    // Target conversation for deep-link navigation (Chat tab specific)
+    var targetConversationId: String?
 
     // Set the current tab index - called when the user switches tabs
     func updateCurrentTab(_ index: Int) {
@@ -36,6 +39,19 @@ import SwiftUI
     func navigate(to destination: NavigationDestination, in tabIndex: Int? = nil) {
         // Always use the current tab unless explicitly specified
         let targetTab = tabIndex ?? currentTabIndex
+        
+        #if os(iOS)
+        // Special handling for conversation navigation in chat tab
+        if case .conversation(let convoId) = destination, targetTab == 4 {
+            // For chat tab, set the target conversation ID instead of using navigation path
+            // This properly handles the NavigationSplitView architecture
+            targetConversationId = convoId
+            // Clear the navigation path to ensure clean navigation state
+            tabPaths[targetTab] = NavigationPath()
+            return
+        }
+        #endif
+        
         tabPaths[targetTab]?.append(destination)
     }
     

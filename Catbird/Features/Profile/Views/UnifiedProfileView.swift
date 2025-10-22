@@ -32,11 +32,19 @@ struct UnifiedProfileView: View {
   @State private var hasAttemptedLoadPosts = false
   @State private var hasAttemptedLoadReplies = false
   @State private var hasAttemptedLoadMedia = false
-    
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
   #if DEBUG
   private let layoutLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
   #endif
+
+  // MARK: - Computed Properties
+  
+  /// Computed property to convert the viewModel's pinned post to a cached version
+  /// This prevents recreating the CachedFeedViewPost on every render
+  private var cachedPinnedPost: CachedFeedViewPost? {
+    guard let pinnedPost = viewModel.pinnedPost else { return nil }
+    return CachedFeedViewPost(feedViewPost: pinnedPost)
+  }
 
   // MARK: - Initialization (keeping all initializers)
   init(
@@ -173,13 +181,19 @@ struct UnifiedProfileView: View {
     ProfileTabSelector(
       path: $navigationPath,
       selectedTab: $viewModel.selectedProfileTab,
-      onTabChange: handleTabChange
+      onTabChange: handleTabChange,
+      isLabeler: viewModel.isLabeler
     )
   }
   
   private func handleTabChange(_ tab: ProfileTab) {
     Task {
       switch tab {
+      case .labelerInfo:
+        // Ensure labeler details are loaded
+        if viewModel.isLabeler && viewModel.labelerDetails == nil {
+          await viewModel.loadLabelerDetails()
+        }
       case .posts:
         hasAttemptedLoadPosts = true
         if viewModel.posts.isEmpty { await viewModel.loadPosts() }
@@ -210,13 +224,13 @@ struct UnifiedProfileView: View {
     
     // Then refresh current tab content
     switch viewModel.selectedProfileTab {
-    case .posts: 
+    case .posts:
       hasAttemptedLoadPosts = true
       await viewModel.loadPosts()
-    case .replies: 
+    case .replies:
       hasAttemptedLoadReplies = true
       await viewModel.loadReplies()
-    case .media: 
+    case .media:
       hasAttemptedLoadMedia = true
       await viewModel.loadMediaPosts()
     case .more: break
@@ -228,13 +242,18 @@ struct UnifiedProfileView: View {
     @ViewBuilder
     private var currentTabContentSection: some View {
         switch viewModel.selectedProfileTab {
+        case .labelerInfo:
+            if let labelerDetails = viewModel.labelerDetails {
+                LabelerInfoTab(labelerDetails: labelerDetails)
+                    .frame(maxWidth: 600, alignment: .center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                ProgressView("Loading labeler information...")
+                    .frame(maxWidth: .infinity, minHeight: 100)
+                    .padding()
+            }
         case .posts:
-            postContentSection(
-                posts: viewModel.posts,
-                emptyMessage: "No posts",
-                hasAttemptedLoad: hasAttemptedLoadPosts,
-                loadAction: viewModel.loadPosts
-            )
+            postsTabContentSection()
         case .replies:
             postContentSection(
                 posts: viewModel.replies,
@@ -257,6 +276,51 @@ struct UnifiedProfileView: View {
         }
     }
     
+  // MARK: - Posts Tab Content Section (with pinned post support)
+  @ViewBuilder
+  private func postsTabContentSection() -> some View {
+    LazyVStack(spacing: 0) {
+      if !hasAttemptedLoadPosts || (viewModel.isLoading && viewModel.posts.isEmpty) {
+        ProgressView("Loading...")
+          .frame(maxWidth: .infinity, minHeight: 100)
+          .padding()
+          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+      } else if viewModel.posts.isEmpty && viewModel.pinnedPost == nil {
+        emptyContentView("No Content", "No posts")
+          .padding(.top, 40)
+          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: .infinity, alignment: .center)
+      } else {
+        // Show pinned post first if it exists
+        if let cachedPinned = cachedPinnedPost {
+          VStack(spacing: 0) {
+            // Post content
+            EnhancedFeedPost(
+              cachedPost: cachedPinned,
+              path: $navigationPath
+            )
+            .frame(maxWidth: 600, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .center)
+            
+            Divider()
+              .padding(.top, 8)
+          }
+        }
+        
+        // Show cached posts (excluding pinned posts)
+        ProfileCachedPostsList(
+          feedKey: viewModel.profileFeedKey(for: .posts),
+          isLoadingMore: viewModel.isLoadingMorePosts,
+          loadMore: {
+            await viewModel.loadPosts()
+          },
+          path: $navigationPath
+        )
+      }
+    }
+  }
+  
   // MARK: - Post Content Section (generalized for reuse)
   @ViewBuilder
   private func postContentSection(
@@ -313,13 +377,32 @@ struct UnifiedProfileView: View {
       self._cached = Query(
         filter: #Predicate<CachedFeedViewPost> { post in
           post.feedType == feedKey
-        },
-        sort: [SortDescriptor(\.createdAt, order: .reverse)]
+        }
       )
+    }
+    
+    // Sort posts: feedOrder first (if present), then by createdAt
+    private var sortedCached: [CachedFeedViewPost] {
+      cached.sorted { post1, post2 in
+        // If both have feedOrder, sort by feedOrder
+        if let order1 = post1.feedOrder, let order2 = post2.feedOrder {
+          return order1 < order2
+        }
+        // If only post1 has feedOrder, it comes first
+        if post1.feedOrder != nil {
+          return true
+        }
+        // If only post2 has feedOrder, it comes first
+        if post2.feedOrder != nil {
+          return false
+        }
+        // If neither has feedOrder, sort by createdAt (newest first)
+        return post1.createdAt > post2.createdAt
+      }
     }
 
     var body: some View {
-      ForEach(cached) { cachedPost in
+      ForEach(sortedCached) { cachedPost in
         VStack(spacing: 0) {
           EnhancedFeedPost(
             cachedPost: cachedPost,
@@ -334,7 +417,7 @@ struct UnifiedProfileView: View {
         .contentShape(Rectangle())
         .onAppear {
           // Load more when reaching the end
-          if cachedPost == cached.last && !isLoadingMore {
+          if cachedPost == sortedCached.last && !isLoadingMore {
             Task { await loadMore() }
           }
         }
@@ -880,6 +963,9 @@ struct UnifiedProfileView: View {
       case .following(let did):
         FollowingView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
           .id(did)
+      case .knownFollowers(let did):
+        KnownFollowersView(userDID: did, path: $navigationPath)
+          .id(did)
       }
     }
     // FIXED: Apply modifiers directly instead of using recursive computed properties
@@ -969,42 +1055,104 @@ struct UnifiedProfileView: View {
   private var otherUserMenu: some View {
     Menu {
       if let profile = viewModel.profile {
-        Button {
-          showAddToListSheet(profile)
-        } label: {
-          Label("Add to List", systemImage: "list.bullet.rectangle")
-        }
+        // Labeler-specific options
+        if viewModel.isLabeler {
+          Button {
+            Task {
+              do {
+                if viewModel.isSubscribedToLabeler {
+                  try await viewModel.unsubscribeFromLabeler()
+                } else {
+                  try await viewModel.subscribeToLabeler()
+                }
+              } catch {
+                logger.error("Error toggling labeler subscription: \(error.localizedDescription)")
+              }
+            }
+          } label: {
+            Label(viewModel.isSubscribedToLabeler ? "Unsubscribe from labeler" : "Subscribe to labeler",
+                  systemImage: viewModel.isSubscribedToLabeler ? "checkmark.circle.fill" : "checkmark.circle")
+          }
+          
+          Button {
+            shareLabeler(profile)
+          } label: {
+            Label("Share labeler", systemImage: "square.and.arrow.up")
+          }
+          
+          Divider()
+          
+          Button {
+            showReportProfileSheet()
+          } label: {
+            Label("Report labeler", systemImage: "flag")
+          }
+        } else {
+          // Regular user options
+          Button {
+            showAddToListSheet(profile)
+          } label: {
+            Label("Add to List", systemImage: "list.bullet.rectangle")
+          }
 
-        Button {
-          searchPostsForProfile(profile)
-        } label: {
-          Label("Search This Profile", systemImage: "magnifyingglass")
-        }
-        Divider()
-      }
-      
-      Button {
-        showReportProfileSheet()
-      } label: {
-        Label("Report User", systemImage: "flag")
-      }
+          Button {
+            searchPostsForProfile(profile)
+          } label: {
+            Label("Search This Profile", systemImage: "magnifyingglass")
+          }
+          
+          Divider()
+          
+          Button {
+            showReportProfileSheet()
+          } label: {
+            Label("Report User", systemImage: "flag")
+          }
 
-      Button {
-        toggleMute()
-      } label: {
-        Label(isMuting ? "Unmute User" : "Mute User",
-              systemImage: isMuting ? "speaker.wave.2" : "speaker.slash")
-      }
-      
-      Button(role: .destructive) {
-        isShowingBlockConfirmation = true
-      } label: {
-        Label(isBlocking ? "Unblock User" : "Block User",
-              systemImage: isBlocking ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark")
+          Button {
+            toggleMute()
+          } label: {
+            Label(isMuting ? "Unmute User" : "Mute User",
+                  systemImage: isMuting ? "speaker.wave.2" : "speaker.slash")
+          }
+          
+          Button(role: .destructive) {
+            isShowingBlockConfirmation = true
+          } label: {
+            Label(isBlocking ? "Unblock User" : "Block User",
+                  systemImage: isBlocking ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark")
+          }
+        }
       }
     } label: {
       Image(systemName: "ellipsis.circle")
     }
+  }
+  
+  // MARK: - Helper Methods
+  
+  private func shareLabeler(_ profile: AppBskyActorDefs.ProfileViewDetailed) {
+    guard let labelerDetails = viewModel.labelerDetails else { return }
+    
+    let shareText = "Check out this labeler: @\(profile.handle.description)"
+    let shareURL = URL(string: "https://bsky.app/profile/\(profile.handle.description)")
+    
+    #if os(iOS)
+    let activityVC = UIActivityViewController(
+      activityItems: [shareText, shareURL].compactMap { $0 },
+      applicationActivities: nil
+    )
+    
+    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+       let rootViewController = windowScene.windows.first?.rootViewController {
+      rootViewController.present(activityVC, animated: true)
+    }
+    #elseif os(macOS)
+    let picker = NSSharingServicePicker(items: [shareText, shareURL].compactMap { $0 })
+    if let view = NSApplication.shared.keyWindow?.contentView {
+      picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+    }
+    #endif
   }
 }
 
@@ -1288,37 +1436,74 @@ struct ProfileHeader: View {
         case repliesOnly
     }
     
+    private var isLabeler: Bool {
+        viewModel.isLabeler
+    }
+    
     private var avatarView: some View {
-        LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-            if let image = state.image {
-                image.resizable().aspectRatio(contentMode: .fill)
+        Group {
+            if isLabeler {
+                // Square avatar for labelers
+                LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                    if let image = state.image {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.3))
+                    }
+                }
+                .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+                .onTapGesture {
+                    isShowingProfileImageViewer = true
+                }
+                .frame(width: avatarSize, height: avatarSize)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
+                        .scaleEffect((avatarSize + 8) / avatarSize)
+                )
+                .zIndex(10)
             } else {
-                Circle().fill(Color.secondary.opacity(0.3))
+                // Circular avatar for regular users
+                LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                    if let image = state.image {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Circle().fill(Color.secondary.opacity(0.3))
+                    }
+                }
+                .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+                .onTapGesture {
+                    isShowingProfileImageViewer = true
+                }
+                .frame(width: avatarSize, height: avatarSize)
+                .clipShape(Circle())
+                .background(
+                    Circle()
+                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
+                        .scaleEffect((avatarSize + 8) / avatarSize)
+                )
+                .zIndex(10)
             }
         }
-        .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
-        .onTapGesture {
-            isShowingProfileImageViewer = true
-        }
-        .frame(width: avatarSize, height: avatarSize)
-        .clipShape(Circle())
-        .background(
-            Circle()
-                .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
-                .scaleEffect((avatarSize + 8) / avatarSize)
-        )
-        .zIndex(10)
     }
     
     private var profileInfoContent: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Top section with edit/follow button aligned to trailing edge
+            // Top section with edit/follow/subscribe button aligned to trailing edge
             HStack(alignment: .top, spacing: 8) {
                 Spacer()
                 
                 if viewModel.isCurrentUser {
                     editProfileButton
                         .allowsHitTesting(true)
+                } else if isLabeler {
+                    HStack(spacing: 8) {
+                        subscribeButton
+                            .allowsHitTesting(true)
+                        labelerLikeButton
+                            .allowsHitTesting(true)
+                    }
                 } else {
                     HStack(spacing: 8) {
                         followButton
@@ -1651,6 +1836,117 @@ struct ProfileHeader: View {
             }
         }
     }
+    
+    // MARK: - Labeler Buttons
+    
+    @State private var isSubscribeButtonLoading = false
+    @State private var isLikeButtonLoading = false
+    
+    @ViewBuilder
+    private var subscribeButton: some View {
+        Group {
+            if isSubscribeButtonLoading {
+                ProgressView()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            } else if viewModel.isSubscribedToLabeler {
+                Button(action: {
+                    Task(priority: .userInitiated) {
+                        isSubscribeButtonLoading = true
+                        do {
+                            try await viewModel.unsubscribeFromLabeler()
+                        } catch {
+                            logger.error("Error unsubscribing from labeler: \(error.localizedDescription)")
+                        }
+                        isSubscribeButtonLoading = false
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "checkmark")
+                            .appFont(AppTextRole.footnote)
+                        Text("Subscribed")
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .appFont(AppTextRole.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .foregroundColor(.accentColor)
+                    .cornerRadius(16)
+                }
+                .background(
+                    Capsule()
+                        .stroke(Color.accentColor, lineWidth: 1.5)
+                )
+            } else {
+                Button(action: {
+                    Task(priority: .userInitiated) {
+                        isSubscribeButtonLoading = true
+                        do {
+                            try await viewModel.subscribeToLabeler()
+                        } catch {
+                            logger.error("Error subscribing to labeler: \(error.localizedDescription)")
+                        }
+                        isSubscribeButtonLoading = false
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "plus")
+                            .appFont(AppTextRole.footnote)
+                        Text("Subscribe")
+                    }
+                    .appFont(AppTextRole.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(16)
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var labelerLikeButton: some View {
+        Button(action: {
+            Task(priority: .userInitiated) {
+                isLikeButtonLoading = true
+                do {
+                    if viewModel.isLabelerLiked {
+                        try await viewModel.unlikeLabeler()
+                    } else {
+                        try await viewModel.likeLabeler()
+                    }
+                } catch {
+                    logger.error("Error toggling labeler like: \(error.localizedDescription)")
+                }
+                isLikeButtonLoading = false
+            }
+        }) {
+            HStack(spacing: 6) {
+                if isLikeButtonLoading {
+                    ProgressView()
+                        .frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: viewModel.isLabelerLiked ? "heart.fill" : "heart")
+                        .foregroundStyle(viewModel.isLabelerLiked ? .red : .primary)
+                }
+                
+                if viewModel.labelerLikeCount > 0 {
+                    Text("\(viewModel.labelerLikeCount)")
+                        .appCaption()
+                }
+            }
+            .padding(8)
+            .background(
+                Circle()
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isLikeButtonLoading)
+    }
 }
 
 #if DEBUG
@@ -1805,6 +2101,48 @@ struct ProfileImageViewerView: View {
         }
     }
 }
+    // MARK: - Pinned Post View
+    struct PinnedPostView: View {
+        let pinnedPost: AppBskyFeedDefs.PostView
+        @Binding var path: NavigationPath
+        @Environment(AppState.self) private var appState
+        
+        var body: some View {
+            VStack(spacing: 0) {
+                // Pinned badge indicator
+                HStack(spacing: 6) {
+                    Image(systemName: "pin.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("Pinned Post")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+                .frame(maxWidth: 600, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                
+                // Post content using PostView with appropriate parameters
+                PostView(
+                    post: pinnedPost,
+                    grandparentAuthor: nil,
+                    isParentPost: false,
+                    isSelectable: true,
+                    path: $path,
+                    appState: appState,
+                    isToYou: false
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .frame(maxWidth: 600, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+    }
+    
     // MARK: - Feed Row View
     struct FeedRowView: View {
         let feed: AppBskyFeedDefs.GeneratorView
@@ -1866,4 +2204,3 @@ struct ProfileImageViewerView: View {
             .contentShape(Rectangle())
         }
     }
-    

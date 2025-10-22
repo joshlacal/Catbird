@@ -78,6 +78,10 @@ struct AccountSwitcherView: View {
         }
 
         ToolbarItem(placement: .primaryAction) {
+          EditButton()
+        }
+
+        ToolbarItem(placement: .primaryAction) {
           Button {
             isAddingAccount = true
           } label: {
@@ -103,7 +107,7 @@ struct AccountSwitcherView: View {
         #endif
       }
       .sheet(isPresented: $isAddingAccount) {
-        LoginView()
+        LoginView(isAddingNewAccount: true)
               .environment(appState)
       }
       .alert(
@@ -143,6 +147,12 @@ struct AccountSwitcherView: View {
           }
         }
       }
+      .onChange(of: isAddingAccount) { _, newValue in
+        if newValue {
+          // Clear any pending reauthentication when user explicitly adds a new account
+          appState.pendingReauthenticationRequest = nil
+        }
+      }
       .task {
         await loadAccounts()
       }
@@ -166,10 +176,16 @@ struct AccountSwitcherView: View {
             ForEach(accounts) { account in
               accountRow(for: account)
             }
+            .onMove { source, destination in
+              accounts.move(fromOffsets: source, toOffset: destination)
+              Task {
+                await saveAccountOrder()
+              }
+            }
           } header: {
-            Text("Your Accounts")
+//            Text("Your Accounts")
           } footer: {
-            Text("You can add multiple Bluesky accounts and quickly switch between them.")
+            Text("You can add multiple Bluesky accounts and quickly switch between them. Drag to reorder.")
           }
 
           if let errorMessage = error {
@@ -193,6 +209,9 @@ struct AccountSwitcherView: View {
             }
           }
         }
+        #if os(iOS)
+        // Do not force edit mode; swipe actions remain available when not editing
+        #endif
       }
     }
   }
@@ -419,6 +438,13 @@ struct AccountSwitcherView: View {
       }
     }
 
+    private func saveAccountOrder() async {
+      // Save the new account order via AuthManager
+      let orderedDIDs = accounts.map { $0.did }
+      appState.authManager.updateAccountOrder(orderedDIDs)
+      logger.info("Saved account order: \(orderedDIDs)")
+    }
+
     private func switchToAccount(_ account: AccountViewModel) async {
       guard !account.isActive else { return }
 
@@ -516,24 +542,49 @@ struct AccountSwitcherView: View {
     do {
       // Get auth URL
       let authURL = try await appState.authManager.addAccount(handle: cleanHandle)
+      logger.debug("Auth URL for new account: \(authURL.absoluteString)")
 
-      // Open web authentication session
+      // Open web authentication session with timeout
       do {
-          let callbackURL: URL
-          if #available(iOS 17.4, *) {
-              callbackURL = try await webAuthenticationSession.authenticate(
+        logger.info("Opening ASWebAuthenticationSession...")
+        
+        let callbackURL: URL = try await withThrowingTaskGroup(of: URL.self) { group in
+          // Main authentication task
+          group.addTask {
+            if #available(iOS 17.4, *) {
+              return try await self.webAuthenticationSession.authenticate(
                 using: authURL,
                 callback: .https(host: "catbird.blue", path: "/oauth/callback"),
                 preferredBrowserSession: .shared,
                 additionalHeaderFields: [:]
               )
-          } else {
-              // Fallback on earlier versions
-              callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
-                )
+            } else {
+              // Fallback on earlier versions - use the actual authURL
+              return try await self.webAuthenticationSession.authenticate(
+                using: authURL,
+                callbackURLScheme: "catbird",
+                preferredBrowserSession: .shared
+              )
+            }
           }
+          
+          // Timeout task (2 minutes)
+          group.addTask {
+            try await Task.sleep(nanoseconds: 120_000_000_000) // 120 seconds
+            throw AuthError.timeout
+          }
+          
+          // Return the first result (either callback or timeout)
+          guard let result = try await group.next() else {
+            throw AuthError.unknown(NSError(domain: "Authentication", code: -1, userInfo: [NSLocalizedDescriptionKey: "Authentication failed"]))
+          }
+          
+          group.cancelAll()
+          return result
+        }
 
         logger.info("Authentication session completed successfully")
+        logger.debug("Callback URL: \(callbackURL.absoluteString)")
 
         // Process callback
         try await appState.authManager.handleCallback(callbackURL)
@@ -543,15 +594,20 @@ struct AccountSwitcherView: View {
 
         // Refresh account list
         await loadAccounts()
-      } catch _ as ASWebAuthenticationSessionError { // Replace authSessionError with _
+      } catch _ as ASWebAuthenticationSessionError {
         // User cancelled authentication
         logger.notice("Authentication was cancelled by user")
         authenticationCancelled = true
         isLoading = false
       } catch {
-        // Other authentication errors
+        // Other authentication errors (including timeout)
         logger.error("Authentication error: \(error.localizedDescription)")
-        self.error = error.localizedDescription
+        
+        if case AuthError.timeout = error {
+          self.error = "Authentication timed out. The authentication session took too long to complete. Please try again."
+        } else {
+          self.error = error.localizedDescription
+        }
         isLoading = false
       }
 
@@ -565,6 +621,7 @@ struct AccountSwitcherView: View {
 
   private func handleReauthentication(_ request: AppState.ReauthenticationRequest) async {
     logger.info("Handling automatic reauthentication for handle: \(request.handle)")
+    logger.debug("Auth URL: \(request.authURL.absoluteString)")
 
     // Clear the pending request to prevent repeated attempts
     appState.pendingReauthenticationRequest = nil
@@ -573,29 +630,53 @@ struct AccountSwitcherView: View {
     isLoading = true
     error = nil
 
-    // Open web authentication session with the provided auth URL
+    // Open web authentication session with the provided auth URL with timeout
     do {
       let callbackURL: URL
-      if #available(iOS 17.4, *) {
-        callbackURL = try await webAuthenticationSession.authenticate(
-          using: request.authURL,
-          callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-          preferredBrowserSession: .shared,
-          additionalHeaderFields: [:]
-        )
-      } else {
-        // Fallback on earlier versions
-        callbackURL = try await webAuthenticationSession.authenticate(
-          using: URL(string: "https://catbird/oauth/callback")!,
-          callbackURLScheme: "catbird",
-          preferredBrowserSession: .shared
-        )
+      logger.info("Opening ASWebAuthenticationSession...")
+      
+      // Add timeout to prevent indefinite hanging
+      callbackURL = try await withThrowingTaskGroup(of: URL.self) { group in
+        // Main authentication task
+        group.addTask {
+          if #available(iOS 17.4, *) {
+            return try await self.webAuthenticationSession.authenticate(
+              using: request.authURL,
+              callback: .https(host: "catbird.blue", path: "/oauth/callback"),
+              preferredBrowserSession: .shared,
+              additionalHeaderFields: [:]
+            )
+          } else {
+            // Fallback on earlier versions - use the actual authURL, not dummy URL
+            return try await self.webAuthenticationSession.authenticate(
+              using: request.authURL,
+              callbackURLScheme: "catbird",
+              preferredBrowserSession: .shared
+            )
+          }
+        }
+        
+        // Timeout task (2 minutes)
+        group.addTask {
+          try await Task.sleep(nanoseconds: 120_000_000_000) // 120 seconds
+          throw AuthError.timeout
+        }
+        
+        // Return the first result (either callback or timeout)
+        guard let result = try await group.next() else {
+          throw AuthError.unknown(NSError(domain: "Authentication", code: -1, userInfo: [NSLocalizedDescriptionKey: "Authentication failed"]))
+        }
+        
+        group.cancelAll()
+        return result
       }
 
       logger.info("Reauthentication session completed successfully")
+      logger.debug("Callback URL: \(callbackURL.absoluteString)")
 
       // Process callback
       try await appState.authManager.handleCallback(callbackURL)
+      logger.info("Callback processed successfully")
 
       // Refresh account list
       await loadAccounts()
@@ -612,9 +693,14 @@ struct AccountSwitcherView: View {
       authenticationCancelled = true
       isLoading = false
     } catch {
-      // Other authentication errors
+      // Other authentication errors (including timeout)
       logger.error("Reauthentication error: \(error.localizedDescription)")
-      self.error = "Failed to reauthenticate: \(error.localizedDescription)"
+      
+      if case AuthError.timeout = error {
+        self.error = "Authentication timed out. The authentication session took too long to complete. Please try again."
+      } else {
+        self.error = "Failed to reauthenticate: \(error.localizedDescription)"
+      }
       isLoading = false
     }
   }

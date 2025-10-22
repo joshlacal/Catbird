@@ -2,6 +2,7 @@ import Foundation
 
 /// Enum representing different tabs/sections in a user profile
 enum ProfileTab: String, CaseIterable, Hashable {
+  case labelerInfo  // First tab for labeler profiles
   case posts
   case replies
   case media
@@ -13,6 +14,7 @@ enum ProfileTab: String, CaseIterable, Hashable {
 
   var title: String {
     switch self {
+    case .labelerInfo: return "Labels"
     case .posts: return "Posts"
     case .replies: return "Replies"
     case .media: return "Media"
@@ -26,6 +28,7 @@ enum ProfileTab: String, CaseIterable, Hashable {
   
   var systemImage: String {
     switch self {
+    case .labelerInfo: return "checkmark.shield"
     case .posts: return "doc.text"
     case .replies: return "arrowshape.turn.up.left"
     case .media: return "photo"
@@ -39,6 +42,7 @@ enum ProfileTab: String, CaseIterable, Hashable {
   
   var subtitle: String {
     switch self {
+    case .labelerInfo: return "Labels and settings"
     case .posts: return "View all posts"
     case .replies: return "Replies to others"
     case .media: return "Photos and videos"
@@ -48,5 +52,15 @@ enum ProfileTab: String, CaseIterable, Hashable {
     case .feeds: return "Custom feeds"
     case .more: return "Additional options"
     }
+  }
+  
+  /// Returns the tabs visible for a labeler profile
+  static var labelerTabs: [ProfileTab] {
+    [.labelerInfo, .posts, .replies]
+  }
+  
+  /// Returns the tabs visible for a regular user profile  
+  static var userTabs: [ProfileTab] {
+    [.posts, .replies, .media, .more]
   }
 }

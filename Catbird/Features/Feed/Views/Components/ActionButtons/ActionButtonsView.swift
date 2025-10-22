@@ -260,6 +260,7 @@ struct ActionButtonsView: View {
       .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
       #endif
     }
+    .id(appState.currentUserDID)
   }
 
   // MARK: - Reply Handling
@@ -273,6 +274,9 @@ struct ActionButtonsView: View {
       // For now, just clear the existing draft and proceed
       appState.composerDraftManager.clearDraft()
     }
+    
+    // Track reply interaction for feed feedback
+    appState.feedFeedbackManager.trackReply(postURI: post.uri)
     
     showingPostComposer = true
   }

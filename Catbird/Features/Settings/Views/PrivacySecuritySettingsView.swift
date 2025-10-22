@@ -66,9 +66,10 @@ struct PrivacySecuritySettingsView: View {
                 Section("App Security") {
                     Toggle(biometricDisplayName, isOn: $biometricAuthEnabled)
                         .tint(.blue)
-                        .onChange(of: biometricAuthEnabled) {
+                        .onChange(of: biometricAuthEnabled) { oldValue, newValue in
+                            guard oldValue != newValue else { return }
                             Task {
-                                await handleBiometricToggle(biometricAuthEnabled)
+                                await handleBiometricToggle(newValue)
                             }
                         }
                         .disabled(isEnablingBiometric)
@@ -82,7 +83,7 @@ struct PrivacySecuritySettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text("Use \(biometricDisplayName.lowercased()) to unlock Catbird and authenticate sensitive actions.")
+                        Text("Use \(biometricDisplayName) to unlock Catbird and authenticate sensitive actions.")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }

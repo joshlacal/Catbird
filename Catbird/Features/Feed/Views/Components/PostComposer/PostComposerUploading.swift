@@ -17,14 +17,23 @@ extension PostComposerViewModel {
     // MARK: - Image Processing and Uploading
     
     func createImagesEmbed() async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
-        guard !mediaItems.isEmpty, let client = appState.atProtoClient else { return nil }
+        guard !mediaItems.isEmpty, let client = appState.atProtoClient else { 
+            logger.trace("PostComposerUploading: createImagesEmbed - no media items or client")
+            return nil 
+        }
 
+        logger.info("PostComposerUploading: Creating images embed with \(self.mediaItems.count) items")
         var imageEmbeds: [AppBskyEmbedImages.Image] = []
 
-        for item in mediaItems {
-            guard let rawData = item.rawData else { continue }
+        for (index, item) in mediaItems.enumerated() {
+            guard let rawData = item.rawData else { 
+                logger.warning("PostComposerUploading: Skipping image at index \(index) - no raw data")
+                continue 
+            }
 
+            logger.debug("PostComposerUploading: Processing image \(index + 1)/\(self.mediaItems.count) - size: \(rawData.count) bytes")
             let imageData = try await processImageForUpload(rawData)
+            logger.debug("PostComposerUploading: Image processed - final size: \(imageData.count) bytes")
 
             let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
                 data: imageData,
@@ -33,8 +42,11 @@ extension PostComposerViewModel {
             )
 
             guard responseCode == 200, let blob = blobOutput?.blob else {
+                logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
                 throw NSError(domain: "BlobUploadError", code: responseCode, userInfo: nil)
             }
+            
+            logger.info("PostComposerUploading: Image \(index + 1) uploaded successfully")
 
             let aspectRatio = AppBskyEmbedDefs.AspectRatio(
                 width: Int(item.aspectRatio?.width ?? 0),

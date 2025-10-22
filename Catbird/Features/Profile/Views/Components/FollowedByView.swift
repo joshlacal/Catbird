@@ -52,8 +52,8 @@ struct FollowedByView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                // Navigate to followers list when tapped
-                path.append(ProfileNavigationDestination.followers(profileDID))
+                // Navigate to known followers list when tapped
+                path.append(ProfileNavigationDestination.knownFollowers(profileDID))
             }
         }
     }

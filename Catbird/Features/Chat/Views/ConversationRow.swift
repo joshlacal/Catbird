@@ -113,8 +113,6 @@ struct ConversationRow: View {
       return nil
     case .unexpected:
       return nil
-    case .pending(_):
-        return nil
     }
   }
 
@@ -175,8 +173,6 @@ struct LastMessagePreview: View {
               .appCallout()
           .foregroundColor(.gray)
           .italic()
-      case .pending(_):
-          EmptyView()
       }
     }
   }

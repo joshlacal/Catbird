@@ -200,6 +200,7 @@ struct ListDiscoveryView: View {
   var body: some View {
     NavigationStack(path: $navigationPath) {
       contentView
+        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
         .navigationTitle("Discover Lists")
 #if os(iOS)
     #if os(iOS)

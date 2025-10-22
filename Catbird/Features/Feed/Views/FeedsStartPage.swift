@@ -189,7 +189,8 @@ struct FeedsStartPage: View {
     if SystemFeedTypes.isTimelineFeed(feedURI) {
       return selectedFeed == .timeline
     } else if let uri = try? ATProtocolURI(uriString: feedURI) {
-      return selectedFeed == .feed(uri)
+      // Consider both custom feeds and list feeds
+      return selectedFeed == .feed(uri) || selectedFeed == .list(uri)
     }
     return false
   }
@@ -401,7 +402,12 @@ struct FeedsStartPage: View {
         selectedFeed = .timeline
         currentFeedName = "Timeline"
       } else if let feedURI = defaultFeed, let uri = try? ATProtocolURI(uriString: feedURI) {
-        selectedFeed = .feed(uri)
+        let uriString = uri.uriString()
+        if uriString.contains("/app.bsky.graph.list/") {
+          selectedFeed = .list(uri)
+        } else {
+          selectedFeed = .feed(uri)
+        }
         currentFeedName = defaultFeedName
       } else {
         selectedFeed = .timeline
@@ -491,24 +497,47 @@ struct FeedsStartPage: View {
     Group {
       if let feedURI = defaultFeed,
         !SystemFeedTypes.isTimelineFeed(feedURI),
-        let uri = try? ATProtocolURI(uriString: feedURI),
-        let generator = viewModel.feedGenerators[uri]
+        let uri = try? ATProtocolURI(uriString: feedURI)
       {
-        // Custom feed avatar
-        LazyImage(
-          request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
-        ) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-              .frame(width: iconSize, height: iconSize)
-              .clipShape(RoundedRectangle(cornerRadius: 12))
-          } else {
-            feedPlaceholder(for: defaultFeedName)
-              .frame(width: iconSize, height: iconSize)
-              .clipShape(RoundedRectangle(cornerRadius: 12))
+        if uri.uriString().contains("/app.bsky.graph.list/"),
+           let list = viewModel.listDetails[uri] {
+          // List avatar
+          LazyImage(
+            request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: iconSize)
+          ) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: iconSize, height: iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+              feedPlaceholder(for: list.name)
+                .frame(width: iconSize, height: iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
           }
+        } else if let generator = viewModel.feedGenerators[uri] {
+          // Custom feed avatar
+          LazyImage(
+            request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
+          ) { state in
+            if let image = state.image {
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: iconSize, height: iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+              feedPlaceholder(for: defaultFeedName)
+                .frame(width: iconSize, height: iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+          }
+        } else {
+          feedPlaceholder(for: defaultFeedName)
+            .frame(width: iconSize, height: iconSize)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
       } else {
         // Default system "Timeline" icon
@@ -565,7 +594,13 @@ struct FeedsStartPage: View {
       impact.impactOccurred()
       #endif
 
-      selectedFeed = .feed(uri)
+      // Choose correct fetch type based on URI collection
+      let uriString = uri.uriString()
+      if uriString.contains("/app.bsky.graph.list/") {
+        selectedFeed = .list(uri)
+      } else {
+        selectedFeed = .feed(uri)
+      }
       currentFeedName =
         viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
       isDrawerOpen = false
@@ -573,7 +608,17 @@ struct FeedsStartPage: View {
       VStack(spacing: 6) {
         // Feed icon
         Group {
-          if let generator = viewModel.feedGenerators[uri] {
+          if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
+            LazyImage(
+              request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: iconSize)
+            ) { state in
+              if let image = state.image {
+                image.resizable().aspectRatio(contentMode: .fill)
+              } else {
+                feedPlaceholder(for: list.name)
+              }
+            }
+          } else if let generator = viewModel.feedGenerators[uri] {
             LazyImage(
               request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: iconSize)
             ) { state in
@@ -590,8 +635,12 @@ struct FeedsStartPage: View {
         .frame(width: iconSize, height: iconSize)
         .clipShape(RoundedRectangle(cornerRadius: 12))
 
-        // Feed name
-          Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+        // Feed/List name
+          Text(
+            uri.uriString().contains("/app.bsky.graph.list/")
+              ? (viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri))
+              : (viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+          )
           .appFont(AppTextRole.caption2)
           .foregroundStyle(.primary)
           .padding(.top, 4)
@@ -846,6 +895,7 @@ struct FeedsStartPage: View {
   
   private func handleRefresh() async {
     await viewModel.fetchFeedGenerators()
+    await viewModel.fetchListDetails()
     await updateFilteredFeeds()
     if appState.isAuthenticated {
       await loadUserProfile()

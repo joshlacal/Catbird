@@ -24,10 +24,6 @@ struct DefaultFeedDropDelegate: DropDelegate {
   @Binding var defaultFeedName: String
   let resetDragState: () -> Void
 
-#if os(iOS)
-  let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
-#endif
-
   func dropEntered(info: DropInfo) {
     if draggedItem != nil {
       withAnimation(.spring(duration: 0.3)) {
@@ -35,7 +31,8 @@ struct DefaultFeedDropDelegate: DropDelegate {
         dropTargetItem = "default-feed-button"
       }
 #if os(iOS)
-      feedbackGenerator.impactOccurred(intensity: 0.7)
+      let generator = UIImpactFeedbackGenerator(style: .medium)
+      generator.impactOccurred(intensity: 0.7)
 #endif
     }
   }
@@ -58,7 +55,8 @@ struct DefaultFeedDropDelegate: DropDelegate {
     let feedToSet = draggedFeedURI
     resetDragState()
 #if os(iOS)
-    feedbackGenerator.impactOccurred(intensity: 1.0)
+    let generator = UIImpactFeedbackGenerator(style: .medium)
+    generator.impactOccurred(intensity: 1.0)
 #endif
 
     // Set the dragged feed as the default (first pinned feed)
@@ -74,7 +72,11 @@ struct DefaultFeedDropDelegate: DropDelegate {
       } else if let uri = try? ATProtocolURI(uriString: feedToSet) {
         defaultFeed = feedToSet
         defaultFeedName = viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-        selectedFeed = .feed(uri)
+        if uri.uriString().contains("/app.bsky.graph.list/") {
+          selectedFeed = .list(uri)
+        } else {
+          selectedFeed = .feed(uri)
+        }
         currentFeedName = defaultFeedName
       }
       

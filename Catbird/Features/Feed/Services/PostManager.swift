@@ -312,7 +312,7 @@ final class PostManager {
         did: try DID(didString: did),
         handle: currentProfile.handle,
         displayName: currentProfile.displayName,
-        avatar: currentProfile.avatar,
+        pronouns: currentProfile.pronouns, avatar: currentProfile.avatar,
         associated: currentProfile.associated,
         viewer: currentProfile.viewer,
         labels: currentProfile.labels,
@@ -326,18 +326,18 @@ final class PostManager {
         did: try DID(didString: did),
         handle: try Handle(handleString: "temp.handle"), // This will be updated when the real post loads
         displayName: nil,
-        avatar: nil,
+        pronouns: nil, avatar: nil,
         associated: nil,
         viewer: AppBskyActorDefs.ViewerState(
-          muted: false,
-          mutedByList: nil,
-          blockedBy: false,
-          blocking: nil,
-          blockingByList: nil,
-          following: nil,
-          followedBy: nil,
-          knownFollowers: nil,
-          activitySubscription: nil
+            muted: false,
+            mutedByList: nil,
+            blockedBy: false,
+            blocking: nil,
+            blockingByList: nil,
+            following: nil,
+            followedBy: nil,
+            knownFollowers: nil,
+            activitySubscription: nil
         ),
         labels: [],
         createdAt: nil,
@@ -490,9 +490,10 @@ final class PostManager {
     hashtags: [String] = [],
     facets: [[AppBskyRichtextFacet]?]? = nil,
     embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil,
+    parentPost: AppBskyFeedDefs.PostView? = nil,
     threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
   ) async throws {
-    logger.info("Starting thread creation with \(posts.count) posts")
+    logger.info("Starting thread creation with \(posts.count) posts, isReply: \(parentPost != nil)")
 
     guard !posts.isEmpty else {
       logger.warning("Attempted to create empty thread, aborting")
@@ -528,6 +529,23 @@ final class PostManager {
       // Keep track of root and parent references
       var rootRef: ComAtprotoRepoStrongRef?
       var parentRef: ComAtprotoRepoStrongRef?
+      
+      // If this thread is a reply, set up initial reply references from parentPost
+      if let parentPost = parentPost {
+        logger.debug("Thread is a reply - setting up reply references from parent post")
+        parentRef = ComAtprotoRepoStrongRef(uri: parentPost.uri, cid: parentPost.cid)
+        
+        // Determine root: use parent's root if it's part of a thread, otherwise parent is the root
+        if case .knownType(let record) = parentPost.record,
+           let feedPost = record as? AppBskyFeedPost,
+           let replyRef = feedPost.reply {
+          rootRef = replyRef.root
+          logger.debug("Parent is part of thread - using its root: \(replyRef.root.uri)")
+        } else {
+          rootRef = ComAtprotoRepoStrongRef(uri: parentPost.uri, cid: parentPost.cid)
+          logger.debug("Parent is thread root - using parent as root: \(parentPost.uri)")
+        }
+      }
 
       // Process each post
       for (index, postText) in posts.enumerated() {
@@ -544,8 +562,8 @@ final class PostManager {
         // Create post object
         var reply: AppBskyFeedPost.ReplyRef?
 
-        // For posts after the first one, set up reply references
-        if index > 0, let root = rootRef, let parent = parentRef {
+        // Set up reply references
+        if let root = rootRef, let parent = parentRef {
           logger.debug("Creating reply reference for post #\(index+1)")
           reply = AppBskyFeedPost.ReplyRef(root: root, parent: parent)
           logger.debug("Reply reference - root: \(root.uri), parent: \(parent.uri)")
@@ -591,8 +609,8 @@ final class PostManager {
         let cid = CID.fromDAGCBOR(postData)
         logger.debug("Post #\(index+1) CID: \(cid)")
 
-        // If this is the first post, set it as the root for the thread
-        if index == 0 {
+        // If this is the first post and not a reply thread, set it as the root
+        if index == 0 && rootRef == nil {
           rootRef = ComAtprotoRepoStrongRef(uri: postURI, cid: cid)
           logger.debug("First post set as thread root: \(postURI)")
         }

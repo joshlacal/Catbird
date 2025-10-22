@@ -157,8 +157,6 @@ struct BookmarksView: View {
       
     case .unexpected:
       EmptyView()
-    case .pending(_):
-        EmptyView()
 }
   }
   

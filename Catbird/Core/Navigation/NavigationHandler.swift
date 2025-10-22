@@ -175,8 +175,8 @@ struct NavigationHandler {
         .id("listDiscovery")
     
     case .listFeed(let listURI):
-      ListFeedView(listURI: listURI.uriString())
-        .navigationTitle("List Feed")
+      ListDetailView(listURIString: listURI.uriString(), path: path)
+        .navigationTitle("List")
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif

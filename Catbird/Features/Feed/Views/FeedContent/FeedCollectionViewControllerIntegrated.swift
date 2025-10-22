@@ -250,9 +250,79 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
         configuration.headerMode = .none
         configuration.footerMode = .none
         
-        // Remove default swipe actions that can add margins
+        // Configure swipe actions for feed feedback
         configuration.leadingSwipeActionsConfigurationProvider = nil
-        configuration.trailingSwipeActionsConfigurationProvider = nil
+        configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+            guard let self = self else { return nil }
+            
+            // Only show swipe actions for post items (not header)
+            guard case .post = self.dataSource?.itemIdentifier(for: indexPath) else {
+                return nil
+            }
+            
+            // Check if feed feedback is enabled
+            guard self.stateManager.appState.feedFeedbackManager.isEnabled else {
+                return nil
+            }
+            
+            // Get the post for this index
+            guard indexPath.item < self.stateManager.posts.count else { return nil }
+            let post = self.stateManager.posts[indexPath.item]
+            
+            // Create Show More action
+            let showMoreAction = UIContextualAction(style: .normal, title: nil) { [weak self] action, view, completion in
+                guard let self = self else {
+                    completion(false)
+                    return
+                }
+                
+                if let postURI = try? post.feedViewPost.post.uri {
+                    self.stateManager.appState.feedFeedbackManager.sendShowMore(postURI: postURI)
+                    self.controllerLogger.debug("Sent 'show more' feedback for post: \(postURI)")
+                    
+                    // Show confirmation toast
+                    self.stateManager.appState.toastManager.show(
+                        ToastItem(
+                            message: "Feedback sent",
+                            icon: "checkmark.circle.fill"
+                        )
+                    )
+                }
+                
+                completion(true)
+            }
+            showMoreAction.backgroundColor = .systemGreen
+            showMoreAction.image = UIImage(systemName: "hand.thumbsup.fill")
+            
+            // Create Show Less action
+            let showLessAction = UIContextualAction(style: .normal, title: nil) { [weak self] action, view, completion in
+                guard let self = self else {
+                    completion(false)
+                    return
+                }
+                
+                if let postURI = try? post.feedViewPost.post.uri {
+                    self.stateManager.appState.feedFeedbackManager.sendShowLess(postURI: postURI)
+                    self.controllerLogger.debug("Sent 'show less' feedback for post: \(postURI)")
+                    
+                    // Show confirmation toast
+                    self.stateManager.appState.toastManager.show(
+                        ToastItem(
+                            message: "Feedback sent",
+                            icon: "checkmark.circle.fill"
+                        )
+                    )
+                }
+                
+                completion(true)
+            }
+            showLessAction.backgroundColor = .systemRed
+            showLessAction.image = UIImage(systemName: "hand.thumbsdown.fill")
+            
+            let configuration = UISwipeActionsConfiguration(actions: [showLessAction, showMoreAction])
+            configuration.performsFirstActionWithFullSwipe = false
+            return configuration
+        }
         
         let layout = UICollectionViewCompositionalLayout.list(using: configuration)
         
@@ -283,7 +353,8 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             cell.contentConfiguration = UIHostingConfiguration {
                 FeedPostRow(
                     viewModel: viewModel,
-                    navigationPath: self.navigationPath
+                    navigationPath: self.navigationPath,
+                    feedTypeIdentifier: self.stateManager.currentFeedType.identifier
                 )
                 .environment(appState)
                 .environment(\.fontManager, appState.fontManager)
@@ -356,7 +427,9 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
             controllerLogger.debug("🔄 Fast refresh triggered")
             isRefreshing = true
             
-            await stateManager.refresh()
+            // User-initiated refresh should override background flag
+            // This ensures pull-to-refresh works even if background flag is stuck
+            await stateManager.refreshUserInitiated()
             await performUpdate()
         }
     }
@@ -579,6 +652,14 @@ final class FeedCollectionViewControllerIntegrated: UIViewController {
 @available(iOS 16.0, *)
 extension FeedCollectionViewControllerIntegrated: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+        // Track post visibility for feed feedback (interaction seen)
+        if indexPath.item < stateManager.posts.count {
+            let postViewModel = stateManager.posts[indexPath.item]
+            if let postURI = try? ATProtocolURI(uriString: postViewModel.feedViewPost.post.uri.uriString()) {
+                stateManager.appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+            }
+        }
+        
         // Trigger load more when approaching the end
         let totalItems = stateManager.posts.count
         if indexPath.item >= totalItems - 5 {
@@ -668,7 +749,7 @@ extension FeedCollectionViewControllerIntegrated {
                 return .emptyFeed(feedName: stateManager.currentFeedType.displayName) { [weak self] in
                     guard let self else { return }
                     Task { @MainActor in
-                        await self.stateManager.refresh()
+                        await self.stateManager.refreshUserInitiated()
                     }
                 }
             }

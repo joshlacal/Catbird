@@ -44,6 +44,8 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>UIObservationTrackingEnabled</key>
+	<true/>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:catbird.blue</string>

@@ -35,7 +35,7 @@ struct TrendingTopicsSection: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack {                
                 Label("Trending", systemImage: "chart.line.uptrend.xyaxis")
                     .appFont(.customSystemFont(size: 17, weight: .medium, width: 120, relativeTo: .headline))
 
@@ -322,19 +322,21 @@ private struct TrendingTopicSummaryLine: View {
 
     let topic: AppBskyUnspeccedDefs.TrendView
 
-    @State private var summary: String?
+    @State private var summary: String = ""
     @State private var isLoading: Bool = false
+    @State private var isStreaming: Bool = false
 
     private var taskID: String { topic.summaryIdentityKey }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let summary {
+            if !summary.isEmpty {
                 Text(summary)
                     .appFont(AppTextRole.footnote)
                     .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                     .transition(.opacity)
                     .accessibilityLabel("Topic summary")
+                    .animation(.easeInOut(duration: 0.2), value: summary)
             } else if isLoading {
                 // Lightweight loading shimmer
                 RoundedRectangle(cornerRadius: 4)
@@ -345,17 +347,34 @@ private struct TrendingTopicSummaryLine: View {
         }
         .task(id: taskID) {
             // Avoid re-entrancy
-            guard !isLoading, summary == nil else { return }
+            guard !isLoading, summary.isEmpty else { return }
             isLoading = true
             defer { isLoading = false }
 
-            // Attempt to produce a brief description using TopicSummaryService.
+            // Attempt to stream a brief description using TopicSummaryService.
             os_log("[SummaryUI] Row task start for %{public}@", topic.displayName)
-            let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
-            await MainActor.run {
-                summary = text
+            
+            if let stream = await TopicSummaryService.shared.streamSummary(for: topic, appState: appState) {
+                isStreaming = true
+                do {
+                    for try await partialText in stream {
+                        await MainActor.run {
+                            summary = partialText
+                        }
+                    }
+                } catch {
+                    os_log("[SummaryUI] Stream error for %{public}@: %{public}@", topic.displayName, error.localizedDescription)
+                }
+                isStreaming = false
+            } else {
+                // Fallback to non-streaming if stream unavailable
+                let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
+                await MainActor.run {
+                    summary = text ?? ""
+                }
             }
-            os_log("[SummaryUI] Row task end for %{public}@ -> %{public}@", topic.displayName, text ?? "<nil>")
+            
+            os_log("[SummaryUI] Row task end for %{public}@ -> %{public}@", topic.displayName, summary.isEmpty ? "<empty>" : summary)
         }
         .padding(.top, 6)
     }

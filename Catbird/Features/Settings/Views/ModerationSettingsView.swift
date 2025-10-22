@@ -191,6 +191,20 @@ struct ModerationSettingsView: View {
                 
                 // Content Labelers Section
                 Section("Content Labelers") {
+                    NavigationLink(destination: LabelerSettingsView()) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Labeler Preferences")
+                                Text("Configure per-labeler content settings")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    
                     if isLoadingLabelers {
                         ProgressView()
                     } else if labelers.isEmpty {
