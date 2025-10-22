@@ -22,6 +22,7 @@ import AppKit
   private(set) var isLoading = false
   private(set) var error: Error?
   var selectedProfileTab: ProfileTab = .posts
+  private(set) var pinnedPost: AppBskyFeedDefs.FeedViewPost?
 
   // Non-observable properties to reduce metadata cache pressure
   private var _likes: [AppBskyFeedDefs.FeedViewPost] = []
@@ -33,6 +34,12 @@ import AppKit
   private var _isLoadingMorePosts = false
   private var _isLoadingKnownFollowers = false
   
+  // Labeler-specific properties
+  private(set) var labelerDetails: AppBskyLabelerDefs.LabelerViewDetailed?
+  private(set) var isSubscribedToLabeler = false
+  private(set) var isLabelerLiked = false
+  private(set) var labelerLikeCount = 0
+  
   // Computed properties for non-observable data
   var likes: [AppBskyFeedDefs.FeedViewPost] { _likes }
   var otherUserLikes: [AppBskyFeedDefs.PostView] { _otherUserLikes }
@@ -42,6 +49,20 @@ import AppKit
   var knownFollowers: [AppBskyActorDefs.ProfileView] { _knownFollowers }
   var isLoadingMorePosts: Bool { _isLoadingMorePosts }
   var isLoadingKnownFollowers: Bool { _isLoadingKnownFollowers }
+  
+  /// Check if this profile is a labeler
+  var isLabeler: Bool {
+    // A profile is a labeler if it has loaded labeler details OR
+    // if the associated labeler field is set to true
+    if labelerDetails != nil {
+      return true
+    }
+    // Check if associated.labeler is explicitly true (not just present)
+    if let labeler = profile?.associated?.labeler, labeler == true {
+      return true
+    }
+    return false
+  }
 
   // Pagination tracking
   private(set) var hasMoreStarterPacks = false
@@ -62,6 +83,9 @@ import AppKit
   private let currentUserDID: String?  // This is the logged-in user's DID
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
   private weak var stateInvalidationBus: StateInvalidationBus?
+  
+  // Content filtering service
+  private let contentFilterService = ContentFilterService()
   
   // Task management to prevent crashes
   private var activeLoadTasks: Set<Task<Void, Never>> = []
@@ -117,6 +141,28 @@ import AppKit
     stateInvalidationBus?.unsubscribe(self)
   }
 
+  // MARK: - Content Filtering
+  
+  /// Apply content filtering to profile posts based on user preferences
+  func applyContentFiltering(filterSettings: FeedTunerSettings) async {
+    // Filter posts
+    let filteredPosts = await contentFilterService.filterFeedViewPosts(posts, settings: filterSettings)
+    
+    // Filter replies
+    let filteredReplies = await contentFilterService.filterFeedViewPosts(replies, settings: filterSettings)
+    
+    // Filter media posts
+    let filteredMediaPosts = await contentFilterService.filterFeedViewPosts(postsWithMedia, settings: filterSettings)
+    
+    await MainActor.run {
+      self.posts = filteredPosts
+      self.replies = filteredReplies
+      self.postsWithMedia = filteredMediaPosts
+    }
+    
+      logger.debug("Applied content filtering to profile posts: \(self.posts.count) posts, \(self.replies.count) replies, \(self.postsWithMedia.count) media posts")
+  }
+
   // MARK: - Public Methods
 
   /// Loads the user profile with enhanced crash protection
@@ -159,12 +205,22 @@ import AppKit
           self.profile = profile
           self.error = nil
           logger.debug("ProfileViewModel[\(self.instanceId)]: Successfully loaded profile for \(profile.handle)")
+          
+          // Set default tab based on profile type
+          if self.isLabeler && self.selectedProfileTab == .posts {
+            self.selectedProfileTab = .labelerInfo
+          }
         } else {
           let profileError = ProfileError.httpError(responseCode)
           self.error = profileError
           logger.error("ProfileViewModel[\(self.instanceId)]: Failed to load profile - HTTP \(responseCode)")
         }
         self.isLoading = false
+      }
+      
+      // Load labeler details if this is a labeler profile
+      if isLabeler {
+        await loadLabelerDetails()
       }
     } catch {
       await MainActor.run {
@@ -349,11 +405,33 @@ import AppKit
         let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
 
         if responseCode == 200, let feed = output?.feed {
+          // Extract pinned post if present (will have reason = .appBskyFeedDefsReasonPin)
+          let pinned = feed.first { post in
+            if case .appBskyFeedDefsReasonPin = post.reason {
+              return true
+            }
+            return post.post.viewer?.pinned == true
+          }
+          
+          // Remove pinned post from regular feed to avoid duplication
+          let regularPosts = feed.filter { post in
+            if case .appBskyFeedDefsReasonPin = post.reason {
+              return false
+            }
+            return post.post.viewer?.pinned != true
+          }
+          
+          if let pinned = pinned {
+            logger.debug("ProfileViewModel[\(self.instanceId)]: Found pinned post: \(pinned.post.uri.uriString())")
+          }
+          
           await MainActor.run {
             if resetCursor {
-              self.posts = feed
+              self.pinnedPost = pinned
+              self.posts = regularPosts
             } else {
-              self.posts.append(contentsOf: feed)
+              // When paginating, don't update pinned post
+              self.posts.append(contentsOf: regularPosts)
             }
             self.postsCursor = output?.cursor
           }
@@ -382,8 +460,6 @@ import AppKit
               case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
                 // For other parent types, include them in the result
                 return true
-              case .pending(_):
-                  return true
 }
             }
             return false
@@ -593,9 +669,9 @@ import AppKit
 
     let key = profileFeedKey(for: tab)
 
-    // Map to CachedFeedViewPost with this tab-specific feed key
-    let cached = source.compactMap { post in
-      CachedFeedViewPost(from: post, feedType: key)
+    // Map to CachedFeedViewPost with this tab-specific feed key, preserving feed order
+    let cached = source.enumerated().compactMap { (index, post) in
+      CachedFeedViewPost(from: post, feedType: key, feedOrder: index)
     }
 
     // Persist using the ModelActor
@@ -781,6 +857,8 @@ import AppKit
       updatedProfile = AppBskyActorProfile(
         displayName: displayName,
         description: description,
+        pronouns: existingProfile.pronouns,
+        website: existingProfile.website,
         avatar: avatar ?? existingProfile.avatar,
         banner: banner ?? existingProfile.banner,
         labels: existingProfile.labels,
@@ -814,10 +892,13 @@ import AppKit
       updatedProfile = AppBskyActorProfile(
         displayName: displayName,
         description: description,
+        pronouns: nil,
+        website: nil,
         avatar: avatar,
         banner: banner,
         labels: nil,
-        joinedViaStarterPack: nil, pinnedPost: nil,
+        joinedViaStarterPack: nil, 
+        pinnedPost: nil,
         createdAt: ATProtocolDate(date: Date())
       )
 
@@ -923,6 +1004,208 @@ import AppKit
       
     default:
       break
+    }
+  }
+  
+  // MARK: - Labeler Methods
+  
+  /// Load detailed labeler information if this profile is a labeler
+  func loadLabelerDetails() async {
+    guard isLabeler, let client = client, let profile = profile else { return }
+    
+    do {
+      let did = profile.did
+      let params = AppBskyLabelerGetServices.Parameters(dids: [did], detailed: true)
+      let (_, response) = try await client.app.bsky.labeler.getServices(input: params)
+      
+      if let views = response?.views, let firstView = views.first {
+        if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = firstView {
+          await MainActor.run {
+            self.labelerDetails = detailed
+            self.isLabelerLiked = detailed.viewer?.like != nil
+            self.labelerLikeCount = detailed.likeCount ?? 0
+          }
+        }
+      }
+      
+      // Check if subscribed
+      await checkLabelerSubscription()
+    } catch {
+      logger.error("Failed to load labeler details: \(error.localizedDescription)")
+    }
+  }
+  
+  /// Check if user is subscribed to this labeler
+  private func checkLabelerSubscription() async {
+    guard let client = client, let profile = profile else { return }
+    
+    do {
+      let (_, response) = try await client.app.bsky.actor.getPreferences(
+        input: AppBskyActorGetPreferences.Parameters()
+      )
+      
+      if let prefs = response?.preferences.items {
+        for pref in prefs {
+          if case let .labelersPref(labelerPref) = pref {
+            let isSubscribed = labelerPref.labelers.contains { labeler in
+              labeler.did == profile.did
+            }
+            await MainActor.run {
+              self.isSubscribedToLabeler = isSubscribed
+            }
+            return
+          }
+        }
+      }
+      
+      await MainActor.run {
+        self.isSubscribedToLabeler = false
+      }
+    } catch {
+      logger.error("Failed to check labeler subscription: \(error.localizedDescription)")
+    }
+  }
+  
+  /// Subscribe to this labeler
+  func subscribeToLabeler() async throws {
+    guard let client = client, let profile = profile else { return }
+    
+    // Get current preferences
+    let (_, currentPrefs) = try await client.app.bsky.actor.getPreferences(
+      input: AppBskyActorGetPreferences.Parameters()
+    )
+    
+    guard let preferences = currentPrefs?.preferences.items else { return }
+    
+    var updatedPreferences = preferences
+    var foundLabelersPref = false
+    
+    // Find and update labelers pref
+    for (index, pref) in updatedPreferences.enumerated() {
+      if case let .labelersPref(labelerPref) = pref {
+        foundLabelersPref = true
+        var labelers = labelerPref.labelers
+        
+        // Add this labeler if not already present
+        if !labelers.contains(where: { $0.did == profile.did }) {
+          labelers.append(AppBskyActorDefs.LabelerPrefItem(did: profile.did))
+          updatedPreferences[index] = .labelersPref(
+            AppBskyActorDefs.LabelersPref(labelers: labelers)
+          )
+        }
+        break
+      }
+    }
+    
+    // If no labelers pref exists, create one
+    if !foundLabelersPref {
+      updatedPreferences.append(
+        .labelersPref(
+          AppBskyActorDefs.LabelersPref(labelers: [
+            AppBskyActorDefs.LabelerPrefItem(did: profile.did)
+          ])
+        )
+      )
+    }
+    
+    // Save preferences
+    let apiPreferences = AppBskyActorDefs.Preferences(items: updatedPreferences)
+    _ = try await client.app.bsky.actor.putPreferences(
+      input: AppBskyActorPutPreferences.Input(preferences: apiPreferences)
+    )
+    
+    await MainActor.run {
+      self.isSubscribedToLabeler = true
+    }
+  }
+  
+  /// Unsubscribe from this labeler
+  func unsubscribeFromLabeler() async throws {
+    guard let client = client, let profile = profile else { return }
+    
+    // Get current preferences
+    let (_, currentPrefs) = try await client.app.bsky.actor.getPreferences(
+      input: AppBskyActorGetPreferences.Parameters()
+    )
+    
+    guard let preferences = currentPrefs?.preferences.items else { return }
+    
+    var updatedPreferences = preferences
+    
+    // Find and update labelers pref
+    for (index, pref) in updatedPreferences.enumerated() {
+      if case let .labelersPref(labelerPref) = pref {
+        let labelers = labelerPref.labelers.filter { $0.did != profile.did }
+        updatedPreferences[index] = .labelersPref(
+          AppBskyActorDefs.LabelersPref(labelers: labelers)
+        )
+        break
+      }
+    }
+    
+    // Save preferences
+    let apiPreferences = AppBskyActorDefs.Preferences(items: updatedPreferences)
+    _ = try await client.app.bsky.actor.putPreferences(
+      input: AppBskyActorPutPreferences.Input(preferences: apiPreferences)
+    )
+    
+    await MainActor.run {
+      self.isSubscribedToLabeler = false
+    }
+  }
+  
+  /// Like this labeler
+  func likeLabeler() async throws {
+    guard let client = client, let labelerDetails = labelerDetails else { return }
+    guard let currentUserDID = currentUserDID else { return }
+    
+    let postRef = ComAtprotoRepoStrongRef(
+      uri: labelerDetails.uri,
+      cid: labelerDetails.cid
+    )
+    
+    let like = AppBskyFeedLike(
+      subject: postRef,
+      createdAt: ATProtocolDate(date: Date()),
+      via: nil
+    )
+    
+    let (_, response) = try await client.com.atproto.repo.createRecord(
+      input: ComAtprotoRepoCreateRecord.Input(
+        repo: try ATIdentifier(string: currentUserDID),
+        collection: NSID(nsidString: "app.bsky.feed.like"),
+        record: .knownType(like)
+      )
+    )
+    
+    if response?.uri != nil {
+      await MainActor.run {
+        self.isLabelerLiked = true
+        self.labelerLikeCount += 1
+      }
+    }
+  }
+  
+  /// Unlike this labeler
+  func unlikeLabeler() async throws {
+    guard let client = client, let labelerDetails = labelerDetails else { return }
+    guard let currentUserDID = currentUserDID else { return }
+    guard let likeUri = labelerDetails.viewer?.like else { return }
+    
+    // Extract rkey from the like URI
+    guard let rkey = likeUri.recordKey else { return }
+    
+    _ = try await client.com.atproto.repo.deleteRecord(
+      input: ComAtprotoRepoDeleteRecord.Input(
+        repo: try ATIdentifier(string: currentUserDID),
+        collection: NSID(nsidString: "app.bsky.feed.like"),
+        rkey: RecordKey(keyString: rkey)
+      )
+    )
+    
+    await MainActor.run {
+      self.isLabelerLiked = false
+      self.labelerLikeCount = max(0, self.labelerLikeCount - 1)
     }
   }
   

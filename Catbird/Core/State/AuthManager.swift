@@ -19,6 +19,14 @@ enum AuthState: Equatable {
     }
     return false
   }
+  
+  /// Helper computed property to check if currently authenticating
+  var isAuthenticating: Bool {
+    if case .authenticating = self {
+      return true
+    }
+    return false
+  }
 
   /// Get the user DID if available
   var userDID: String? {
@@ -128,6 +136,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   
   // Handle storage for multi-account support
   private let handleStorageKey = "catbird_account_handles"
+  private let accountOrderKey = "catbird_account_order"
 
   // State change handling with async streams
   @ObservationIgnored
@@ -182,6 +191,10 @@ final class AuthenticationManager: AuthProgressDelegate {
     redirectUri: "https://catbird.blue/oauth/callback",
     scope: "atproto transition:generic transition:chat.bsky"
   )
+  
+  // Service DID configuration - can be customized before authentication
+  var customAppViewDID: String = "did:web:api.bsky.app#bsky_appview"
+  var customChatDID: String = "did:web:api.bsky.chat#bsky_chat"
   
   // MARK: - Timeout Utility
   
@@ -321,7 +334,9 @@ final class AuthenticationManager: AuthProgressDelegate {
       client = await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        userAgent: "Catbird/1.0"
+        userAgent: "Catbird/1.0",
+        bskyAppViewDID: customAppViewDID,
+        bskyChatDID: customChatDID
       )
       await client?.applicationDidBecomeActive()
 
@@ -332,6 +347,8 @@ final class AuthenticationManager: AuthProgressDelegate {
       } else {
         logger.info("✅✅✅ ATProtoClient CREATED SUCCESSFULLY ✅✅✅")
         await client?.setAuthProgressDelegate(self)
+        await client?.setFailureDelegate(self)
+        if let client = client { await client.setAuthenticationDelegate(self) }
       }
 
     } else {
@@ -373,7 +390,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     if await client.hasValidSession() {
       let refreshSuccess = await refreshTokenWithRetry(client: client)
       if !refreshSuccess {
-        logger.warning("Token refresh failed after retries, proceeding with existing session")
+        logger.warning("Token refresh failed after retries; will verify session validity next")
       }
     }
 
@@ -402,6 +419,12 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
     } else {
       logger.info("No valid session found")
+
+      // If we know which account likely expired, prime re-auth so LoginView auto-starts OAuth.
+      if expiredAccountInfo == nil { // don’t overwrite if already set (e.g., auto-logout path)
+        await prepareExpiredAccountInfoForReauth(using: client)
+      }
+
       if !isAuthenticationCancelled {
         updateState(.unauthenticated)
       }
@@ -431,7 +454,9 @@ final class AuthenticationManager: AuthProgressDelegate {
         
         if let nsError = error as NSError? {
           if nsError.code == 401 || nsError.code == 403 {
-            logger.info("Authentication error detected, not retrying token refresh")
+            logger.info("Authentication error detected (\(nsError.code)); not retrying token refresh")
+            // Mark the current account as expired to route UI to re-auth.
+            await markCurrentAccountExpiredForReauth(client: client, reason: "unauthorized_\(nsError.code)")
             break
           }
           if nsError.domain == NSURLErrorDomain && [
@@ -455,8 +480,54 @@ final class AuthenticationManager: AuthProgressDelegate {
     
     if let error = lastError {
       logger.error("Token refresh failed after \(maxRetries) attempts: \(error.localizedDescription)")
+      // If we didn’t already tag an expired account above, try once more here
+      if expiredAccountInfo == nil {
+        await markCurrentAccountExpiredForReauth(client: client, reason: "refresh_failed")
+      }
     }
     return false
+  }
+
+  // MARK: - Expired-session helpers
+
+  /// If there’s a single plausible account or an active DID, set expiredAccountInfo so LoginView can auto-reauth.
+  @MainActor
+  private func prepareExpiredAccountInfoForReauth(using client: ATProtoClient) async {
+    // Prefer the active account DID if we can get it
+    var chosenDID: String? = nil
+    if let did = try? await client.getDid() { chosenDID = did }
+
+    // Fallback: if exactly one stored/listed account exists, choose it
+    if chosenDID == nil {
+      let accounts = await client.listAccounts()
+      if accounts.count == 1 { chosenDID = accounts.first?.did }
+      else if accounts.isEmpty {
+        // Last resort: use stored handles cache
+        let stored = getStoredHandles()
+        if stored.count == 1 { chosenDID = stored.keys.first }
+      }
+    }
+
+    guard let did = chosenDID else { return }
+    let storedHandle = getStoredHandle(for: did)
+    expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+    logger.info("Prepared expiredAccountInfo for DID=\(did) handle=\(storedHandle ?? "nil") to trigger re-auth")
+
+    // Keep the account list fresh for Account Switcher fallback
+    await refreshAvailableAccounts()
+  }
+
+  /// Marks the current account as expired (when we can resolve DID) to drive re-auth UI.
+  @MainActor
+  private func markCurrentAccountExpiredForReauth(client: ATProtoClient, reason: String?) async {
+    // Do not clobber if already set via auto-logout log bridge
+    guard expiredAccountInfo == nil else { return }
+    let did = (try? await client.getDid()) ?? ""
+    if !did.isEmpty {
+      let storedHandle = getStoredHandle(for: did)
+      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+      logger.warning("Session expired for DID=\(did); reason=\(reason ?? "unknown"). Prompting re-auth.")
+    }
   }
 
   /// Start the OAuth authentication flow with improved error handling
@@ -475,10 +546,14 @@ final class AuthenticationManager: AuthProgressDelegate {
       client = await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
-        userAgent: "Catbird/1.0"
+        userAgent: "Catbird/1.0",
+        bskyAppViewDID: customAppViewDID,
+        bskyChatDID: customChatDID
       )
       await client?.applicationDidBecomeActive()
       await client?.setAuthProgressDelegate(self)
+      await client?.setFailureDelegate(self)
+      if let client = client { await client.setAuthenticationDelegate(self) }
     }
     
     guard let client = client else {
@@ -723,6 +798,34 @@ final class AuthenticationManager: AuthProgressDelegate {
     if let data = try? JSONEncoder().encode(handles) {
       UserDefaults.standard.set(data, forKey: handleStorageKey)
     }
+    
+    // Also remove from account order
+    var order = getAccountOrder()
+    order.removeAll { $0 == did }
+    saveAccountOrder(order)
+  }
+  
+  /// Get stored account order (array of DIDs)
+  private func getAccountOrder() -> [String] {
+    guard let data = UserDefaults.standard.data(forKey: accountOrderKey),
+          let order = try? JSONDecoder().decode([String].self, from: data) else {
+      return []
+    }
+    return order
+  }
+  
+  /// Save account order
+  private func saveAccountOrder(_ order: [String]) {
+    if let data = try? JSONEncoder().encode(order) {
+      UserDefaults.standard.set(data, forKey: accountOrderKey)
+    }
+  }
+  
+  /// Update account order (called from UI when user reorders)
+  @MainActor
+  func updateAccountOrder(_ orderedDIDs: [String]) {
+    logger.info("Updating account order with \(orderedDIDs.count) accounts")
+    saveAccountOrder(orderedDIDs)
   }
   
   /// Remove an account completely (including stored handle)
@@ -799,10 +902,34 @@ final class AuthenticationManager: AuthProgressDelegate {
       )
     }
 
-    availableAccounts = accountInfos.sorted { lhs, rhs in
-      let lhsHandle = lhs.handle ?? lhs.did
-      let rhsHandle = rhs.handle ?? rhs.did
-      return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+    // Apply custom ordering if available
+    let savedOrder = getAccountOrder()
+    if !savedOrder.isEmpty {
+      // Sort by saved order, with unordered accounts at the end (alphabetically)
+      availableAccounts = accountInfos.sorted { lhs, rhs in
+        let lhsIndex = savedOrder.firstIndex(of: lhs.did)
+        let rhsIndex = savedOrder.firstIndex(of: rhs.did)
+        
+        switch (lhsIndex, rhsIndex) {
+        case let (.some(lIdx), .some(rIdx)):
+          return lIdx < rIdx
+        case (.some, .none):
+          return true
+        case (.none, .some):
+          return false
+        case (.none, .none):
+          let lhsHandle = lhs.handle ?? lhs.did
+          let rhsHandle = rhs.handle ?? rhs.did
+          return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+        }
+      }
+    } else {
+      // No custom order, sort alphabetically
+      availableAccounts = accountInfos.sorted { lhs, rhs in
+        let lhsHandle = lhs.handle ?? lhs.did
+        let rhsHandle = rhs.handle ?? rhs.did
+        return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+      }
     }
   }
 
@@ -814,11 +941,15 @@ final class AuthenticationManager: AuthProgressDelegate {
     client = await ATProtoClient(
       oauthConfig: oauthConfig,
       namespace: "blue.catbird",
-      userAgent: "Catbird/1.0"
+      userAgent: "Catbird/1.0",
+      bskyAppViewDID: customAppViewDID,
+      bskyChatDID: customChatDID
     )
 
     await client?.applicationDidBecomeActive()
     await client?.setAuthProgressDelegate(self)
+    await client?.setFailureDelegate(self)
+    if let client = client { await client.setAuthenticationDelegate(self) }
   }
 
   /// Update the available accounts list from locally stored handles when the client is unavailable.
@@ -838,10 +969,32 @@ final class AuthenticationManager: AuthProgressDelegate {
       )
     }
 
-    availableAccounts = infos.sorted { lhs, rhs in
-      let lhsHandle = lhs.handle ?? lhs.did
-      let rhsHandle = rhs.handle ?? rhs.did
-      return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+    // Apply custom ordering if available
+    let savedOrder = getAccountOrder()
+    if !savedOrder.isEmpty {
+      availableAccounts = infos.sorted { lhs, rhs in
+        let lhsIndex = savedOrder.firstIndex(of: lhs.did)
+        let rhsIndex = savedOrder.firstIndex(of: rhs.did)
+        
+        switch (lhsIndex, rhsIndex) {
+        case let (.some(lIdx), .some(rIdx)):
+          return lIdx < rIdx
+        case (.some, .none):
+          return true
+        case (.none, .some):
+          return false
+        case (.none, .none):
+          let lhsHandle = lhs.handle ?? lhs.did
+          let rhsHandle = rhs.handle ?? rhs.did
+          return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+        }
+      }
+    } else {
+      availableAccounts = infos.sorted { lhs, rhs in
+        let lhsHandle = lhs.handle ?? lhs.did
+        let rhsHandle = rhs.handle ?? rhs.did
+        return lhsHandle.localizedCaseInsensitiveCompare(rhsHandle) == .orderedAscending
+      }
     }
   }
 
@@ -873,6 +1026,11 @@ final class AuthenticationManager: AuthProgressDelegate {
       logger.info("Successfully switched to account: \(self.handle ?? "unknown") with DID: \(newDid)")
     } catch {
       logger.error("Error switching accounts: \(error.localizedDescription)")
+      
+      // Clear expired account info when switch fails
+      // This prevents automatic re-authentication of the wrong account
+      expiredAccountInfo = nil
+      
       updateState(.error(message: "Failed to switch accounts: \(error.localizedDescription)"))
       throw error
     }
@@ -1095,6 +1253,51 @@ final class AuthenticationManager: AuthProgressDelegate {
     } catch {
       logger.error("Recovery attempt failed: \(error)")
       updateState(AuthState.error(message: "Recovery failed: \(error.localizedDescription)"))
+    }
+  }
+}
+
+// MARK: - AuthenticationDelegate
+
+extension AuthenticationManager: AuthenticationDelegate {
+  // Called by Petrel when a refresh fails or auth is otherwise required again.
+  func authenticationRequired(client: ATProtoClient) {
+    logger.error("AuthenticationDelegate.authenticationRequired received from Petrel")
+    Task { @MainActor in
+      await self.markCurrentAccountExpiredForReauth(client: client, reason: "authentication_required")
+      // Surface a gentle alert once; LoginView will auto-start reauth for expiredAccountInfo
+      if self.pendingAuthAlert == nil {
+        self.pendingAuthAlert = AuthAlert(title: "Signed Out", message: "Your session has expired. Please sign in again.")
+      }
+      self.updateState(.unauthenticated)
+    }
+  }
+}
+
+// MARK: - AuthFailureDelegate
+
+extension AuthenticationManager: AuthFailureDelegate {
+  @MainActor
+  func handleCatastrophicAuthFailure(did: String, error: Error, isRetryable: Bool) async {
+    logger.error("AuthFailureDelegate.catastrophic did=\(did) retryable=\(isRetryable) error=\(error.localizedDescription)")
+    // Prime re-auth for the specified DID
+    let storedHandle = getStoredHandle(for: did)
+    if expiredAccountInfo == nil {
+      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+    }
+    if pendingAuthAlert == nil {
+      let title = isRetryable ? "Authentication Unavailable" : "Signed Out"
+      let message = isRetryable ? "The server is temporarily unavailable. Please try again shortly." : "Your session is no longer valid. Please sign in again."
+      pendingAuthAlert = AuthAlert(title: title, message: message)
+    }
+    updateState(.unauthenticated)
+  }
+
+  @MainActor
+  func handleCircuitBreakerOpen(did: String) async {
+    logger.warning("AuthFailureDelegate.circuitBreakerOpen did=\(did)")
+    if pendingAuthAlert == nil {
+      pendingAuthAlert = AuthAlert(title: "Authentication Temporarily Paused", message: "We’re seeing repeated failures contacting your server. We’ll retry shortly, or you can sign in again now.")
     }
   }
 }

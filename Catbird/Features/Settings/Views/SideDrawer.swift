@@ -37,15 +37,43 @@ class DrawerPanGestureRecognizer: UIPanGestureRecognizer {
     }
     return false
   }
+  
+  // Override touch handling to check swipe direction
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+    super.touchesMoved(touches, with: event)
+    
+    // Get the translation to determine swipe direction
+    guard let view = self.view else { return }
+    let translation = self.translation(in: view)
+    
+    // If the drawer is closed and user is swiping left-to-right (translation.x < 0),
+    // cancel this gesture to let swipe actions take priority
+    if let coordinator = coordinator, !coordinator.isDrawerOpen() {
+      if translation.x < -10 { // Small threshold to determine direction
+        self.state = .cancelled
+        return
+      }
+    }
+    
+    // If drawer is open and user is swiping right (translation.x > 0) significantly,
+    // cancel to avoid interfering
+    if let coordinator = coordinator, coordinator.isDrawerOpen() {
+      if translation.x > 10 {
+        self.state = .cancelled
+        return
+      }
+    }
+  }
 }
 
 struct DrawerPanGesture: UIGestureRecognizerRepresentable {
   let onChanged: (CGFloat) -> Void
   let onEnded: (CGFloat, CGFloat) -> Void
   let canOpen: () -> Bool
+  let isDrawerOpen: () -> Bool
 
   func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
-    Coordinator(onChanged: onChanged, onEnded: onEnded, canOpen: canOpen)
+    Coordinator(onChanged: onChanged, onEnded: onEnded, canOpen: canOpen, isDrawerOpen: isDrawerOpen)
   }
 
   func makeUIGestureRecognizer(context: Context) -> DrawerPanGestureRecognizer {
@@ -62,21 +90,25 @@ struct DrawerPanGesture: UIGestureRecognizerRepresentable {
     context.coordinator.onChanged = onChanged
     context.coordinator.onEnded = onEnded
     context.coordinator.canOpen = canOpen
+    context.coordinator.isDrawerOpen = isDrawerOpen
   }
 
   class Coordinator: NSObject {
     var onChanged: (CGFloat) -> Void
     var onEnded: (CGFloat, CGFloat) -> Void
     var canOpen: () -> Bool
+    var isDrawerOpen: () -> Bool
 
     init(
       onChanged: @escaping (CGFloat) -> Void,
       onEnded: @escaping (CGFloat, CGFloat) -> Void,
-      canOpen: @escaping () -> Bool
+      canOpen: @escaping () -> Bool,
+      isDrawerOpen: @escaping () -> Bool
     ) {
       self.onChanged = onChanged
       self.onEnded = onEnded
       self.canOpen = canOpen
+      self.isDrawerOpen = isDrawerOpen
     }
 
     func canRecognizeGesture(in view: UIView) -> Bool {
@@ -313,7 +345,8 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
               dragOffset = 0
             }
           },
-          canOpen: { canOpen }
+          canOpen: { canOpen },
+          isDrawerOpen: { isOpen }
         )
       )
       .onChange(of: isOpen) { _, newValue in

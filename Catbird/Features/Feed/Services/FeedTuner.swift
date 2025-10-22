@@ -4,11 +4,16 @@ import OSLog
 import OrderedCollections
 
 /// Feed filtering preferences for FeedTuner
+/// Matches Bluesky's app.bsky.actor.defs#feedViewPref specification
 struct FeedTunerSettings {
+    // Server-synced FeedViewPref settings
     let hideReplies: Bool
     let hideRepliesByUnfollowed: Bool 
+    let hideRepliesByLikeCount: Int?  // Hide replies with fewer than this many likes
     let hideReposts: Bool
     let hideQuotePosts: Bool
+    
+    // App-level settings
     let hideNonPreferredLanguages: Bool
     let preferredLanguages: [String]
     let mutedUsers: Set<String>
@@ -19,9 +24,20 @@ struct FeedTunerSettings {
     let onlyTextPosts: Bool
     let onlyMediaPosts: Bool
     
+    // Content label filtering
+    let contentLabelPreferences: [ContentLabelPreference]
+    let hideAdultContent: Bool
+    
+    // Post hiding
+    let hiddenPosts: Set<String>
+    
+    // Current user DID for self-reply detection
+    let currentUserDid: String?
+    
     static let `default` = FeedTunerSettings(
         hideReplies: false,
         hideRepliesByUnfollowed: false,
+        hideRepliesByLikeCount: nil,
         hideReposts: false,
         hideQuotePosts: false,
         hideNonPreferredLanguages: false,
@@ -30,7 +46,11 @@ struct FeedTunerSettings {
         blockedUsers: [],
         hideLinks: false,
         onlyTextPosts: false,
-        onlyMediaPosts: false
+        onlyMediaPosts: false,
+        contentLabelPreferences: [],
+        hideAdultContent: false,
+        hiddenPosts: [],
+        currentUserDid: nil
     )
 }
 
@@ -120,17 +140,26 @@ final class FeedTuner {
   private var seenKeys: Set<String> = []
   private var seenUris: Set<String> = []
   
+  // Store current filter settings for slice validation
+  private var currentFilterSettings: FeedTunerSettings = .default
+  
+  // Content filtering service
+  private let contentFilterService = ContentFilterService()
+  
   /// Main processing method - converts raw posts to slices
-  func tune(_ rawPosts: [AppBskyFeedDefs.FeedViewPost], filterSettings: FeedTunerSettings = .default) -> [FeedSlice] {
+  func tune(_ rawPosts: [AppBskyFeedDefs.FeedViewPost], filterSettings: FeedTunerSettings = .default) async -> [FeedSlice] {
     logger.debug("🧵 FeedTuner.tune() called with \(rawPosts.count) raw posts")
     
-    // Apply content filtering first
-    let filteredPosts = applyContentFiltering(rawPosts, settings: filterSettings)
+    // Apply content filtering first using centralized service
+    let filteredPosts = await contentFilterService.filterFeedViewPosts(rawPosts, settings: filterSettings)
     logger.debug("🧵 Filtered \(rawPosts.count) posts to \(filteredPosts.count) posts")
     
     // Reset seen tracking for new batch
     seenKeys.removeAll()
     seenUris.removeAll()
+    
+    // Store filter settings for use in slice creation
+    self.currentFilterSettings = filterSettings
     
     // Use OrderedDictionary to preserve feed order and prevent randomization
     var rootGroups: OrderedDictionary<String, [AppBskyFeedDefs.FeedViewPost]> = [:]
@@ -178,6 +207,93 @@ final class FeedTuner {
   /// Filter individual items within a slice based on quick filter settings
   /// Returns nil if all items are filtered out, otherwise returns a new slice with filtered items
   private func filterSliceItems(_ slice: FeedSlice, settings: FeedTunerSettings) -> FeedSlice? {
+    // Check hideReplies FIRST - this hides ALL replies unconditionally
+    if settings.hideReplies && slice.isReply {
+      // Exception: Don't hide the user's own replies
+      if let currentUserDid = settings.currentUserDid,
+         let replyAuthorDid = slice.items.last?.post.author.did.didString(),
+         replyAuthorDid == currentUserDid {
+        // Let user's own replies through
+      } else {
+        logger.debug("Filtered slice: hideReplies enabled, hiding reply \(slice.id)")
+        return nil
+      }
+    }
+    
+    // Check hideRepliesByUnfollowed - hide replies TO posts from users you don't follow
+    // Key: Must follow someone in the ORIGINAL THREAD (parent or root), EXCLUDING the reply author
+    // This prevents seeing followed bots/users spamming replies to unfollowed users
+    if settings.hideRepliesByUnfollowed && slice.isReply {
+      // Get the reply post (last item in slice)
+      guard let replyItem = slice.items.last else { return nil }
+      
+      let replyAuthor = replyItem.post.author.handle
+      let replyAuthorDid = replyItem.post.author.did.didString()
+      
+      // Exception 1: Don't hide the user's own replies
+      if let currentUserDid = settings.currentUserDid,
+         replyAuthorDid == currentUserDid {
+        logger.debug("Showing reply: user's own reply by @\(replyAuthor)")
+        return slice
+      }
+      
+      // Check if we follow ANYONE in the ORIGINAL THREAD (parent or root)
+      // CRITICAL: We exclude the reply author from this check
+      // This ensures we only see replies to conversations we're actually interested in
+      var followsSomeoneInThread = false
+      var followedAuthors: [String] = []
+      
+      // Check all items in the slice EXCEPT the last one (which is the reply itself)
+      // These represent the parent/root posts in the thread
+      for item in slice.items.dropLast() {
+        let itemAuthor = item.post.author.handle
+        let itemDid = item.post.author.did.didString()
+        let isFollowed = item.post.author.viewer?.following != nil
+        
+        logger.debug("  Thread item: @\(itemAuthor) (DID: \(itemDid), followed: \(isFollowed))")
+        
+        // CRITICAL: Skip if this thread item is the same person as the reply author
+        // This prevents showing bot self-replies or followed users replying to their own threads
+        if itemDid == replyAuthorDid {
+          logger.debug("  Skipping thread item - same as reply author")
+          continue
+        }
+        
+        if isFollowed {
+          followsSomeoneInThread = true
+          followedAuthors.append(itemAuthor.description)
+        }
+        // Also check if it's the current user's post
+        if let currentUserDid = settings.currentUserDid, itemDid == currentUserDid {
+          followsSomeoneInThread = true
+          followedAuthors.append("\(itemAuthor) (you)")
+        }
+      }
+      
+      if followsSomeoneInThread {
+        logger.debug("✅ Showing reply by @\(replyAuthor): follows \(followedAuthors.joined(separator: ", ")) in thread")
+        return slice
+      }
+      
+      // Hide if we don't follow anyone in the thread (other than the reply author)
+      let threadAuthors = slice.items.dropLast().map { $0.post.author.handle.description }.joined(separator: ", ")
+      logger.debug("🚫 Filtered slice: reply by @\(replyAuthor) to thread with no OTHER followed users [@\(threadAuthors)]")
+      return nil
+    }
+    
+    // Check hideRepliesByLikeCount - hide replies with insufficient likes
+    if let minLikeCount = settings.hideRepliesByLikeCount, slice.isReply {
+      // Get the reply post (last item in slice)
+      guard let replyItem = slice.items.last else { return nil }
+      
+      let likeCount = replyItem.post.likeCount ?? 0
+      if likeCount < minLikeCount {
+        let replyAuthor = replyItem.post.author.handle
+        logger.debug("🚫 Filtered slice: reply by @\(replyAuthor) has \(likeCount) likes (minimum: \(minLikeCount))")
+        return nil
+      }
+    }
+    
     // If no quick filters are active, return original slice
     if !settings.hideLinks && !settings.onlyTextPosts && !settings.onlyMediaPosts {
       return slice
@@ -522,312 +638,5 @@ final class FeedTuner {
     seenUris = newSeenUris
     
     return results
-  }
-  
-  // MARK: - Content Filtering
-  
-  /// Apply content filtering based on user preferences
-  private func applyContentFiltering(_ posts: [AppBskyFeedDefs.FeedViewPost], settings: FeedTunerSettings) -> [AppBskyFeedDefs.FeedViewPost] {
-    var filteredPosts: [AppBskyFeedDefs.FeedViewPost] = []
-    
-    for post in posts {
-      // Check if post author is blocked (blocks are stronger than mutes)
-      let authorDID = post.post.author.did.didString()
-      if settings.blockedUsers.contains(authorDID) {
-        logger.debug("Filtering out post from blocked user: \(post.post.author.handle)")
-        continue
-      }
-      
-      // Check if post author is muted
-      if settings.mutedUsers.contains(authorDID) {
-        logger.debug("Filtering out post from muted user: \(post.post.author.handle)")
-        continue
-      }
-      
-      // Check if root post author is blocked (for replies to blocked users)
-      if let reply = post.reply,
-         case .appBskyFeedDefsPostView(let rootPost) = reply.root {
-        let rootAuthorDID = rootPost.author.did.didString()
-        if settings.blockedUsers.contains(rootAuthorDID) {
-          logger.debug("Filtering out reply to blocked user: \(rootPost.author.handle)")
-          continue
-        }
-        if settings.mutedUsers.contains(rootAuthorDID) {
-          logger.debug("Filtering out reply to muted user: \(rootPost.author.handle)")
-          continue
-        }
-      }
-      
-      // Check if parent post author is blocked/muted (for replies in threads)
-      if let reply = post.reply,
-         case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
-        let parentAuthorDID = parentPost.author.did.didString()
-        if settings.blockedUsers.contains(parentAuthorDID) {
-          logger.debug("Filtering out reply to blocked parent: \(parentPost.author.handle)")
-          continue
-        }
-        if settings.mutedUsers.contains(parentAuthorDID) {
-          logger.debug("Filtering out reply to muted parent: \(parentPost.author.handle)")
-          continue
-        }
-      }
-      
-      // Check if this is a reply
-      let isReply = post.reply != nil
-      if settings.hideReplies && isReply {
-        logger.debug("Filtering out reply post: \(post.post.uri.uriString())")
-        continue
-      }
-      
-      // Check if this is a repost (has reason)
-      let isRepost = post.reason != nil
-      if isRepost {
-        // Check if the reposter is blocked/muted
-        if case .appBskyFeedDefsReasonRepost(let repostReason) = post.reason {
-          let reposterDID = repostReason.by.did.didString()
-          if settings.blockedUsers.contains(reposterDID) {
-            logger.debug("Filtering out repost by blocked user: \(repostReason.by.handle)")
-            continue
-          }
-          if settings.mutedUsers.contains(reposterDID) {
-            logger.debug("Filtering out repost by muted user: \(repostReason.by.handle)")
-            continue
-          }
-        }
-        
-        // Check if user wants to hide all reposts
-        if settings.hideReposts {
-          logger.debug("Filtering out repost: \(post.post.uri.uriString())")
-          continue
-        }
-      }
-      
-      // Apply language filtering if enabled
-      if settings.hideNonPreferredLanguages && !settings.preferredLanguages.isEmpty {
-        // Extract post record to check languages
-        if case .knownType(let record) = post.post.record,
-           let feedPost = record as? AppBskyFeedPost {
-          
-          var hasPreferredLanguage = false
-          
-          // First check if post has language metadata
-          if let postLanguages = feedPost.langs, !postLanguages.isEmpty {
-            // Check if any of the post's languages match user's preferred languages
-            hasPreferredLanguage = postLanguages.contains { postLangContainer in
-              settings.preferredLanguages.contains { prefLang in
-                // Compare language codes (e.g., "en" == "en")
-                let postLangCode = postLangContainer.lang.languageCode?.identifier ?? postLangContainer.lang.minimalIdentifier
-                return postLangCode == prefLang
-              }
-            }
-          } else {
-            // No language metadata - use language detection
-            let postText = feedPost.text
-            if !postText.isEmpty {
-              let detectedLanguage = LanguageDetector.shared.detectLanguage(for: postText)
-              if let detectedLang = detectedLanguage {
-                hasPreferredLanguage = settings.preferredLanguages.contains(detectedLang)
-                logger.debug("Detected language '\(detectedLang)' for post without language metadata")
-              } else {
-                // Could not detect language - allow it through
-                hasPreferredLanguage = true
-              }
-            } else {
-              // No text content - allow it through (might be image-only post)
-              hasPreferredLanguage = true
-            }
-          }
-          
-          if !hasPreferredLanguage {
-            logger.debug("Filtering out post with non-preferred language")
-            continue
-          }
-        }
-        // If we can't decode the post, allow it through
-      }
-      
-      // Check if this is a quote post
-      // Quote posts have embedded records that are posts
-      let isQuotePost: Bool = {
-        guard case .knownType(let record) = post.post.record,
-              let feedPost = record as? AppBskyFeedPost else {
-          return false
-        }
-        
-        if let embed = feedPost.embed {
-          switch embed {
-          case .appBskyEmbedRecord(let recordEmbed):
-            // This indicates a quote post (embedded record)
-            return true
-          case .appBskyEmbedRecordWithMedia(let recordWithMedia):
-            // This indicates a quote post with media
-            return true
-          default:
-            break
-          }
-        }
-        return false
-      }()
-      
-      if settings.hideQuotePosts && isQuotePost {
-        logger.debug("Filtering out quote post: \(post.post.uri.uriString())")
-        continue
-      }
-      
-      // Check if this is a reply from someone we don't follow
-      if settings.hideRepliesByUnfollowed && isReply {
-        // Check if the post author is followed by the current user
-        let isFollowing = post.post.author.viewer?.following != nil
-        
-        if !isFollowing {
-          logger.debug("Filtering out reply from unfollowed user: \(post.post.author.handle)")
-          continue
-        }
-      }
-      
-      // Quick filter: Hide Link Posts
-      if settings.hideLinks {
-        var hasLink = false
-        
-        // Helper function to check if a PostView has links
-        let checkPostForLinks: (AppBskyFeedDefs.PostView) -> Bool = { postView in
-          var foundLink = false
-          
-          // Check embed for external links
-          if let embed = postView.embed {
-            switch embed {
-            case .appBskyEmbedExternalView:
-              foundLink = true
-            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-              if case .appBskyEmbedExternalView = recordWithMedia.media {
-                foundLink = true
-              }
-            default:
-              break
-            }
-          }
-          
-          // Also check post record for link facets
-          if !foundLink {
-            if case .knownType(let record) = postView.record,
-               let feedPost = record as? AppBskyFeedPost,
-               let facets = feedPost.facets {
-              for facet in facets {
-                for feature in facet.features {
-                  if case .appBskyRichtextFacetLink = feature {
-                    foundLink = true
-                    break
-                  }
-                }
-                if foundLink { break }
-              }
-            }
-          }
-          
-          return foundLink
-        }
-        
-        // Check main post
-        hasLink = checkPostForLinks(post.post)
-        
-        // Also check parent and root posts if they exist (for thread filtering)
-        if !hasLink, let reply = post.reply {
-          if case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
-            hasLink = checkPostForLinks(parentPost)
-          }
-          
-          if !hasLink, case .appBskyFeedDefsPostView(let rootPost) = reply.root {
-            hasLink = checkPostForLinks(rootPost)
-          }
-        }
-        
-        if hasLink {
-          logger.debug("Filtering out link post or thread with links: \(post.post.uri.uriString())")
-          continue
-        }
-      }
-      
-      // Quick filter: Only Text Posts (no embeds at all)
-      if settings.onlyTextPosts {
-        var hasEmbed = false
-        
-        // Check main post
-        if post.post.embed != nil {
-          hasEmbed = true
-        }
-        
-        // Also check parent and root posts
-        if !hasEmbed, let reply = post.reply {
-          if case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
-            if parentPost.embed != nil {
-              hasEmbed = true
-            }
-          }
-          
-          if !hasEmbed, case .appBskyFeedDefsPostView(let rootPost) = reply.root {
-            if rootPost.embed != nil {
-              hasEmbed = true
-            }
-          }
-        }
-        
-        if hasEmbed {
-          logger.debug("Filtering out non-text post or thread: \(post.post.uri.uriString())")
-          continue
-        }
-      }
-      
-      // Quick filter: Only Media Posts (must have images or videos)
-      if settings.onlyMediaPosts {
-        var hasMedia = false
-        
-        // Helper function to check if a PostView has media
-        let checkPostForMedia: (AppBskyFeedDefs.PostView) -> Bool = { postView in
-          var foundMedia = false
-          
-          if let embed = postView.embed {
-            switch embed {
-            case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
-              foundMedia = true
-            case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
-              switch recordWithMedia.media {
-              case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
-                foundMedia = true
-              default:
-                break
-              }
-            default:
-              break
-            }
-          }
-          
-          return foundMedia
-        }
-        
-        // Check main post
-        hasMedia = checkPostForMedia(post.post)
-        
-        // For "Only Media", we want to show threads if ANY post has media
-        if !hasMedia, let reply = post.reply {
-          if case .appBskyFeedDefsPostView(let parentPost) = reply.parent {
-            hasMedia = checkPostForMedia(parentPost)
-          }
-          
-          if !hasMedia, case .appBskyFeedDefsPostView(let rootPost) = reply.root {
-            hasMedia = checkPostForMedia(rootPost)
-          }
-        }
-        
-        if !hasMedia {
-          logger.debug("Filtering out non-media post or thread: \(post.post.uri.uriString())")
-          continue
-        }
-      }
-      
-      // If we reach here, the post passed all filters
-      filteredPosts.append(post)
-    }
-    
-    return filteredPosts
   }
 }

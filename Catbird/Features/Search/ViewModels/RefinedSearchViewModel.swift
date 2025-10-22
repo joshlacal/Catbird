@@ -69,9 +69,12 @@ enum SearchState {
     private let searchHistoryManager = SearchHistoryManager()
     private let logger = Logger(subsystem: "blue.catbird", category: "RefinedSearchViewModel")
     
+    // Content filtering service for search results
+    private let contentFilterService = ContentFilterService()
+    
     // MARK: - Debouncing
     private var searchTask: Task<Void, Never>?
-    private let searchDebounceTime: TimeInterval = 0.3
+    private let searchDebounceTime: TimeInterval = 0.15 // SRCH-006: Reduced from 300ms to 150ms for better responsiveness
     
     // MARK: - Computed Properties
     
@@ -340,9 +343,17 @@ enum SearchState {
                 let hasNewResults = !newProfileResults.isEmpty || !newPostResults.isEmpty || !newFeedResults.isEmpty
                 
                 if hasNewResults {
+                    // Apply content filtering to post results
+                    var filteredPostResults = newPostResults
+                    if !newPostResults.isEmpty {
+                        let filterSettings = await appState.buildFilterSettings()
+                        filteredPostResults = await contentFilterService.filterPostViews(newPostResults, settings: filterSettings)
+                        logger.debug("Applied content filtering to initial search results: \(filteredPostResults.count) posts after filtering")
+                    }
+                    
                     // Update the results and cursors
                     let profileResults = newProfileResults.isEmpty ? self.profileResults : newProfileResults
-                    let postResults = newPostResults.isEmpty ? self.postResults : newPostResults
+                    let postResults = filteredPostResults.isEmpty && self.postResults.isEmpty ? [] : (filteredPostResults.isEmpty ? self.postResults : filteredPostResults)
                     let feedResults = newFeedResults.isEmpty ? self.feedResults : newFeedResults
                     
                     await MainActor.run {
@@ -477,6 +488,18 @@ enum SearchState {
         recentSearches = []
         let key = recentSearchesKey()
         UserDefaults(suiteName: "group.blue.catbird.shared")?.removeObject(forKey: key)
+    }
+    
+    /// SRCH-008: Delete a specific recent search
+    func deleteRecentSearch(_ search: String) {
+        recentSearches.removeAll { $0 == search }
+        saveRecentSearches()
+    }
+    
+    /// Save recent searches to UserDefaults
+    private func saveRecentSearches() {
+        let key = recentSearchesKey()
+        UserDefaults(suiteName: "group.blue.catbird.shared")?.set(recentSearches, forKey: key)
     }
     
     /// Add a profile to recent profile searches
@@ -771,6 +794,11 @@ enum SearchState {
                     results = applyLanguageFiltering(to: results)
                 }
                 
+                // Apply content filtering (blocked/muted users, content labels, etc.)
+                let filterSettings = await appState.buildFilterSettings()
+                results = await contentFilterService.filterPostViews(results, settings: filterSettings)
+                logger.debug("Applied content filtering to search results: \(results.count) posts after filtering")
+                
                 postResults = results
                 postCursor = postsResponse.cursor
             }
@@ -1062,6 +1090,30 @@ enum SearchState {
             }
         default:
             break
+        }
+    }
+    
+    // MARK: - Saved Search Operations
+    
+    /// Save a search configuration for later use
+    func saveSearch(_ savedSearch: SavedSearch) {
+        let userDID = appState.currentUserDID
+        searchHistoryManager.saveSearch(savedSearch, userDID: userDID)
+        loadSavedSearches()
+    }
+    
+    /// Load and apply a saved search configuration
+    func loadAndApplySavedSearch(_ savedSearch: SavedSearch, client: ATProtoClient) {
+        // Apply the saved search parameters
+        searchQuery = savedSearch.query
+        advancedParams = savedSearch.filters
+        
+        // Update the last used timestamp
+        searchHistoryManager.updateLastUsed(savedSearch.id, userDID: appState.currentUserDID)
+        
+        // Perform the search
+        Task {
+            await searchPosts(client: client)
         }
     }
 }

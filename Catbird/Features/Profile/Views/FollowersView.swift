@@ -32,15 +32,14 @@ struct FollowersView: View {
                 .listRowInsets(EdgeInsets())
             } else if !viewModel.followers.isEmpty {
                 ForEach(viewModel.followers, id: \.did) { follower in
-                        ProfileRowView(profile: follower, path: $path)
-                            .padding(12)
-                            .buttonStyle(.plain)
-                    .onAppear {
-                        // Load more when reaching the end
-                        if follower == viewModel.followers.last && viewModel.hasMoreFollowers && !viewModel.isLoadingMore {
-                            Task { await viewModel.loadFollowers() }
+                    ProfileRowView(profile: follower, path: $path)
+                        .listRowInsets(EdgeInsets())
+                        .onAppear {
+                            // Load more when reaching the end
+                            if follower == viewModel.followers.last && viewModel.hasMoreFollowers && !viewModel.isLoadingMore {
+                                Task { await viewModel.loadFollowers() }
+                            }
                         }
-                    }
                 }
                 
                 // Loading indicator for pagination

@@ -288,17 +288,6 @@ private struct SwiftUIThreadView: View {
             .padding()
             .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground).opacity(0.5))
             .cornerRadius(8)
-            
-        case .pending(_):
-            HStack {
-                ProgressView()
-                    .scaleEffect(0.8)
-                Text("Loading post...")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding()
         }
     }
     
@@ -369,16 +358,6 @@ private struct SwiftUIThreadView: View {
             .padding()
             .background(Color.orange.opacity(0.1))
             .cornerRadius(8)
-            
-        case .pending(_):
-            HStack {
-                ProgressView()
-                    .scaleEffect(0.8)
-                Text("Loading reply...")
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding()
         }
     }
     
@@ -584,12 +563,18 @@ private struct SwiftUIThreadView: View {
                 currentPost = nil
                 
             case .pending(let pendingData):
-                let pendingID = "pending-\(pendingData.type)-\(depth)"
-                parents.append(ParentPost(id: pendingID, post: post, grandparentAuthor: grandparentAuthor))
-                
+                // Try to decode the pending post to get the full ThreadViewPost with embeds
                 if let threadViewPost = try? post.getThreadViewPost() {
+                    let postURI = threadViewPost.post.uri.uriString()
+                    // Use the decoded ThreadViewPost wrapped in a union so embeds are properly included
+                    let decodedUnion: AppBskyFeedDefs.ThreadViewPostParentUnion = .appBskyFeedDefsThreadViewPost(threadViewPost)
+                    parents.append(ParentPost(id: postURI, post: decodedUnion, grandparentAuthor: grandparentAuthor))
+                    grandparentAuthor = threadViewPost.post.author
                     currentPost = threadViewPost.parent
                 } else {
+                    // Fallback: if we can't decode, use the pending post as-is
+                    let pendingID = "pending-\(pendingData.type)-\(depth)"
+                    parents.append(ParentPost(id: pendingID, post: post, grandparentAuthor: grandparentAuthor))
                     currentPost = nil
                 }
                 
@@ -710,7 +695,11 @@ extension AppBskyFeedDefs.ThreadViewPostParentUnion {
         case .pending(let data):
             if data.type == "app.bsky.feed.defs#threadViewPost" {
                 do {
-                    let threadViewPost = try JSONDecoder().decode(AppBskyFeedDefs.ThreadViewPost.self, from: data.rawData)
+                    // Configure decoder with original data to support nested pending decodes (e.g., embeds)
+                    let decoder = JSONDecoder()
+                    decoder.userInfo[.originalData] = data.rawData
+                    decoder.userInfo[.debugEnabled] = true
+                    let threadViewPost = try decoder.decode(AppBskyFeedDefs.ThreadViewPost.self, from: data.rawData)
                     return threadViewPost
                 } catch {
                     return nil

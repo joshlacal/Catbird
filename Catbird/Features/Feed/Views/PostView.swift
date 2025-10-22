@@ -54,6 +54,8 @@ let isToYou: Bool
   @State private var threadSummaryError: String?
   @State private var canRetryThreadSummary = false
   @State private var threadSummaryTask: Task<Void, Never>?
+  @State private var showDeleteConfirmation = false
+  @State private var showBlockConfirmation = false
 
   // MARK: - Computed Properties
 var id: String {
@@ -168,6 +170,22 @@ var id: String {
         post: postState.currentPost
       )
     }
+    .alert("Delete Post", isPresented: $showDeleteConfirmation) {
+      Button("Cancel", role: .cancel) { }
+      Button("Delete", role: .destructive) {
+        Task { await contextMenuViewModel.deletePost() }
+      }
+    } message: {
+      Text("Are you sure you want to delete this post? This action cannot be undone.")
+    }
+    .alert("Block User", isPresented: $showBlockConfirmation) {
+      Button("Cancel", role: .cancel) { }
+      Button("Block", role: .destructive) {
+        Task { await contextMenuViewModel.blockUser() }
+      }
+    } message: {
+      Text("Block @\(postState.currentPost.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
+    }
   }
 
   // MARK: - Content Views
@@ -176,23 +194,24 @@ var id: String {
   private var moderatedPostContent: some View {
     let labels = postState.currentPost.labels
     let selfLabelValues = extractSelfLabelValues(from: postState.currentPost)
-    if let labels, !labels.isEmpty || !selfLabelValues.isEmpty {
+    let hasEmbed = postState.currentPost.embed != nil
+    
+    // Only wrap in ContentLabelManager if:
+    // 1. There's no embed (post handles its own labels), OR
+    // 2. There are text-specific labels that don't apply to the embed
+    if !hasEmbed && (labels?.isEmpty == false || !selfLabelValues.isEmpty) {
       ContentLabelManager(labels: labels, selfLabelValues: selfLabelValues, contentType: "post") {
         normalPostContent
       }
     } else {
+      // Embeds handle their own labels exclusively
       normalPostContent
     }
   }
 
   @ViewBuilder
   private var normalPostContent: some View {
-    // Only show content labels if there's no embed - embeds handle their own labels
-    if let labels = postState.currentPost.labels, !labels.isEmpty, postState.currentPost.embed == nil {
-      ContentLabelView(labels: labels)
-        .padding(.bottom, PostView.baseUnit)
-    }
-
+    // ContentLabelManager handles label display, so don't show them here
     postContentView
       .padding(.bottom, PostView.baseUnit)
 
@@ -316,18 +335,38 @@ var id: String {
         )
       }
       
+      // Show More / Show Less options for custom feeds
+      if contextMenuViewModel.isFeedbackEnabled {
+        Divider()
+        
+        Button(action: {
+          contextMenuViewModel.sendShowMore()
+        }) {
+          Label("Show More Like This", systemImage: "hand.thumbsup")
+        }
+        
+        Button(action: {
+          contextMenuViewModel.sendShowLess()
+        }) {
+          Label("Show Less Like This", systemImage: "hand.thumbsdown")
+        }
+      }
+      
       Divider()
       
-      Button(action: {
-        Task { await contextMenuViewModel.muteUser() }
-      }) {
-        Label("Mute User", systemImage: "speaker.slash")
-      }
+      // Only show mute/block for other users' posts
+      if postState.currentPost.author.did.didString() != postState.currentUserDid {
+        Button(action: {
+          Task { await contextMenuViewModel.muteUser() }
+        }) {
+          Label("Mute User", systemImage: "speaker.slash")
+        }
 
-      Button(action: {
-        Task { await contextMenuViewModel.blockUser() }
-      }) {
-        Label("Block User", systemImage: "exclamationmark.octagon")
+        Button(role: .destructive, action: {
+          showBlockConfirmation = true
+        }) {
+          Label("Block User", systemImage: "exclamationmark.octagon")
+        }
       }
 
       Button(action: {
@@ -335,21 +374,40 @@ var id: String {
       }) {
         Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
       }
+      
+      // Only show hide/report for other users' posts
+      if postState.currentPost.author.did.didString() != postState.currentUserDid {
+        // Hide/Unhide post option
+        Button(action: {
+          Task {
+            if contextMenuViewModel.isPostHidden {
+              await contextMenuViewModel.unhidePost()
+            } else {
+              await contextMenuViewModel.hidePost()
+            }
+          }
+        }) {
+          Label(
+            contextMenuViewModel.isPostHidden ? "Unhide Post" : "Hide Post",
+            systemImage: contextMenuViewModel.isPostHidden ? "eye" : "eye.slash"
+          )
+        }
+
+        Button(action: {
+          postState.showingReportView = true  // Use consolidated state
+        }) {
+          Label("Report Post", systemImage: "flag")
+        }
+      }
 
       // Use postState.currentUserDid and postState.currentPost
       if let currentUserDid = postState.currentUserDid,
         postState.currentPost.author.did.didString() == currentUserDid {
-        Button(action: {
-          Task { await contextMenuViewModel.deletePost() }
+        Button(role: .destructive, action: {
+          showDeleteConfirmation = true
         }) {
           Label("Delete Post", systemImage: "trash")
         }
-      }
-
-      Button(action: {
-        postState.showingReportView = true  // Use consolidated state
-      }) {
-        Label("Report Post", systemImage: "flag")
       }
     } label: {
       Image(systemName: "ellipsis")
@@ -419,7 +477,7 @@ var id: String {
           did: blockedPost.author.did,
           handle: placeholderHandle,
           displayName: nil,
-          avatar: nil,
+          pronouns: nil, avatar: nil,
           associated: nil,
           viewer: blockedPost.author.viewer,
           labels: nil,
@@ -435,7 +493,7 @@ var id: String {
           did: placeholderDID,
           handle: placeholderHandle,
           displayName: nil,
-          avatar: nil,
+          pronouns: nil, avatar: nil,
           associated: nil,
           viewer: nil,
           labels: nil,

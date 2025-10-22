@@ -321,6 +321,29 @@ actor PersistentFeedStateManager {
     }
   }
   
+  // MARK: - Cache Cleanup
+  
+  /// Remove invalid posts from cache (posts that fail to decode)
+  func removeInvalidPosts(withIds postIds: [String]) async {
+    do {
+      for postId in postIds {
+        let descriptor = FetchDescriptor<CachedFeedViewPost>(
+          predicate: #Predicate<CachedFeedViewPost> { post in
+            post.id == postId
+          }
+        )
+        let posts = try modelContext.fetch(descriptor)
+        for post in posts {
+          modelContext.delete(post)
+        }
+      }
+      try modelContext.save()
+      logger.info("Removed \(postIds.count) invalid posts from cache")
+    } catch {
+      logger.error("Failed to remove invalid posts: \(error)")
+    }
+  }
+  
   // MARK: - Smart Refresh Logic
   
   func shouldRefreshFeed(

@@ -13,6 +13,7 @@ struct ContentMediaSettingsView: View {
     @State private var isLoadingFeedPrefs = true
     @State private var hideReplies: Bool = false
     @State private var hideRepliesByUnfollowed: Bool = false
+    @State private var hideRepliesByLikeCount: Int? = nil
     @State private var hideReposts: Bool = false
     @State private var hideQuotePosts: Bool = false
     
@@ -51,19 +52,69 @@ struct ContentMediaSettingsView: View {
             }
             
             // Feed View Preferences - synced with server
-            Section("Feed Filtering") {
+            Section {
                 if isLoadingFeedPrefs {
                     ProgressView()
                 } else {
-                    Toggle("Hide Replies", isOn: $hideReplies)
+                    Toggle("Hide All Replies", isOn: $hideReplies)
                         .onChange(of: hideReplies) {
                             updateFeedViewPreference()
                         }
                     
-                    Toggle("Hide Replies from Users I Don't Follow", isOn: $hideRepliesByUnfollowed)
+                    if hideReplies {
+                        Text("Hides all reply posts from your feed, except your own replies")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.leading, 16)
+                    }
+                    
+                    Toggle("Hide Replies to Users You Don't Follow", isOn: $hideRepliesByUnfollowed)
                         .onChange(of: hideRepliesByUnfollowed) {
                             updateFeedViewPreference()
                         }
+                        .disabled(hideReplies) // Disabled if hideReplies is on
+                    
+                    if !hideReplies && hideRepliesByUnfollowed {
+                        Text("Hides replies to posts from people you don't follow")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.leading, 16)
+                    }
+                    
+                    // Hide replies by like count
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Hide Replies Below Minimum Likes", isOn: Binding(
+                            get: { hideRepliesByLikeCount != nil },
+                            set: { enabled in
+                                hideRepliesByLikeCount = enabled ? 2 : nil
+                                updateFeedViewPreference()
+                            }
+                        ))
+                        .disabled(hideReplies)
+                        
+                        if !hideReplies && hideRepliesByLikeCount != nil {
+                            HStack {
+                                Text("Minimum likes:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Spacer()
+                                
+                                Stepper(value: Binding(
+                                    get: { hideRepliesByLikeCount ?? 2 },
+                                    set: { newValue in
+                                        hideRepliesByLikeCount = max(0, newValue)
+                                        updateFeedViewPreference()
+                                    }
+                                ), in: 0...100) {
+                                    Text("\(hideRepliesByLikeCount ?? 2)")
+                                        .font(.caption)
+                                        .monospacedDigit()
+                                }
+                            }
+                            .padding(.leading, 16)
+                        }
+                    }
                     
                     Toggle("Hide Reposts", isOn: $hideReposts)
                         .onChange(of: hideReposts) {
@@ -74,6 +125,14 @@ struct ContentMediaSettingsView: View {
                         .onChange(of: hideQuotePosts) {
                             updateFeedViewPreference()
                         }
+                }
+            } header: {
+                Text("Feed Filtering")
+            } footer: {
+                if !isLoadingFeedPrefs {
+                    Text("These settings sync with your Bluesky account and apply across all your devices")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
             
@@ -135,14 +194,12 @@ struct ContentMediaSettingsView: View {
                 ))
                 .tint(.blue)
                 
-                .tint(.blue)
-                .disabled(!appState.appSettings.useWebViewEmbeds)
-                
                 Toggle("YouTube", isOn: Binding(
                     get: { appState.appSettings.allowYouTube },
                     set: { appState.appSettings.allowYouTube = $0 }
                 ))
                 .tint(.blue)
+                .disabled(!appState.appSettings.useWebViewEmbeds)
                 
                 Toggle("YouTube Shorts", isOn: Binding(
                     get: { appState.appSettings.allowYouTubeShorts },
@@ -257,6 +314,7 @@ struct ContentMediaSettingsView: View {
             if let feedPref = preferences.feedViewPref {
                 hideReplies = feedPref.hideReplies ?? false
                 hideRepliesByUnfollowed = feedPref.hideRepliesByUnfollowed ?? false
+                hideRepliesByLikeCount = feedPref.hideRepliesByLikeCount
                 hideReposts = feedPref.hideReposts ?? false
                 hideQuotePosts = feedPref.hideQuotePosts ?? false
             }
@@ -292,8 +350,15 @@ struct ContentMediaSettingsView: View {
                 try await appState.preferencesManager.setFeedViewPreferences(
                     hideReplies: hideReplies,
                     hideRepliesByUnfollowed: hideRepliesByUnfollowed,
+                    hideRepliesByLikeCount: hideRepliesByLikeCount,
                     hideReposts: hideReposts,
                     hideQuotePosts: hideQuotePosts
+                )
+                
+                // Notify that preferences have changed to trigger feed refresh
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("FeedPreferencesChanged"),
+                    object: nil
                 )
             } catch {
                 errorMessage = "Failed to update feed preferences: \(error.localizedDescription)"
@@ -331,6 +396,7 @@ struct ContentMediaSettingsView: View {
         // Reset feed preferences
         hideReplies = false
         hideRepliesByUnfollowed = false
+        hideRepliesByLikeCount = nil
         hideReposts = false
         hideQuotePosts = false
         

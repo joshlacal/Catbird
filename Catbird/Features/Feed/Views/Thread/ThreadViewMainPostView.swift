@@ -17,6 +17,8 @@ struct ThreadViewMainPostView: View, Equatable {
     @State private var currentUserDid: String?
     @State private var showingReportView = false
     @State private var showingAddToListSheet = false
+    @State private var showDeleteConfirmation = false
+    @State private var showBlockConfirmation = false
     
     // Using multiples of 3 for spacing
     private static let baseUnit: CGFloat = 3
@@ -218,6 +220,22 @@ struct ThreadViewMainPostView: View, Equatable {
                     userDisplayName: post.author.displayName
                 )
             }
+            .alert("Delete Post", isPresented: $showDeleteConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    Task { await contextMenuViewModel.deletePost() }
+                }
+            } message: {
+                Text("Are you sure you want to delete this post? This action cannot be undone.")
+            }
+            .alert("Block User", isPresented: $showBlockConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Block", role: .destructive) {
+                    Task { await contextMenuViewModel.blockUser() }
+                }
+            } message: {
+                Text("Block @\(post.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
+            }
             .task {
                 await setupContextMenu()
             }
@@ -302,8 +320,8 @@ struct ThreadViewMainPostView: View, Equatable {
                 Label("Mute User", systemImage: "speaker.slash")
             }
             
-            Button(action: {
-                Task { await contextMenuViewModel.blockUser() }
+            Button(role: .destructive, action: {
+                showBlockConfirmation = true
             }) {
                 Label("Block User", systemImage: "exclamationmark.octagon")
             }
@@ -317,8 +335,8 @@ struct ThreadViewMainPostView: View, Equatable {
             // Use currentUserDid and post
             if let currentUserDid = currentUserDid,
                post.author.did.didString() == currentUserDid {
-                Button(action: {
-                    Task { await contextMenuViewModel.deletePost() }
+                Button(role: .destructive, action: {
+                    showDeleteConfirmation = true
                 }) {
                     Label("Delete Post", systemImage: "trash")
                 }

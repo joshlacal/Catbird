@@ -50,6 +50,15 @@ struct ChatTabView: View {
         }
       }
     }
+    .onChange(of: appState.navigationManager.targetConversationId) { oldValue, newValue in
+      // Handle deep-link navigation to a specific conversation
+      if let convoId = newValue, convoId != selectedConvoId {
+        logger.info("Deep-link navigation to conversation: \(convoId)")
+        selectedConvoId = convoId
+        // Clear the target after setting to avoid repeated navigation
+        appState.navigationManager.targetConversationId = nil
+      }
+    }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
       handleErrorStateChange(oldError: oldError, newError: newError)
     }

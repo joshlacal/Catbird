@@ -577,8 +577,6 @@ final class FeedPostViewModel {
                 break
             case .unexpected:
                 break
-            case .pending:
-                break
             }
         }
         

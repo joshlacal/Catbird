@@ -26,10 +26,6 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
   @Binding var firstPinnedFeedName: String
   let resetDragState: () -> Void
 
-  #if os(iOS)
-  let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
-  #endif
-
   func dropEntered(info: DropInfo) {
     // Only highlight if dragging a valid item
     if draggedItem != nil {
@@ -38,7 +34,8 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
         dropTargetItem = "timeline-button"
       }
       #if os(iOS)
-      feedbackGenerator.impactOccurred(intensity: 0.7)
+      let generator = UIImpactFeedbackGenerator(style: .medium)
+      generator.impactOccurred(intensity: 0.7)
       #endif
     }
   }
@@ -62,7 +59,8 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
     let feedToSet = draggedFeedURI
     resetDragState()
     #if os(iOS)
-    feedbackGenerator.impactOccurred(intensity: 1.0)
+    let generator = UIImpactFeedbackGenerator(style: .medium)
+    generator.impactOccurred(intensity: 1.0)
     #endif
 
     // Update the local state immediately for UI responsiveness
@@ -72,7 +70,11 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
         viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
 
       // Also update the feed selection for navigation
-      selectedFeed = .feed(uri)
+      if uri.uriString().contains("/app.bsky.graph.list/") {
+        selectedFeed = .list(uri)
+      } else {
+        selectedFeed = .feed(uri)
+      }
       currentFeedName = firstPinnedFeedName
     }
 

@@ -193,6 +193,37 @@ struct PostComposerView: View {
     }
     
     private var configuredWithModifiers: some View {
+        baseViewWithSafeArea
+            .modifier(DiscardConfirmationModifier(showingDismissAlert: $showingDismissAlert, dismiss: dismiss))
+            .modifier(MediaPickersModifier(
+                photoPickerVisible: $photoPickerVisible,
+                photoPickerItems: $photoPickerItems,
+                videoPickerVisible: $videoPickerVisible,
+                videoPickerItems: $videoPickerItems,
+                viewModel: viewModel
+            ))
+            .modifier(SheetsModifier(
+                viewModel: viewModel,
+                isTextFieldFocused: Binding(
+                    get: { isTextFieldFocused },
+                    set: { isTextFieldFocused = $0 }
+                ),
+                showingAccountSwitcher: $showingAccountSwitcher,
+                showingEmojiPicker: $showingEmojiPicker,
+                showingLinkCreation: $showingLinkCreation,
+                showingAudioRecorder: $showingAudioRecorder,
+                isGeneratingVisualizerVideo: $isGeneratingVisualizerVideo,
+                selectedTextForLink: selectedTextForLink,
+                selectedRangeForLink: selectedRangeForLink,
+                addLinkFacet: addLinkFacet,
+                handleAudioRecorded: handleAudioRecorded,
+                visualizerService: visualizerService
+            ))
+            .modifier(NotificationsModifier(handleLinkCreation: handleLinkCreation))
+            .modifier(DraftSavingModifier(viewModel: viewModel))
+    }
+    
+    private var baseViewWithSafeArea: some View {
         baseMainView
             .safeAreaInset(edge: .top) {
                 if let reason = viewModel.videoUploadBlockedReason {
@@ -221,167 +252,6 @@ struct PostComposerView: View {
                     .padding(.horizontal)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
-            }
-            .modifier(DiscardConfirmationModifier(showingDismissAlert: $showingDismissAlert, dismiss: dismiss))
-            // Media pickers
-            .photosPicker(
-                isPresented: $photoPickerVisible,
-                selection: $photoPickerItems,
-                maxSelectionCount: viewModel.maxImagesAllowed,
-                matching: .images
-            )
-            .onChange(of: photoPickerItems) {
-                Task {
-                    if !photoPickerItems.isEmpty {
-                        await viewModel.processPhotoSelection(photoPickerItems)
-                        photoPickerItems = []
-                    }
-                }
-            }
-            .photosPicker(
-                isPresented: $videoPickerVisible,
-                selection: $videoPickerItems,
-                maxSelectionCount: 1,
-                matching: .any(of: [.videos])
-            )
-            .onChange(of: videoPickerItems) {
-                Task {
-                    if let item = videoPickerItems.first {
-                        await viewModel.processVideoSelection(item)
-                        videoPickerItems.removeAll()
-                    }
-                }
-            }
-            // Sheets
-            .sheet(isPresented: $viewModel.showLabelSelector, onDismiss: {
-                // Restore focus when sheet dismisses
-                Task { @MainActor in
-                    isTextFieldFocused = true
-                }
-            }) {
-                LabelSelectorView(selectedLabels: $viewModel.selectedLabels)
-            }
-            .sheet(isPresented: $viewModel.isAltTextEditorPresented) {
-                if let editingId = viewModel.currentEditingMediaId {
-                    if let videoItem = viewModel.videoItem, videoItem.id == editingId,
-                       let image = videoItem.image {
-                        AltTextEditorView(
-                            altText: videoItem.altText,
-                            image: image,
-                            imageId: videoItem.id,
-                            onSave: viewModel.updateAltText
-                        )
-                    } else if let index = viewModel.mediaItems.firstIndex(where: { $0.id == editingId }),
-                              let image = viewModel.mediaItems[index].image {
-                        AltTextEditorView(
-                            altText: viewModel.mediaItems[index].altText,
-                            image: image,
-                            imageId: editingId,
-                            onSave: viewModel.updateAltText
-                        )
-                    }
-                }
-            }
-            // Add the threadgate options sheet
-            .sheet(isPresented: $viewModel.showThreadgateOptions, onDismiss: {
-                // Restore focus when threadgate sheet dismisses
-                Task { @MainActor in
-                    isTextFieldFocused = true
-                }
-            }) {
-                ThreadgateOptionsView(settings: $viewModel.threadgateSettings)
-            }
-            // GIF picker sheet
-            .sheet(isPresented: $viewModel.showingGifPicker, onDismiss: {
-                // Restore focus when GIF picker dismisses
-                Task { @MainActor in
-                    isTextFieldFocused = true
-                }
-            }) {
-                GifPickerView { gif in
-                    viewModel.selectGif(gif)
-                }
-            }
-            // Alerts
-            .alert(item: $viewModel.alertItem) { alertItem in
-                Alert(
-                    title: Text(alertItem.title),
-                    message: Text(alertItem.message),
-                    dismissButton: .default(Text("OK")))
-            }
-            // ✅ CLEANED: Removed selectedImageItem handling - now using direct processing
-            .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
-                viewModel.insertEmoji(emoji)
-            }
-            // Link creation sheet
-            .sheet(isPresented: $showingLinkCreation, onDismiss: {
-                // Restore focus when link creation sheet dismisses
-                Task { @MainActor in
-                    isTextFieldFocused = true
-                }
-            }) {
-                LinkCreationDialog(
-                    selectedText: selectedTextForLink,
-                    onComplete: { url, display in
-                        // Use dialog's chosen display text when provided
-                        addLinkFacet(url: url, displayText: display, range: selectedRangeForLink)
-                        showingLinkCreation = false
-                    },
-                    onCancel: {
-                        showingLinkCreation = false
-                    }
-                )
-            }
-            // Audio recording sheet
-            .sheet(isPresented: $showingAudioRecorder, onDismiss: {
-                // Restore focus when audio recorder dismisses
-                Task { @MainActor in
-                    isTextFieldFocused = true
-                }
-            }) {
-                PostComposerAudioRecordingView(
-                    onAudioRecorded: { audioURL in
-                        handleAudioRecorded(audioURL)
-                    },
-                    onCancel: {
-                        showingAudioRecorder = false
-                    }
-                )
-            }
-            // Removed secondary preview screen per request; generation happens directly
-            .sheet(isPresented: $isGeneratingVisualizerVideo) {
-                VStack(spacing: 24) {
-                    Spacer()
-                    VStack(spacing: 16) {
-                        ProgressView(value: visualizerService.progress, total: 1.0)
-                            .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
-                            .scaleEffect(1.4)
-                        Text("Generating Video…")
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                        Text("This may take a few seconds depending on length.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding()
-                .presentationDetents([.fraction(0.35)])
-                .presentationDragIndicator(.hidden)
-                .interactiveDismissDisabled(true)
-            }
-            // Account switcher sheet
-            .sheet(isPresented: $showingAccountSwitcher, onDismiss: {
-                // Restore focus when account switcher dismisses
-                Task { @MainActor in
-                    isTextFieldFocused = true
-                }
-            }) {
-                AccountSwitcherView()
-            }
-            // Global keyboard shortcuts
-            .onReceive(NotificationCenter.default.publisher(for: .init("CreateLinkKeyboardShortcut"))) { _ in
-                handleLinkCreation()
             }
     }
     
@@ -430,7 +300,7 @@ struct PostComposerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 textEditorSection
-                quotedPostSection  
+                quotedPostSection
                 mediaSection
                 urlCardsSection
                 outlineTagsSection
@@ -532,13 +402,13 @@ struct PostComposerView: View {
                         )
                         .background(
                             RoundedRectangle(cornerRadius: 16)
-                                .fill(index == viewModel.currentThreadEntryIndex ? 
-                                      Color.accentColor.opacity(0.05) : 
+                                .fill(index == viewModel.currentThreadEntryIndex ?
+                                      Color.accentColor.opacity(0.05) :
                                       Color.systemBackground)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 16)
-                                        .stroke(index == viewModel.currentThreadEntryIndex ? 
-                                               Color.accentColor.opacity(0.3) : 
+                                        .stroke(index == viewModel.currentThreadEntryIndex ?
+                                               Color.accentColor.opacity(0.3) :
                                                Color.systemGray5, lineWidth: 1)
                                 )
                         )
@@ -726,7 +596,7 @@ struct PostComposerView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(viewModel.mentionSuggestions.enumerated()), id: \.element.did) { index, profile in
                         Button(action: {
-                            viewModel.insertMention(profile)
+                            _ = viewModel.insertMention(profile)
                         }) {
                             HStack(spacing: 12) {
                                 // Avatar
@@ -774,7 +644,7 @@ struct PostComposerView: View {
                             Rectangle()
                                 .fill(Color.clear)
                                 .onTapGesture {
-                                    viewModel.insertMention(profile)
+                                    _ = viewModel.insertMention(profile)
                                 }
                         )
                         
@@ -1356,11 +1226,11 @@ struct PostComposerView: View {
         if #available(iOS 26.0, macOS 15.0, *) {
             // Convert NSRange to AttributedString range
             let start = viewModel.attributedPostText.index(
-                viewModel.attributedPostText.startIndex, 
+                viewModel.attributedPostText.startIndex,
                 offsetByCharacters: range.location
             )
             let end = viewModel.attributedPostText.index(
-                start, 
+                start,
                 offsetByCharacters: range.length
             )
             let attrRange = start..<end
@@ -1458,7 +1328,7 @@ struct PostComposerView: View {
     }
 }
 
-// MARK: - Custom View Modifier for Discard Confirmation
+// MARK: - Custom View Modifiers
 
 struct DiscardConfirmationModifier: ViewModifier {
     @Binding var showingDismissAlert: Bool
@@ -1479,6 +1349,213 @@ struct DiscardConfirmationModifier: ViewModifier {
                 }
             } message: {
                 Text("You'll lose your post if you discard now.")
+            }
+    }
+}
+
+struct MediaPickersModifier: ViewModifier {
+    @Binding var photoPickerVisible: Bool
+    @Binding var photoPickerItems: [PhotosPickerItem]
+    @Binding var videoPickerVisible: Bool
+    @Binding var videoPickerItems: [PhotosPickerItem]
+    let viewModel: PostComposerViewModel
+    
+    func body(content: Content) -> some View {
+        content
+            .photosPicker(
+                isPresented: $photoPickerVisible,
+                selection: $photoPickerItems,
+                maxSelectionCount: viewModel.maxImagesAllowed,
+                matching: .images
+            )
+            .onChange(of: photoPickerItems) {
+                Task {
+                    if !photoPickerItems.isEmpty {
+                        await viewModel.processPhotoSelection(photoPickerItems)
+                        photoPickerItems = []
+                    }
+                }
+            }
+            .photosPicker(
+                isPresented: $videoPickerVisible,
+                selection: $videoPickerItems,
+                maxSelectionCount: 1,
+                matching: .any(of: [.videos])
+            )
+            .onChange(of: videoPickerItems) {
+                Task {
+                    if let item = videoPickerItems.first {
+                        await viewModel.processVideoSelection(item)
+                        videoPickerItems.removeAll()
+                    }
+                }
+            }
+    }
+}
+
+struct SheetsModifier: ViewModifier {
+    @Bindable var viewModel: PostComposerViewModel
+    @Binding var isTextFieldFocused: Bool
+    @Binding var showingAccountSwitcher: Bool
+    @Binding var showingEmojiPicker: Bool
+    @Binding var showingLinkCreation: Bool
+    @Binding var showingAudioRecorder: Bool
+    @Binding var isGeneratingVisualizerVideo: Bool
+    let selectedTextForLink: String
+    let selectedRangeForLink: NSRange
+    let addLinkFacet: (URL, String?, NSRange) -> Void
+    let handleAudioRecorded: (URL) -> Void
+    let visualizerService: AudioVisualizerService
+    
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $viewModel.showLabelSelector, onDismiss: {
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                LabelSelectorView(selectedLabels: $viewModel.selectedLabels)
+            }
+            .sheet(isPresented: $viewModel.isAltTextEditorPresented) {
+                if let editingId = viewModel.currentEditingMediaId {
+                    if let videoItem = viewModel.videoItem, videoItem.id == editingId,
+                       let image = videoItem.image {
+                        AltTextEditorView(
+                            altText: videoItem.altText,
+                            image: image,
+                            imageId: videoItem.id,
+                            onSave: viewModel.updateAltText
+                        )
+                    } else if let index = viewModel.mediaItems.firstIndex(where: { $0.id == editingId }),
+                              let image = viewModel.mediaItems[index].image {
+                        AltTextEditorView(
+                            altText: viewModel.mediaItems[index].altText,
+                            image: image,
+                            imageId: editingId,
+                            onSave: viewModel.updateAltText
+                        )
+                    }
+                }
+            }
+            .sheet(isPresented: $viewModel.showThreadgateOptions, onDismiss: {
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                ThreadgateOptionsView(settings: $viewModel.threadgateSettings)
+            }
+            .sheet(isPresented: $viewModel.showingGifPicker, onDismiss: {
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                GifPickerView { gif in
+                    viewModel.selectGif(gif)
+                }
+            }
+            .alert(item: $viewModel.alertItem) { alertItem in
+                Alert(
+                    title: Text(alertItem.title),
+                    message: Text(alertItem.message),
+                    dismissButton: .default(Text("OK")))
+            }
+            .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
+                viewModel.insertEmoji(emoji)
+            }
+            .sheet(isPresented: $showingLinkCreation, onDismiss: {
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                LinkCreationDialog(
+                    selectedText: selectedTextForLink,
+                    onComplete: { url, display in
+                        addLinkFacet(url, display, selectedRangeForLink)
+                        showingLinkCreation = false
+                    },
+                    onCancel: {
+                        showingLinkCreation = false
+                    }
+                )
+            }
+            .sheet(isPresented: $showingAudioRecorder, onDismiss: {
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                PostComposerAudioRecordingView(
+                    onAudioRecorded: { audioURL in
+                        handleAudioRecorded(audioURL)
+                    },
+                    onCancel: {
+                        showingAudioRecorder = false
+                    }
+                )
+            }
+            .sheet(isPresented: $isGeneratingVisualizerVideo) {
+                VStack(spacing: 24) {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        ProgressView(value: visualizerService.progress, total: 1.0)
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+                            .scaleEffect(1.4)
+                        Text("Generating Video…")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text("This may take a few seconds depending on length.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding()
+                .presentationDetents([.fraction(0.35)])
+                .presentationDragIndicator(.hidden)
+                .interactiveDismissDisabled(true)
+            }
+            .sheet(isPresented: $showingAccountSwitcher, onDismiss: {
+                Task { @MainActor in
+                    isTextFieldFocused = true
+                }
+            }) {
+                AccountSwitcherView()
+            }
+    }
+}
+
+struct NotificationsModifier: ViewModifier {
+    let handleLinkCreation: () -> Void
+    
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .init("CreateLinkKeyboardShortcut"))) { _ in
+                handleLinkCreation()
+            }
+    }
+}
+
+struct DraftSavingModifier: ViewModifier {
+    let viewModel: PostComposerViewModel
+    
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: viewModel.selectedLabels) { _, _ in
+                viewModel.saveDraftIfNeeded()
+            }
+            .onChange(of: viewModel.threadgateSettings.allowEverybody) { _, _ in
+                viewModel.saveDraftIfNeeded()
+            }
+            .onChange(of: viewModel.threadgateSettings.allowMentioned) { _, _ in
+                viewModel.saveDraftIfNeeded()
+            }
+            .onChange(of: viewModel.threadgateSettings.allowFollowing) { _, _ in
+                viewModel.saveDraftIfNeeded()
+            }
+            .onChange(of: viewModel.threadgateSettings.allowLists) { _, _ in
+                viewModel.saveDraftIfNeeded()
+            }
+            .onChange(of: viewModel.threadgateSettings.selectedLists) { _, _ in
+                viewModel.saveDraftIfNeeded()
             }
     }
 }

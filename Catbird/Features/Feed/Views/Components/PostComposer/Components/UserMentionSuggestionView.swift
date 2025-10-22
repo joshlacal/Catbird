@@ -34,7 +34,7 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
       did: profile.did,
       handle: profile.handle,
       displayName: profile.displayName,
-      avatar: profile.avatar,
+      pronouns: profile.pronouns, avatar: profile.avatar,
       associated: profile.associated,
       viewer: profile.viewer,
       labels: profile.labels,
@@ -50,7 +50,7 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
       did: profile.did,
       handle: profile.handle,
       displayName: profile.displayName,
-      avatar: profile.avatar,
+      pronouns: profile.pronouns, avatar: profile.avatar,
       associated: profile.associated,
       viewer: profile.viewer,
       labels: profile.labels,
@@ -72,28 +72,43 @@ struct UserMentionSuggestionView: View {
   let suggestions: [MentionSuggestion]
   let onSuggestionSelected: (MentionSuggestion) -> Void
   let onDismiss: () -> Void
+  var enableGlass: Bool = true
   
   var body: some View {
     if !suggestions.isEmpty {
       VStack(spacing: 0) {
         suggestionList
       }
+      .frame(minHeight: 60, maxHeight: 200)
       .background(Color.systemBackground)
-      .glassEffect(.regular, in: .rect(cornerRadius: 12))
+      .blendMode(.normal)
+      
+      
       .overlay(
         RoundedRectangle(cornerRadius: 12)
           .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
       )
       // Clip contents to the rounded shape so edges aren't sharp
       .clipShape(RoundedRectangle(cornerRadius: 12))
+      
       .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 2)
-      .frame(maxHeight: 200)
+    }
+  }
+  
+  private struct ConditionalGlass: ViewModifier {
+    let enable: Bool
+    func body(content: Content) -> some View {
+      if enable {
+        content.glassEffect(.regular, in: .rect(cornerRadius: 12))
+      } else {
+        content
+      }
     }
   }
   
   private var suggestionList: some View {
     ScrollView {
-      LazyVStack(spacing: 0) {
+      VStack(spacing: 0) {
         ForEach(suggestions) { suggestion in
           Button {
             onSuggestionSelected(suggestion)
@@ -108,7 +123,11 @@ struct UserMentionSuggestionView: View {
           }
         }
       }
+      .background(Color.systemBackground)
+      .blendMode(.normal)
     }
+    .background(Color.systemBackground)
+      .blendMode(.normal)
   }
 }
 
@@ -127,7 +146,10 @@ struct UserMentionSuggestionViewLegacy: View {
       VStack(spacing: 0) {
         suggestionList
       }
+      .frame(minHeight: 60, maxHeight: 200)
       .background(Color.systemBackground)
+      .blendMode(.normal)
+      
       // Corner radius alone doesn't clip all subviews; ensure proper clipping
       .clipShape(RoundedRectangle(cornerRadius: 12))
       .overlay(
@@ -135,13 +157,12 @@ struct UserMentionSuggestionViewLegacy: View {
           .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
       )
       .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 2)
-      .frame(maxHeight: 200)
     }
   }
   
   private var suggestionList: some View {
     ScrollView {
-      LazyVStack(spacing: 0) {
+      VStack(spacing: 0) {
         ForEach(suggestions) { suggestion in
           Button {
             onSuggestionSelected(suggestion)
@@ -156,7 +177,11 @@ struct UserMentionSuggestionViewLegacy: View {
           }
         }
       }
+      .background(Color.systemBackground)
+      .blendMode(.normal)
     }
+    .background(Color.systemBackground)
+      .blendMode(.normal)
   }
 }
 
@@ -166,13 +191,15 @@ struct UserMentionSuggestionViewResolver: View {
   let suggestions: [MentionSuggestion]
   let onSuggestionSelected: (MentionSuggestion) -> Void
   let onDismiss: () -> Void
+  var enableGlass: Bool = false
   
   var body: some View {
     if #available(iOS 26.0, macOS 26.0, *) {
       UserMentionSuggestionView(
         suggestions: suggestions,
         onSuggestionSelected: onSuggestionSelected,
-        onDismiss: onDismiss
+        onDismiss: onDismiss,
+        enableGlass: enableGlass
       )
     } else {
       UserMentionSuggestionViewLegacy(
@@ -225,6 +252,8 @@ struct MentionSuggestionRow: View {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 12)
+    .background(Color.systemBackground)
+      .blendMode(.normal)
     .contentShape(Rectangle())
   }
 }

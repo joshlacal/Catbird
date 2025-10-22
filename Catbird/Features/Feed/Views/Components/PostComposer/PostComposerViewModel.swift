@@ -22,6 +22,9 @@ final class PostComposerViewModel {
         syncAttributedTextFromPlainText()
         if !isDraftMode {
           updatePostContent()
+          // Avoid saving the transient draft on every keystroke; rely on
+          // periodic autosave and onDisappear/minimize instead.
+          if autosaveOnEdit { saveDraftIfNeeded() }
         }
       }
     }
@@ -92,14 +95,27 @@ final class PostComposerViewModel {
   // MARK: - Mention Properties
   
   var mentionSuggestions: [AppBskyActorDefs.ProfileViewBasic] = []
+  
+  /// Cached mention suggestions mapped to MentionSuggestion model
+  var mappedMentionSuggestions: [MentionSuggestion] {
+    mentionSuggestions.map { MentionSuggestion(profile: $0) }
+  }
   var resolvedProfiles: [String: AppBskyActorDefs.ProfileViewBasic] = [:]
   var cursorPosition: Int = 0
+  // Cancelable mention search task to avoid stale results flashing after selection
+  var mentionSearchTask: Task<Void, Never>? = nil
+  // Cancelable URL embed selection task to debounce link card generation
+  var urlEmbedSelectionTask: Task<Void, Never>? = nil
   
   // MARK: - Manual Link Facets (legacy inline links)
   /// Facets derived from inline link attributes when using legacy NSAttributedString path.
   /// These are merged into the facets used for posting so inline links survive even when
   /// the visible text does not contain the raw URL.
   var manualLinkFacets: [AppBskyRichtextFacet] = []
+
+  // Controls whether to autosave the transient draft on each edit.
+  // Default: false. We autosave via periodic timer and onDisappear.
+  var autosaveOnEdit: Bool = false
 
   // MARK: - Active RichTextView Reference
   #if os(iOS)
@@ -184,12 +200,16 @@ final class PostComposerViewModel {
   // MARK: - Initialization
   
   init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
+    logger.info("PostComposerViewModel: Initializing - parentPost: \(parentPost != nil), quotedPost: \(quotedPost != nil)")
     self.parentPost = parentPost
     self.quotedPost = quotedPost
     self.appState = appState
     
     if let client = appState.atProtoClient {
       self.mediaUploadManager = MediaUploadManager(client: client)
+      logger.debug("PostComposerViewModel: MediaUploadManager initialized")
+    } else {
+      logger.warning("PostComposerViewModel: No atProtoClient available, MediaUploadManager not initialized")
     }
     
     self.richAttributedText = NSAttributedString(string: postText)
@@ -200,18 +220,50 @@ final class PostComposerViewModel {
     // Initialize performance optimization
     if #available(iOS 16.0, macOS 13.0, *) {
       _ = performanceOptimizer // Initialize lazily
+      logger.debug("PostComposerViewModel: Performance optimizer initialized")
     }
+    
+    logger.info("PostComposerViewModel: Initialization complete")
+  }
+  
+  // MARK: - Auto-save Management
+  
+func saveDraftIfNeeded() {
+    // Don't save if there's no content
+    let hasText = !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasMedia = !mediaItems.isEmpty
+    let hasVideo = videoItem != nil
+    let hasGif = selectedGif != nil
+    
+    guard hasText || hasMedia || hasVideo || hasGif else {
+      logger.trace("PostComposerViewModel: saveDraftIfNeeded - no content to save")
+      return
+    }
+    
+    logger.info("PostComposerViewModel: Saving draft - text: \(hasText), media: \(hasMedia), video: \(hasVideo), gif: \(hasGif)")
+    
+    // Save draft
+    let draft = saveDraftState()
+    appState.composerDraftManager.storeDraft(draft)
+    
+    logger.debug("PostComposerViewModel: Draft saved - text preview: \(self.postText.prefix(50))...")
   }
 
   // MARK: - Video Upload Eligibility
   func checkVideoUploadEligibility(force: Bool = false) async {
-    guard videoItem != nil, let manager = mediaUploadManager else { return }
+    guard videoItem != nil, let manager = mediaUploadManager else { 
+      logger.trace("PostComposerViewModel: checkVideoUploadEligibility - no video or manager")
+      return 
+    }
+    logger.info("PostComposerViewModel: Checking video upload eligibility - force: \(force)")
     let result = await manager.preflightUploadPermission(force: force)
     await MainActor.run {
       if result.allowed {
+        logger.info("PostComposerViewModel: Video upload allowed")
         self.videoUploadBlockedReason = nil
         self.videoUploadBlockedCode = nil
       } else {
+        logger.warning("PostComposerViewModel: Video upload blocked - code: \(result.code ?? "none"), message: \(result.message ?? "none")")
         self.videoUploadBlockedReason = result.message ?? "Video uploads are currently unavailable"
         self.videoUploadBlockedCode = result.code
       }
@@ -220,17 +272,24 @@ final class PostComposerViewModel {
 
   // MARK: - Email Verification
   func resendVerificationEmail() async {
-    guard let manager = mediaUploadManager else { return }
+    guard let manager = mediaUploadManager else { 
+      logger.warning("PostComposerViewModel: resendVerificationEmail - no mediaUploadManager")
+      return 
+    }
+    logger.info("PostComposerViewModel: Requesting email verification")
     do {
       try await manager.requestEmailConfirmation()
+      logger.info("PostComposerViewModel: Email verification request successful")
       await MainActor.run {
         self.videoUploadBlockedReason = "Verification email sent. Check your inbox."
         self.videoUploadBlockedCode = nil
       }
       // Optionally trigger a forced re-check after a short delay (user may confirm quickly)
       try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+      logger.debug("PostComposerViewModel: Re-checking video upload permission after email sent")
       _ = await manager.preflightUploadPermission(force: true)
     } catch {
+      logger.error("PostComposerViewModel: Failed to send verification email - error: \(error.localizedDescription)")
       await MainActor.run {
         self.videoUploadBlockedReason = "Failed to send verification email. Please try again."
       }
@@ -246,23 +305,28 @@ final class PostComposerViewModel {
   // MARK: - Initialization and State Management
   
   private func setupInitialState() {
+    logger.debug("PostComposerViewModel: Setting up initial state")
     // Ensure thread entries are properly initialized
     if threadEntries.isEmpty {
       threadEntries = [ThreadEntry()]
+      logger.debug("PostComposerViewModel: Initialized thread entries array")
     }
     currentThreadIndex = 0
     
     // Set up reply context if this is a reply
     if parentPost != nil {
       replyTo = parentPost
+      logger.debug("PostComposerViewModel: Set up reply context")
     }
   }
   
   func enterDraftMode() {
+    logger.debug("PostComposerViewModel: Entering draft mode")
     isDraftMode = true
   }
   
   func exitDraftMode() {
+    logger.debug("PostComposerViewModel: Exiting draft mode")
     isDraftMode = false
     updatePostContent()
   }
@@ -284,13 +348,41 @@ final class PostComposerViewModel {
     )
   }
   
+  func clearAll() {
+    logger.info("PostComposerViewModel: Clearing all composer state")
+    isUpdatingText = true
+    defer { isUpdatingText = false }
+    
+    postText = ""
+    richAttributedText = NSAttributedString()
+    attributedPostText = AttributedString()
+    mediaItems = []
+    videoItem = nil
+    selectedGif = nil
+    selectedLanguages = []
+    selectedLabels = []
+    outlineTags = []
+    threadEntries = [ThreadEntry()]
+    currentThreadIndex = 0
+    isThreadMode = false
+    detectedURLs = []
+    urlCards = [:]
+    selectedEmbedURL = nil
+    urlsKeptForEmbed = []
+    mentionSuggestions = []
+    
+    logger.debug("PostComposerViewModel: All state cleared")
+  }
+  
   func restoreDraftState(_ draft: PostComposerDraft) {
+    logger.info("PostComposerViewModel: Restoring draft state - text length: \(draft.postText.count), media: \(draft.mediaItems.count), video: \(draft.videoItem != nil), gif: \(draft.selectedGif != nil)")
     isUpdatingText = true
     isDraftMode = true
 
     defer {
       isUpdatingText = false
       isDraftMode = false
+      logger.debug("PostComposerViewModel: Draft restoration complete")
     }
 
     postText = draft.postText
@@ -303,17 +395,21 @@ final class PostComposerViewModel {
     threadEntries = draft.threadEntries.map { $0.toThreadEntry() }
     isThreadMode = draft.isThreadMode
     currentThreadIndex = draft.currentThreadIndex
+    
+      logger.debug("PostComposerViewModel: Draft state restored - isThreadMode: \(self.isThreadMode), threadEntries: \(self.threadEntries.count), currentIndex: \(self.currentThreadIndex)")
 
     richAttributedText = NSAttributedString(string: postText)
     updatePostContent()
 
     // Restore parent and quoted post references from URIs
     if let parentURI = draft.parentPostURI {
+      logger.debug("PostComposerViewModel: Restoring parent post from URI: \(parentURI)")
       Task {
         await restorePostFromURI(parentURI, isParent: true)
       }
     }
     if let quotedURI = draft.quotedPostURI {
+      logger.debug("PostComposerViewModel: Restoring quoted post from URI: \(quotedURI)")
       Task {
         await restorePostFromURI(quotedURI, isParent: false)
       }
@@ -321,13 +417,17 @@ final class PostComposerViewModel {
 
     // If the restored draft contains a video URL but no thumbnail yet, generate it now
     if let restoredVideo = videoItem, restoredVideo.image == nil, restoredVideo.rawVideoURL != nil {
+      logger.debug("PostComposerViewModel: Loading video thumbnail for restored draft")
       var loadingVideo = restoredVideo
       loadingVideo.isLoading = true
       videoItem = loadingVideo
       Task { await loadVideoThumbnail(for: loadingVideo) }
     }
     // Also preflight eligibility when restoring draft with a video
-    Task { await checkVideoUploadEligibility() }
+    if videoItem != nil {
+      logger.debug("PostComposerViewModel: Checking video upload eligibility for restored draft")
+      Task { await checkVideoUploadEligibility() }
+    }
   }
 
   /// Fetch and restore a post from its URI

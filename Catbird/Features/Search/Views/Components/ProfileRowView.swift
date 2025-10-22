@@ -67,10 +67,10 @@ struct ProfileRowView: View {
                 }
             }
             .foregroundColor(.primary)
-            .padding(.horizontal, 16)
         }
         .buttonStyle(.plain)
         .padding(.vertical, 8)
+        .padding(.horizontal, 16)
         .task {
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()

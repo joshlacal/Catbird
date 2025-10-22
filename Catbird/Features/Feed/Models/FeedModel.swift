@@ -25,6 +25,9 @@ final class FeedModel: StateInvalidationSubscriber {
   private let appState: AppState
   private let feedTuner = FeedTuner()
 
+  /// Feed generator info for custom feeds (contains DID for proxy routing)
+  private(set) var feedGeneratorInfo: AppBskyFeedDefs.GeneratorView?
+  
   @MainActor var posts: [CachedFeedViewPost] = []
 
   // State tracking
@@ -64,6 +67,17 @@ final class FeedModel: StateInvalidationSubscriber {
         await self?.handleSocialGraphChange()
       }
     }
+    
+    // Subscribe to feed preference changes (reply hiding, etc.)
+    NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("FeedPreferencesChanged"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        await self?.handleSocialGraphChange()
+      }
+    }
   }
   
   deinit {
@@ -73,7 +87,31 @@ final class FeedModel: StateInvalidationSubscriber {
     // Remove NotificationCenter observers
     NotificationCenter.default.removeObserver(self)
   }
-
+  // MARK: - Feed Generator Info
+  
+  /// Fetch feed generator information for custom feeds
+  private func fetchFeedGeneratorInfo(for feedURI: ATProtocolURI) async -> AppBskyFeedDefs.GeneratorView? {
+    guard let client = appState.atProtoClient else {
+      logger.warning("No AT Proto client available - cannot fetch feed generator info")
+      return nil
+    }
+    
+    do {
+      let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: feedURI))
+      
+      if result.responseCode == 200, let data = result.data {
+        logger.debug("Fetched feed generator info for \(feedURI.uriString()): \(data.view.displayName ?? "Unknown")")
+        return data.view
+      } else {
+        logger.warning("Failed to fetch feed generator info: HTTP \(result.responseCode)")
+        return nil
+      }
+    } catch {
+      logger.error("Error fetching feed generator info for \(feedURI.uriString()): \(error.localizedDescription)")
+      return nil
+    }
+  }
+  
   // MARK: - Data Restoration
   
   @MainActor
@@ -83,7 +121,28 @@ final class FeedModel: StateInvalidationSubscriber {
       return
     }
     
-    self.posts = posts
+    // Filter out posts that can't be decoded (malformed cached data)
+    var validPosts: [CachedFeedViewPost] = []
+    var invalidPostIds: [String] = []
+    
+    for post in posts {
+      if (try? post.feedViewPost) != nil {
+        validPosts.append(post)
+      } else {
+        invalidPostIds.append(post.id)
+        logger.warning("Cached post \(post.id) cannot be decoded - will be removed from cache")
+      }
+    }
+    
+    // If we found invalid posts, remove them from the cache
+    if !invalidPostIds.isEmpty {
+      logger.info("Removing \(invalidPostIds.count) invalid cached posts")
+      Task.detached { [invalidPostIds] in
+        await PersistentFeedStateManager.shared.removeInvalidPosts(withIds: invalidPostIds)
+      }
+    }
+    
+    self.posts = validPosts
     self.isLoading = false
     self.hasMore = true
     
@@ -92,11 +151,71 @@ final class FeedModel: StateInvalidationSubscriber {
     // This is safe because loadMore will fetch from the server
     self.cursor = nil
     
-    logger.debug("Restored \(posts.count) persisted posts to FeedModel")
+    logger.debug("Restored \(validPosts.count) persisted posts to FeedModel (\(invalidPostIds.count) invalid posts filtered out)")
 
     // Refresh shadows for restored posts
-    let feedViewPosts = posts.compactMap { try? $0.feedViewPost }
+    let feedViewPosts = validPosts.compactMap { try? $0.feedViewPost }
     await refreshPostShadows(feedViewPosts)
+  }
+  
+  /// Applies pre-warmed feed data from account switching for smooth transition
+  @MainActor
+  private func applyPrewarmedData(_ prewarmData: [AppBskyFeedDefs.FeedViewPost]) async {
+    let filterSettings = await getFilterSettings()
+    let tunedPosts = await feedTuner.tune(prewarmData, filterSettings: filterSettings)
+    
+    let cachedPosts = tunedPosts.compactMap { slice in
+      CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
+    }
+    
+    self.posts = cachedPosts
+    self.cursor = nil  // Will be set on next loadMore
+    self.isLoading = false
+    self.isLoadingMore = false
+    self.hasMore = true
+    self.lastRefreshTime = Date()
+    
+    // Refresh post shadows for pre-warmed data
+    await refreshPostShadows(prewarmData)
+    
+    logger.info("Applied \(cachedPosts.count) pre-warmed posts to feed from \(prewarmData.count) raw posts")
+    
+    // If aggressive filtering left us with too few posts, do a normal fetch
+    let minPostsThreshold = 10
+    if cachedPosts.count < minPostsThreshold {
+      logger.warning("Only \(cachedPosts.count) posts after filtering prewarmed data - fetching more")
+      
+      // Clear prewarmed posts and do a normal fetch
+      self.posts = []
+      self.isLoading = true
+      
+      do {
+        let (fetchedPosts, newCursor) = try await feedManager.fetchFeed(fetchType: lastFeedType, cursor: nil)
+        
+        await appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: lastFeedType)
+        
+        // Process with FeedTuner
+        let slices = await feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
+        let newPosts = slices.compactMap { slice in
+          CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
+        }
+        
+        self.posts = newPosts
+        self.cursor = newCursor
+        self.isLoading = false
+        self.hasMore = newCursor != nil
+        self.lastRefreshTime = Date()
+        
+        await refreshPostShadows(fetchedPosts)
+        
+        logger.info("Fetched \(newPosts.count) additional posts after insufficient prewarmed data")
+      } catch {
+        logger.error("Failed to fetch additional posts after prewarming: \(error)")
+        self.isLoading = false
+        // Keep the prewarmed posts we had rather than showing nothing
+        self.posts = cachedPosts
+      }
+    }
   }
 
   // MARK: - Feed Loading
@@ -109,6 +228,48 @@ final class FeedModel: StateInvalidationSubscriber {
   ) async {
     self.lastFeedType = fetch
     feedManager.updateFetchType(fetch)
+    
+    // Check for pre-warmed data from account switch
+    if case .timeline = fetch, let prewarmData = appState.prewarmingFeedData, forceRefresh {
+      logger.info("Using pre-warmed feed data for smooth account transition")
+      await applyPrewarmedData(prewarmData)
+      appState.prewarmingFeedData = nil  // Clear after use
+      return
+    }
+    
+    // Fetch feed generator info for custom feeds and configure feedback
+    if case .feed(let generatorUri) = fetch {
+      // Fetch the feed generator info to get the correct DID
+      feedGeneratorInfo = await fetchFeedGeneratorInfo(for: generatorUri)
+      
+      // Configure feed feedback with the generator's DID (NOT the creator's DID)
+      // The generator DID is the service DID (e.g., did:web:xxx or feed generator's did:plc)
+      // The creator DID is the person who created the feed
+      if let generatorDID = feedGeneratorInfo?.did.didString() {
+        appState.feedFeedbackManager.configure(
+          for: fetch,
+          client: appState.atProtoClient,
+          feedGeneratorDID: generatorDID,
+          canSendInteractions: feedGeneratorInfo?.acceptsInteractions ?? false
+        )
+        logger.debug("Configured feed feedback for generator: \(generatorDID)")
+      } else {
+        logger.warning("No DID found in feed generator info, feedback may not route correctly")
+        appState.feedFeedbackManager.configure(
+          for: fetch,
+          client: appState.atProtoClient,
+          feedGeneratorDID: nil
+        )
+      }
+    } else {
+      // Disable feedback for non-custom feeds
+      feedGeneratorInfo = nil
+      appState.feedFeedbackManager.configure(
+        for: fetch,
+        client: appState.atProtoClient,
+        feedGeneratorDID: nil
+      )
+    }
 
     if isLoading || (strategy == .loadIfNeeded && !posts.isEmpty) {
       return
@@ -140,7 +301,7 @@ final class FeedModel: StateInvalidationSubscriber {
       // Process posts using FeedTuner (following React Native pattern)
       logger.debug("🔍 About to call feedTuner.tune() with \(fetchedPosts.count) posts")
       let filterSettings = await getFilterSettings()
-      let slices = feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
+      let slices = await feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
       logger.debug("🔍 FeedTuner returned \(slices.count) slices")
       let newPosts = slices.compactMap { slice in
         // Convert to CachedFeedViewPost with thread metadata preserved
@@ -195,7 +356,7 @@ final class FeedModel: StateInvalidationSubscriber {
   func setCachedFeed(_ cachedPosts: [AppBskyFeedDefs.FeedViewPost], cursor: String?) async {
     // Process posts using FeedTuner for consistency
     let filterSettings = await getFilterSettings()
-    let slices = feedTuner.tune(cachedPosts, filterSettings: filterSettings)
+    let slices = await feedTuner.tune(cachedPosts, filterSettings: filterSettings)
     await MainActor.run {
       self.posts = slices.compactMap { slice in
         return CachedFeedViewPost(from: slice, feedType: "timeline")
@@ -234,7 +395,7 @@ final class FeedModel: StateInvalidationSubscriber {
 
       // Process new posts using FeedTuner
       let filterSettings = await getFilterSettings()
-      let newSlices = feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
+      let newSlices = await feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
       let newCachedPosts = newSlices.compactMap { slice in
         return CachedFeedViewPost(from: slice, feedType: fetchType.identifier)
       }
@@ -466,7 +627,7 @@ final class FeedModel: StateInvalidationSubscriber {
     // First process posts using FeedTuner (following React Native pattern)
     logger.debug("🔍 processAndFilterPosts: About to call feedTuner.tune() with \(fetchedPosts.count) posts")
     let tunerSettings = await getFilterSettings()
-    let slices = feedTuner.tune(fetchedPosts, filterSettings: tunerSettings)
+    let slices = await feedTuner.tune(fetchedPosts, filterSettings: tunerSettings)
     logger.debug("🔍 processAndFilterPosts: FeedTuner returned \(slices.count) slices")
     
     // Convert slices to cached posts
@@ -787,7 +948,7 @@ final class FeedModel: StateInvalidationSubscriber {
     let validFeedViewPosts = posts.compactMap { try? $0.feedViewPost }
     guard !validFeedViewPosts.isEmpty else { return }
 
-    let tunedSlices = feedTuner.tune(validFeedViewPosts, filterSettings: filterSettings)
+    let tunedSlices = await feedTuner.tune(validFeedViewPosts, filterSettings: filterSettings)
     let reprocessedPosts = tunedSlices.compactMap { slice in
       return CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
     }
@@ -822,9 +983,17 @@ final class FeedModel: StateInvalidationSubscriber {
       let onlyTextPosts = appState.feedFilterSettings.isFilterEnabled(name: "Only Text Posts")
       let onlyMediaPosts = appState.feedFilterSettings.isFilterEnabled(name: "Only Media Posts")
       
+      // Get content label preferences for filtering
+      let contentLabelPrefs = preferences.contentLabelPrefs
+      let hideAdultContent = !appState.isAdultContentEnabled
+      
+      // Get hidden posts from PostHidingManager
+      let hiddenPosts = await MainActor.run { appState.postHidingManager.hiddenPosts }
+      
       return FeedTunerSettings(
         hideReplies: hideRepliesQuick || (feedPref?.hideReplies ?? false),
         hideRepliesByUnfollowed: feedPref?.hideRepliesByUnfollowed ?? false,
+        hideRepliesByLikeCount: feedPref?.hideRepliesByLikeCount,
         hideReposts: hideRepostsQuick || (feedPref?.hideReposts ?? false),
         hideQuotePosts: hideQuotePostsQuick || (feedPref?.hideQuotePosts ?? false),
         hideNonPreferredLanguages: appState.appSettings.hideNonPreferredLanguages,
@@ -833,7 +1002,11 @@ final class FeedModel: StateInvalidationSubscriber {
         blockedUsers: blockedUsers,
         hideLinks: hideLinks,
         onlyTextPosts: onlyTextPosts,
-        onlyMediaPosts: onlyMediaPosts
+        onlyMediaPosts: onlyMediaPosts,
+        contentLabelPreferences: contentLabelPrefs,
+        hideAdultContent: hideAdultContent,
+        hiddenPosts: hiddenPosts,
+        currentUserDid: appState.currentUserDID
       )
     } catch {
       logger.warning("Failed to get feed preferences, using defaults: \(error)")

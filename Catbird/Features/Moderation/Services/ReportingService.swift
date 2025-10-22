@@ -64,9 +64,15 @@ final class ReportingService {
     }
     
     /// Get available labelers the user is subscribed to
-    /// - Returns: Array of detailed labeler information
+    /// - Returns: Array of detailed labeler information, always including Bluesky moderation service first
     func getSubscribedLabelers() async throws -> [AppBskyLabelerDefs.LabelerViewDetailed] {
-        // First get the user's preferences to find which labelers they're subscribed to
+        var labelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
+        
+        // ALWAYS include Bluesky moderation service first - this is guaranteed to be available
+        let blueskyMod = try await getBlueskyModerationService()
+        labelers.append(blueskyMod)
+        
+        // Then get the user's preferences to find which labelers they're subscribed to
         let response = try await client.app.bsky.actor.getPreferences(input: AppBskyActorGetPreferences.Parameters())
         
         // Extract labeler DIDs from preferences
@@ -77,46 +83,66 @@ final class ReportingService {
             return nil
         }.flatMap { $0 } ?? []
         
-        // If there are no labelers in preferences, return an empty array
-        if labelerPrefs.isEmpty {
-            return []
+        // If there are subscribed labelers, fetch their details
+        if !labelerPrefs.isEmpty {
+            let params = AppBskyLabelerGetServices.Parameters(dids: labelerPrefs, detailed: true)
+            let labelerResponse = try await client.app.bsky.labeler.getServices(input: params)
+            
+            // Extract the detailed labeler views, excluding Bluesky moderation (already added first)
+            let blueskyDid = try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")
+            let subscribedLabelers = labelerResponse.data?.views.compactMap { view -> AppBskyLabelerDefs.LabelerViewDetailed? in
+                if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view {
+                    // Skip Bluesky moderation service (already at top of list)
+                    if detailed.creator.did == blueskyDid {
+                        return nil
+                    }
+                    return detailed
+                }
+                return nil
+            } ?? []
+            
+            labelers.append(contentsOf: subscribedLabelers)
         }
         
-        // Fetch detailed info about these labelers
-        let params = AppBskyLabelerGetServices.Parameters(dids: labelerPrefs, detailed: true)
-        let labelerResponse = try await client.app.bsky.labeler.getServices(input: params)
-        
-        // Extract the detailed labeler views
-        return labelerResponse.data?.views.compactMap { view -> AppBskyLabelerDefs.LabelerViewDetailed? in
-            if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view {
-                return detailed
-            }
-            return nil
-        } ?? []
+        return labelers
     }
     
-    /// Get information about the Bluesky moderation service (as a fallback)
+    /// Get information about the official Bluesky moderation service
     /// - Returns: Detailed information about the Bluesky moderation service
-    func getBlueskyModerationService() async throws -> AppBskyLabelerDefs.LabelerViewDetailed? {
+    /// - Throws: Error if the Bluesky moderation service cannot be retrieved
+    func getBlueskyModerationService() async throws -> AppBskyLabelerDefs.LabelerViewDetailed {
         // The official Bluesky moderation service has a known DID
+        let blueskyDid = try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")
         let params = AppBskyLabelerGetServices.Parameters(
-            dids: [try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")],
+            dids: [blueskyDid],
             detailed: true
         )
         
         let response = try await client.app.bsky.labeler.getServices(input: params)
         
-        return response.data?.views.first(where: { view in
-            if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view,
-               detailed.creator.handle.description == "moderation.bsky.app" {
-                return true
+        // Find the Bluesky moderation service in the response
+        guard let blueskyService = response.data?.views.first(where: { view in
+            if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view {
+                return detailed.creator.did == blueskyDid
             }
             return false
-        }).flatMap { view in
-            if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view {
-                return detailed
-            }
-            return nil
+        }) else {
+            throw NSError(
+                domain: "ReportingService",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to retrieve Bluesky moderation service"]
+            )
         }
+        
+        // Extract the detailed view
+        guard case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = blueskyService else {
+            throw NSError(
+                domain: "ReportingService",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid response format for Bluesky moderation service"]
+            )
+        }
+        
+        return detailed
     }
 }

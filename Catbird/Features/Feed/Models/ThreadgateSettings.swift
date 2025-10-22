@@ -27,6 +27,8 @@ struct ThreadgateSettings: Equatable {
   var allowMentioned: Bool = false
   var allowFollowing: Bool = false
   var allowFollowers: Bool = false
+  var allowLists: Bool = false
+  var selectedLists: [String] = []  // List URIs
 
   // Convert settings to AppBskyFeedThreadgateAllowUnion array
   func toAllowUnions() -> [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion] {
@@ -41,13 +43,20 @@ struct ThreadgateSettings: Equatable {
     if allowFollowers {
       allowUnions.append(.appBskyFeedThreadgateFollowerRule(AppBskyFeedThreadgate.FollowerRule()))
     }
+    if allowLists {
+      for listURI in selectedLists {
+        if let uri = try? ATProtocolURI(uriString: listURI) {
+          allowUnions.append(.appBskyFeedThreadgateListRule(AppBskyFeedThreadgate.ListRule(list: uri)))
+        }
+      }
+    }
 
     return allowUnions
   }
 
   // Determine if posting is allowed based on settings
   var isReplyingAllowed: Bool {
-    return allowEverybody || allowMentioned || allowFollowing || allowFollowers
+    return allowEverybody || allowMentioned || allowFollowing || allowFollowers || allowLists
   }
 
   // Get the primary option for display
@@ -56,7 +65,7 @@ struct ThreadgateSettings: Equatable {
       return .everybody
     } else if allowNobody {
       return .nobody
-    } else if allowMentioned || allowFollowing || allowFollowers {
+    } else if allowMentioned || allowFollowing || allowFollowers || allowLists {
       // Return the first enabled option for display purposes
       if allowMentioned { return .mentioned }
       if allowFollowing { return .following }
@@ -77,6 +86,11 @@ struct ThreadgateSettings: Equatable {
 
     return options
   }
+  
+  // Check if lists are enabled
+  var hasListsEnabled: Bool {
+    return allowLists && !selectedLists.isEmpty
+  }
 
   // Update based on selected option
   mutating func selectOption(_ option: ReplyOption) {
@@ -86,6 +100,8 @@ struct ThreadgateSettings: Equatable {
     allowMentioned = false
     allowFollowing = false
     allowFollowers = false
+    allowLists = false
+    selectedLists = []
 
     // Set the selected option
     switch option {
@@ -128,8 +144,35 @@ struct ThreadgateSettings: Equatable {
     allowNobody = false
 
     // If no options are selected, default back to everybody
-    if !allowMentioned && !allowFollowing && !allowFollowers {
+    if !allowMentioned && !allowFollowing && !allowFollowers && !allowLists {
       allowEverybody = true
+    }
+  }
+  
+  // Add a list to threadgate
+  mutating func addList(_ listURI: String) {
+    if !selectedLists.contains(listURI) {
+      selectedLists.append(listURI)
+      allowLists = true
+      updateAfterToggle()
+    }
+  }
+  
+  // Remove a list from threadgate
+  mutating func removeList(_ listURI: String) {
+    selectedLists.removeAll { $0 == listURI }
+    if selectedLists.isEmpty {
+      allowLists = false
+      updateAfterToggle()
+    }
+  }
+  
+  // Toggle list selection
+  mutating func toggleList(_ listURI: String) {
+    if selectedLists.contains(listURI) {
+      removeList(listURI)
+    } else {
+      addList(listURI)
     }
   }
 }

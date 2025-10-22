@@ -108,6 +108,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private var loadMoreTask: Task<Void, Error>?
     private var updateTask: Task<Void, Error>?
     
+    /// Automatic refresh coordination
+    private var autoRefreshTask: Task<Void, Never>?
+    
     /// App lifecycle tracking
     private var isAppInBackground = false
     private var backgroundNotificationObserver: NSObjectProtocol?
@@ -146,6 +149,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
         
         // Setup app lifecycle observers
         setupAppLifecycleObservers()
+        
+        // Start automatic refresh monitoring
+        startAutomaticRefreshMonitoring()
         
         logger.debug("FeedStateManager initialized for feed type: \(feedType.identifier)")
     }
@@ -220,6 +226,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
+        autoRefreshTask?.cancel()
         
         logger.debug("App entered background - cancelled all tasks")
     }
@@ -228,6 +235,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private func handleAppWillEnterForeground() {
         isAppInBackground = false
         logger.debug("App entering foreground")
+        
+        // Restart automatic refresh monitoring
+        startAutomaticRefreshMonitoring()
         
         // Don't automatically refresh when returning from navigation
         // Only refresh if user hasn't taken any action recently
@@ -350,6 +360,19 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
         loadingState = .idle
         logger.debug("System-initiated initial data loaded successfully - posts: \(self.posts.count), hasMore: \(self.feedModel.hasMore)")
+    }
+    
+    /// Refreshes the feed data (user-initiated via pull-to-refresh or button)
+    /// This bypasses background checks since user interaction proves app is active
+    @MainActor
+    func refreshUserInitiated() async {
+        logger.debug("🔄 User-initiated refresh - forcing foreground state")
+        
+        // User interaction means we're definitely in foreground, reset the flag
+        isAppInBackground = false
+        
+        // Delegate to standard refresh
+        await refresh()
     }
     
     /// Refreshes the feed data (user-initiated)
@@ -642,14 +665,35 @@ final class FeedStateManager: StateInvalidationSubscriber {
             return
         }
         
-        self.posts = posts
+        // Filter out posts that can't be decoded (malformed cached data)
+        var validPosts: [CachedFeedViewPost] = []
+        var invalidPostIds: [String] = []
+        
+        for post in posts {
+            if (try? post.feedViewPost) != nil {
+                validPosts.append(post)
+            } else {
+                invalidPostIds.append(post.id)
+                logger.warning("Cached post \(post.id) cannot be decoded - will be removed from cache")
+            }
+        }
+        
+        // If we found invalid posts, remove them from the cache
+        if !invalidPostIds.isEmpty {
+            logger.info("Removing \(invalidPostIds.count) invalid cached posts")
+            Task.detached { [invalidPostIds] in
+                await PersistentFeedStateManager.shared.removeInvalidPosts(withIds: invalidPostIds)
+            }
+        }
+        
+        self.posts = validPosts
         self.loadingState = .idle
         self.hasReachedEnd = false
         
         // Update feed model's posts to match
-        await feedModel.restorePersistedPosts(posts)
+        await feedModel.restorePersistedPosts(validPosts)
         
-        logger.debug("Restored \(posts.count) persisted posts")
+        logger.debug("Restored \(validPosts.count) persisted posts (\(invalidPostIds.count) invalid posts filtered out)")
     }
     
     // MARK: - iOS 18+ Smart Refresh Methods
@@ -988,6 +1032,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
+        autoRefreshTask?.cancel()
         
         // Capture current scroll anchor for restoration
         captureScrollAnchor()
@@ -1000,6 +1045,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private func handleScenePhaseActive() async {
         logger.debug("📱 Scene becoming active - restoring state")
         isAppInBackground = false
+        
+        // Restart automatic refresh monitoring
+        startAutomaticRefreshMonitoring()
         
         // State restoration is handled by the store's intelligent refresh logic
         // Individual state managers don't need to refresh automatically
@@ -1060,6 +1108,66 @@ final class FeedStateManager: StateInvalidationSubscriber {
         return timeSinceLastUserAction > userActionCooldownInterval
     }
     
+    // MARK: - Automatic Refresh
+    
+    /// Starts background task to periodically check and perform automatic refresh
+    private func startAutomaticRefreshMonitoring() {
+        logger.debug("🔄 Starting automatic refresh monitoring")
+        
+        autoRefreshTask = Task { @MainActor in
+            while !Task.isCancelled {
+                // Wait for check interval
+                try? await Task.sleep(nanoseconds: UInt64(FeedConstants.automaticRefreshCheckInterval * 1_000_000_000))
+                
+                guard !Task.isCancelled else { break }
+                
+                // Check conditions and potentially refresh
+                await checkAndPerformAutomaticRefresh()
+            }
+        }
+    }
+    
+    /// Checks conditions and performs automatic refresh if appropriate
+    private func checkAndPerformAutomaticRefresh() async {
+        // Don't refresh if app is in background
+        guard !isAppInBackground else {
+            logger.debug("⏸️ Skipping auto-refresh: app in background")
+            return
+        }
+        
+        // Don't refresh if user is actively using the feed
+        let timeSinceLastUserAction = Date().timeIntervalSince(lastUserAction)
+        guard timeSinceLastUserAction > FeedConstants.userIdleTimeForAutoRefresh else {
+            logger.debug("⏸️ Skipping auto-refresh: user active (\(Int(timeSinceLastUserAction))s since last action)")
+            return
+        }
+        
+        // Don't refresh if already loading
+        guard loadingState == .idle else {
+            logger.debug("⏸️ Skipping auto-refresh: already loading")
+            return
+        }
+        
+        // Check if enough time has passed since last refresh
+        guard feedModel.shouldRefreshFeed(minInterval: FeedConstants.minimumRefreshInterval) else {
+            logger.debug("⏸️ Skipping auto-refresh: too soon since last refresh")
+            return
+        }
+        
+        // All conditions met - perform background refresh
+        logger.info("✅ Performing automatic background refresh (idle for \(Int(timeSinceLastUserAction))s)")
+        
+        // Use refreshIfNeeded which returns true if refresh was performed
+        let didRefresh = await feedModel.refreshIfNeeded(
+            fetch: feedType,
+            minInterval: FeedConstants.minimumRefreshInterval
+        )
+        
+        if didRefresh {
+            logger.info("🔄 Automatic refresh completed successfully")
+        }
+    }
+    
     // MARK: - Cleanup
     
     /// Clears all cached data and cancels ongoing tasks
@@ -1071,11 +1179,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         refreshTask?.cancel()
         loadMoreTask?.cancel()
         updateTask?.cancel()
+        autoRefreshTask?.cancel()
         
         // Clear references
         refreshTask = nil
         loadMoreTask = nil
         updateTask = nil
+        autoRefreshTask = nil
         
         viewModelCache.removeAll()
         scrollAnchor = nil
@@ -1217,8 +1327,12 @@ extension FeedStateManager {
             posts.removeAll()
             viewModelCache.removeAll()
             hasReachedEnd = false
+            loadingState = .idle // Reset loading state
+            errorMessage = nil // Clear any errors
             markUserAction() // Mark as user action since account switch is user-initiated
-            await loadInitialData()
+            
+            // Use system flag to bypass user-initiated checks
+            await loadInitialDataWithSystemFlag()
             
         case .authenticationCompleted:
             // When authentication completes, load initial data if we don't have any

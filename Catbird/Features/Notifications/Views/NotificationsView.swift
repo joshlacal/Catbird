@@ -360,7 +360,7 @@ struct NotificationCard: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Button {
-        if group.type == .follow {
+        if group.type == .follow || group.type == .followBack {
           if group.notifications.count > 1 {
             isFollowExpanded.toggle()
           } else {
@@ -381,7 +381,7 @@ struct NotificationCard: View {
       }
       .buttonStyle(.plain)
 
-      if group.type == .follow && isFollowExpanded {
+      if (group.type == .follow || group.type == .followBack) && isFollowExpanded {
         expandedFollowersList
       }
     }
@@ -501,7 +501,7 @@ struct NotificationCard: View {
 
       VStack(alignment: .leading, spacing: 4) {
         HStack(alignment: .center) {
-          if group.type == .follow && group.notifications.count > 1 {
+          if (group.type == .follow || group.type == .followBack) && group.notifications.count > 1 {
             HStack(spacing: 3) {
               AvatarStack(notifications: group.notifications)
 
@@ -601,6 +601,14 @@ struct NotificationCard: View {
       attributedText.append(text)
     case (.follow, _):
       var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") followed you")
+      text.font = bodyFont
+      attributedText.append(text)
+    case (.followBack, 1):
+      var text = AttributedString(" followed you back")
+      text.font = bodyFont
+      attributedText.append(text)
+    case (.followBack, _):
+      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") followed you back")
       text.font = bodyFont
       attributedText.append(text)
     case (.mention, 1):
@@ -731,7 +739,7 @@ struct NotificationCard: View {
       } else if let reasonSubject = group.notifications.first?.reasonSubject {
         onTap(NavigationDestination.post(reasonSubject))
       }
-    case .follow:
+    case .follow, .followBack:
       break
     case .reply, .quote, .mention:
       if let post = group.subjectPost {
@@ -840,8 +848,6 @@ struct NotificationCard: View {
       
     case .unexpected:
       break
-    case .pending(_):
-        break
 }
     
     return thumbnails

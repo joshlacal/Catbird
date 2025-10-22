@@ -64,6 +64,12 @@ struct FeedConstants {
     /// Minimum interval between automatic feed refreshes (in seconds)
     static let minimumRefreshInterval: TimeInterval = 300 // 5 minutes
     
+    /// Interval for automatic refresh checks (how often we check if refresh is needed)
+    static let automaticRefreshCheckInterval: TimeInterval = 60 // 1 minute
+    
+    /// User idle time required before automatic refresh (prevents interrupting active users)
+    static let userIdleTimeForAutoRefresh: TimeInterval = 15 // 15 seconds
+    
     /// Interval for checking new posts availability
     static let newPostsCheckInterval: TimeInterval = 60 // 1 minute
     

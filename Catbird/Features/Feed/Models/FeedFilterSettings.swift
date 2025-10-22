@@ -435,6 +435,46 @@ struct FeedFilter: Identifiable, Hashable {
       sortMode = mode
     }
   }
+  
+  // MARK: - Convenience Properties
+  
+  /// Convenience property for checking if "Hide Link Posts" filter is enabled
+  var hideLinks: Bool {
+    isFilterEnabled(name: "Hide Link Posts")
+  }
+  
+  /// Convenience property for checking if "Only Text Posts" filter is enabled
+  var onlyTextPosts: Bool {
+    isFilterEnabled(name: "Only Text Posts")
+  }
+  
+  /// Convenience property for checking if "Only Media Posts" filter is enabled
+  var onlyMediaPosts: Bool {
+    isFilterEnabled(name: "Only Media Posts")
+  }
+  
+  /// Convenience property for checking if "Hide Replies" filter is enabled
+  var hideReplies: Bool {
+    isFilterEnabled(name: "Hide Replies")
+  }
+  
+  /// Convenience property for checking if "Hide Reposts" filter is enabled
+  var hideReposts: Bool {
+    isFilterEnabled(name: "Hide Reposts")
+  }
+  
+  /// Convenience property for checking if "Hide Quote Posts" filter is enabled
+  var hideQuotePosts: Bool {
+    isFilterEnabled(name: "Hide Quote Posts")
+  }
+  
+  /// Convenience property for "Hide Replies By Unfollowed"
+  /// Note: This is controlled via FeedViewPreference server sync, not local filters
+  var hideRepliesByUnfollowed: Bool {
+    // This setting is managed through PreferencesManager.feedViewPref
+    // Return false here as it's not part of the local filter system
+    false
+  }
 }
 
 // MARK: - Content Processing Capabilities

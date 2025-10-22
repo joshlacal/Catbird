@@ -84,20 +84,20 @@ struct ToastView: View {
     .glassEffectCompatibility()
     .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
     .offset(x: dragOffset)
-    .offset(x: isVisible ? 0 : 300)
+    .offset(x: isVisible ? 0 : -300)  // Slide from left instead of right
     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isVisible)
     .animation(.spring(response: 0.3, dampingFraction: 0.9), value: dragOffset)
     .gesture(
       DragGesture()
         .onChanged { value in
-          if value.translation.width > 0 {
+          if value.translation.width < 0 {  // Swipe left to dismiss
             dragOffset = value.translation.width
           }
         }
         .onEnded { value in
-          if value.translation.width > 50 || value.predictedEndTranslation.width > 100 {
+          if value.translation.width < -50 || value.predictedEndTranslation.width < -100 {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-              dragOffset = 300
+              dragOffset = -300  // Dismiss to the left
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
               onDismiss()
@@ -121,28 +121,9 @@ struct ToastContainerModifier: ViewModifier {
   @Environment(\.toastManager) private var toastManager
   
   func body(content: Content) -> some View {
+    // Toast display is now handled by FAB component
+    // This modifier just ensures the environment is set up
     content
-      .overlay(alignment: .bottomTrailing) {
-        if let toast = toastManager.currentToast {
-          ToastView(toast: toast) {
-            toastManager.dismiss()
-          }
-          .padding(.trailing, 16)
-          .padding(.bottom, calculateBottomPadding())
-          .transition(.move(edge: .trailing).combined(with: .opacity))
-          .zIndex(999)
-        }
-      }
-  }
-  
-  private func calculateBottomPadding() -> CGFloat {
-    #if os(iOS)
-    // Position above FAB: tab bar (49) + spacing (30) + FAB height (62) + spacing (12)
-    return 49 + 30 + 62 + 12
-    #else
-    // macOS: position above FAB with spacing
-    return 20 + 62 + 12
-    #endif
   }
 }
 

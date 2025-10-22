@@ -134,73 +134,66 @@ struct ListsManagerView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var viewModel: ListsManagerViewModel
-  @State private var navigationPath = NavigationPath()
   
   init() {
     self._viewModel = State(wrappedValue: ListsManagerViewModel(appState: AppState.shared))
   }
   
   var body: some View {
-    NavigationStack(path: $navigationPath) {
-      contentView
-        .navigationTitle("My Lists")
-        #if os(iOS)
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
-    #endif
-        #endif
-        .toolbar {
-          ToolbarItem(placement: .primaryAction) {
-            Button {
-              viewModel.showingCreateList = true
-            } label: {
-              Image(systemName: "plus")
-            }
+    contentView
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+      .navigationTitle("My Lists")
+      #if os(iOS)
+      .toolbarTitleDisplayMode(.large)
+      #endif
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            viewModel.showingCreateList = true
+          } label: {
+            Image(systemName: "plus")
           }
         }
-        .onAppear {
-          viewModel = ListsManagerViewModel(appState: appState)
-          Task {
-            await viewModel.loadData()
-          }
+      }
+      .onAppear {
+        viewModel = ListsManagerViewModel(appState: appState)
+        Task {
+          await viewModel.loadData()
         }
-        .refreshable {
-          await viewModel.refreshData()
+      }
+      .refreshable {
+        await viewModel.refreshData()
+      }
+      .searchable(text: $viewModel.searchText, prompt: "Search your lists")
+      .alert("Error", isPresented: $viewModel.showingError) {
+        Button("OK") {
+          viewModel.showingError = false
         }
-        .searchable(text: $viewModel.searchText, prompt: "Search your lists")
-        .alert("Error", isPresented: $viewModel.showingError) {
-          Button("OK") {
-            viewModel.showingError = false
-          }
-        } message: {
-          if let errorMessage = viewModel.errorMessage {
-            Text(errorMessage)
-          }
+      } message: {
+        if let errorMessage = viewModel.errorMessage {
+          Text(errorMessage)
         }
-        .alert("Delete List", isPresented: $viewModel.showingDeleteConfirmation) {
-          Button("Cancel", role: .cancel) {
-            viewModel.listToDelete = nil
-          }
-          Button("Delete", role: .destructive) {
-            if let list = viewModel.listToDelete {
-              Task {
-                await viewModel.deleteList(list)
-              }
-            }
-            viewModel.listToDelete = nil
-          }
-        } message: {
+      }
+      .alert("Delete List", isPresented: $viewModel.showingDeleteConfirmation) {
+        Button("Cancel", role: .cancel) {
+          viewModel.listToDelete = nil
+        }
+        Button("Delete", role: .destructive) {
           if let list = viewModel.listToDelete {
-            Text("Are you sure you want to delete \"\(list.name)\"? This action cannot be undone.")
+            Task {
+              await viewModel.deleteList(list)
+            }
           }
+          viewModel.listToDelete = nil
         }
-        .sheet(isPresented: $viewModel.showingCreateList) {
-          CreateListView()
+      } message: {
+        if let list = viewModel.listToDelete {
+          Text("Are you sure you want to delete \"\(list.name)\"? This action cannot be undone.")
         }
-        .navigationDestination(for: NavigationDestination.self) { destination in
-          NavigationHandler.viewForDestination(destination, path: $navigationPath, appState: appState, selectedTab: .constant(0))
-        }
-    }
+      }
+      .sheet(isPresented: $viewModel.showingCreateList) {
+        CreateListView()
+      }
   }
   
   @ViewBuilder
@@ -258,15 +251,6 @@ struct ListsManagerView: View {
           ForEach(viewModel.groupedLists[category] ?? [], id: \.uri) { list in
             ListManagerRow(
               list: list,
-              onTap: {
-                navigationPath.append(NavigationDestination.listFeed(list.uri))
-              },
-              onEdit: {
-                navigationPath.append(NavigationDestination.editList(list.uri))
-              },
-              onManageMembers: {
-                navigationPath.append(NavigationDestination.listMembers(list.uri))
-              },
               onDelete: {
                 viewModel.confirmDelete(list)
               }
@@ -277,6 +261,7 @@ struct ListsManagerView: View {
     }
 #if os(iOS)
     .listStyle(.insetGrouped)
+    .scrollContentBackground(.hidden)
 #elseif os(macOS)
     .listStyle(.inset)
 #endif
@@ -286,14 +271,14 @@ struct ListsManagerView: View {
 // MARK: - Supporting Views
 
 struct ListManagerRow: View {
+  @Environment(AppState.self) private var appState
   let list: AppBskyGraphDefs.ListView
-  let onTap: () -> Void
-  let onEdit: () -> Void
-  let onManageMembers: () -> Void
   let onDelete: () -> Void
   
   var body: some View {
-    Button(action: onTap) {
+    Button {
+      appState.navigationManager.navigate(to: .listFeed(list.uri))
+    } label: {
       HStack(spacing: 12) {
         // List Avatar
         LazyImage(url: list.avatar?.url) { state in
@@ -337,7 +322,9 @@ struct ListManagerRow: View {
             Spacer()
             
             // Manage Members button
-            Button(action: onManageMembers) {
+            Button(action: {
+              appState.navigationManager.navigate(to: .listMembers(list.uri))
+            }) {
               Image(systemName: "person.2.badge.gearshape")
                 .font(.caption)
                 .foregroundStyle(.blue)
@@ -361,13 +348,13 @@ struct ListManagerRow: View {
     .buttonStyle(.plain)
     .contextMenu {
       Button {
-        onEdit()
+        appState.navigationManager.navigate(to: .editList(list.uri))
       } label: {
         Label("Edit List", systemImage: "pencil")
       }
       
       Button {
-        onManageMembers()
+        appState.navigationManager.navigate(to: .listMembers(list.uri))
       } label: {
         Label("Manage Members", systemImage: "person.2.badge.gearshape")
       }

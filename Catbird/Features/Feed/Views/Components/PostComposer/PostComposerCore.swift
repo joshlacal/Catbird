@@ -333,8 +333,8 @@ extension PostComposerViewModel {
     
     // MARK: - Mention Management
     
-    func insertMention(_ profile: AppBskyActorDefs.ProfileViewBasic) {
-        selectMentionSuggestion(profile)
+    func insertMention(_ profile: AppBskyActorDefs.ProfileViewBasic) -> Int {
+        return selectMentionSuggestion(profile)
     }
     
     // MARK: - GIF Management
@@ -351,6 +351,7 @@ extension PostComposerViewModel {
         } else {
             selectedLanguages.append(language)
         }
+        saveDraftIfNeeded()
     }
     
     // MARK: - Thread Creation
@@ -436,6 +437,7 @@ extension PostComposerViewModel {
                 hashtags: outlineTags,
                 facets: allFacets,
                 embeds: allEmbeds,
+                parentPost: parentPost,
                 threadgateAllowRules: threadgateRules
             )
         } catch {
@@ -607,7 +609,7 @@ extension PostComposerViewModel {
     /// Retry thumbnail upload for a specific URL
     @MainActor
     func retryThumbnailUpload(for url: String) async {
-        guard let urlCard = urlCards[url], 
+        guard let urlCard = urlCards[url],
               !urlCard.image.isEmpty,
               thumbnailCache[url] == nil,
               urlCard.thumbnailBlob == nil else {
@@ -650,6 +652,9 @@ extension PostComposerViewModel {
             threadEntries[currentThreadIndex].mediaItems = []
             threadEntries[currentThreadIndex].videoItem = nil
         }
+        
+        // Save draft after GIF selection
+        saveDraftIfNeeded()
     }
     
     var isPostButtonDisabled: Bool {
@@ -832,7 +837,7 @@ extension PostComposerViewModel {
     private func createExternalEmbed(_ urlCard: URLCardResponse) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
         // Priority order for thumbnail:
         // 1. URLCard's cached thumbnailBlob
-        // 2. Thumbnail cache by URL 
+        // 2. Thumbnail cache by URL
         // 3. Async upload if needed
         let cacheKey = urlCard.resolvedURL
         let thumbBlob = urlCard.thumbnailBlob ?? thumbnailCache[cacheKey]
@@ -1091,7 +1096,7 @@ extension PostComposerViewModel {
                         did: profile.did,
                         handle: profile.handle,
                         displayName: profile.displayName,
-                        avatar: profile.avatar,
+                        pronouns: profile.pronouns, avatar: profile.avatar,
                         associated: profile.associated,
                         viewer: profile.viewer,
                         labels: profile.labels,

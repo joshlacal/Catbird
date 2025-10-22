@@ -52,7 +52,7 @@ class ContentFilterManager {
     static func getVisibilityForLabel(label: String, preferences: [ContentLabelPreference]) -> ContentVisibility {
         // Look for a specific preference for this label
         if let pref = preferences.first(where: { $0.label == label }) {
-            return ContentVisibility(rawValue: pref.visibility) ?? .warn
+            return ContentVisibility(fromPreference: pref.visibility)
         }
 
         // Default to warn if no specific preference
@@ -74,12 +74,12 @@ class ContentFilterManager {
         // Prefer labeler-scoped preference when available
         if let did = labelerDid?.didString(),
            let scoped = preferences.first(where: { $0.label == label && $0.labelerDid?.didString() == did }) {
-            return ContentVisibility(rawValue: scoped.visibility) ?? .warn
+            return ContentVisibility(fromPreference: scoped.visibility)
         }
 
         // Fall back to global (no labeler) preference
         if let global = preferences.first(where: { $0.label == label && $0.labelerDid == nil }) {
-            return ContentVisibility(rawValue: global.visibility) ?? .warn
+            return ContentVisibility(fromPreference: global.visibility)
         }
 
         // Last fallback: any match for this label
@@ -87,11 +87,11 @@ class ContentFilterManager {
     }
 
     /// Convert our display model to the server model format
-    static func createPreferenceForLabel(label: String, visibility: ContentVisibility) -> ContentLabelPreference {
+    static func createPreferenceForLabel(label: String, visibility: ContentVisibility, labelerDid: DID? = nil) -> ContentLabelPreference {
         return ContentLabelPreference(
-            labelerDid: nil,
+            labelerDid: labelerDid,
             label: label,
-            visibility: visibility.rawValue
+            visibility: visibility.preferenceValue
         )
     }
 
@@ -163,7 +163,7 @@ struct ContentVisibilitySelector: View {
                         .foregroundStyle(option.color)
                         .appFont(size: 20)
                         .tag(option)
-                        .help(option.rawValue) // Accessibility label
+                        .help(option.displayName) // Accessibility label
                 }
             }
             .pickerStyle(.segmented)
@@ -176,7 +176,7 @@ struct ContentVisibilitySelector: View {
                         Image(systemName: option.iconName)
                             .foregroundStyle(option.color)
                             .appFont(AppTextRole.caption)
-                        Text(option.rawValue)
+                        Text(option.displayName)
                             .appFont(AppTextRole.caption2)
                             .foregroundStyle(.secondary)
                     }

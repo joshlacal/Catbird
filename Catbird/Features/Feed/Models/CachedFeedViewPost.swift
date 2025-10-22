@@ -27,6 +27,9 @@ final class CachedFeedViewPost: Identifiable {
     /// The post's creation timestamp for sorting
     var createdAt: Date
     
+    /// The original order position from the feed API (used to preserve pinned post order)
+    var feedOrder: Int?
+    
     /// Thread metadata (optional, for enhanced thread display)
     var threadDisplayMode: String?
     var threadPostCount: Int?
@@ -69,11 +72,12 @@ final class CachedFeedViewPost: Identifiable {
         self.isIncompleteThread = false
         self.serializedSliceItems = nil
         self.isTemporary = false // Default to false for cached posts
+        self.feedOrder = nil
 
     }
     
     /// Full initializer with all parameters
-    init?(from feedViewPost: AppBskyFeedDefs.FeedViewPost, cursor: String? = nil, feedType: String) {
+    init?(from feedViewPost: AppBskyFeedDefs.FeedViewPost, cursor: String? = nil, feedType: String, feedOrder: Int? = nil) {
         self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
         self.feedType = feedType
         do {
@@ -151,6 +155,7 @@ final class CachedFeedViewPost: Identifiable {
         }
         self.serializedSliceItems = nil
         self.isTemporary = false
+        self.feedOrder = nil
     }
     
     /// Initializer from FeedSlice (following React Native pattern)
@@ -211,6 +216,7 @@ final class CachedFeedViewPost: Identifiable {
         }
 
         self.isTemporary = false
+        self.feedOrder = nil
     }
     
     /// Creates ReplyRef from slice items (reconstructing the thread structure)
@@ -239,11 +245,30 @@ final class CachedFeedViewPost: Identifiable {
     /// Reconstructs the original FeedViewPost
     var feedViewPost: AppBskyFeedDefs.FeedViewPost {
         get throws {
+            let decoder = JSONDecoder()
+            
+            // First, try standard decoding
             do {
-                return try JSONDecoder().decode(AppBskyFeedDefs.FeedViewPost.self, from: serializedPost)
-            } catch {
-                cachedPostLogger.error("Failed to decode cached post: \(error)")
-                throw error
+                return try decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: serializedPost)
+            } catch let DecodingError.keyNotFound(key, context) {
+                // Check if this is a deeply nested embed issue
+                let path = context.codingPath.map { $0.stringValue }.joined(separator: ".")
+                let isNestedEmbedIssue = path.contains("embed") && path.contains("record") && path.components(separatedBy: "record").count > 2
+                
+                if isNestedEmbedIssue {
+                    cachedPostLogger.warning("Cached post has malformed deeply nested embed at \(path), key '\(key.stringValue)' missing - this post has complex nesting that can't be decoded")
+                    cachedPostLogger.debug("Full error context: \(context.debugDescription)")
+                    
+                    // These posts were cached with bad data - they need to be removed from cache
+                    // The `try?` pattern where this is called will cause them to be skipped
+                    throw DecodingError.keyNotFound(key, context)
+                } else {
+                    cachedPostLogger.error("Failed to decode cached post at \(path): \(String(describing: DecodingError.keyNotFound(key, context)))")
+                    throw DecodingError.keyNotFound(key, context)
+                }
+            } catch let decodingError {
+                cachedPostLogger.error("Failed to decode cached post: \(String(describing: decodingError))")
+                throw decodingError
             }
         }
     }

@@ -1,0 +1,34 @@
+{
+  "agents": [
+    {
+      "name": "syntax-checker",
+      "task": "Check all Swift files in Catbird/Core/ for syntax errors using swift -frontend -parse",
+      "approval": "--allow-tool 'shell(swift)' --allow-tool 'shell(find)'"
+    },
+    {
+      "name": "ios-builder",
+      "task": "Build the iOS target for iPhone 16 Pro simulator",
+      "approval": "--allow-tool 'shell(xcodebuild)'"
+    },
+    {
+      "name": "macos-builder",
+      "task": "Build the macOS target",
+      "approval": "--allow-tool 'shell(xcodebuild)'"
+    },
+    {
+      "name": "test-runner",
+      "task": "Run Swift tests for CatbirdTests",
+      "approval": "--allow-tool 'shell(xcodebuild)'"
+    },
+    {
+      "name": "swiftlint",
+      "task": "Run SwiftLint on the codebase and report issues",
+      "approval": "--allow-tool 'shell(swiftlint)'"
+    },
+    {
+      "name": "doc-checker",
+      "task": "Check for TODO, FIXME, and print() statements in Swift files",
+      "approval": "--allow-tool 'shell(rg)' --allow-tool 'shell(grep)'"
+    }
+  ]
+}

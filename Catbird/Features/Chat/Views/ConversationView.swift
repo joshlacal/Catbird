@@ -261,7 +261,7 @@ struct ConversationView: View {
                   did: profile.did,
                   handle: profile.handle,
                   displayName: profile.displayName,
-                  avatar: profile.avatar,
+                  pronouns: profile.pronouns, avatar: profile.avatar,
                   associated: profile.associated,
                   viewer: profile.viewer,
                   labels: profile.labels,
@@ -274,7 +274,7 @@ struct ConversationView: View {
                 author = AppBskyActorDefs.ProfileViewBasic(
                   did: try DID(didString: did),
                   handle: try Handle(handleString: ""), 
-                  displayName: nil,
+                  displayName: nil, pronouns: nil,
                   avatar: nil,
                   associated: nil,
                   viewer: nil,

@@ -93,11 +93,15 @@ struct RichTextEditor: UIViewRepresentable {
         }
         
         func textViewDidChange(_ textView: UITextView) {
+            // CRITICAL: Skip genmoji detection when IME is active (Japanese, Chinese, Korean input)
+            // to avoid interfering with character composition
+            let isIMEActive = textView.markedTextRange != nil
+            
             parent.attributedText = textView.attributedText
             parent.onTextChanged?(textView.attributedText)
             
-            // Check for genmoji in the text
-            if let richTextView = textView as? RichTextView {
+            // Check for genmoji in the text only when IME is not active
+            if !isIMEActive, let richTextView = textView as? RichTextView {
                 richTextView.detectAndHandleGenmoji()
             }
         }

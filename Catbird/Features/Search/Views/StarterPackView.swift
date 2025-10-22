@@ -10,6 +10,11 @@ struct StarterPackView: View {
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     
+    // Pagination state
+    @State private var allProfiles: [AppBskyGraphDefs.ListItemView] = []
+    @State private var cursor: String?
+    @State private var isLoadingMore = false
+    
     var body: some View {
         Group {
             if isLoading {
@@ -110,7 +115,7 @@ struct StarterPackView: View {
     // Main content view displaying the starter pack
     private func packContentView(_ pack: AppBskyGraphDefs.StarterPackView) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: 24) {
                 // Header with creator info
                 headerView(pack)
                 
@@ -130,14 +135,24 @@ struct StarterPackView: View {
                 
                 Divider()
                 
-                // Profile samples
-                if let profiles = pack.listItemsSample, !profiles.isEmpty {
-                    profilesSection(profiles)
+                // Profiles - use paginated list instead of sample
+                if !allProfiles.isEmpty {
+                    profilesSection(allProfiles)
                 }
                 
                 // Feed suggestions
                 if let feeds = pack.feeds, !feeds.isEmpty {
                     feedsSection(feeds)
+                }
+                
+                // Loading indicator for pagination
+                if isLoadingMore {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .padding()
                 }
                 
                 Spacer(minLength: 40)
@@ -180,10 +195,15 @@ struct StarterPackView: View {
     // Statistics about the pack
     private func statsView(_ pack: AppBskyGraphDefs.StarterPackView) -> some View {
         HStack(spacing: 24) {
-            // Profile count
+            // Profile count - use actual list count, or loaded profiles count
             VStack {
-                Text("\(pack.listItemsSample?.count ?? 0)")
-                    .appFont(AppTextRole.headline)
+                if let listItemCount = pack.list?.listItemCount {
+                    Text("\(listItemCount)")
+                        .appFont(AppTextRole.headline)
+                } else {
+                    Text("\(allProfiles.count)")
+                        .appFont(AppTextRole.headline)
+                }
                 
                 Text("Profiles")
                     .appFont(AppTextRole.caption)
@@ -231,7 +251,7 @@ struct StarterPackView: View {
         .padding(.horizontal)
     }
     
-    // Profiles section
+    // Profiles section with pagination support
     private func profilesSection(_ profiles: [AppBskyGraphDefs.ListItemView]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Suggested Profiles")
@@ -239,7 +259,7 @@ struct StarterPackView: View {
                 .padding(.horizontal)
             
             VStack(spacing: 0) {
-                ForEach(profiles, id: \.uri) { item in
+                ForEach(Array(profiles.enumerated()), id: \.element.uri) { index, item in
                     let subject = item.subject
                     
                     Button {
@@ -274,6 +294,14 @@ struct StarterPackView: View {
                         .padding()
                     }
                     .buttonStyle(.plain)
+                    .onAppear {
+                        // Trigger pagination when approaching the end
+                        if index == profiles.count - 3 {
+                            Task {
+                                await loadMoreProfiles()
+                            }
+                        }
+                    }
                     
                     if item.uri.uriString() != profiles.last?.uri.uriString() {
                         Divider()
@@ -362,7 +390,6 @@ struct StarterPackView: View {
     }
     
     // Fetch starter pack data
-    // Replace your current fetchStarterPack() method with this:
     private func fetchStarterPack() async {
         guard let client = appState.atProtoClient else {
             error = NSError(domain: "StarterPackView", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])
@@ -375,11 +402,12 @@ struct StarterPackView: View {
             let response = try await client.app.bsky.graph.getStarterPack(input: input)
             
             if let packData = response.data {
-                // The starterPack object itself should already be a StarterPackView
                 self.starterPack = packData.starterPack
                 
-                // If the above doesn't work because of type issues, try:
-                // self.starterPack = packData.starterPack as? AppBskyGraphDefs.StarterPackView
+                // Fetch full list with pagination if list exists
+                if let listUri = packData.starterPack.list?.uri {
+                    await loadProfileList(client: client, listUri: listUri, cursor: nil)
+                }
             } else {
                 self.error = NSError(domain: "StarterPackView", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data returned"])
             }
@@ -388,5 +416,41 @@ struct StarterPackView: View {
         }
         
         isLoading = false
+    }
+    
+    // Load profile list with pagination
+    private func loadProfileList(client: ATProtoClient, listUri: ATProtocolURI, cursor: String?) async {
+        do {
+            let input = AppBskyGraphGetList.Parameters(
+                list: listUri,
+                limit: 30,
+                cursor: cursor
+            )
+            let response = try await client.app.bsky.graph.getList(input: input)
+            
+            if let data = response.data {
+                // Append new profiles to the list
+                allProfiles.append(contentsOf: data.items)
+                self.cursor = data.cursor
+            }
+        } catch {
+            // Log error but don't show to user - initial load already succeeded
+            print("Error loading profile list: \(error)")
+        }
+    }
+    
+    // Load more profiles when scrolling near the end
+    private func loadMoreProfiles() async {
+        guard let pack = starterPack,
+              let listUri = pack.list?.uri,
+              let currentCursor = cursor,
+              !isLoadingMore,
+              let client = appState.atProtoClient else {
+            return
+        }
+        
+        isLoadingMore = true
+        await loadProfileList(client: client, listUri: listUri, cursor: currentCursor)
+        isLoadingMore = false
     }
 }

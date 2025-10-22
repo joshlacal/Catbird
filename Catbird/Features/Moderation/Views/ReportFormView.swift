@@ -69,7 +69,10 @@ struct ReportFormView: View {
                                 Text("Moderation service")
                                 Spacer()
                                 if let selectedLabeler = selectedLabeler {
-                                    Text(selectedLabeler.creator.displayName ?? selectedLabeler.creator.handle.description)
+                                    let displayName = selectedLabeler.creator.handle.description == "moderation.bsky.app" 
+                                        ? "Official Bluesky Moderation"
+                                        : (selectedLabeler.creator.displayName ?? selectedLabeler.creator.handle.description)
+                                    Text(displayName)
                                         .foregroundStyle(.secondary)
                                 } else {
                                     Text("Select")
@@ -145,21 +148,12 @@ struct ReportFormView: View {
     
     private func loadLabelers() async {
         do {
-            // Try to get user's subscribed labelers
+            // Get subscribed labelers (always includes Bluesky moderation service first)
             availableLabelers = try await reportingService.getSubscribedLabelers()
             
-            // If no labelers found, try to get the default Bluesky moderation service
-            if availableLabelers.isEmpty {
-                if let bskyLabeler = try await reportingService.getBlueskyModerationService() {
-                    availableLabelers = [bskyLabeler]
-                }
-            }
-            
-            // Default to Bluesky moderation service if available
-            if selectedLabeler == nil, let bskyLabeler = availableLabelers.first(where: { 
-                $0.creator.handle.description == "moderation.bsky.app" 
-            }) {
-                selectedLabeler = bskyLabeler
+            // Default to the first labeler (which is always Bluesky moderation service)
+            if selectedLabeler == nil, let firstLabeler = availableLabelers.first {
+                selectedLabeler = firstLabeler
             }
         } catch {
             errorMessage = "Failed to load available moderation services: \(error.localizedDescription)"

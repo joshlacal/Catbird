@@ -22,14 +22,16 @@ struct ResultsView: View {
         List {
             if let error = viewModel.searchError {
                 Section {
-                    ErrorStateView(
+                    // SRCH-011: Enhanced error state view
+                    SearchErrorView(
                         error: error,
-                        context: "Search failed",
+                        query: viewModel.searchQuery,
                         retryAction: {
                             Task { await retrySearch() }
                         }
                     )
                     .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 }
             } else {
                 switch selectedContentType {

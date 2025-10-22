@@ -155,15 +155,13 @@ class PostHeightCalculator {
     
     /// Calculate height for a parent post (may have special rendering)
     func calculateParentPostHeight(for parentPost: ParentPost) -> CGFloat {
-        switch parentPost.post {
-        case .appBskyFeedDefsThreadViewPost(let post):
-            return calculateHeight(for: post.post, mode: .parentInThread)
+        switch parentPost.threadItem.value {
+        case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+            return calculateHeight(for: threadItemPost.post, mode: .parentInThread)
             
-        case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
+        case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemBlocked,
+             .appBskyUnspeccedDefsThreadItemNoUnauthenticated, .unexpected:
             return 60 // Standard height for error states
-            
-        case .pending:
-            return 100 // Default height for pending posts
         }
     }
     
@@ -171,23 +169,22 @@ class PostHeightCalculator {
     func calculateReplyHeight(for replyWrapper: ReplyWrapper, showingNestedReply: Bool = false) -> CGFloat {
         var totalHeight: CGFloat = 0
         
-        switch replyWrapper.reply {
-        case .appBskyFeedDefsThreadViewPost(let replyPost):
+        switch replyWrapper.threadItem.value {
+        case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
             // Calculate height for the reply post
-            totalHeight += calculateHeight(for: replyPost.post, mode: .compact)
+            totalHeight += calculateHeight(for: threadItemPost.post, mode: .compact)
             
-            // Add height for nested reply if shown
-            if showingNestedReply, let replies = replyPost.replies, !replies.isEmpty {
-                // Simplified height calculation for nested reply
+            // V2 API uses flat structure, so nested replies would be separate items
+            // Add small padding for reply indication if this has more replies
+            if showingNestedReply && threadItemPost.moreReplies > 0 {
+                // Simplified height calculation for nested reply indication
                 totalHeight += 12 // Spacing
-                totalHeight += 180 // Approximate height for a nested reply
+                totalHeight += 40 // "Continue thread" button height
             }
             
-        case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
+        case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemBlocked,
+             .appBskyUnspeccedDefsThreadItemNoUnauthenticated, .unexpected:
             totalHeight = 60
-            
-        case .pending:
-            totalHeight = 100
         }
         
         return totalHeight
@@ -486,8 +483,6 @@ class PostHeightCalculator {
             
         case .unexpected:
             return 60 // Default height for unexpected embeds
-        case .pending(_):
-            return 0
         }
     }
     
@@ -561,8 +556,6 @@ class PostHeightCalculator {
             
         case .unexpected:
             return 60
-        case .pending(_):
-            return 0
         }
     }
     

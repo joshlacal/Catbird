@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SwiftUI
 
 struct FAB: View {
     let composeAction: () -> Void
@@ -15,6 +14,7 @@ struct FAB: View {
     let hasMinimizedComposer: Bool
     let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.toastManager) private var toastManager
     // Namespace for matched zoom transitions to the composer (provided by ContentView)
     @Environment(\.composerTransitionNamespace) private var composerNamespace
 
@@ -32,6 +32,14 @@ struct FAB: View {
         VStack {
             Spacer()
             HStack(spacing: 12) {
+                // Toast on the left
+                if let toast = toastManager.currentToast {
+                    ToastView(toast: toast) {
+                        toastManager.dismiss()
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                
                 if showFeedsButton {
                     if #available(iOS 26.0, *) {
                         feedsButton
@@ -102,9 +110,9 @@ struct FAB: View {
             .frame(width: circleSize, height: circleSize)
 
 //            .background(
-//                   
+//
 //                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
-//                    
+//
 //            )
             .contentShape(Circle())
             .buttonStyle(.glassProminent)

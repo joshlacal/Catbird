@@ -25,6 +25,8 @@ struct FeedPostRow: View, Equatable, Identifiable {
     
     var viewModel: FeedPostViewModel
     @Binding var navigationPath: NavigationPath
+    var feedTypeIdentifier: String
+    @Environment(AppState.self) private var appState
     
     // MARK: - Body
     
@@ -46,9 +48,67 @@ struct FeedPostRow: View, Equatable, Identifiable {
                 .fill(Color.separator)
                 .frame(height: 0.5)
         }
+        #if os(macOS)
+        // macOS uses SwiftUI List - add swipe actions here
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if appState.feedFeedbackManager.isEnabled {
+                VStack {
+                        Button {
+                            guard let postURI = try? viewModel.post.feedViewPost.post.uri, appState.feedFeedbackManager.isEnabled else { return }
+                            appState.feedFeedbackManager.sendShowMore(postURI: postURI)
+                            logger.debug("Sent 'show more' feedback for post: \(postURI)")
+                            
+                            // Show confirmation toast
+                            appState.toastManager.show(
+                                ToastItem(
+                                    message: "Feedback sent",
+                                    icon: "checkmark.circle.fill"
+                                )
+                            )
+                        } label: {
+                            Label("Show More Like This", systemImage: "hand.thumbsup.fill")
+                                .imageScale(.large)
+                                .labelStyle(.iconOnly)
+
+                        }
+                        .tint(.green)
+                    
+                    
+                    Button {
+                        guard let postURI = try? viewModel.post.feedViewPost.post.uri, appState.feedFeedbackManager.isEnabled else { return }
+                        appState.feedFeedbackManager.sendShowLess(postURI: postURI)
+                        logger.debug("Sent 'show less' feedback for post: \(postURI)")
+                        
+                        // Show confirmation toast
+                        appState.toastManager.show(
+                            ToastItem(
+                                message: "Feedback sent",
+                                icon: "checkmark.circle.fill"
+                            )
+                        )
+                    } label: {
+                        Label("Show Less Like This", systemImage: "hand.thumbsdown.fill")
+                            .imageScale(.large)
+                            .labelStyle(.iconOnly)
+                    }
+                    .tint(.red)
+                }
+            }
+            
+        }
+        #endif
         .platformIgnoresSafeArea(.container, edges: .horizontal)
         .fixedSize(horizontal: false, vertical: true)
         .transition(.identity)
+        // Track post visibility for feed feedback (iOS 18.0+/macOS 15.0+)
+        .onScrollVisibilityChange(threshold: 0.5) { isVisible in
+            if isVisible {
+                if let postURI = try? ATProtocolURI(uriString: viewModel.post.feedViewPost.post.uri.uriString()) {
+                    appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+                }
+            }
+        }
+        .id("\(feedTypeIdentifier)-\(viewModel.post.id)-feedback:\(appState.feedFeedbackManager.isEnabled)")
     }
     
 }
@@ -60,7 +120,7 @@ struct FeedPostRow: View, Equatable, Identifiable {
 
 //#Preview {
 //    @State var navigationPath = NavigationPath()
-//    
+//
 //    // Create a mock post for preview
 //    let mockPost = CachedFeedViewPost(
 //        id: "preview-post",
@@ -97,9 +157,9 @@ struct FeedPostRow: View, Equatable, Identifiable {
 //            feedContext: nil, reqId: nil
 //        )
 //    )
-//    
+//
 //    let mockViewModel = FeedPostViewModel(post: mockPost, appState: AppState.shared)
-//    
+//
 //    NavigationStack(path: $navigationPath) {
 //        FeedPostRow(
 //            viewModel: mockViewModel,

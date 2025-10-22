@@ -84,7 +84,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   private var parentPosts: [ParentPost] = []
   private var mainPost: AppBskyFeedDefs.PostView?
-  private var replyWrappers: [ReplyWrapper] = []
+  private var opThreadContinuations: [ReplyWrapper] = []  // OP's thread continuations
+  private var replyWrappers: [ReplyWrapper] = []  // Regular replies only
+  private var nestedRepliesMap: [String: [ReplyWrapper]] = [:]  // Maps reply URI to nested replies
 
   // MARK: - Snapshot Serialization
   // Prevent overlapping diffable snapshot applications which can cause
@@ -588,7 +590,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
       case .replies:
         if !self.replyWrappers.isEmpty {
-          // Get average height from actual replies
+          // Get estimated height from first reply
           if let firstReply = self.replyWrappers.first {
             estimatedHeight = self.heightCalculator.calculateReplyHeight(
               for: firstReply,
@@ -666,8 +668,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         let cell =
           collectionView.dequeueReusableCell(withReuseIdentifier: "ReplyCell", for: indexPath)
           as! ReplyCell
+        
+        // Get nested replies for this reply (if any)
+        let nestedReplies = self.nestedRepliesMap[replyWrapper.id] ?? []
+        
         cell.configure(
           replyWrapper: replyWrapper,
+          nestedReplies: nestedReplies,
           opAuthorID: self.mainPost?.author.did.didString() ?? "",
           appState: self.appState,
           path: self.path
@@ -691,9 +698,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       await threadManager?.loadThread(uri: postURI)
 
       // Check if the thread has no parent posts
-      if let threadViewPost = threadManager?.threadViewPost,
-        case .appBskyFeedDefsThreadViewPost(let threadData) = threadViewPost {
-        if !threadData.hasParentPosts() {
+      if let threadData = threadManager?.threadData {
+        if threadData.thread.filter({ $0.depth < 0 }).isEmpty {
           controllerLogger.debug("🧵 THREAD LOAD: This thread has no parent posts, marking as top of thread")
           hasReachedTopOfThread = true
         }
@@ -758,76 +764,119 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
 
-  private func processThreadData() {
+    private func processThreadData() {
     guard let threadManager = threadManager,
-      let threadUnion = threadManager.threadViewPost
+      let threadData = threadManager.threadData
     else {
       return
     }
 
-    switch threadUnion {
-    case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-      parentPosts = collectParentPosts(from: threadViewPost.parent)
-      mainPost = threadViewPost.post
-
-      if let replies = threadViewPost.replies {
-        var newReplyWrappers = selectRelevantReplies(
-          replies, opAuthorID: threadViewPost.post.author.did.didString())
-        
-        // If we have optimistic updates, merge them with server data
-        if hasOptimisticUpdates && !optimisticReplyUris.isEmpty {
-          // Keep track of which optimistic replies are confirmed by server
-          var confirmedOptimisticUris = Set<String>()
-          
-          // Check if any server replies match our optimistic URIs
-          for wrapper in newReplyWrappers {
-            if case .appBskyFeedDefsThreadViewPost(let post) = wrapper.reply {
-              if optimisticReplyUris.contains(post.post.uri.uriString()) {
-                confirmedOptimisticUris.insert(post.post.uri.uriString())
-              }
-            }
-          }
-          
-          // Add unconfirmed optimistic replies back to the list
-          for existingWrapper in replyWrappers {
-            if case .appBskyFeedDefsThreadViewPost(let post) = existingWrapper.reply {
-              let uri = post.post.uri.uriString()
-              if optimisticReplyUris.contains(uri) && !confirmedOptimisticUris.contains(uri) {
-                // This is an optimistic reply not yet on server, keep it
-                newReplyWrappers.append(existingWrapper)
-              }
-            }
-          }
-          
-          // Remove confirmed optimistic URIs
-          optimisticReplyUris.subtract(confirmedOptimisticUris)
-          
-          // Clear optimistic state if all updates are confirmed
-          if optimisticReplyUris.isEmpty {
-            hasOptimisticUpdates = false
-          }
-        }
-        
-        replyWrappers = newReplyWrappers
-      } else {
-        // No replies from server, but check if we have optimistic ones
-        if hasOptimisticUpdates && !replyWrappers.isEmpty {
-          // Keep existing optimistic replies
-          let optimisticReplies = replyWrappers.filter { wrapper in
-            if case .appBskyFeedDefsThreadViewPost(let post) = wrapper.reply {
-              return optimisticReplyUris.contains(post.post.uri.uriString())
-            }
-            return false
-          }
-          replyWrappers = optimisticReplies
-        } else {
-          replyWrappers = []
-        }
-      }
-
-    default:
+    // V2 API returns a flat list of ThreadItems with depth indicators
+    // Negative depth = parent posts, 0 = main post, positive = replies
+    
+    // Find main post (depth = 0)
+    guard let mainItem = threadData.thread.first(where: { $0.depth == 0 }) else {
       parentPosts = []
       mainPost = nil
+      replyWrappers = []
+      return
+    }
+    
+    // Extract main post
+    if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = mainItem.value {
+      mainPost = threadItemPost.post
+      
+      // Collect parent posts (depth < 0), sorted by depth (oldest = most negative)
+      let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
+      parentPosts = collectParentPostsV2(from: parentItems)
+      
+      // Collect reply posts (depth > 0) - Keep API order which has chains grouped together
+      let replyItems = threadData.thread.filter { $0.depth > 0 }
+      
+      // Group replies into chains:
+      // - depth 1 = top-level reply to main post (starts a new chain)
+      // - depth 2+ = continuation of the current chain
+      var topLevelReplies: [ReplyWrapper] = []
+      var nestedMap: [String: [ReplyWrapper]] = [:]
+      var currentChainTopLevelURI: String? = nil
+      
+      for item in replyItems {
+        guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value else {
+          continue
+        }
+        
+        let id = item.uri.uriString()
+        let isFromOP = threadItemPost.post.author.did.didString() == mainPost!.author.did.didString()
+        let isOpThread = threadItemPost.opThread
+        let hasReplies = threadItemPost.moreReplies > 0
+        
+        let wrapper = ReplyWrapper(
+          id: id,
+          threadItem: item,
+          depth: item.depth,
+          isFromOP: isFromOP,
+          isOpThread: isOpThread,
+          hasReplies: hasReplies
+        )
+        
+        if item.depth == 1 {
+          // Top-level reply to main post - starts a new chain
+          topLevelReplies.append(wrapper)
+          currentChainTopLevelURI = id
+          // Initialize nested array for this chain
+          nestedMap[id] = []
+        } else if item.depth > 1, let chainRoot = currentChainTopLevelURI {
+          // Nested reply (depth 2+) - belongs to the current chain
+          nestedMap[chainRoot]?.append(wrapper)
+        }
+      }
+      
+      // Store the nested replies map
+      self.nestedRepliesMap = nestedMap
+      
+      // Separate OP thread continuations from regular replies (only depth-1)
+      opThreadContinuations = topLevelReplies.filter { $0.isOpThread }
+      var regularReplies = topLevelReplies.filter { !$0.isOpThread }
+      
+      // If we have optimistic updates, merge them with server data
+      if hasOptimisticUpdates && !optimisticReplyUris.isEmpty {
+        // Keep track of which optimistic replies are confirmed by server
+        var confirmedOptimisticUris = Set<String>()
+        
+        // Check if any server replies match our optimistic URIs
+        for wrapper in regularReplies {
+          if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = wrapper.threadItem.value {
+            if optimisticReplyUris.contains(itemPost.post.uri.uriString()) {
+              confirmedOptimisticUris.insert(itemPost.post.uri.uriString())
+            }
+          }
+        }
+        
+        // Add unconfirmed optimistic replies back to the list
+        for existingWrapper in replyWrappers {
+          if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = existingWrapper.threadItem.value {
+            let uri = itemPost.post.uri.uriString()
+            if optimisticReplyUris.contains(uri) && !confirmedOptimisticUris.contains(uri) {
+              // This is an optimistic reply not yet on server, keep it
+              regularReplies.append(existingWrapper)
+            }
+          }
+        }
+        
+        // Remove confirmed optimistic URIs
+        optimisticReplyUris.subtract(confirmedOptimisticUris)
+        
+        // Clear optimistic state if all updates are confirmed
+        if optimisticReplyUris.isEmpty {
+          hasOptimisticUpdates = false
+        }
+      }
+      
+      replyWrappers = regularReplies
+    } else {
+      parentPosts = []
+      mainPost = nil
+      opThreadContinuations = []
       replyWrappers = []
     }
   }
@@ -843,8 +892,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
     }
 
-    // Add parent posts in reverse chronological order (oldest first, newest last)
-    let parentItems = parentPosts.reversed().map { Item.parentPost($0) }
+    // Add parent posts in chronological order (oldest first, newest last)
+    // parentPosts is already sorted by depth with oldest (most negative) first
+    let parentItems = parentPosts.map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
 
     // Add main post if available
@@ -852,7 +902,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
     }
 
-    // Add replies
+    // Add OP thread continuations first (these are part of OP's continued thread)
+    let opThreadItems = opThreadContinuations.map { Item.reply($0) }
+    snapshot.appendItems(opThreadItems, toSection: .replies)
+    
+    // Then add regular replies (from other users)
     let replyItems = replyWrappers.map { Item.reply($0) }
     snapshot.appendItems(replyItems, toSection: .replies)
 
@@ -895,47 +949,28 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
       // Check for content differences in the post data
       // Even if IDs match, the post content could have been updated
-      switch (oldPost.post, newPost.post) {
+      switch (oldPost.threadItem.value, newPost.threadItem.value) {
       case (
-        .appBskyFeedDefsThreadViewPost(let oldThreadPost),
-        .appBskyFeedDefsThreadViewPost(let newThreadPost)
+        .appBskyUnspeccedDefsThreadItemPost(let oldThreadPost),
+        .appBskyUnspeccedDefsThreadItemPost(let newThreadPost)
       ):
         // Compare post URIs
         if oldThreadPost.post.uri.uriString() != newThreadPost.post.uri.uriString() {
           return true
         }
 
-        // Check if parent structures are different
-        if (oldThreadPost.parent == nil) != (newThreadPost.parent == nil) {
+        // With v2, we can check moreParents and moreReplies flags
+        if oldThreadPost.moreParents != newThreadPost.moreParents {
           return true
         }
-
-        // If both have parents, check the parent type and ID
-        if let oldParent = oldThreadPost.parent, let newParent = newThreadPost.parent {
-          switch (oldParent, newParent) {
-          case (
-            .appBskyFeedDefsThreadViewPost(let oldParentPost),
-            .appBskyFeedDefsThreadViewPost(let newParentPost)
-          ):
-            if oldParentPost.post.uri.uriString() != newParentPost.post.uri.uriString() {
-              return true
-            }
-          default:
-            // Different parent types
-            if type(of: oldParent) != type(of: newParent) {
-              return true
-            }
-          }
-        }
-
-        // Check for reply chain differences
-        if (oldThreadPost.replies?.count ?? 0) != (newThreadPost.replies?.count ?? 0) {
+        
+        if oldThreadPost.moreReplies != newThreadPost.moreReplies {
           return true
         }
 
       default:
         // Different post types
-        if type(of: oldPost.post) != type(of: newPost.post) {
+        if type(of: oldPost.threadItem.value) != type(of: newPost.threadItem.value) {
           return true
         }
       }
@@ -1168,56 +1203,35 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     #endif
     
-    let oldestParent = parentPosts.last!
+    // Get the oldest parent (first element since parentPosts is sorted oldest-to-newest)
+    let oldestParent = parentPosts.first!
     
     // Start loading animation
     updateLoadingCell(isLoading: true)
     
     Task { @MainActor in
-      // Get oldest parent URI
-      var postURI: ATProtocolURI?
-      
-      var oldestParentPost = oldestParent.post
-      if case .pending = oldestParentPost {
-        await oldestParentPost.loadPendingData()
-      }
-      
-      if case .appBskyFeedDefsThreadViewPost(let threadViewPost) = oldestParentPost {
-        postURI = threadViewPost.post.uri
-      } else {
-        // Search for valid parent
-        for i in (0..<parentPosts.count - 1).reversed() {
-          if case .appBskyFeedDefsThreadViewPost(let post) = parentPosts[i].post {
-            postURI = post.post.uri
-            break
-          }
-        }
-      }
-      
-      guard let postURI = postURI else {
-        isLoadingMoreParents = false
-        updateLoadingCell(isLoading: false)
-        return
-      }
+      // Get oldest parent URI - with v2 API it's directly on the thread item
+      let postURI = oldestParent.threadItem.uri
       
       // Load more parents
       let success = await threadManager.loadMoreParents(uri: postURI)
       
       guard success,
-            let threadUnion = threadManager.threadViewPost,
-            case .appBskyFeedDefsThreadViewPost(let threadViewPost) = threadUnion else {
+            let threadData = threadManager.threadData else {
         isLoadingMoreParents = false
         updateLoadingCell(isLoading: false)
         return
       }
       
-      // Get new parent chain
-      let fullChainFromManager = collectParentPosts(from: threadViewPost.parent)
+      // Get new parent chain from thread data
+      let fullChainFromManager = collectParentPostsV2(
+        from: threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
+      )
       
-      // Check if we have the complete chain with root post
+      // Check if we have the complete chain with root post (topmost parent has moreParents = false)
       let hasRootPost = fullChainFromManager.last.map { parent in
-        if case .appBskyFeedDefsThreadViewPost(let post) = parent.post {
-          return post.parent == nil
+        if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = parent.threadItem.value {
+          return !itemPost.moreParents
         }
         return false
       } ?? false
@@ -1281,10 +1295,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let oldParentCount = parentPosts.count
     parentPosts = newParents
     
-    // Check if we now have the root post
+    // Check if we now have the root post (topmost parent has moreParents = false)
     let hasRootPost = parentPosts.last.map { parent in
-      if case .appBskyFeedDefsThreadViewPost(let post) = parent.post {
-        return post.parent == nil
+      if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = parent.threadItem.value {
+        return !itemPost.moreParents
       }
       return false
     } ?? false
@@ -1303,8 +1317,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
     }
     
-    // Add parent posts in reverse chronological order (oldest first, newest last)
-    let parentItems = parentPosts.reversed().map { Item.parentPost($0) }
+    // Add parent posts in chronological order (oldest first, newest last)
+    // parentPosts is already sorted by depth with oldest (most negative) first
+    let parentItems = parentPosts.map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
     
     // Add main post
@@ -1312,7 +1327,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
     }
     
-    // Add replies
+    // Add regular replies as flat items
     let replyItems = replyWrappers.map { Item.reply($0) }
     snapshot.appendItems(replyItems, toSection: .replies)
     
@@ -1681,7 +1696,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       // Parent posts section (Section.parentPosts.rawValue = 1)
       // Parents are displayed in reverse order, so map accordingly
       for (displayIndex, parentPost) in parentPosts.reversed().enumerated() {
-        let key = parentPost.post.uri.uriString()
+        let key = parentPost.threadItem.uri.uriString()
         // Skip placeholder/unknown URIs to avoid mapping the wrong item
         if key.hasPrefix("at://unknown") == false {
           mapping[key] = IndexPath(item: displayIndex, section: Section.parentPosts.rawValue)
@@ -1833,7 +1848,45 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return nil
   }
 
-  private func collectParentPosts(from initialPost: AppBskyFeedDefs.ThreadViewPostParentUnion?)
+  private func collectParentPostsV2(from parentItems: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]) -> [ParentPost] {
+    var parents: [ParentPost] = []
+    var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
+    
+    // Parent items are already sorted by depth (oldest = most negative depth first)
+    for item in parentItems {
+      switch item.value {
+      case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+        let postURI = item.uri.uriString()
+        parents.append(ParentPost(id: postURI, threadItem: item, grandparentAuthor: grandparentAuthor))
+        grandparentAuthor = threadItemPost.post.author
+        
+      case .appBskyUnspeccedDefsThreadItemNotFound:
+        let uri = item.uri.uriString()
+        parents.append(ParentPost(id: uri, threadItem: item, grandparentAuthor: grandparentAuthor))
+        grandparentAuthor = nil
+        
+      case .appBskyUnspeccedDefsThreadItemBlocked:
+        let uri = item.uri.uriString()
+        parents.append(ParentPost(id: uri, threadItem: item, grandparentAuthor: grandparentAuthor))
+        grandparentAuthor = nil
+        
+      case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+        let uri = item.uri.uriString()
+        parents.append(ParentPost(id: uri, threadItem: item, grandparentAuthor: grandparentAuthor))
+        grandparentAuthor = nil
+        
+      case .unexpected:
+        let unexpectedID = "unexpected-\(item.depth)-\(UUID().uuidString.prefix(8))"
+        controllerLogger.debug("collectParentPostsV2: Found unexpected post type at depth \(item.depth): \(unexpectedID)")
+        parents.append(ParentPost(id: unexpectedID, threadItem: item, grandparentAuthor: grandparentAuthor))
+        grandparentAuthor = nil
+      }
+    }
+    
+    return parents
+  }
+
+  private func collectParentPosts(from initialPost: AppBskyFeedDefs.ThreadViewPostParentUnion?) async
     -> [ParentPost] {
     var parents: [ParentPost] = []
     var currentPost = initialPost
@@ -1842,46 +1895,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     while let post = currentPost {
       depth += 1
-      switch post {
-      case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-        let postURI = threadViewPost.post.uri.uriString()
-        parents.append(ParentPost(id: postURI, post: post, grandparentAuthor: grandparentAuthor))
-        grandparentAuthor = threadViewPost.post.author
-        currentPost = threadViewPost.parent
-
-      case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-        let uri = notFoundPost.uri.uriString()
-        parents.append(ParentPost(id: uri, post: post, grandparentAuthor: grandparentAuthor))
-        currentPost = nil
-
-      case .appBskyFeedDefsBlockedPost(let blockedPost):
-        let uri = blockedPost.uri.uriString()
-        parents.append(ParentPost(id: uri, post: post, grandparentAuthor: grandparentAuthor))
-        currentPost = nil
-
-      case .pending(let pendingData):
-        // Generate a more consistent ID for pending posts based on the type
-        let pendingID = "pending-\(pendingData.type)-\(depth)"
-
-        parents.append(ParentPost(id: pendingID, post: post, grandparentAuthor: grandparentAuthor))
-
-        // Important: Don't terminate the chain, try to access parent if possible
-        if let threadViewPost = try? post.getThreadViewPost() {
-          currentPost = threadViewPost.parent
-          controllerLogger.debug("collectParentPosts: Accessed parent through pending post")
-        } else {
-          currentPost = nil
-          controllerLogger.debug("collectParentPosts: Could not access parent through pending post")
-        }
-
-      case .unexpected:
-        let unexpectedID = "unexpected-\(depth)-\(UUID().uuidString.prefix(8))"
-        controllerLogger.debug(
-          "collectParentPosts: Found unexpected post type at depth \(depth): \(unexpectedID)")
-        parents.append(
-          ParentPost(id: unexpectedID, post: post, grandparentAuthor: grandparentAuthor))
-        currentPost = nil
-      }
+      // This method should never be called with v2 API - it's kept for backwards compatibility only
+      controllerLogger.error("collectParentPosts: Old API method called - this should not happen with v2 API")
+      currentPost = nil
     }
 
     if !parents.isEmpty {
@@ -1891,56 +1907,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return parents
   }
 
-  private func selectRelevantReplies(
-    _ replies: [AppBskyFeedDefs.ThreadViewPostRepliesUnion], opAuthorID: String
-  ) -> [ReplyWrapper] {
-    // First, convert replies to ReplyWrapper and extract relevant information
-    let wrappedReplies = replies.map { reply -> ReplyWrapper in
-      let id = getReplyID(reply)
-      let isFromOP =
-        if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-          post.post.author.did.didString() == opAuthorID
-        } else {
-          false
-        }
-      let hasReplies =
-        if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-          !(post.replies?.isEmpty ?? true)
-        } else {
-          false
-        }
-      return ReplyWrapper(id: id, reply: reply, depth: 0, isFromOP: isFromOP, hasReplies: hasReplies)
-    }
-
-    // Sort replies to prioritize:
-    // 1. Replies from the original poster
-    // 2. Replies that have their own replies (indicating discussion)
-    // 3. Most recent replies
-    return wrappedReplies.sorted { first, second in
-      if first.isFromOP != second.isFromOP {
-        return first.isFromOP
-      }
-      if first.hasReplies != second.hasReplies {
-        return first.hasReplies
-      }
-      return first.id > second.id  // Assuming IDs are chronological
-    }
-  }
-
-  private func getReplyID(_ reply: AppBskyFeedDefs.ThreadViewPostRepliesUnion) -> String {
-    switch reply {
-    case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-      return threadViewPost.post.uri.uriString()
-    case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-      return notFoundPost.uri.uriString()
-    case .appBskyFeedDefsBlockedPost(let blockedPost):
-      return blockedPost.uri.uriString()
-    case .unexpected:
-      return UUID().uuidString
-    case .pending:
-      return UUID().uuidString
-    }
-  }
   
   // MARK: - State Invalidation Handling
   
@@ -1983,25 +1949,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   /// Helper function to check if a reply wrapper contains a post with given URI
   private func checkReplyWrapper(_ wrapper: ReplyWrapper, containsPostWithURI uri: String) -> Bool {
-    switch wrapper.reply {
-    case .appBskyFeedDefsThreadViewPost(let post):
-      // Check if this post matches
-      if post.post.uri.uriString() == uri {
-        return true
-      }
-      // Check nested replies
-      if let replies = post.replies {
-        for reply in replies {
-          if case .appBskyFeedDefsThreadViewPost(let nestedPost) = reply,
-             nestedPost.post.uri.uriString() == uri {
-            return true
-          }
-        }
-      }
-      return false
-    default:
-      return false
-    }
+    // With v2 flat structure, just check the direct URI
+    return wrapper.threadItem.uri.uriString() == uri
   }
   
   /// Check if a post URI is a reply to any post in this thread
@@ -2012,7 +1961,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     // Check parent posts (ancestors)
-    if parentPosts.contains(where: { $0.post.uri.uriString() == parentUri }) {
+    if parentPosts.contains(where: { $0.threadItem.uri.uriString() == parentUri }) {
       return true
     }
     
@@ -2068,6 +2017,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         if updateReplyWrapper(&wrapper, withNewReply: reply, toParent: parentUri) {
           // Update the specific reply wrapper
           replyWrappers[index] = wrapper
+          
           applySnapshotOptimistically()
           break
         }
@@ -2117,100 +2067,38 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   // Helper to create a reply wrapper from a PostView
   private func createReplyWrapper(from post: AppBskyFeedDefs.PostView) -> ReplyWrapper {
-    // Create a ThreadViewPost from the PostView
-    let threadViewPost = AppBskyFeedDefs.ThreadViewPost(
+    // Create a ThreadItem for the optimistic reply with v2 structure
+    let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
       post: post,
-      parent: nil,
-      replies: nil,
-      threadContext: nil
+      moreParents: false,
+      moreReplies: 0,
+      opThread: false,
+      hiddenByThreadgate: false,
+      mutedByViewer: false
+    )
+    
+    let threadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+      uri: post.uri,
+      depth: 1, // Direct reply depth
+      value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
     )
     
     let isFromOP = post.author.did.didString() == mainPost?.author.did.didString()
     
     return ReplyWrapper(
       id: post.uri.uriString(),
-      reply: .appBskyFeedDefsThreadViewPost(threadViewPost),
-      depth: 0,
+      threadItem: threadItem,
+      depth: 1,
       isFromOP: isFromOP,
+      isOpThread: false,  // Optimistic replies are not part of OP thread
       hasReplies: false
     )
   }
   
-  // Helper to update nested replies
+  // Helper to update nested replies - simplified for v2 flat structure
   private func updateReplyWrapper(_ wrapper: inout ReplyWrapper, withNewReply reply: AppBskyFeedDefs.PostView, toParent parentUri: String) -> Bool {
-    switch wrapper.reply {
-    case .appBskyFeedDefsThreadViewPost(var threadPost):
-      // Check if this is the parent
-      if threadPost.post.uri.uriString() == parentUri {
-        // Add the new reply to this post's replies
-        var replies = threadPost.replies ?? []
-        let newReplyThread = AppBskyFeedDefs.ThreadViewPost(
-          post: reply,
-          parent: nil,
-          replies: nil,
-          threadContext: nil
-        )
-        replies.append(.appBskyFeedDefsThreadViewPost(newReplyThread))
-        
-        // Create a new ThreadViewPost with updated replies
-        let updatedThreadPost = AppBskyFeedDefs.ThreadViewPost(
-          post: threadPost.post,
-          parent: threadPost.parent,
-          replies: replies,
-          threadContext: threadPost.threadContext
-        )
-        
-        // Create a new wrapper with updated values
-        wrapper = ReplyWrapper(
-          id: wrapper.id,
-          reply: .appBskyFeedDefsThreadViewPost(updatedThreadPost),
-          depth: wrapper.depth,
-          isFromOP: wrapper.isFromOP,
-          hasReplies: true
-        )
-        return true
-      }
-      
-      // Check nested replies recursively
-      if var replies = threadPost.replies {
-        for i in 0..<replies.count {
-          if case .appBskyFeedDefsThreadViewPost(let nestedPost) = replies[i] {
-            var nestedWrapper = ReplyWrapper(
-              id: nestedPost.post.uri.uriString(),
-              reply: replies[i],
-              depth: wrapper.depth + 1,
-              isFromOP: nestedPost.post.author.did.didString() == mainPost?.author.did.didString(),
-              hasReplies: !(nestedPost.replies?.isEmpty ?? true)
-            )
-            
-            if updateReplyWrapper(&nestedWrapper, withNewReply: reply, toParent: parentUri) {
-              replies[i] = nestedWrapper.reply
-              
-              // Create a new ThreadViewPost with updated replies
-              let updatedThreadPost = AppBskyFeedDefs.ThreadViewPost(
-                post: threadPost.post,
-                parent: threadPost.parent,
-                replies: replies,
-                threadContext: threadPost.threadContext
-              )
-              
-              wrapper = ReplyWrapper(
-                id: wrapper.id,
-                reply: .appBskyFeedDefsThreadViewPost(updatedThreadPost),
-                depth: wrapper.depth,
-                isFromOP: wrapper.isFromOP,
-                hasReplies: wrapper.hasReplies
-              )
-              return true
-            }
-          }
-        }
-      }
-      
-    default:
-      break
-    }
-    
+    // In v2 flat structure, we don't have nested reply structures to update
+    // This would need to be handled differently, potentially by reloading the thread
     return false
   }
   
@@ -2245,20 +2133,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
 // MARK: - ParentPost Extensions
 extension ParentPost {
-  /// Safely extracts URI from parent post union
+  /// Safely extracts URI from parent post thread item
   var uri: ATProtocolURI? {
-    switch post {
-    case .appBskyFeedDefsThreadViewPost(let threadPost):
-      return threadPost.post.uri
-    case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-      return notFoundPost.uri
-    case .appBskyFeedDefsBlockedPost(let blockedPost):
-      return blockedPost.uri
-    case .pending:
-      return nil // Pending posts don't have stable URIs
-    case .unexpected:
-      return nil // Unexpected posts don't have accessible URIs
-    }
+    return threadItem.uri
   }
 }
 
@@ -2489,7 +2366,10 @@ final class ReplyCell: UICollectionViewCell {
   }
 
   func configure(
-    replyWrapper: ReplyWrapper, opAuthorID: String, appState: AppState,
+    replyWrapper: ReplyWrapper, 
+    nestedReplies: [ReplyWrapper],
+    opAuthorID: String, 
+    appState: AppState,
     path: Binding<NavigationPath>
   ) {
     // Set themed background color
@@ -2503,6 +2383,7 @@ final class ReplyCell: UICollectionViewCell {
           ReplyView(
             replyWrapper: replyWrapper,
             opAuthorID: opAuthorID,
+            nestedReplies: nestedReplies,
             path: path,
             appState: appState
           )
@@ -2682,10 +2563,10 @@ struct ParentPostView: View {
   var appState: AppState
 
   var body: some View {
-    switch parentPost.post {
-    case .appBskyFeedDefsThreadViewPost(let post):
+    switch parentPost.threadItem.value {
+    case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
       PostView(
-        post: post.post,
+        post: threadItemPost.post,
         grandparentAuthor: nil,
         isParentPost: true,
         isSelectable: false,
@@ -2694,19 +2575,24 @@ struct ParentPostView: View {
       )
       .contentShape(Rectangle())
       .onTapGesture {
-        path.append(NavigationDestination.post(post.post.uri))
+        path.append(NavigationDestination.post(threadItemPost.post.uri))
       }
 
-    case .appBskyFeedDefsNotFoundPost(let notFoundPost):
+    case .appBskyUnspeccedDefsThreadItemNotFound:
       PostNotFoundView(
-        uri: notFoundPost.uri,
+        uri: parentPost.threadItem.uri,
         reason: .notFound,
         path: $path
       )
       .environment(appState)
 
-    case .appBskyFeedDefsBlockedPost(let blockedPost):
-      BlockedPostView(blockedPost: blockedPost, path: $path)
+    case .appBskyUnspeccedDefsThreadItemBlocked:
+      Text("Blocked post")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.gray)
+
+    case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+      Text("Post not available (authentication required)")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.gray)
 
@@ -2714,9 +2600,6 @@ struct ParentPostView: View {
       Text("Unexpected parent post type: \(unexpected.textRepresentation)")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.orange)
-
-    case .pending:
-      EmptyView()
     }
   }
 }
@@ -2724,132 +2607,143 @@ struct ParentPostView: View {
 struct ReplyView: View {
   let replyWrapper: ReplyWrapper
   let opAuthorID: String
+  let nestedReplies: [ReplyWrapper]  // Nested replies for this post
+  let maxDepth: Int = 3
   @Binding var path: NavigationPath
   var appState: AppState
 
   var body: some View {
-    switch replyWrapper.reply {
-    case .appBskyFeedDefsThreadViewPost(let replyPost):
-      recursiveReplyView(
-        reply: replyPost,
-        opAuthorID: opAuthorID,
-        depth: 0,
-        maxDepth: 3
-      )
-      .padding(.vertical, 3)
-      .frame(maxWidth: 550, alignment: .leading)
+    switch replyWrapper.threadItem.value {
+    case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+      VStack(alignment: .leading, spacing: 0) {
+        // Show the top-level reply (depth 1)
+        let showLine = !nestedReplies.isEmpty
+        
+        PostView(
+          post: threadItemPost.post,
+          grandparentAuthor: nil,
+          isParentPost: showLine,  // Show connecting line if there are nested replies
+          isSelectable: false,
+          path: $path,
+          appState: appState
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+          path.append(NavigationDestination.post(threadItemPost.post.uri))
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: 550, alignment: .leading)
+        
+        // Show nested replies (depth 2+) in a chain
+        if !nestedReplies.isEmpty {
+          // Only the slice we'll actually consider rendering
+          let visible = Array(nestedReplies.prefix(maxDepth - 1))
+          
+          // Find the last element in `visible` that is actually renderable as a Post
+          let lastRenderableIndex: Int? = visible.lastIndex(where: {
+            if case .appBskyUnspeccedDefsThreadItemPost = $0.threadItem.value { return true }
+            return false
+          })
+          
+          ForEach(Array(visible.enumerated()), id: \.element.id) { idx, nestedWrapper in
+            switch nestedWrapper.threadItem.value {
+              
+            case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
+              // "Renderable last" = last visible Post cell in the chain (ignoring placeholders)
+              let isLastRenderable = (idx == lastRenderableIndex)
+              // Draw the connecting line unless this is the last rendered post and it has no more replies
+              let showNestedLine = !(isLastRenderable && !nestedWrapper.hasReplies)
+              
+              PostView(
+                post: nestedPost.post,
+                grandparentAuthor: nil,
+                isParentPost: showNestedLine,
+                isSelectable: false,
+                path: $path,
+                appState: appState
+              )
+              .contentShape(Rectangle())
+              .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
+              .padding(.vertical, 3)
+              .frame(maxWidth: 550, alignment: .leading)
+              
+                let shouldShowContinue = isLastRenderable && nestedPost.post.replyCount ?? 0 > 0
+              
+              if shouldShowContinue {
+                Button(action: {
+                  // Jump into the last rendered post; the server will expand from here
+                  path.append(NavigationDestination.post(nestedPost.post.uri))
+                }) {
+                  HStack {
+                    Text("Continue thread").appFont(AppTextRole.subheadline)
+                    Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
+                  }
+                  .foregroundColor(.accentColor)
+                  .padding(.vertical, 8)
+                  .padding(.horizontal, 12)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .contentShape(Rectangle())
+                }
+              }
+              
+            case .appBskyUnspeccedDefsThreadItemNotFound:
+              PostNotFoundView(
+                uri: nestedWrapper.threadItem.uri,
+                reason: .notFound,
+                path: $path
+              )
+              .environment(appState)
+              
+              // Offer a way to jump into the missing leg of the chain
+              Button(action: { path.append(NavigationDestination.post(nestedWrapper.uri)) }) {
+                HStack {
+                  Text("Continue thread").appFont(AppTextRole.subheadline)
+                  Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
+                }
+                .foregroundColor(.accentColor)
+                .padding(.vertical, 6)
+              }
+              
+            case .appBskyUnspeccedDefsThreadItemBlocked:
+              Text("Blocked reply")
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.gray)
+              
+            case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+              Text("Reply not available (authentication required)")
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.gray)
+              
+            case .unexpected(let unexpected):
+              Text("Unexpected reply type: \(unexpected.textRepresentation)")
+                .foregroundColor(.orange)
+            }
+          }
+        }
+      }
 
-    case .appBskyFeedDefsNotFoundPost(let notFoundPost):
+    case .appBskyUnspeccedDefsThreadItemNotFound:
       PostNotFoundView(
-        uri: notFoundPost.uri,
+        uri: replyWrapper.threadItem.uri,
         reason: .notFound,
         path: $path
       )
       .environment(appState)
 
-    case .appBskyFeedDefsBlockedPost(let blocked):
-      BlockedPostView(blockedPost: blocked, path: $path)
+    case .appBskyUnspeccedDefsThreadItemBlocked:
+      Text("Blocked reply")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.gray)
+
+    case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+      Text("Reply not available (authentication required)")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.gray)
 
     case .unexpected(let unexpected):
       Text("Unexpected reply type: \(unexpected.textRepresentation)")
         .foregroundColor(.orange)
-
-    case .pending:
-      EmptyView()
     }
-  }
-
-  @ViewBuilder
-  private func recursiveReplyView(
-    reply: AppBskyFeedDefs.ThreadViewPost,
-    opAuthorID: String,
-    depth: Int,
-    maxDepth: Int
-  ) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // Display the current reply
-      // Only show connecting line if it has replies AND we haven't reached max depth
-      let showConnectingLine = reply.replies?.isEmpty == false && depth < maxDepth
-
-      PostView(
-        post: reply.post,
-        grandparentAuthor: nil,
-        isParentPost: showConnectingLine,
-        isSelectable: false,
-        path: $path,
-        appState: appState
-      )
-      .contentShape(Rectangle())
-      .onTapGesture {
-        path.append(NavigationDestination.post(reply.post.uri))
-      }
-      .padding(.vertical, 3)
-
-      // If we're at max depth but there are more replies, show "Continue thread" button
-      if depth == maxDepth && reply.replies?.isEmpty == false {
-        Button(action: {
-          path.append(NavigationDestination.post(reply.post.uri))
-        }) {
-          HStack {
-            Text("Continue thread")
-              .appFont(AppTextRole.subheadline)
-              .foregroundColor(.accentColor)
-            Image(systemName: "chevron.right")
-              .appFont(AppTextRole.subheadline)
-              .foregroundColor(.accentColor)
-          }
-          .padding(.vertical, 8)
-          .padding(.horizontal, 12)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .contentShape(Rectangle())
-        }
-      }
-      // If we haven't reached max depth and there are replies, show the next post
-      else if depth < maxDepth, let replies = reply.replies, !replies.isEmpty {
-        let topReply = selectMostRelevantReply(replies, opAuthorID: opAuthorID)
-
-        if case .appBskyFeedDefsThreadViewPost(let nestedPost) = topReply {
-          AnyView(
-            recursiveReplyView(
-              reply: nestedPost,
-              opAuthorID: opAuthorID,
-              depth: depth + 1,
-              maxDepth: maxDepth
-            )
-          )
-        }
-      }
-    }
-  }
-
-  // Helper function to select the most relevant nested reply to show
-  private func selectMostRelevantReply(
-    _ replies: [AppBskyFeedDefs.ThreadViewPostRepliesUnion], opAuthorID: String
-  ) -> AppBskyFeedDefs.ThreadViewPostRepliesUnion {
-    // Priority: 1) From OP, 2) Has replies itself, 3) Most recent
-
-    // Check for replies from OP
-    if let opReply = replies.first(where: { reply in
-      if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-        return post.post.author.did.didString() == opAuthorID
-      }
-      return false
-    }) {
-      return opReply
-    }
-
-    // Check for replies that have their own replies
-    if let threadReply = replies.first(where: { reply in
-      if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-        return !(post.replies?.isEmpty ?? true)
-      }
-      return false
-    }) {
-      return threadReply
-    }
-
-    // Default to first reply
-    return replies.first!
   }
 }
 
@@ -2869,110 +2763,22 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   }
 }
 
-
-extension AppBskyFeedDefs.ThreadViewPostParentUnion {
-  func getThreadViewPost() throws -> AppBskyFeedDefs.ThreadViewPost? {
-    switch self {
-    case .appBskyFeedDefsThreadViewPost(let post):
-      return post
-    case .pending(let data):
-      // Try to decode the pending data to get a ThreadViewPost
-      if data.type == "app.bsky.feed.defs#threadViewPost" {
-        do {
-          let threadViewPost = try JSONDecoder().decode(
-            AppBskyFeedDefs.ThreadViewPost.self, from: data.rawData)
-          return threadViewPost
-        } catch {
-          return nil
-        }
-      }
-      return nil
-    default:
-      return nil
-    }
-  }
-  
-  var uri: ATProtocolURI {
-    switch self {
-    case .appBskyFeedDefsThreadViewPost(let post):
-      return post.post.uri
-    case .appBskyFeedDefsNotFoundPost(let notFound):
-      return notFound.uri
-    case .appBskyFeedDefsBlockedPost(let blocked):
-      return blocked.uri
-    default:
-      // Return a placeholder URI for other cases
-      return try! ATProtocolURI(uriString: "at://unknown/unknown/unknown")
-    }
-  }
-}
-
-// Add helper methods to ThreadViewPostUnion to improve parent checking
-extension AppBskyFeedGetPostThread.OutputThreadUnion {
-  func getParent() -> AppBskyFeedDefs.ThreadViewPostParentUnion? {
-    switch self {
-    case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-      return threadViewPost.parent
-    default:
-      return nil
-    }
-  }
-
-  func hasParentPosts() -> Bool {
-    if let parent = getParent() {
-      switch parent {
-      case .appBskyFeedDefsThreadViewPost:
-        return true
-      case .pending:
-        return true
-      default:
-        return false
-      }
-    }
-    return false
-  }
-}
-
-extension AppBskyFeedDefs.ThreadViewPost {
-  func hasParentPosts() -> Bool {
-    if let parent = self.parent {
-      switch parent {
-      case .appBskyFeedDefsThreadViewPost:
-        return true
-      case .pending:
-        return true
-      default:
-        return false
-      }
-    }
-    return false
-  }
-}
-
 // MARK: - ReplyWrapper Extensions
 extension ReplyWrapper {
-  /// Computed property to access the post from the reply union
+  /// Computed property to access the post from the thread item
   /// Returns nil for non-accessible post types (not found, blocked, etc.)
   var post: AppBskyFeedDefs.PostView? {
-    switch reply {
-    case .appBskyFeedDefsThreadViewPost(let threadPost):
-      return threadPost.post
-    case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected, .pending:
+    switch threadItem.value {
+    case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+      return threadItemPost.post
+    case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemBlocked,
+         .appBskyUnspeccedDefsThreadItemNoUnauthenticated, .unexpected:
       return nil
     }
   }
 
-  /// URI accessor that works for all reply types
+  /// URI accessor that works for all thread item types
   var uri: ATProtocolURI {
-    switch reply {
-    case .appBskyFeedDefsThreadViewPost(let threadPost):
-      return threadPost.post.uri
-    case .appBskyFeedDefsNotFoundPost(let notFound):
-      return notFound.uri
-    case .appBskyFeedDefsBlockedPost(let blocked):
-      return blocked.uri
-    case .unexpected, .pending:
-      return try! ATProtocolURI(uriString: "at://unknown/unknown/unknown")
-    }
+    return threadItem.uri
   }
 }

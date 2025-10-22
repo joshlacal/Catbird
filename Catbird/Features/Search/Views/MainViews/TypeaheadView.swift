@@ -109,13 +109,13 @@ struct TypeaheadView: View {
                     }
                     .mainContentFrame()
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
                 }
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
             }
         }
         .listStyle(.plain)
+        .padding(0)
     }
     
 }

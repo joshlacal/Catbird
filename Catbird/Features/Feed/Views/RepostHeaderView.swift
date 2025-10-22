@@ -22,7 +22,7 @@ struct RepostHeaderView: View {
                                 .appFont(AppTextRole.body)
                 .textScale(.secondary)
                 .foregroundColor(.secondary)
-                .lineLimit(2)
+                .lineLimit(1)
                 .truncationMode(.tail)
                 .allowsTightening(true)
                 .offset(y: -2)

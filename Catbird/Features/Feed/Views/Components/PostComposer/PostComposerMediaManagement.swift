@@ -18,35 +18,36 @@ extension PostComposerViewModel {
     
     @MainActor
     func addMediaItems(_ items: [PhotosPickerItem]) async {
-        logger.debug("DEBUG: addMediaItems called with \(items.count) items")
+        logger.info("PostComposerMedia: addMediaItems called with \(items.count) items")
         
         // Clear selected GIF when adding other media
         if selectedGif != nil {
+            logger.debug("PostComposerMedia: Clearing existing GIF selection")
             selectedGif = nil
         }
         
         // Check each item for GIFs before processing as regular images
         for (index, item) in items.enumerated() {
-            logger.debug("DEBUG: Checking item \(index) for GIF content")
+            logger.debug("PostComposerMedia: Checking item \(index + 1)/\(items.count) for GIF content")
             
             if let data = try? await item.loadTransferable(type: Data.self) {
-                logger.debug("DEBUG: Loaded data for item \(index), size: \(data.count) bytes")
+                logger.debug("PostComposerMedia: Loaded data for item \(index + 1) - size: \(data.count) bytes")
                 
                 if isDataAnimatedGIF(data) {
-                    logger.debug("DEBUG: Item \(index) is an animated GIF! Converting to video")
+                    logger.info("PostComposerMedia: Item \(index + 1) is an animated GIF - converting to video")
                     // Clear other media when adding GIF
                     mediaItems.removeAll()
                     await processGIFAsVideoFromData(data)
                     syncMediaStateToCurrentThread()
                     return
                 } else {
-                    logger.debug("DEBUG: Item \(index) is not an animated GIF")
+                    logger.trace("PostComposerMedia: Item \(index + 1) is not an animated GIF")
                 }
             }
         }
         
         // If no GIFs found, process as regular images
-        logger.debug("DEBUG: No animated GIFs found, processing as regular images")
+        logger.info("PostComposerMedia: No animated GIFs found, processing \(items.count) items as regular images")
         
         // Clear video when adding images
         videoItem = nil
@@ -66,6 +67,9 @@ extension PostComposerViewModel {
         
         // Sync media state to current thread
         syncMediaStateToCurrentThread()
+        
+        // Save draft after adding media
+        saveDraftIfNeeded()
     }
     
     // MARK: - Media State Synchronization
@@ -80,14 +84,18 @@ extension PostComposerViewModel {
 
     @MainActor
     private func loadImageForItem(at index: Int) async {
-        guard index < mediaItems.count else { return }
+        guard index < mediaItems.count else { 
+            logger.warning("PostComposerMedia: loadImageForItem - index \(index) out of bounds")
+            return 
+        }
 
         // Skip loading if this is pasted content (already has image data)
         guard let pickerItem = mediaItems[index].pickerItem else {
-            logger.debug("DEBUG: Skipping load for pasted content item")
+            logger.debug("PostComposerMedia: Skipping load for pasted content item at index \(index)")
             return
         }
 
+        logger.debug("PostComposerMedia: Loading image for item at index \(index)")
         do {
             let (data, platformImage) = try await loadImageData(from: pickerItem)
 
@@ -101,23 +109,25 @@ extension PostComposerViewModel {
                 mediaItems[index].aspectRatio = CGSize(
                     width: platformImage.imageSize.width, height: platformImage.imageSize.height)
                 mediaItems[index].rawData = data
+                logger.info("PostComposerMedia: Image loaded successfully at index \(index) - size: \(platformImage.imageSize.width)x\(platformImage.imageSize.height)")
             }
         } catch let error as NSError {
-            logger.debug("Error loading image: \(error)")
+            logger.error("PostComposerMedia: Error loading image at index \(index) - code: \(error.code), error: \(error.localizedDescription)")
             
             // Check if this is our special animated GIF error
             if error.code == 100, let gifData = error.userInfo["gifData"] as? Data {
-                logger.debug("DEBUG: Caught animated GIF error, converting to video")
+                logger.info("PostComposerMedia: Caught animated GIF error at index \(index), converting to video")
                 // Remove this item from mediaItems
                 mediaItems.remove(at: index)
                 // Process as GIF video
                 await processGIFAsVideoFromData(gifData)
             } else {
                 // Remove failed item
+                logger.warning("PostComposerMedia: Removing failed item at index \(index)")
                 mediaItems.remove(at: index)
             }
         } catch {
-            logger.debug("Error loading image: \(error)")
+            logger.error("PostComposerMedia: Unexpected error loading image at index \(index) - error: \(error.localizedDescription)")
             // Remove failed item
             mediaItems.remove(at: index)
         }
@@ -155,6 +165,7 @@ extension PostComposerViewModel {
     func removeMediaItem(at index: Int) {
         guard index < mediaItems.count else { return }
         mediaItems.remove(at: index)
+        saveDraftIfNeeded()
     }
 
     func removeMediaItem(withId id: UUID) {
@@ -166,6 +177,9 @@ extension PostComposerViewModel {
         
         // Sync media state to current thread
         syncMediaStateToCurrentThread()
+        
+        // Save draft after removing media
+        saveDraftIfNeeded()
     }
 
     // MARK: - Reorder Media Items
@@ -174,6 +188,7 @@ extension PostComposerViewModel {
         guard let idx = mediaItems.firstIndex(where: { $0.id == id }), idx > 0 else { return }
         mediaItems.swapAt(idx, idx - 1)
         syncMediaStateToCurrentThread()
+        saveDraftIfNeeded()
     }
 
     @MainActor
@@ -181,6 +196,7 @@ extension PostComposerViewModel {
         guard let idx = mediaItems.firstIndex(where: { $0.id == id }), idx < mediaItems.count - 1 else { return }
         mediaItems.swapAt(idx, idx + 1)
         syncMediaStateToCurrentThread()
+        saveDraftIfNeeded()
     }
 
     // MARK: - Crop Image to Square
@@ -228,6 +244,7 @@ extension PostComposerViewModel {
             let truncatedText = String(text.prefix(maxAltTextLength))
             mediaItems[index].altText = truncatedText
         }
+        saveDraftIfNeeded()
     }
 
     func beginEditingAltText(for id: UUID) {

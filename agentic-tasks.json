@@ -1,0 +1,68 @@
+{
+  "version": "1.0",
+  "description": "Agentic task definitions for remaining Catbird development work",
+  "tasks": {
+    "mod-001-post-hiding": {
+      "name": "Post Hiding Implementation",
+      "prompt": "Implement post hiding feature with Bluesky preferences sync and local fallback:\n\n1. Research app.bsky.actor.defs#mutedWord API for post hiding\n2. Add Hide/Unhide option to post menu in FeedPostRow.swift\n3. Implement server sync in Moderation services with Bluesky preferences\n4. Add local-only fallback storage for offline capability\n5. Integrate with existing moderation system (ContentFilterService)\n6. Add Swift Testing tests for hide/unhide flow\n\nFiles to modify:\n- Catbird/Features/Moderation/Services/ModerationService.swift\n- Catbird/Features/Feed/Views/FeedPostRow.swift\n- Catbird/Core/State/AppState.swift\n\nSuccess criteria:\n- Post menu shows Hide/Unhide option\n- Hidden posts filtered from feeds\n- Preferences sync to Bluesky server\n- Local fallback works offline\n- Tests pass on iOS and macOS",
+      "approval": "--allow-all-tools",
+      "timeout": 14400
+    },
+    "msg-002-messages-polish": {
+      "name": "Messages Polish",
+      "prompt": "Polish the messaging experience with these improvements:\n\n1. Audit and fix ChatManager state management issues\n2. Improve scrolling performance in ConversationView (60fps target)\n3. Implement unread message markers with visual indicators\n4. Add read receipt tracking\n5. Test conversation loading edge cases (slow network, large conversations)\n6. Profile scrolling performance with Instruments\n\nFiles to modify:\n- Catbird/Features/Chat/Services/ChatManager.swift\n- Catbird/Features/Chat/Views/ConversationView.swift\n- Catbird/Features/Chat/Views/MessageBubbleView.swift\n\nTODO to address:\n- Line ~105 in ChatManager.swift: Implement async getProfiles for display names\n\nSuccess criteria:\n- No state synchronization issues\n- Smooth 60fps scrolling\n- Unread markers display correctly\n- Conversation loads reliably\n- Performance metrics acceptable",
+      "approval": "--allow-all-tools",
+      "timeout": 18000
+    },
+    "ui-003-glass-zoom": {
+      "name": "Liquid Glass Zoom Transitions",
+      "prompt": "Implement Liquid Glass zoom transitions for iOS 26:\n\n1. Create GlassZoomTransition.swift ViewModifier using .glassEffectID\n2. Implement 120-180ms zoom animations with morphing\n3. Apply to navigation transitions in AppNavigationManager\n4. Test with Reduce Motion enabled (accessibility fallback)\n5. Profile animation performance (target: 60fps)\n6. Document usage in AGENTS.md Liquid Glass section\n\nReference: AGENTS.md Liquid Glass API section for patterns\n\nFiles to create:\n- Catbird/Core/UI/Modifiers/GlassZoomTransition.swift\n\nFiles to modify:\n- Catbird/Core/Navigation/AppNavigationManager.swift\n- AGENTS.md (add zoom transition example)\n\nSuccess criteria:\n- Zoom animations 120-180ms duration\n- Works with glass morphing\n- Accessible (respects Reduce Motion)\n- 60fps performance\n- Available on iOS 26+, macOS Tahoe 26+",
+      "approval": "--allow-all-tools",
+      "timeout": 10800
+    },
+    "tool-001-mcp-servers": {
+      "name": "MCP Servers for Bluesky and ASC",
+      "prompt": "Create MCP servers for developer tooling:\n\n1. Create bluesky-mcp server (read-only XRPC)\n   - Implement: getProfile, getPost, listFeeds, searchPosts\n   - Use Petrel patterns for AT Protocol communication\n\n2. Create asc-mcp server (App Store Connect read-only)\n   - Implement: listBuilds, getTestFlight, getBuildStatus\n   - Use ASC API v2\n\n3. Add servers to .mcp.json configuration\n4. Test integration with existing MCP infrastructure\n5. Document usage patterns in AGENTS.md\n\nReference: AGENTS.md MCP section for server patterns\n\nFiles to create:\n- tools/bluesky-mcp/server.py\n- tools/bluesky-mcp/README.md\n- tools/asc-mcp/server.py\n- tools/asc-mcp/README.md\n\nFiles to modify:\n- .mcp.json (add new servers)\n- AGENTS.md (document new MCP capabilities)\n\nSuccess criteria:\n- Bluesky MCP responds to XRPC queries\n- ASC MCP fetches build/TestFlight info\n- Integrated with MCP client\n- Documentation complete with examples",
+      "approval": "--allow-all-tools",
+      "timeout": 21600
+    },
+    "todo-cleanup-batch": {
+      "name": "Code TODO Cleanup",
+      "prompt": "Fix remaining TODO comments in code:\n\n1. Chat profile fetching (ChatManager.swift ~line 105)\n   - Implement async getProfiles for conversation display names\n   - Cache results in ChatManager\n\n2. Saved searches UI (DiscoveryView.swift)\n   - Create SavedSearchesSheet SwiftUI view\n   - Integrate with existing search infrastructure\n\n3. New message search (NewMessageView.swift)\n   - Add typeahead user search\n   - Use existing search/typeahead components\n\n4. Label parsing (FeedPostViewModel.swift)\n   - Verify ContentLabelManager works correctly\n   - Replace TODO with actual implementation or remove if already working\n\nFiles to modify:\n- Catbird/Features/Chat/Services/ChatManager.swift\n- Catbird/Features/Search/Views/MainViews/DiscoveryView.swift\n- Catbird/Features/Chat/Views/NewMessageView.swift\n- Catbird/Features/Feed/Views/FeedContent/FeedPostViewModel.swift\n\nSuccess criteria:\n- All 4 TODOs resolved\n- No new TODOs added\n- Features work as expected\n- Code compiles without warnings",
+      "approval": "--allow-all-tools",
+      "timeout": 14400
+    }
+  },
+  "workflows": {
+    "high-priority": {
+      "description": "User-facing features (post hiding and messaging)",
+      "tasks": ["mod-001-post-hiding", "msg-002-messages-polish"],
+      "mode": "parallel",
+      "stop_on_failure": true
+    },
+    "polish": {
+      "description": "UI polish and developer tooling",
+      "tasks": ["ui-003-glass-zoom", "tool-001-mcp-servers"],
+      "mode": "sequential",
+      "stop_on_failure": false
+    },
+    "cleanup": {
+      "description": "Tech debt and TODO cleanup",
+      "tasks": ["todo-cleanup-batch"],
+      "mode": "sequential",
+      "stop_on_failure": false
+    },
+    "complete": {
+      "description": "Run all remaining tasks to completion",
+      "tasks": [
+        "mod-001-post-hiding",
+        "msg-002-messages-polish", 
+        "ui-003-glass-zoom",
+        "tool-001-mcp-servers",
+        "todo-cleanup-batch"
+      ],
+      "mode": "sequential",
+      "stop_on_failure": true
+    }
+  }
+}

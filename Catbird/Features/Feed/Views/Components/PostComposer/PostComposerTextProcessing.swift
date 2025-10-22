@@ -13,21 +13,24 @@ extension PostComposerViewModel {
     func updatePostContent() {
         // Use performance optimizer for debounced processing
         if let optimizer = performanceOptimizer {
+            logger.trace("PostComposerTextProcessing: Using performance optimizer for debounced processing")
             optimizer.debounceTextProcessing {
                 self.performUpdatePostContent()
             }
         } else {
+            logger.trace("PostComposerTextProcessing: No optimizer, performing immediate update")
             performUpdatePostContent()
         }
     }
     
     private func performUpdatePostContent() {
-        logger.debug("RT: updatePostContent start len=\(self.postText.count)")
+        logger.info("PostComposerTextProcessing: updatePostContent start - length: \(self.postText.count), cursor: \(self.cursorPosition)")
         suggestedLanguage = detectLanguage()
+        logger.debug("PostComposerTextProcessing: Detected language: \(self.suggestedLanguage?.lang.minimalIdentifier ?? "none")")
 
         // Parse the text content to get URLs and update mentions
         let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
-        logger.debug("RT: parser facets=\(parsedFacets.count) urls=\(urls.count)")
+        logger.info("PostComposerTextProcessing: Parser results - facets: \(parsedFacets.count), URLs: \(urls.count), manualLinkFacets: \(self.manualLinkFacets.count)")
 
         // Merge in any manually created link facets (from the UIKit editor) so that:
         // - inline links with custom display text stay visually highlighted
@@ -35,6 +38,7 @@ extension PostComposerViewModel {
         var displayFacets = parsedFacets
         if !manualLinkFacets.isEmpty {
             displayFacets.append(contentsOf: manualLinkFacets)
+            logger.debug("PostComposerTextProcessing: Merged manual link facets - total display facets: \(displayFacets.count)")
         }
 
         // Update attributed text with highlighting using existing RichText implementation
@@ -50,7 +54,7 @@ extension PostComposerViewModel {
     
     func updateFromAttributedText(_ nsAttributedText: NSAttributedString, cursorPosition: Int = 0) {
         let counts = summarizeNS(nsAttributedText)
-        logger.debug("RT: updateFromAttributedText len=\(nsAttributedText.string.count) runs=\(counts.runs) linkRuns=\(counts.linkRuns) cursor=\(cursorPosition)")
+        logger.info("PostComposerTextProcessing: updateFromAttributedText - length: \(nsAttributedText.string.count), runs: \(counts.runs), linkRuns: \(counts.linkRuns), cursor: \(cursorPosition)")
         // Extract plain text from attributed text
         let newText = nsAttributedText.string
         
@@ -59,6 +63,7 @@ extension PostComposerViewModel {
         
         // Only update if text actually changed to avoid infinite loops
         if newText != postText && !isUpdatingText {
+            logger.debug("PostComposerTextProcessing: Text changed, updating - old length: \(self.postText.count), new length: \(newText.count)")
             isUpdatingText = true
             
             postText = newText
@@ -67,12 +72,15 @@ extension PostComposerViewModel {
             // Update AttributedString for iOS 26+ compatibility
             if #available(iOS 26.0, macOS 15.0, *) {
                 attributedPostText = AttributedString(nsAttributedText)
+                logger.trace("PostComposerTextProcessing: Updated AttributedString for iOS 26+")
             }
             
             // Trigger standard post content update
             updatePostContent()
             
             isUpdatingText = false
+        } else {
+            logger.trace("PostComposerTextProcessing: Text unchanged or already updating - skipping")
         }
     }
     
@@ -255,10 +263,28 @@ extension PostComposerViewModel {
             resetTypingAttributes()
         }
 
+        // Debounced URL embed selection to prevent premature link card generation
+        // Cancel any pending URL selection task
+        urlEmbedSelectionTask?.cancel()
+        
         // Set the first URL as the selected embed URL if none is set and we have URLs
+        // Use debouncing to allow user to finish typing (e.g., "google.com" not "google.co")
         if selectedEmbedURL == nil && !urls.isEmpty {
-            selectedEmbedURL = urls.first
-            logger.debug("RT: Set first URL as selected embed: \(urls.first ?? "none")")
+            let firstURL = urls.first!
+            urlEmbedSelectionTask = Task { @MainActor in
+                // Wait 750ms to allow user to finish typing
+                try? await Task.sleep(for: .milliseconds(750))
+                
+                // Check if task was cancelled or URL is no longer valid
+                guard !Task.isCancelled, 
+                      detectedURLs.contains(firstURL),
+                      selectedEmbedURL == nil else {
+                    return
+                }
+                
+                selectedEmbedURL = firstURL
+                logger.debug("RT: Set first URL as selected embed after debounce: \(firstURL)")
+            }
         }
 
         // If the selected embed URL is no longer in the detected URLs,
@@ -350,14 +376,23 @@ extension PostComposerViewModel {
     
     @MainActor
     private func updateMentionSuggestions() async {
+        // Cancel any in-flight search to avoid stale results after selection
+        mentionSearchTask?.cancel()
+        logger.trace("PostComposerTextProcessing: Cancelled previous mention search task")
+
         // Extract current mention being typed
         guard let currentMention = getCurrentTypingMention() else {
+            logger.trace("PostComposerTextProcessing: No current mention being typed")
             mentionSuggestions = []
+            mentionSearchTask = nil
             return
         }
-        
-        // Search for matching profiles
-        await searchProfiles(query: currentMention)
+
+        logger.info("PostComposerTextProcessing: Detected mention query: '\(currentMention)'")
+        // Kick off a fresh search task
+        mentionSearchTask = Task { [weak self] in
+            await self?.searchProfiles(query: currentMention)
+        }
     }
     
     private func getCurrentTypingMention() -> String? {
@@ -396,22 +431,25 @@ extension PostComposerViewModel {
     private func searchProfiles(query: String) async {
         guard !query.isEmpty,
               let client = appState.atProtoClient else {
+            logger.trace("PostComposerTextProcessing: searchProfiles - empty query or no client")
             mentionSuggestions = []
             return
         }
         
+        logger.info("PostComposerTextProcessing: Searching profiles for query: '\(query)'")
         do {
             let params = AppBskyActorSearchActors.Parameters(q: query, limit: 5)
             let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActors(input: params)
             
             if responseCode >= 200 && responseCode < 300, let response = searchResponse {
+                logger.info("PostComposerTextProcessing: Profile search successful - found \(response.actors.count) actors")
                 // Convert ProfileView to ProfileViewBasic
                 mentionSuggestions = response.actors.compactMap { profileView in
                     AppBskyActorDefs.ProfileViewBasic(
                         did: profileView.did,
                         handle: profileView.handle,
                         displayName: profileView.displayName,
-                        avatar: profileView.avatar,
+                        pronouns: profileView.pronouns, avatar: profileView.avatar,
                         associated: profileView.associated,
                         viewer: profileView.viewer,
                         labels: profileView.labels,
@@ -420,33 +458,120 @@ extension PostComposerViewModel {
                         status: profileView.status
                     )
                 }
+                logger.debug("PostComposerTextProcessing: Converted to \(self.mentionSuggestions.count) ProfileViewBasic")
             } else {
+                logger.warning("PostComposerTextProcessing: Profile search failed - response code: \(responseCode)")
                 mentionSuggestions = []
             }
         } catch {
-            logger.error("Failed to search profiles: \(error)")
+            logger.error("PostComposerTextProcessing: Failed to search profiles - error: \(error.localizedDescription)")
             mentionSuggestions = []
         }
     }
     
-    func selectMentionSuggestion(_ profile: AppBskyActorDefs.ProfileViewBasic) {
-        // Replace the current partial mention with the selected profile
-        guard let lastAtIndex = postText.lastIndex(of: "@") else { return }
+    func selectMentionSuggestion(_ profile: AppBskyActorDefs.ProfileViewBasic) -> Int {
+        #if os(iOS)
+        // If we have direct access to the UITextView, update it in-place to avoid keyboard disruption
+        if let textView = activeRichTextView {
+            return insertMentionDirectly(profile, in: textView)
+        }
+        #endif
         
-        let beforeMention = String(postText[..<lastAtIndex])
-        let afterMention = ""  // Remove any partial text after @
+        // Fallback to standard text update
+        return insertMentionViaTextUpdate(profile)
+    }
+    
+    #if os(iOS)
+    private func insertMentionDirectly(_ profile: AppBskyActorDefs.ProfileViewBasic, in textView: UITextView) -> Int {
+        // Get current selection
+        let currentRange = textView.selectedRange
+        let text = textView.text ?? ""
         
-        let newText = beforeMention + "@\(profile.handle.description) " + afterMention
-        postText = newText
+        // Find the @ symbol before cursor
+        guard let lastAtIndex = text.prefix(currentRange.location).lastIndex(of: "@") else {
+            return currentRange.location
+        }
+        
+        let atPosition = text.distance(from: text.startIndex, to: lastAtIndex)
+        let mentionText = "@\(profile.handle.description) "
+        
+        // Calculate ranges
+        let replaceRange = NSRange(location: atPosition, length: currentRange.location - atPosition)
+        let cursorPosition = atPosition + mentionText.count
         
         // Store resolved profile for facet generation
         resolvedProfiles[profile.handle.description] = profile
         
-        // Clear suggestions
+        // Clear suggestions immediately
         mentionSuggestions = []
+        
+        // Update the text view directly
+        isUpdatingText = true
+        
+        // Create attributed string for the mention
+        let mentionAttributedText = NSMutableAttributedString(string: mentionText)
+        let font = textView.font ?? UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
+        mentionAttributedText.addAttributes([
+            .font: font,
+            .foregroundColor: UIColor.label
+        ], range: NSRange(location: 0, length: mentionText.count))
+        
+        // Replace the range in the text view
+        textView.textStorage.replaceCharacters(in: replaceRange, with: mentionAttributedText)
+        
+        // Update cursor position
+        textView.selectedRange = NSRange(location: cursorPosition, length: 0)
+        
+        // Reset typing attributes to prevent inheriting any unwanted attributes
+        textView.typingAttributes = [
+            .font: font,
+            .foregroundColor: UIColor.label
+        ]
+        
+        // Sync back to view model
+        let newText = textView.text ?? ""
+        postText = newText
+        richAttributedText = textView.attributedText
+        
+        // Update content to regenerate facets (with isUpdatingText flag preventing loops)
+        updatePostContent()
+        
+        isUpdatingText = false
+        
+        return cursorPosition
+    }
+    #endif
+    
+    private func insertMentionViaTextUpdate(_ profile: AppBskyActorDefs.ProfileViewBasic) -> Int {
+        // Replace the current partial mention with the selected profile
+        guard let lastAtIndex = postText.lastIndex(of: "@") else { return postText.count }
+        
+        let beforeMention = String(postText[..<lastAtIndex])
+        let afterMention = ""  // Remove any partial text after @
+        
+        let mentionText = "@\(profile.handle.description) "
+        let newText = beforeMention + mentionText + afterMention
+        
+        // Calculate cursor position: right after the inserted mention (including the space)
+        let cursorPosition = beforeMention.count + mentionText.count
+        
+        // Store resolved profile for facet generation
+        resolvedProfiles[profile.handle.description] = profile
+        
+        // Clear suggestions immediately
+        mentionSuggestions = []
+        
+        // Update text with loop prevention flag set
+        isUpdatingText = true
+        postText = newText
         
         // Update content to regenerate facets
         updatePostContent()
+        
+        isUpdatingText = false
+        
+        // Return the cursor position so the caller can set it
+        return cursorPosition
     }
     
     // MARK: - iOS 26+ Enhanced Mention and Link Support using Petrel infrastructure

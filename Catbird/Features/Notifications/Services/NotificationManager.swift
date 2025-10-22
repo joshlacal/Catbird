@@ -181,12 +181,57 @@ final class NotificationManager: NSObject {
     let forceAttestation: Bool
   }
 
-  enum NotificationServiceError: Error {
+  enum NotificationServiceError: Error, LocalizedError {
     case appStateUnavailable
     case clientUnavailable
+    case clientNotConfigured
+    case deviceTokenNotAvailable
     case appAttestUnsupported
     case challengeUnavailable
     case invalidServerResponse
+    case serverError(String)
+    
+    var errorDescription: String? {
+      switch self {
+      case .appStateUnavailable:
+        return "App state not available"
+      case .clientUnavailable:
+        return "Network client not available"
+      case .clientNotConfigured:
+        return "Network client not configured"
+      case .deviceTokenNotAvailable:
+        return "Device token not available"
+      case .appAttestUnsupported:
+        #if targetEnvironment(simulator)
+        return "Push notifications require a physical device"
+        #else
+        return "Push notification configuration error"
+        #endif
+      case .challengeUnavailable:
+        return "Security challenge not available"
+      case .invalidServerResponse:
+        return "Invalid server response"
+      case .serverError(let message):
+        return message
+      }
+    }
+    
+    var recoverySuggestion: String? {
+      switch self {
+      case .appAttestUnsupported:
+        #if targetEnvironment(simulator)
+        return "App Attest security is not available on iOS Simulator. Please test push notifications on a physical iOS or macOS device."
+        #else
+        return "The app may be missing required security entitlements. Please try reinstalling the app or contact support if the issue persists."
+        #endif
+      case .deviceTokenNotAvailable:
+        return "Please try disabling and re-enabling notifications."
+      case .clientUnavailable, .clientNotConfigured:
+        return "Please try signing out and signing back in."
+      default:
+        return nil
+      }
+    }
   }
 
   // MARK: - Flat request payloads (match server schema)
@@ -367,18 +412,49 @@ final class NotificationManager: NSObject {
   /// Base URL for the notification service API
   private let serviceBaseURL: URL
 
-  /// Persisted key for chat notification preference
-  private let chatNotificationsDefaultsKey = "chatNotificationsEnabled"
+  /// Persisted key prefix for per-account chat notification preference
+  private let chatNotificationsDefaultsKeyPrefix = "chatNotificationsEnabled"
 
-  /// Whether chat message notifications are enabled locally
+  /// Whether chat message notifications are enabled locally (per-account)
   var chatNotificationsEnabled: Bool = true {
     didSet {
-      guard shouldPersistChatPreference, let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") else {
+      guard shouldPersistChatPreference else {
         return
       }
-
-      defaults.set(chatNotificationsEnabled, forKey: chatNotificationsDefaultsKey)
-      notificationLogger.info("Chat notification preference updated: \(self.chatNotificationsEnabled ? "enabled" : "disabled")")
+      saveChatNotificationPreference()
+    }
+  }
+  
+  /// Save chat notification preference for the current account
+  private func saveChatNotificationPreference() {
+    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+          let did = appState?.currentUserDID else {
+      return
+    }
+    
+    let key = "\(chatNotificationsDefaultsKeyPrefix)_\(did)"
+    defaults.set(chatNotificationsEnabled, forKey: key)
+    notificationLogger.info("Chat notification preference updated for \(did): \(self.chatNotificationsEnabled ? "enabled" : "disabled")")
+  }
+  
+  /// Load chat notification preference for the current account
+  private func loadChatNotificationPreference() async {
+    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+          let client = client,
+          let did = try? await client.getDid() else {
+      notificationLogger.debug("Cannot load chat notification preference - client or DID unavailable")
+      return
+    }
+    
+    let key = "\(chatNotificationsDefaultsKeyPrefix)_\(did)"
+    if defaults.object(forKey: key) != nil {
+      let enabled = defaults.bool(forKey: key)
+      notificationLogger.info("Loaded chat notification preference for \(did): \(enabled ? "enabled" : "disabled")")
+      chatNotificationsEnabled = enabled
+    } else {
+      // Default to enabled for accounts that haven't set a preference yet
+      notificationLogger.info("No chat notification preference found for \(did), defaulting to enabled")
+      chatNotificationsEnabled = true
     }
   }
 
@@ -417,11 +493,7 @@ final class NotificationManager: NSObject {
     self.serviceBaseURL = serviceBaseURL
     super.init()
 
-    if let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
-       defaults.object(forKey: chatNotificationsDefaultsKey) != nil {
-      chatNotificationsEnabled = defaults.bool(forKey: chatNotificationsDefaultsKey)
-    }
-
+    // Chat notification preference will be loaded per-account when client is set
     shouldPersistChatPreference = true
 
     // Initialize widget with a test value to ensure it's populated
@@ -462,29 +534,50 @@ final class NotificationManager: NSObject {
   // MARK: - Public API
 
   /// Update the client reference when authentication changes
-  func updateClient(_ newClient: ATProtoClient?) {
+  func updateClient(_ newClient: ATProtoClient?) async {
     let previousClient = client
     self.client = newClient
 
-      notificationLogger.info("🔄 Client updated: hasNewClient=\(newClient != nil), hasDeviceToken=\(self.deviceToken != nil)")
+    notificationLogger.info("🔄 Client updated: hasNewClient=\(newClient != nil), hasDeviceToken=\(self.deviceToken != nil)")
+
+    // Clear notification preferences when switching accounts to prevent state leakage
+    if newClient != nil && previousClient != nil {
+      notificationLogger.info("🧹 Clearing notification preferences for account switch")
+      preferences = NotificationPreferences()
+    }
+
+    // Load chat notification preference for the new account
+    if newClient != nil {
+      await loadChatNotificationPreference()
+    }
 
     // If we have a valid token and a new client, register the device
     if let client = newClient, let deviceToken = deviceToken {
       notificationLogger.info("🚀 Triggering device registration from updateClient")
-      Task {
-        await registerDeviceToken(deviceToken)
-      }
+      await registerDeviceToken(deviceToken)
     } else if newClient == nil {
       notificationLogger.info("🧹 Client cleared - cleaning up notifications")
       // Client was cleared (user logged out), clean up notifications
-      Task {
-        await cleanupNotifications(previousClient: previousClient)
-      }
+      await cleanupNotifications(previousClient: previousClient)
     } else if newClient != nil && deviceToken == nil {
-      notificationLogger.info("⚠️ Client available but no device token yet")
+      notificationLogger.info("⚠️ Client available but no device token yet - fetching preferences without registration")
+      // Even without push notifications, we should fetch notification preferences from server
+      await fetchNotificationPreferencesWithoutRegistration()
     } else {
       notificationLogger.info("ℹ️ No action needed - no client and no token")
     }
+  }
+  
+  /// Fetch notification preferences when push notifications are disabled
+  /// This ensures preferences are loaded even without device token registration
+  private func fetchNotificationPreferencesWithoutRegistration() async {
+    guard client != nil else {
+      notificationLogger.warning("Cannot fetch preferences - no client available")
+      return
+    }
+    
+    notificationLogger.info("📥 Fetching notification preferences without device registration")
+    await fetchNotificationPreferences()
   }
 
   /// Request notification permissions from the user
@@ -1273,7 +1366,7 @@ final class NotificationManager: NSObject {
         if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output {
           for list in output.lists {
             allLists.append((
-              uri: list.uri,
+                uri: list.uri.uriString(),
               purpose: list.purpose.rawValue,
               name: list.name
             ))
@@ -1289,7 +1382,7 @@ final class NotificationManager: NSObject {
         if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output {
           for list in output.lists {
             allLists.append((
-              uri: list.uri,
+                uri: list.uri.uriString(),
               purpose: list.purpose.rawValue,
               name: list.name
             ))
@@ -1437,9 +1530,35 @@ final class NotificationManager: NSObject {
       throw NotificationServiceError.appStateUnavailable
     }
 
-    guard DCAppAttestService.shared.isSupported else {
-      notificationLogger.warning("⚠️ App Attest not supported by DCAppAttestService.isSupported")
+    // Check App Attest support with retry logic for transient issues
+    if !DCAppAttestService.shared.isSupported {
+      #if targetEnvironment(simulator)
+      // On simulator, don't retry - it will never work
+      notificationLogger.warning("⚠️ App Attest not supported on simulator")
       throw NotificationServiceError.appAttestUnsupported
+      #else
+      // On physical device, retry up to 3 times in case of transient issues
+      let maxRetries = 3
+      if attempt < maxRetries {
+        let delay = pow(2.0, Double(attempt)) * 0.5 // 0.5s, 1s, 2s
+        notificationLogger.info("⏳ App Attest not supported (attempt \(attempt + 1)/\(maxRetries)), retrying in \(delay)s...")
+        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        
+        // Retry with incremented attempt counter
+        return try await prepareAppAttestPayload(
+          did: did,
+          deviceToken: deviceToken,
+          forceKeyRotation: forceKeyRotation,
+          forceAttestation: forceAttestation,
+          isNewRegistration: isNewRegistration,
+          attempt: attempt + 1
+        )
+      } else {
+        // Max retries exceeded
+        notificationLogger.warning("⚠️ App Attest not supported after \(maxRetries) attempts")
+        throw NotificationServiceError.appAttestUnsupported
+      }
+      #endif
     }
 
     notificationLogger.info("✅ App Attest is supported, proceeding with attestation")

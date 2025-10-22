@@ -49,57 +49,51 @@ struct FeedView: View {
           stateManager: stateManager,
           navigationPath: $path
         )
+        .opacity(appState.isTransitioningAccounts ? 0.0 : 1.0)
+        .animation(.easeInOut(duration: 0.3), value: appState.isTransitioningAccounts)
       } else {
         ProgressView()
-          .task {
-            // Initialize state manager once (defensive check)
-            if stateManager == nil {
-              stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
-              currentFetch = fetch
-            }
-          }
       }
     }
     // Search UI removed
     .environment(\.currentFeedType, fetch)
+    .task {
+      // Initialize state manager if needed
+      if stateManager == nil {
+        stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
+        currentFetch = fetch
+      }
+      
+      // Set model context on first appearance
+      if !isInitialized {
+        isInitialized = true
+        feedStateStore.setModelContext(modelContext)
+      }
+      
+      // Load initial data if posts are empty, but NOT during account transition
+      // Account transition will trigger loading via StateInvalidationEvent
+      if let manager = stateManager, manager.posts.isEmpty, !appState.isTransitioningAccounts {
+        logger.debug("Loading initial data for feed: \(fetch.identifier)")
+        await manager.loadInitialData()
+      }
+    }
     .task(id: fetch.identifier) {
-      // Check if this is a feed change
-      if currentFetch != fetch {
-        logger.debug("Feed type changed from \(currentFetch?.identifier ?? "nil") to \(fetch.identifier)")
+      // Handle feed type changes
+      guard currentFetch != fetch else { return }
+      
+      logger.debug("Feed type changed from \(currentFetch?.identifier ?? "nil") to \(fetch.identifier)")
 
-        // Switch to a dedicated state manager per feed to keep per-feed scroll state
-        let newManager = feedStateStore.stateManager(for: fetch, appState: appState)
-        self.stateManager = newManager
-        self.currentFetch = fetch
+      // Switch to a dedicated state manager per feed to keep per-feed scroll state
+      let newManager = feedStateStore.stateManager(for: fetch, appState: appState)
+      self.stateManager = newManager
+      self.currentFetch = fetch
 
-        // Set model context on first appearance
-        if !isInitialized {
-          isInitialized = true
-          feedStateStore.setModelContext(modelContext)
-        }
-
-        // Load data for the new feed
-        if newManager.posts.isEmpty {
-          logger.debug("Loading initial data for new feed: \(fetch.identifier)")
-          await newManager.loadInitialData()
-        } else {
-          logger.debug("New feed already has \(newManager.posts.count) posts")
-        }
-      } else if let stateManager = stateManager {
-        // Same feed - just check if we need initial data
-        // Set model context on first appearance
-        if !isInitialized {
-          isInitialized = true
-          feedStateStore.setModelContext(modelContext)
-        }
-
-        // Always attempt to load initial data if posts are empty
-        if stateManager.posts.isEmpty {
-          logger.debug("Loading initial data for empty feed: \(fetch.identifier)")
-          await stateManager.loadInitialData()
-        } else {
-          logger.debug("Skipping initial data load - feed already has \(stateManager.posts.count) posts")
-        }
+      // Load data for the new feed if empty, but NOT during account transition
+      if newManager.posts.isEmpty, !appState.isTransitioningAccounts {
+        logger.debug("Loading initial data for new feed: \(fetch.identifier)")
+        await newManager.loadInitialData()
+      } else if !appState.isTransitioningAccounts {
+        logger.debug("New feed already has \(newManager.posts.count) posts")
       }
     }
     .onChange(of: scenePhase) { oldPhase, newPhase in

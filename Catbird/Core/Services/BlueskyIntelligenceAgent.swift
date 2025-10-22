@@ -71,6 +71,22 @@ actor BlueskyIntelligenceAgent {
         return response.content
     }
 
+    /// Streams a response token-by-token for real-time display
+    func streamResponse(
+        to prompt: String,
+        temperature: Double = 0.25,
+        maxResponseTokens: Int = 512
+    ) async throws -> LanguageModelSession.ResponseStream<String> {
+        guard let client else { throw BlueskyAgentError.missingClient }
+
+        let session = try await ensureSession(using: client)
+        let options = GenerationOptions(
+            temperature: temperature,
+            maximumResponseTokens: maxResponseTokens
+        )
+        return session.streamResponse(options: options, prompt: { Prompt(prompt) })
+    }
+
     func summarizeThread(at uri: ATProtocolURI, maxSentences: Int = 3) async throws -> String {
         guard let client else { throw BlueskyAgentError.missingClient }
 
@@ -84,12 +100,49 @@ actor BlueskyIntelligenceAgent {
         """
 
         let options = GenerationOptions(
-            temperature: 1.0,
+            temperature: 0.3,
             maximumResponseTokens: 500
         )
 
-        let response = try await session.respond(to: Prompt(prompt), options: options)
-        return response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                let response = try await session.respond(to: Prompt(prompt), options: options)
+                let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                if !content.isEmpty && !content.contains("No data was returned") {
+                    return content
+                }
+                
+                logger.warning("Thread summarization attempt \(attempt) returned empty or error content")
+                lastError = BlueskyAgentError.emptyResult("thread summary (attempt \(attempt))")
+                
+                if attempt < 3 {
+                    try await Task.sleep(for: .milliseconds(500 * attempt))
+                }
+            } catch let error as BlueskyAgentError {
+                if case .emptyResult(let context) = error, context.contains("deleted or unavailable") {
+                    logger.info("Thread unavailable (400 error), not retrying")
+                    throw error
+                }
+                
+                logger.warning("Thread summarization attempt \(attempt) failed: \(error.localizedDescription)")
+                lastError = error
+                
+                if attempt < 3 {
+                    try await Task.sleep(for: .milliseconds(500 * attempt))
+                }
+            } catch {
+                logger.warning("Thread summarization attempt \(attempt) failed: \(error.localizedDescription)")
+                lastError = error
+                
+                if attempt < 3 {
+                    try await Task.sleep(for: .milliseconds(500 * attempt))
+                }
+            }
+        }
+        
+        throw lastError ?? BlueskyAgentError.emptyResult("thread summary after 3 attempts")
     }
 
     // MARK: - Session lifecycle
@@ -176,13 +229,21 @@ private enum ToolFormatter {
         prefix: String? = nil,
         maxLength: Int = 400
     ) -> String? {
-        guard case .knownType(let value) = post.record,
-              let feedPost = value as? AppBskyFeedPost else {
+        guard case .knownType(let value) = post.record else {
+            logger.debug("Post record is not a known type: \(post.record.textRepresentation)")
+            return nil
+        }
+        
+        guard let feedPost = value as? AppBskyFeedPost else {
+            logger.debug("Post record known type cannot be cast to AppBskyFeedPost. Type: \(type(of: value))")
             return nil
         }
 
         let sanitized = sanitize(feedPost.text, limit: maxLength)
-        guard !sanitized.isEmpty else { return nil }
+        guard !sanitized.isEmpty else {
+            logger.debug("Post text is empty after sanitization")
+            return nil
+        }
 
         let handle = post.author.handle.description
         let display = post.author.displayName ?? handle
@@ -263,78 +324,134 @@ private struct ThreadFetchTool: Tool {
         @Guide(description: "The at:// URI of the post to inspect.")
         let uri: String
 
-        @Guide(description: "Maximum number of messages to include", .range(4 ... 80))
+        @Guide(description: "Maximum number of reply levels to include (API maximum is 20)", .range(4 ... 20))
         let limit: Int?
     }
 
     func call(arguments: Arguments) async throws -> String {
+        context.logger.debug("fetch_thread invoked: uri=\(arguments.uri), limit=\(arguments.limit ?? 20)")
+        
         guard let uri = try? ATProtocolURI(uriString: arguments.uri) else {
+            context.logger.error("Invalid URI format: \(arguments.uri)")
             throw BlueskyAgentError.invalidThreadURI(arguments.uri)
         }
 
-        let limit = arguments.limit ?? 40
-        let params = AppBskyFeedGetPostThread.Parameters(uri: uri, depth: limit, parentHeight: limit)
-        let (code, output) = try await context.client.app.bsky.feed.getPostThread(input: params)
-        guard (200 ... 299).contains(code), let thread = output?.thread else {
-            throw BlueskyAgentError.emptyResult("thread")
+        let limit = min(arguments.limit ?? 20, 20)
+        let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
+            anchor: uri,
+            above: true,
+            below: limit
+        )
+        
+        context.logger.debug("Fetching thread for URI: \(uri.uriString()), above=true, below=\(limit)")
+        
+        let (code, output) = try await context.client.app.bsky.unspecced.getPostThreadV2(input: params)
+        
+        guard (200 ... 299).contains(code) else {
+            context.logger.error("Failed to fetch thread: code=\(code), URI=\(uri.uriString())")
+            
+            if code == 400 {
+                throw BlueskyAgentError.emptyResult("thread (post may be deleted or unavailable)")
+            }
+            
+            throw BlueskyAgentError.emptyResult("thread fetch (status \(code))")
+        }
+        
+        guard let threadData = output else {
+            context.logger.error("Thread fetch returned nil output despite success code")
+            throw BlueskyAgentError.emptyResult("thread (no data in response)")
+        }
+        
+        // Check if thread array is empty
+        guard !threadData.thread.isEmpty else {
+            context.logger.error("Thread data returned empty array for URI: \(uri.uriString())")
+            throw BlueskyAgentError.emptyResult("thread (empty array)")
         }
 
-        let segments = flatten(thread: thread, limit: limit)
+        let segments = flatten(threadData: threadData, limit: limit)
         guard !segments.isEmpty else {
-            throw BlueskyAgentError.emptyResult("thread")
+            context.logger.error("Thread flattening produced no segments for URI: \(uri.uriString()), thread items: \(threadData.thread.count)")
+            throw BlueskyAgentError.emptyResult("thread (no valid posts after parsing)")
         }
 
         return segments.joined(separator: "\n")
     }
 
-    private func flatten(thread: AppBskyFeedGetPostThread.OutputThreadUnion, limit: Int) -> [String] {
+    private func flatten(threadData: AppBskyUnspeccedGetPostThreadV2.Output, limit: Int) -> [String] {
         var lines: [String] = []
         var remaining = limit
+        var skippedItems = 0
 
-        func append(post: AppBskyFeedDefs.ThreadViewPost, depth: Int, prefix: String?) {
+        func append(post: AppBskyFeedDefs.PostView, depth: Int, prefix: String?) {
             guard remaining > 0 else { return }
-            if let summary = ToolFormatter.summarize(post: post.post, depth: depth, prefix: prefix) {
+            if let summary = ToolFormatter.summarize(post: post, depth: depth, prefix: prefix) {
                 lines.append(summary)
                 remaining -= 1
+            } else {
+                skippedItems += 1
+                context.logger.debug("Skipped post at depth \(depth): no summary generated")
             }
         }
 
-        var replyRootDepth = 0
-
-        func walkReplies(_ replies: [AppBskyFeedDefs.ThreadViewPostRepliesUnion]?, depth: Int) {
-            guard remaining > 0, let replies else { return }
-            for reply in replies {
-                guard remaining > 0 else { break }
-                switch reply {
-                case .appBskyFeedDefsThreadViewPost(let child):
-                    let label = depth == replyRootDepth ? "reply" : nil
-                    append(post: child, depth: depth, prefix: label)
-                    walkReplies(child.replies, depth: depth + 1)
-                default:
-                    continue
-                }
+        // Sort thread items by depth (parents first, then main post, then replies)
+        let sortedItems = threadData.thread.sorted { $0.depth < $1.depth }
+        
+        context.logger.debug("Flattening thread: \(sortedItems.count) total items, limit=\(limit)")
+        
+        // Count different item types
+        var postCount = 0
+        var notFoundCount = 0
+        var blockedCount = 0
+        var noAuthCount = 0
+        var unexpectedCount = 0
+        
+        for item in sortedItems {
+            switch item.value {
+            case .appBskyUnspeccedDefsThreadItemPost:
+                postCount += 1
+            case .appBskyUnspeccedDefsThreadItemNotFound:
+                notFoundCount += 1
+            case .appBskyUnspeccedDefsThreadItemBlocked:
+                blockedCount += 1
+            case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+                noAuthCount += 1
+            case .unexpected:
+                unexpectedCount += 1
             }
         }
-
-        func collectParents(from parent: AppBskyFeedDefs.ThreadViewPostParentUnion?, stack: inout [AppBskyFeedDefs.ThreadViewPost]) {
-            guard let parent else { return }
-            if case .appBskyFeedDefsThreadViewPost(let view) = parent {
-                collectParents(from: view.parent, stack: &stack)
-                stack.append(view)
+        
+        context.logger.debug("Thread items breakdown: posts=\(postCount), notFound=\(notFoundCount), blocked=\(blockedCount), noAuth=\(noAuthCount), unexpected=\(unexpectedCount)")
+        
+        // Process parent posts (depth < 0)
+        let parentItems = sortedItems.filter { $0.depth < 0 }
+        for (offset, item) in parentItems.enumerated() where remaining > 0 {
+            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
+                append(post: threadItemPost.post, depth: offset, prefix: "parent")
             }
         }
-
-        guard case .appBskyFeedDefsThreadViewPost(let root) = thread else { return lines }
-
-        var parents: [AppBskyFeedDefs.ThreadViewPost] = []
-        collectParents(from: root.parent, stack: &parents)
-        for (offset, parent) in parents.enumerated() where remaining > 0 {
-            append(post: parent, depth: offset, prefix: "parent")
+        
+        // Process main post (depth = 0)
+        if let mainItem = sortedItems.first(where: { $0.depth == 0 }), remaining > 0 {
+            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = mainItem.value {
+                append(post: threadItemPost.post, depth: parentItems.count, prefix: "focus")
+            } else {
+                context.logger.error("Main post (depth=0) is not a valid post item")
+            }
+        } else {
+            context.logger.error("No main post found at depth=0")
         }
-
-        append(post: root, depth: parents.count, prefix: "focus")
-        replyRootDepth = parents.count + 1
-        walkReplies(root.replies, depth: replyRootDepth)
+        
+        // Process reply posts (depth > 0)
+        let replyItems = sortedItems.filter { $0.depth > 0 }
+        for item in replyItems where remaining > 0 {
+            if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
+                let prefix = item.depth == 1 ? "reply" : nil
+                append(post: threadItemPost.post, depth: parentItems.count + item.depth, prefix: prefix)
+            }
+        }
+        
+        context.logger.debug("Thread flattening complete: generated \(lines.count) summaries, skipped \(skippedItems) items")
+        
         return lines
     }
 }

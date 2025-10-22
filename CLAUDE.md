@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Critical Development Principles
+
+### Efficiency & Workflow
+- **NO timeline estimates**: Don't predict how long things will take
+- **NO dates in documentation**: Avoid date-based references that become stale
+- **NO unnecessary builds**: Only build when explicitly requested by user
+- **Prefer syntax checks**: Use `swift -frontend -parse` for validation instead of full builds
+- **Trust user feedback**: If user reports Xcode errors, work with that rather than building yourself
+- **Use MCP servers extensively**: Verify against Apple docs, use xcodebuild-mcp, leverage all MCP tools
+- **Work continuously**: No artificial session boundaries - keep going until task is complete
+- **Maximize parallelism**: Use parallel tool calls aggressively for independent operations
+
+### Documentation Management
+- **Session notes directory**: Place temporary fix documentation in `docs/session-notes/` (gitignored)
+- **Keep root clean**: No ad-hoc fix documentation files cluttering the main directory
+- **Permanent docs only**: Only commit documentation with lasting value to repository root
+
+### Context Management
+- **No context anxiety**: You can do more than you think in a session
+- **Rolling context**: Application maintains context automatically - don't artificially limit yourself
+- **Work depth over breadth**: Complete tasks fully rather than stopping prematurely
+
+### Communication Style
+- **Minimal explanations**: Execute efficiently without verbose preambles
+- **Skip confirmations**: Don't repeatedly ask for permission on straightforward tasks
+- **Direct action**: Prefer doing over discussing for simple operations
+
 ## Project Overview
 
 Catbird is a **PRODUCTION-READY** cross-platform client for Bluesky built with SwiftUI and modern Swift 6 patterns, supporting both iOS and macOS. This is a release-ready application where all code must be production-quality with no placeholders, fallbacks, or temporary implementations. It uses the Petrel library for AT Protocol communication.
@@ -24,34 +51,346 @@ Apple introduced a major change to OS naming at WWDC 2025, moving from sequentia
 - This naming convention applies to all Apple platforms: iOS 26, iPadOS 26, macOS Tahoe 26, watchOS 26, tvOS 26, visionOS 26
 - Provides consistency across all Apple operating systems and aligns with industry conventions (like automotive model years)
 
+## MCP Server Integration
+
+This project leverages Model Context Protocol (MCP) servers for intelligent automation and enhanced development workflows. **ALWAYS prefer MCP server commands over manual CLI operations** for consistency and automation.
+
+### Available MCP Servers
+
+#### 1. **sequential-thinking** - Master Planning and Analysis Tool
+Your **primary cognitive command center** for complex problem-solving.
+
+**ALWAYS use sequential-thinking FIRST for:**
+- Feature planning (5-10 thoughts minimum)
+- Bug root cause analysis (10-15 thoughts)
+- Architecture decisions (8-12 thoughts)
+- Performance optimization (12-20 thoughts)
+- Refactoring strategies (8-15 thoughts)
+- Test strategy development (5-8 thoughts)
+
+**Key capabilities:**
+- Dynamic thought adjustment (can increase totalThoughts mid-stream)
+- Thought revision (mark thoughts as revisions to course-correct)
+- Branching (explore multiple solution paths)
+- Hypothesis generation and verification
+
+**Example usage:**
+```python
+# Start with initial estimate
+sequential_thinking:sequentialthinking(
+    thought="Planning Timeline Refresh feature implementation",
+    totalThoughts=8,
+    nextThoughtNeeded=True,
+    thoughtNumber=1
+)
+
+# Revise based on new findings
+sequential_thinking:sequentialthinking(
+    thought="Revising approach based on performance analysis",
+    isRevision=True,
+    revisesThought=3,
+    thoughtNumber=7,
+    totalThoughts=10  # Increased from 8
+)
+```
+
+#### 2. **xcodebuild-mcp** - Xcode Build Operations
+Comprehensive Xcode automation for builds, tests, and project management.
+
+**Common operations:**
+- `build_sim()` - Build for iOS/watchOS/tvOS/visionOS simulators
+- `build_device()` - Build for physical devices
+- `build_macos()` - Build for macOS
+- `build_run_macos()` - Build and launch macOS app
+- `test_sim()` - Run tests on simulator
+- `test_device()` - Run tests on physical device
+- `test_macos()` - Run tests on macOS
+- `clean()` - Clean build artifacts
+- `list_schemes()` - List available schemes
+- `show_build_settings()` - Display build configuration
+
+**Example workflow:**
+```python
+# Check project health
+xcodebuild_mcp:doctor()
+
+# Discover projects
+xcodebuild_mcp:discover_projs(workspaceRoot="/path/to/Catbird")
+
+# Build and test
+xcodebuild_mcp:build_sim(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird",
+    simulatorName="iPhone 16 Pro"
+)
+
+xcodebuild_mcp:test_sim(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird",
+    simulatorName="iPhone 16 Pro"
+)
+```
+
+#### 3. **ios-simulator** - Precise UI Automation
+Automated UI testing with coordinate-based interactions. **NEVER guess coordinates from screenshots** - always use `describe_ui()` first.
+
+**Critical operations:**
+- `describe_ui()` - Get complete UI hierarchy with precise coordinates
+- `tap()` - Tap at specific coordinates
+- `swipe()` - Swipe between two points
+- `type_text()` - Type text into focused field
+- `screenshot()` - Capture current screen
+- `record_sim_video()` - Record simulator video
+- `launch_app_sim()` - Launch app by bundle ID
+
+**Mandatory workflow for UI testing:**
+```python
+# Step 1: ALWAYS get UI hierarchy first
+ui_tree = ios_simulator:describe_ui(simulatorUuid="...")
+
+# Step 2: Use coordinates from ui_tree (never guess!)
+ios_simulator:tap(
+    x=ui_tree['button']['frame']['x'],
+    y=ui_tree['button']['frame']['y'],
+    simulatorUuid="..."
+)
+
+# Step 3: Verify with screenshot
+ios_simulator:screenshot(simulatorUuid="...")
+```
+
+#### 4. **github** - Repository Management
+Automated GitHub operations for issues, PRs, and workflows.
+
+**Common operations:**
+- `create_pull_request()` - Create PR with description
+- `request_copilot_review()` - Request AI code review
+- `add_issue_comment()` - Comment on issues
+- `search_issues()` - Search repository issues
+- `list_pull_requests()` - List PRs with filters
+- `get_pull_request_diff()` - Get PR changes
+
+**Example PR workflow:**
+```python
+# Create PR
+github:create_pull_request(
+    title="feat: Add Timeline Refresh",
+    body="## Description\nImplemented pull-to-refresh...\n\n## Planning\nUsed sequential-thinking with 8 thoughts",
+    base="main",
+    head="feature/timeline-refresh"
+)
+
+# Request Copilot review
+github:request_copilot_review(
+    owner="catbird",
+    repo="catbird",
+    pullNumber=123
+)
+```
+
+#### 5. **apple-doc-mcp** - Documentation Search
+Access Apple framework documentation and best practices.
+
+**Operations:**
+- `search_symbols()` - Search for APIs and symbols
+- `get_documentation()` - Get detailed documentation
+- `list_technologies()` - List available frameworks
+
+**Example usage:**
+```python
+# Research SwiftUI performance
+apple_doc_mcp:search_symbols(
+    query="SwiftUI performance optimization",
+    framework="SwiftUI"
+)
+
+# Get specific API docs
+apple_doc_mcp:get_documentation(
+    path="documentation/SwiftUI/View"
+)
+```
+
+### MCP Workflow Patterns
+
+#### Pattern 1: Feature Development
+```yaml
+step_1_planning:
+  tool: sequential-thinking
+  thoughts: 8-10
+  purpose: "Comprehensive feature planning with revision capability"
+
+step_2_research:
+  tool: apple-doc-mcp
+  action: "Research relevant APIs and best practices"
+
+step_3_implementation:
+  tools: [Read, Write, Edit]
+  guided_by: "sequential-thinking output"
+
+step_4_build_test:
+  tools:
+    - xcodebuild-mcp:build_sim
+    - xcodebuild-mcp:test_sim
+
+step_5_ui_automation:
+  tools:
+    - ios-simulator:describe_ui  # Get precise coordinates
+    - ios-simulator:tap
+    - ios-simulator:screenshot
+
+step_6_submission:
+  tools:
+    - github:create_pull_request
+    - github:request_copilot_review
+```
+
+#### Pattern 2: Bug Diagnosis
+```yaml
+step_1_analysis:
+  tool: sequential-thinking
+  thoughts: 12-15
+  features:
+    - Generate hypotheses
+    - Test each hypothesis
+    - Revise based on findings
+
+step_2_investigation:
+  tools:
+    - Read (examine code)
+    - Grep (search patterns)
+    - ios-simulator:describe_ui (reproduce bug)
+
+step_3_verification:
+  tools:
+    - xcodebuild-mcp:test_sim
+    - ios-simulator:screenshot (verify fix)
+
+step_4_documentation:
+  tool: github:add_issue_comment
+```
+
+#### Pattern 3: Performance Optimization
+```yaml
+step_1_strategy:
+  tool: sequential-thinking
+  thoughts: 15-20
+  purpose: "Deep analysis of bottlenecks and optimization strategies"
+
+step_2_profiling:
+  tools:
+    - xcodebuild-mcp:build_sim (release config)
+    - ios-simulator:record_sim_video (baseline)
+
+step_3_research:
+  tool: apple-doc-mcp
+  query: "performance optimization techniques"
+
+step_4_implementation:
+  tools: [Edit]
+  implementing: "sequential-thinking solution"
+
+step_5_validation:
+  tools:
+    - xcodebuild-mcp:test_sim
+    - ios-simulator:record_sim_video (comparison)
+```
+
 ## Build and Development Commands
 
-### Building the App
+### MCP-Enhanced Building (Preferred)
 
 #### iOS Builds
-- **Quick incremental build**: `./quick-build.sh [scheme]`
-- **Build for simulator by name**: Use MCP tools with `build_sim` command
-- **Build for physical device**: Use MCP tools with `build_device` command
-- **Clean build**: Use MCP tools with `clean` command
+```python
+# Build for simulator
+xcodebuild_mcp:build_sim(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird",
+    simulatorName="iPhone 16 Pro"
+)
+
+# Build for physical device
+xcodebuild_mcp:build_device(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird",
+    configuration="Debug"
+)
+
+# Clean build
+xcodebuild_mcp:clean(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird"
+)
+```
 
 #### macOS Builds
-- **Build for macOS**: Use MCP tools with `build_macos` command
-- **Build and run macOS**: Use MCP tools with `build_run_macos` command
-- **Get macOS app path**: Use MCP tools with `get_mac_app_path` command
-- **Launch macOS app**: Use MCP tools with `launch_mac_app` command
+```python
+# Build for macOS
+xcodebuild_mcp:build_macos(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird"
+)
+
+# Build and run
+xcodebuild_mcp:build_run_macos(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird"
+)
+```
+
+### Legacy Commands (Fallback Only)
+- **Quick incremental build**: `./quick-build.sh [scheme]`
+- Manual xcodebuild commands (use only if MCP servers unavailable)
 
 ### Testing
 
-#### iOS Testing
-- **Run tests on simulator**: Use MCP tools with `test_sim` command
-- **Run tests on device**: Use MCP tools with `test_device` command
+#### MCP-Enhanced Testing (Preferred)
 
-#### macOS Testing
-- **Run tests on macOS**: Use MCP tools with `test_macos` command
+**iOS Testing:**
+```python
+# Run tests on simulator with MCP
+xcodebuild_mcp:test_sim(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird",
+    simulatorName="iPhone 16 Pro"
+)
+
+# Run tests on physical device
+xcodebuild_mcp:test_device(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird",
+    deviceId="device-uuid-from-list_devices"
+)
+```
+
+**macOS Testing:**
+```python
+# Run tests on macOS
+xcodebuild_mcp:test_macos(
+    projectPath="/path/to/Catbird.xcodeproj",
+    scheme="Catbird"
+)
+```
+
+**UI Testing with Sequential Thinking:**
+```python
+# Step 1: Plan test strategy
+sequential_thinking:sequentialthinking(
+    thought="Planning UI test for timeline refresh",
+    totalThoughts=5
+)
+
+# Step 2: Get UI coordinates (NEVER guess!)
+ui_tree = ios_simulator:describe_ui(simulatorUuid="...")
+
+# Step 3: Execute automated interactions
+ios_simulator:tap(x=ui_tree['refresh_button']['x'], y=...)
+ios_simulator:screenshot()
+```
 
 #### General Testing
 - **Test framework**: Swift Testing (NOT XCTest) - use `@Test` attribute
-- **Check Swift syntax errors**: `./swift-check.sh` or `./quick-error-check.sh`
+- **Quick syntax check**: `./swift-check.sh` or `./quick-error-check.sh`
+- **Swift frontend parsing**: `swift -frontend -parse filename.swift`
 
 ### Petrel Code Generation
 - **Generate AT Protocol models**: `cd Petrel && python Generator/main.py`
@@ -903,16 +1242,86 @@ The project includes automated quality checks:
 - **Pre-push**: Build verification, secrets scanning, branch protection
 
 ### Development Workflow
+- **ALWAYS** use sequential-thinking for complex tasks (feature planning, bug diagnosis, optimization)
 - **ALWAYS** run syntax checks before committing: `./swift-check.sh`
-- **Use incremental builds** for development iteration
-- **Full builds** only for release preparation or major refactoring
-- **Leverage MCP tools** for iOS simulator/device and macOS builds
-- **Test on both platforms** when making UI changes
-- **Use platform-specific MCP commands**:
-  - iOS: `build_sim`, `test_sim`, `build_device`
-  - macOS: `build_macos`, `test_macos`, `build_run_macos`
+- **ALWAYS** use `describe_ui()` before UI automation (never guess coordinates)
+- **Prefer MCP servers** over manual commands for consistency
+- **DO NOT BUILD** unless explicitly instructed by the user
+- **Use syntax checks** (`swift -frontend -parse`) to validate code changes
+- **Full builds** only when user requests or for release preparation
+- **Test on both platforms** when making UI changes (if instructed)
+
+## MCP Server Quick Reference
+
+### Decision Tree: Which MCP Server to Use?
+
+```
+Is the task complex or multi-step?
+├─ YES → Start with sequential-thinking
+│   ├─ Feature planning → 5-10 thoughts
+│   ├─ Bug diagnosis → 10-15 thoughts
+│   ├─ Architecture → 12-20 thoughts
+│   └─ Performance → 15-25 thoughts
+│
+├─ Building/Testing?
+│   ├─ iOS → xcodebuild-mcp:build_sim / test_sim
+│   ├─ macOS → xcodebuild-mcp:build_macos / test_macos
+│   └─ Device → xcodebuild-mcp:build_device / test_device
+│
+├─ UI Testing?
+│   ├─ 1. ios-simulator:describe_ui (get coordinates)
+│   ├─ 2. ios-simulator:tap/swipe/type_text
+│   └─ 3. ios-simulator:screenshot/record_video
+│
+├─ Research APIs?
+│   └─ apple-doc-mcp:search_symbols / get_documentation
+│
+└─ GitHub Operations?
+    ├─ Create PR → github:create_pull_request
+    ├─ Request review → github:request_copilot_review
+    └─ Comment → github:add_issue_comment
+```
+
+### Common Task Workflows
+
+| Task | MCP Workflow |
+|------|-------------|
+| **Add Feature** | 1. sequential-thinking (8 thoughts)<br>2. apple-doc-mcp:search_symbols<br>3. Edit files<br>4. Syntax check (`swift -frontend -parse`)<br>5. (Build only if instructed)<br>6. github:create_pull_request |
+| **Fix Bug** | 1. sequential-thinking (12 thoughts)<br>2. Grep patterns<br>3. Edit files<br>4. Syntax check<br>5. (Build/test only if instructed) |
+| **Optimize** | 1. sequential-thinking (15 thoughts)<br>2. Edit files<br>3. Syntax check<br>4. (Build/profile only if instructed) |
+| **UI Test** | 1. (Only when instructed)<br>2. ios-simulator:describe_ui<br>3. ios-simulator:tap (precise coords)<br>4. ios-simulator:screenshot |
+
+### MCP Server Health Check
+
+Run daily to verify all MCP servers are operational:
+```python
+# Verify server availability
+sequential_thinking:sequentialthinking(thought="Health check", totalThoughts=1)
+xcodebuild_mcp:doctor()
+ios_simulator:list_sims()
+github:get_me()
+apple_doc_mcp:list_technologies()
+```
+
+### Emergency Fallback
+
+If MCP servers are unavailable:
+1. Use legacy commands documented in sections above
+2. Report MCP server issues immediately
+3. Document manual steps for later automation
+
+## Golden Rules for MCP Usage
+
+1. **Sequential-Thinking First**: For any non-trivial task (3+ steps), start with sequential-thinking
+2. **Never Guess Coordinates**: Always use `describe_ui()` before UI automation
+3. **Embrace Revision**: Use sequential-thinking's revision capability freely
+4. **Document Planning**: Include sequential-thinking analysis in PRs
+5. **Prefer MCP Over Manual**: Use MCP servers instead of CLI commands
+6. **Health Check Daily**: Verify all MCP servers are operational
+7. **Test Both Platforms**: Run tests on iOS and macOS with MCP tools
 
 ---
 
 *This document is focused on essential information for effective development. For detailed MCP server usage, simulator automation, and testing patterns, see TESTING_COOKBOOK.md and other documentation files.*
 - be sure to think about capture semantics for `self` in Swift 6
+- **MCP servers are your primary development interface** - master them for maximum productivity

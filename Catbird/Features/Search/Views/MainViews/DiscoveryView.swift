@@ -13,12 +13,33 @@ struct DiscoveryView: View {
     var viewModel: RefinedSearchViewModel
     @Binding var path: NavigationPath
     @Binding var showAllTrendingTopics: Bool
+    @Binding var showSuggestedProfiles: Bool
+    @Binding var showAddFeedSheet: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppState.self) private var appState
     
     var body: some View {
         ScrollView {
             VStack(spacing: 32) {
+                
+                // SRCH-015: Saved Searches Section
+                if !viewModel.savedSearches.isEmpty {
+                    SavedSearchesSection(
+                        savedSearches: viewModel.savedSearches,
+                        onSelect: { savedSearch in
+                            if let client = appState.atProtoClient {
+                                viewModel.loadAndApplySavedSearch(savedSearch, client: client)
+                            }
+                        },
+                        onDelete: { savedSearch in
+                            viewModel.deleteSavedSearch(savedSearch.id)
+                        },
+                        onShowAll: {
+                            // TODO: Show all saved searches sheet
+                        }
+                    )
+                }
+                
                 // Trending topics
                 if !viewModel.trendingTopics.isEmpty, 
                    let client = appState.atProtoClient,
@@ -36,21 +57,8 @@ struct DiscoveryView: View {
                     )
                 }
                 
-                // Suggested profiles
-                if !viewModel.suggestedProfiles.isEmpty {
-                    SuggestedProfilesSection(
-                        profiles: viewModel.suggestedProfiles,
-                        onSelect: { profile in
-                            path.append(NavigationDestination.profile(profile.did.didString()))
-                        },
-                        onRefresh: {
-                            Task {
-                                guard let client = appState.atProtoClient else { return }
-                                await viewModel.refreshSuggestedProfiles(client: client)
-                            }
-                        }
-                    )
-                }
+                // SRCH-007: Quick Actions Section
+                quickActionsSection
                 
                 // Spacer for bottom safe area
                 Spacer(minLength: 32)
@@ -65,6 +73,97 @@ struct DiscoveryView: View {
             guard let client = appState.atProtoClient else { return }
             await viewModel.refreshDiscoveryContent(client: client)
         }
+    }
+    
+    // SRCH-007: Quick Actions for common searches
+    @ViewBuilder
+    private var quickActionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .appFont(AppTextRole.subheadline)
+                    .foregroundColor(.accentColor)
+                
+                Text("Quick Searches")
+                    .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+            }
+            .padding(.horizontal)
+            
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ], spacing: 12) {
+                quickActionButton(
+                    icon: "person.2.fill",
+                    title: "Find Friends",
+                    description: "Discover people to follow",
+                    color: .blue
+                ) {
+                    showSuggestedProfiles = true
+                }
+                
+                quickActionButton(
+                    icon: "rectangle.on.rectangle.angled",
+                    title: "Custom Feeds",
+                    description: "Explore curated feeds",
+                    color: .purple
+                ) {
+                    showAddFeedSheet = true
+                }
+                
+                quickActionButton(
+                    icon: "chart.line.uptrend.xyaxis",
+                    title: "What's Trending",
+                    description: "See popular topics",
+                    color: .orange
+                ) {
+                    showAllTrendingTopics = true
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    @ViewBuilder
+    private func quickActionButton(
+        icon: String,
+        title: String,
+        description: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: icon)
+                        .appFont(AppTextRole.title3)
+                        .foregroundColor(color)
+                        .frame(width: 40, height: 40)
+                        .background(
+                            Circle()
+                                .fill(color.opacity(0.15))
+                        )
+                    
+                    Spacer()
+                }
+                
+                Text(title)
+                    .appFont(AppTextRole.subheadline.weight(.semibold))
+                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                    .lineLimit(1)
+                
+                Text(description)
+                    .appFont(AppTextRole.caption)
+                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                    .lineLimit(2)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
+            .cornerRadius(12)
+            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -282,7 +381,10 @@ private struct InlineTopicSummaryLine: View {
     
     private func topicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            onSelect(topic.link)
+            // Create a full URL from the relative path to properly route to the feed
+            if let url = URL(string: "https://bsky.app\(topic.link)") {
+                onSelect(url.absoluteString)
+            }
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 16) {
@@ -383,7 +485,10 @@ private struct InlineTopicSummaryLine: View {
     
     private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            onSelect(topic.link)
+            // Create a full URL from the relative path to properly route to the feed
+            if let url = URL(string: "https://bsky.app\(topic.link)") {
+                onSelect(url.absoluteString)
+            }
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 12) {
@@ -586,3 +691,4 @@ private struct InlineTopicSummaryLine: View {
         }
     }
 }
+

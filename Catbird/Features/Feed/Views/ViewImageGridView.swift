@@ -753,7 +753,7 @@ struct EnhancedImageViewer: View {
 
 #if os(iOS)
         LazyPager(data: images, page: $currentIndex) { image in
-          ImageViewerItemView(
+          ZoomableImageWrapper(
             image: image,
             liveTextEnabled: $liveTextEnabled,
             liveTextSupported: liveTextSupported
@@ -762,14 +762,7 @@ struct EnhancedImageViewer: View {
           .accessibilityLabel(image.alt)
           .accessibilityAddTraits(.isImage)
           .accessibilityValue("Image \(currentIndex + 1) of \(images.count)")
-          .onAppear {
-            // This would be used if we needed to track the current image viewer item
-            if let index = images.firstIndex(where: { $0.id == image.id }) {
-              // Store reference to this view controller if needed
-            }
-          }
         }
-        .zoomable(min: 1.0, max: 4.0, doubleTapGesture: .scale(2.0))
         .onDismiss(backgroundOpacity: $opacity) {
 //          logger.debug("🚪 LazyPager onDismiss called from gesture. currentIndex: \(currentIndex)")
           isPresented = false
@@ -792,7 +785,7 @@ struct EnhancedImageViewer: View {
             config.pinchGestureEnableOffset = 15
             config.shouldCancelSwiftUIAnimationsOnDismiss = false
         }
-        .id("pager-\(images.count)") // Add ID to ensure proper refresh
+        .id("pager-\(images.count)")
 #else
         // macOS: Simple TabView-based image viewer
         TabView(selection: $currentIndex) {
@@ -1134,38 +1127,11 @@ struct EnhancedImageViewer: View {
   // MARK: - Notification Handlers
 
   private func setupNotificationHandlers() {
-    // Next image notification handler
-    NotificationCenter.default.addObserver(
-      forName: Notification.Name("LazyPagerNextImage"),
-      object: nil,
-      queue: .main
-    ) { [self] _ in
-      guard currentIndex < images.count - 1 else { return }
-      currentIndex += 1
-    }
-
-    // Previous image notification handler
-    NotificationCenter.default.addObserver(
-      forName: Notification.Name("LazyPagerPreviousImage"),
-      object: nil,
-      queue: .main
-    ) { [self] _ in
-      guard currentIndex > 0 else { return }
-      currentIndex -= 1
-    }
-
-    // Close viewer notification handler
-    NotificationCenter.default.addObserver(
-      forName: Notification.Name("LazyPagerCloseViewer"),
-      object: nil,
-      queue: .main
-    ) { [self] _ in
-      isPresented = false
-    }
+    // Reserved for future notification-based interactions
   }
 
   private func removeNotificationHandlers() {
-    NotificationCenter.default.removeObserver(self)
+    // Reserved for future notification-based interactions
   }
 }
 
@@ -1249,3 +1215,167 @@ extension Array {
     return indices.contains(index) ? self[index] : nil
   }
 }
+
+// MARK: - Zoomable Image Wrapper (UIScrollView-based)
+#if os(iOS)
+struct ZoomableImageWrapper: UIViewControllerRepresentable {
+  let image: AppBskyEmbedImages.ViewImage
+  @Binding var liveTextEnabled: Bool
+  var liveTextSupported: Bool
+  
+  func makeUIViewController(context: Context) -> ZoomableImageViewController {
+    ZoomableImageViewController(
+      image: image,
+      liveTextEnabled: liveTextEnabled,
+      liveTextSupported: liveTextSupported
+    )
+  }
+  
+  func updateUIViewController(_ uiViewController: ZoomableImageViewController, context: Context) {
+    uiViewController.updateLiveText(enabled: liveTextEnabled)
+  }
+}
+
+class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
+  private let scrollView = UIScrollView()
+  private let imageView = UIImageView()
+  private let image: AppBskyEmbedImages.ViewImage
+  private let liveTextSupported: Bool
+  private var imageAnalysisInteraction: ImageAnalysisInteraction?
+  
+  init(image: AppBskyEmbedImages.ViewImage, liveTextEnabled: Bool, liveTextSupported: Bool) {
+    self.image = image
+    self.liveTextSupported = liveTextSupported
+    super.init(nibName: nil, bundle: nil)
+  }
+  
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+  
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    setupScrollView()
+    setupImageView()
+    loadImage()
+    
+    if liveTextSupported {
+      setupLiveText()
+    }
+  }
+  
+  private func setupScrollView() {
+    scrollView.delegate = self
+    scrollView.minimumZoomScale = 1.0
+    scrollView.maximumZoomScale = 4.0
+    scrollView.showsHorizontalScrollIndicator = false
+    scrollView.showsVerticalScrollIndicator = false
+    scrollView.contentInsetAdjustmentBehavior = .never
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    
+    view.addSubview(scrollView)
+    NSLayoutConstraint.activate([
+      scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+    ])
+    
+    let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+    doubleTap.numberOfTapsRequired = 2
+    scrollView.addGestureRecognizer(doubleTap)
+  }
+  
+  private func setupImageView() {
+    imageView.contentMode = .scaleAspectFit
+    imageView.isUserInteractionEnabled = true
+    imageView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.addSubview(imageView)
+    
+    NSLayoutConstraint.activate([
+      imageView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+      imageView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+      imageView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+      imageView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+      imageView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+      imageView.heightAnchor.constraint(equalTo: scrollView.heightAnchor)
+    ])
+    
+    imageView.isAccessibilityElement = true
+    imageView.accessibilityLabel = image.alt.isEmpty ? "Image" : image.alt
+    imageView.accessibilityTraits = .image
+  }
+  
+  private func setupLiveText() {
+    let interaction = ImageAnalysisInteraction()
+    imageView.addInteraction(interaction)
+    interaction.preferredInteractionTypes = .automatic
+    self.imageAnalysisInteraction = interaction
+  }
+  
+  private func loadImage() {
+    Task {
+      do {
+          if let url = image.fullsize.url {
+              let loadedImage = try await ImagePipeline.shared.image(for: url)
+              await MainActor.run {
+                  imageView.image = loadedImage
+                  
+                  if liveTextSupported, let interaction = imageAnalysisInteraction {
+                      analyzeImage(loadedImage, interaction: interaction)
+                  }
+              }
+          } else {
+              logger.error("Invalid image URL")
+          }
+      } catch {
+          logger.error("Failed to load image: \(error)")
+      }
+    }
+  }
+  
+  private func analyzeImage(_ image: UIImage, interaction: ImageAnalysisInteraction) {
+    Task {
+      do {
+        let analyzer = ImageAnalyzer()
+        let configuration = ImageAnalyzer.Configuration([.text, .machineReadableCode])
+        let analysis = try await analyzer.analyze(image, configuration: configuration)
+        await MainActor.run {
+          interaction.analysis = analysis
+        }
+      } catch {
+        print("Failed to analyze image: \(error)")
+      }
+    }
+  }
+  
+  func updateLiveText(enabled: Bool) {
+    imageAnalysisInteraction?.preferredInteractionTypes = enabled ? .automatic : []
+  }
+  
+  @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+    if scrollView.zoomScale > scrollView.minimumZoomScale {
+      scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+    } else {
+      let location = gesture.location(in: imageView)
+      let zoomRect = CGRect(
+        x: location.x - 50,
+        y: location.y - 50,
+        width: 100,
+        height: 100
+      )
+      scrollView.zoom(to: zoomRect, animated: true)
+    }
+  }
+  
+  func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+    return imageView
+  }
+  
+  func scrollViewDidZoom(_ scrollView: UIScrollView) {
+    let offsetX = max((scrollView.bounds.width - scrollView.contentSize.width) * 0.5, 0)
+    let offsetY = max((scrollView.bounds.height - scrollView.contentSize.height) * 0.5, 0)
+    scrollView.contentInset = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
+  }
+}
+#endif

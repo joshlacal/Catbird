@@ -84,6 +84,10 @@ final class AppState {
   
   // Current user's profile data for optimistic updates
   var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
+  
+  // Account switching transition state for smooth UX
+  var isTransitioningAccounts: Bool = false
+  var prewarmingFeedData: [AppBskyFeedDefs.FeedViewPost]?
 
   // MARK: - Component Managers
 
@@ -105,6 +109,9 @@ final class AppState {
 
   /// Preferences manager for handling user preferences
   @ObservationIgnored let preferencesManager = PreferencesManager()
+  
+  /// Feed feedback manager for custom feed interactions
+  @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
   
   /// Age verification manager (deprecated; retained for source compatibility, no UI)
   @ObservationIgnored let ageVerificationManager = AgeVerificationManager()
@@ -181,13 +188,17 @@ final class AppState {
   }
   
   /// Composer draft manager for handling minimized post composer drafts
-  let composerDraftManager = ComposerDraftManager()
+  var composerDraftManager: ComposerDraftManager
   
   /// Toast manager for displaying temporary notifications
   @ObservationIgnored let toastManager = ToastManager()
   
   /// List manager for handling list operations
   @ObservationIgnored var listManager: ListManager
+  
+  /// Post hiding manager for hiding/unhiding posts with server sync
+  @ObservationIgnored var postHidingManager: PostHidingManager
+
   
   #if os(iOS)
   /// Observable chat unread count for UI updates
@@ -236,6 +247,9 @@ final class AppState {
     
     self.urlHandler = URLHandler()
 
+    // Initialize composer draft manager
+    self.composerDraftManager = ComposerDraftManager(appState: nil)
+
     // Initialize theme manager with font manager dependency
     self._themeManager = ThemeManager(fontManager: _fontManager)
 
@@ -247,6 +261,9 @@ final class AppState {
 
     // Initialize list manager with nil client (will be updated when auth is complete)
     self.listManager = ListManager(client: nil, appState: nil)
+    
+    // Initialize post hiding manager (preferences manager will be set after auth)
+    self.postHidingManager = PostHidingManager()
 
     #if os(iOS)
     // Initialize chat manager with nil client (will be updated with self reference after initialization)
@@ -277,13 +294,20 @@ final class AppState {
             self.postManager.updateClient(self.authManager.client)
             self.preferencesManager.updateClient(self.authManager.client)
             if !isFaultOrderingMode {
-              self.notificationManager.updateClient(self.authManager.client)
+              await self.notificationManager.updateClient(self.authManager.client)
             }
             if let client = self.authManager.client {
               self.graphManager = GraphManager(atProtoClient: client)
               self.listManager.updateClient(client)
               self.listManager.updateAppState(self)
               self.activitySubscriptionService.updateClient(client)
+              
+              // Update preferences manager reference and load hidden posts
+              Task { @MainActor in
+                self.postHidingManager.updatePreferencesManager(self.preferencesManager)
+                await self.postHidingManager.loadFromPreferences()
+              }
+              
 #if canImport(FoundationModels)
               if #available(iOS 26.0, macOS 15.0, *), !isFaultOrderingMode {
                 let agent = self.blueskyAgent
@@ -367,11 +391,12 @@ final class AppState {
             // Clear client on logout or session expiry
             self.postManager.updateClient(nil)
             self.preferencesManager.updateClient(nil)
-            self.notificationManager.updateClient(nil)
+            await self.notificationManager.updateClient(nil)
             self.graphManager = GraphManager(atProtoClient: nil)
             self.listManager.updateClient(nil)
             self.listManager.updateAppState(nil)
             self.activitySubscriptionService.updateClient(nil)
+            self.postHidingManager.updatePreferencesManager(nil)
 #if canImport(FoundationModels)
             if #available(iOS 26.0, macOS 15.0, *) {
               if let agent = self.blueskyAgentStorage as? BlueskyIntelligenceAgent {
@@ -397,6 +422,7 @@ final class AppState {
 
     // Set up circular references after initialization
     postManager.updateAppState(self)
+    composerDraftManager.updateAppState(self)
     #if os(iOS)
     chatManager.updateAppState(self)
     #endif
@@ -512,7 +538,7 @@ final class AppState {
       
     postManager.updateClient(authManager.client)
     preferencesManager.updateClient(authManager.client)
-    notificationManager.updateClient(authManager.client)
+    await notificationManager.updateClient(authManager.client)
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
       listManager.updateClient(client)
@@ -586,14 +612,20 @@ final class AppState {
       try await authManager.switchToAccount(did: did)
       logger.debug("SWITCH: AuthManager switched account")
 
-      // Update client references in all managers
+      // Update client references in all managers and complete transition
+      // IMPORTANT: refreshAfterAccountSwitch sets isTransitioningAccounts = true,
+      // completes all setup, then sets it back to false
       await refreshAfterAccountSwitch()
 
-      // Notify that account was switched to trigger view refreshes
+      // AFTER refresh completes, notify to clear old state managers
+      // This ensures new managers are created with fully configured client
       notifyAccountSwitched()
 
+      // Trigger feed loading for all new state managers that will be created
+      await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
+
       // Wait to ensure client is ready
-      try await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+      try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
 
     } catch {
       // If switching failed due to auth issues, trigger reauthentication
@@ -636,6 +668,9 @@ final class AppState {
   func refreshAfterAccountSwitch() async {
     // Update client references in all managers
     logger.info("Refreshing data after account switch")
+    
+    // Set transition state for smooth UX
+    isTransitioningAccounts = true
 
     // Clear current user profile to ensure fresh data
     currentUserProfile = nil
@@ -644,11 +679,14 @@ final class AppState {
 
     // Clear old prefetched data
     await prefetchedFeedCache.clear()
+    
+    // Clear post interaction shadow state to prevent state leakage between accounts
+    await postShadowManager.clearAll()
 
     // Update client references in all managers
     postManager.updateClient(authManager.client)
     preferencesManager.updateClient(authManager.client)
-    notificationManager.updateClient(authManager.client)
+    await notificationManager.updateClient(authManager.client)
     #if os(iOS)
     chatManager.updateAppState(self) // Wire AppState reference to ChatManager
     await chatManager.updateClient(authManager.client) // Update ChatManager client
@@ -683,6 +721,49 @@ final class AppState {
       await loadCurrentUserProfile(did: userDID)
     } else {
       logger.warning("No current user DID available after account switch")
+    }
+    
+    // Pre-warm the following feed for smooth transition
+    await prewarmFollowingFeed()
+    
+    // Clear transition state after all async work completes
+    isTransitioningAccounts = false
+  }
+  
+  /// Pre-warms the Following feed for the new account to enable smooth crossfade
+  @MainActor
+  private func prewarmFollowingFeed() async {
+    guard let client = authManager.client else {
+      logger.debug("No client available for feed pre-warming")
+      return
+    }
+    
+    do {
+      logger.info("Pre-warming following feed for smooth account transition")
+      
+      // Fetch initial posts for the following feed
+      // Use 50 posts to match normal fetch behavior and account for filtering
+        let (response, output) = try await client.app.bsky.feed.getTimeline(
+            input: .init(limit: 50),  // Increased from 15 to account for aggressive filtering
+      )
+      if response != 200 {
+        logger.error("Failed to pre-warm feed: HTTP \(response)")
+        prewarmingFeedData = nil
+        return
+      }
+        
+        guard let output = output else {
+            logger.error("Failed to pre-warm feed: No output data")
+            prewarmingFeedData = nil
+            return
+        }
+      // Store for potential crossfade transition
+        prewarmingFeedData = output.feed
+      
+      logger.info("Pre-warmed \(output.feed.count) posts for feed transition")
+    } catch {
+      logger.error("Failed to pre-warm feed: \(error.localizedDescription)")
+      prewarmingFeedData = nil
     }
   }
 
@@ -791,7 +872,7 @@ final class AppState {
           did: profile.did,
           handle: profile.handle,
           displayName: profile.displayName,
-          avatar: profile.avatar,
+          pronouns: profile.pronouns, avatar: profile.avatar,
           associated: profile.associated,
           viewer: profile.viewer,
           labels: profile.labels,
@@ -1190,6 +1271,7 @@ final class AppState {
     hashtags: [String] = [],
     facets: [[AppBskyRichtextFacet]?] = [],
     embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil,
+    parentPost: AppBskyFeedDefs.PostView? = nil,
     threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
   ) async throws {
     try await postManager.createThread(
@@ -1199,6 +1281,7 @@ final class AppState {
       hashtags: hashtags,
       facets: facets,
       embeds: embeds,
+      parentPost: parentPost,
       threadgateAllowRules: threadgateAllowRules
     )
   }
@@ -1208,6 +1291,11 @@ final class AppState {
   /// Present the post composer for creating a new post, reply, or quote post
   @MainActor
   func presentPostComposer(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil) {
+    // Track quote interaction for feed feedback
+    if let quotedPost = quotedPost {
+      feedFeedbackManager.trackQuote(postURI: quotedPost.uri)
+    }
+    
     // Create the UIKit-backed post composer view with either a parent post (for reply) or quoted post
     let composerView = PostComposerViewUIKit(
       parentPost: parentPost,
@@ -1366,6 +1454,67 @@ final class AppState {
     } catch {
       logger.error("Failed to encode App Attest info: \(error.localizedDescription)")
     }
+  }
+  
+  // MARK: - Content Filtering Helper
+  
+  /// Build FeedTunerSettings from current user preferences
+  /// This ensures consistent filtering across feeds, threads, profiles, and search
+  @MainActor
+  func buildFilterSettings() async -> FeedTunerSettings {
+    // Get current user DID
+      let currentUserDid = authManager.state.userDID
+    
+    // Get moderation preferences from PreferencesManager
+    var contentLabelPrefs: [ContentLabelPreference] = []
+    var adultContentEnabled = false
+    var preferredLanguages: [String] = []
+    var feedViewPref: FeedViewPreference?
+    
+    do {
+      let preferences = try await preferencesManager.loadPreferences()
+      contentLabelPrefs = preferences?.contentLabelPrefs ?? []
+      adultContentEnabled = preferences?.adultContentEnabled ?? false
+      preferredLanguages = preferences?.contentLanguages ?? ["en"]
+      feedViewPref = preferences?.feedViewPref
+    } catch {
+      logger.warning("Could not load preferences for filtering: \(error.localizedDescription)")
+    }
+    
+    // Get muted and blocked users from GraphManager
+    let mutedUsers = graphManager.muteCache
+    let blockedUsers = graphManager.blockCache
+    
+    // Get feed filter settings (quick filters - these override server prefs)
+    let hideRepliesQuick = feedFilterSettings.hideReplies
+    let hideRepostsQuick = feedFilterSettings.hideReposts
+    let hideQuotePostsQuick = feedFilterSettings.hideQuotePosts
+    let hideLinks = feedFilterSettings.hideLinks
+    let onlyTextPosts = feedFilterSettings.onlyTextPosts
+    let onlyMediaPosts = feedFilterSettings.onlyMediaPosts
+    
+    // Get hidden posts from PostHidingManager
+    let hiddenPosts = postHidingManager.hiddenPosts
+    
+    // Build settings - combine quick filters with server-synced preferences
+    return FeedTunerSettings(
+      hideReplies: hideRepliesQuick || (feedViewPref?.hideReplies ?? false),
+      hideRepliesByUnfollowed: feedViewPref?.hideRepliesByUnfollowed ?? false,
+      hideRepliesByLikeCount: feedViewPref?.hideRepliesByLikeCount,
+      hideReposts: hideRepostsQuick || (feedViewPref?.hideReposts ?? false),
+      hideQuotePosts: hideQuotePostsQuick || (feedViewPref?.hideQuotePosts ?? false),
+      hideNonPreferredLanguages: !preferredLanguages.isEmpty && preferredLanguages != ["en"],
+      preferredLanguages: preferredLanguages,
+      mutedUsers: mutedUsers,
+      blockedUsers: blockedUsers,
+      hideLinks: hideLinks,
+      onlyTextPosts: onlyTextPosts,
+      onlyMediaPosts: onlyMediaPosts,
+      contentLabelPreferences: contentLabelPrefs,
+      hideAdultContent: !adultContentEnabled,
+      hiddenPosts: hiddenPosts,
+      currentUserDid: currentUserDid
+    )
   }
 }
 

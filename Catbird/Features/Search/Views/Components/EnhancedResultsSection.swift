@@ -64,3 +64,4 @@ struct EnhancedResultsSection<Content: View>: View {
         .padding(.vertical, 6)
     }
 }
+

@@ -150,7 +150,7 @@ struct FeedCollectionViewWrapper: View {
                         feedName: stateManager.currentFeedType.displayName
                     ) {
                         // Refresh action for non-timeline feeds
-                        Task { await stateManager.refresh() }
+                        Task { await stateManager.refreshUserInitiated() }
                     }
                 }
             } else {
@@ -159,7 +159,8 @@ struct FeedCollectionViewWrapper: View {
                     ForEach(stateManager.posts, id: \.id) { cachedPost in
                         FeedPostRow(
                             viewModel: stateManager.viewModel(for: cachedPost),
-                            navigationPath: $navigationPath
+                            navigationPath: $navigationPath,
+                            feedTypeIdentifier: stateManager.currentFeedType.identifier
                         )
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets())
@@ -189,7 +190,7 @@ struct FeedCollectionViewWrapper: View {
                 }
                 .listStyle(.plain)
                 .refreshable {
-                    await stateManager.refresh()
+                    await stateManager.refreshUserInitiated()
                 }
             }
         }

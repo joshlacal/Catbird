@@ -6,7 +6,9 @@
 //
 
 import Foundation
+import OSLog
 import Petrel
+
 
 /// A shadow state representation for posts
 /// Maintains the UI state separate from server state for optimistic updates
@@ -29,6 +31,8 @@ struct PostShadow: Equatable, Sendable {
 /// Actor for managing post shadow state
 /// Uses Swift concurrency to provide safe, isolated access to shadow state
 actor PostShadowManager {
+    private let logger = Logger(subsystem: "blue.catbird", category: "PostShadowManager")
+
     // MARK: - Properties
     
     // Use UUIDs to uniquely identify each continuation for observation
@@ -36,8 +40,6 @@ actor PostShadowManager {
     
     // Map of URI -> Shadow state
     private var shadows: [String: PostShadow] = [:]
-    
-    // MARK: - Initialization
     
     /// Shared singleton instance
     static let shared = PostShadowManager()
@@ -318,5 +320,28 @@ actor PostShadowManager {
         updateShadow(forUri: uri) { shadow in
             shadow.embed = embed
         }
+    }
+    
+    // MARK: - Account Switching
+    
+    /// Clears all shadow state
+    /// This should be called when switching accounts to prevent state leakage between accounts
+    func clearAll() {
+        logger.info("Clearing all shadow state (count: \(self.shadows.count))")
+        
+        // Clear all shadows
+        shadows.removeAll()
+        
+        // Notify all observers with nil to clear their state
+        for (uri, observers) in continuations {
+            for continuation in observers.values {
+                continuation.yield(nil)
+            }
+        }
+        
+        // Clear continuations
+        continuations.removeAll()
+        
+        logger.debug("Shadow state cleared successfully")
     }
 }

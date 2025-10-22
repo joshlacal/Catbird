@@ -180,6 +180,7 @@ struct EditListView: View {
           formView
         }
       }
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Edit List")
       #if os(iOS)
       .toolbarTitleDisplayMode(.inline)

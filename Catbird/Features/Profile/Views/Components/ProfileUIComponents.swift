@@ -8,9 +8,12 @@ struct ProfileTabSelector: View {
     @Binding var path: NavigationPath
     @Binding var selectedTab: ProfileTab
     var onTabChange: ((ProfileTab) -> Void)?
+    let isLabeler: Bool
 
-    // Define the picker sections
-    private let sections: [ProfileTab] = [.posts, .replies, .media, .more]
+    // Define the picker sections based on profile type
+    private var sections: [ProfileTab] {
+        isLabeler ? ProfileTab.labelerTabs : ProfileTab.userTabs
+    }
     
     var body: some View {
         Picker("", selection: $selectedTab) {
