@@ -5,6 +5,9 @@ import Observation
 /// SwiftData model for app settings that aren't synced with the Bluesky server
 @Model
 final class AppSettingsModel {
+    // Shared ID constant for singleton instance
+    static let sharedId = "app_settings"
+    
     // Unique identifier for single instance
     var id: String = "app_settings"
     

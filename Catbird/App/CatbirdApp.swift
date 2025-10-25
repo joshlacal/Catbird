@@ -397,6 +397,14 @@ struct CatbirdApp: App {
           FeedStateStore.shared.setModelContext(modelContext)
         }
 
+        // Provide shared ModelActor for serialized storage (iOS 26+/macOS 26+)
+        if #available(iOS 26.0, macOS 26.0, *) {
+            let store = AppModelStore(modelContainer: modelContainer)
+          Task { @MainActor in
+            appState.setModelStore(store)
+          }
+        }
+
         // Import shared drafts from the Share Extension, if any
         IncomingSharedDraftHandler.importIfAvailable()
       }

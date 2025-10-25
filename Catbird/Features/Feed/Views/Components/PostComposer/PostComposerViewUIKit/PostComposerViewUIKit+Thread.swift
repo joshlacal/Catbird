@@ -173,7 +173,13 @@ extension PostComposerViewUIKit {
         selectedRangeForLink = NSRange(location: vm.postText.count, length: 0)
         showingLinkCreation = true
       },
-      allowTenor: appState.appSettings.allowTenor
+      allowTenor: appState.appSettings.allowTenor,
+      onTextViewCreated: { textView in
+        pcThreadLogger.debug("PostComposerThread: Text view created for active thread entry")
+        #if os(iOS)
+        vm.activeRichTextView = textView
+        #endif
+      }
     )
     .id(appState.currentUserDID ?? "composer-unknown-user")
     .frame(minHeight: 120)

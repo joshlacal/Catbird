@@ -594,72 +594,93 @@ final class AppState {
 
   @MainActor
   func switchToAccount(did: String) async throws {
-    logger.info("Switching to account: \(did)")
+    logger.info("🔄 [APPSTATE-SWITCH] Starting switchToAccount for DID: \(did)")
+    logger.debug("🔄 [APPSTATE-SWITCH] Looking up account info in availableAccounts")
 
     // Get account info before switching (for potential reauthentication)
     let accountInfo = authManager.availableAccounts.first { $0.did == did }
+    logger.debug("🔄 [APPSTATE-SWITCH] Account info found: \(accountInfo != nil ? "yes" : "no")")
+    if let info = accountInfo {
+      logger.debug("🔄 [APPSTATE-SWITCH] Account - Handle: \(info.handle ?? "nil"), isActive: \(info.isActive)")
+    }
 
     // Clear current user profile before switching
     currentUserProfile = nil
-    logger.debug("SWITCH: Cleared current user profile")
+    logger.debug("🔄 [APPSTATE-SWITCH] Cleared current user profile")
 
     // Yield before account switch to ensure UI updates
     await Task.yield()
-    logger.debug("SWITCH: Yielded after resetting profile state")
+    logger.debug("🔄 [APPSTATE-SWITCH] Yielded after resetting profile state")
 
     do {
       // Switch account in AuthManager
+      logger.info("🔄 [APPSTATE-SWITCH] Calling authManager.switchToAccount(did: \(did))")
       try await authManager.switchToAccount(did: did)
-      logger.debug("SWITCH: AuthManager switched account")
+      logger.info("✅ [APPSTATE-SWITCH] AuthManager switched account successfully")
 
       // Update client references in all managers and complete transition
       // IMPORTANT: refreshAfterAccountSwitch sets isTransitioningAccounts = true,
       // completes all setup, then sets it back to false
+      logger.debug("🔄 [APPSTATE-SWITCH] Calling refreshAfterAccountSwitch()")
       await refreshAfterAccountSwitch()
+      logger.debug("✅ [APPSTATE-SWITCH] refreshAfterAccountSwitch completed")
 
       // AFTER refresh completes, notify to clear old state managers
       // This ensures new managers are created with fully configured client
+      logger.debug("🔄 [APPSTATE-SWITCH] Notifying account switched")
       notifyAccountSwitched()
 
       // Trigger feed loading for all new state managers that will be created
+      logger.debug("🔄 [APPSTATE-SWITCH] Triggering post-authentication feed load")
       await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
 
       // Wait to ensure client is ready
+      logger.debug("🔄 [APPSTATE-SWITCH] Sleeping 100ms to ensure client ready")
       try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+      logger.info("✅ [APPSTATE-SWITCH] Account switch completed successfully")
 
     } catch {
       // If switching failed due to auth issues, trigger reauthentication
-      logger.error("Account switch failed: \(error.localizedDescription)")
+      logger.error("❌ [APPSTATE-SWITCH] Account switch failed: \(error.localizedDescription)")
+      logger.error("❌ [APPSTATE-SWITCH] Error type: \(String(describing: type(of: error)))")
 
       // Check if we have account info to attempt reauthentication
       if let accountInfo = accountInfo {
         let handle = accountInfo.handle ?? accountInfo.did
-        logger.info("Attempting to trigger reauthentication for handle: \(handle)")
+        logger.info("🔐 [APPSTATE-SWITCH] Attempting to trigger reauthentication for handle: \(handle)")
 
         do {
           // Initiate reauthentication flow by starting OAuth for this account
+          logger.debug("🔐 [APPSTATE-SWITCH] Calling authManager.addAccount(handle: \(handle))")
           let authURL = try await authManager.addAccount(handle: handle)
+          logger.info("✅ [APPSTATE-SWITCH] Got OAuth URL for reauthentication: \(authURL.absoluteString)")
 
           // Store the pending reauthentication request for the UI to handle
+          logger.debug("🔐 [APPSTATE-SWITCH] Creating ReauthenticationRequest")
           pendingReauthenticationRequest = ReauthenticationRequest(
             handle: handle,
             did: did,
             authURL: authURL
           )
 
-          logger.info("Reauthentication flow initiated for handle: \(handle)")
-          logger.info("UI should present OAuth session for URL: \(authURL)")
+          logger.info("✅ [APPSTATE-SWITCH] Reauthentication flow initiated for handle: \(handle)")
+          logger.info("🌐 [APPSTATE-SWITCH] UI should present OAuth session for URL: \(authURL.absoluteString)")
 
           // Don't re-throw the error here - the UI will handle reauthentication
+          logger.debug("ℹ️ [APPSTATE-SWITCH] Returning without throwing error (UI will handle reauth)")
           return
         } catch {
-          logger.error("Failed to initiate reauthentication: \(error.localizedDescription)")
+          logger.error("❌ [APPSTATE-SWITCH] Failed to initiate reauthentication: \(error.localizedDescription)")
+          logger.error("❌ [APPSTATE-SWITCH] Reauthentication error type: \(String(describing: type(of: error)))")
           // Re-throw the original account switch error
           throw error
         }
+      } else {
+        logger.warning("⚠️ [APPSTATE-SWITCH] No account info available for reauthentication")
       }
 
       // Re-throw the error if we couldn't initiate reauthentication
+      logger.debug("❌ [APPSTATE-SWITCH] Re-throwing error")
       throw error
     }
   }

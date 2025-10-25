@@ -63,6 +63,7 @@ final class FeedFeedbackManager {
   // MARK: - Configuration
   
   /// Configure the feedback manager for a specific feed
+  @MainActor
   func configure(
     for feedType: FetchType,
     client: ATProtoClient?,
@@ -90,6 +91,7 @@ final class FeedFeedbackManager {
   }
   
   /// Disable feedback and clear state
+  @MainActor
   func disable() {
     isEnabled = false
     currentFeedType = nil

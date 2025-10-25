@@ -139,11 +139,21 @@ struct AccountSwitcherView: View {
           }
         }
       }
-      .onChange(of: appState.pendingReauthenticationRequest) { _, newRequest in
-        if let request = newRequest {
-          // Automatically handle reauthentication when account switching fails
-          Task {
-            await handleReauthentication(request)
+      .onChange(of: appState.pendingReauthenticationRequest) { oldRequest, newRequest in
+        Task { @MainActor in
+          logger.info("🔔 [REAUTH-ONCHANGE] pendingReauthenticationRequest onChange triggered")
+          logger.debug("🔔 [REAUTH-ONCHANGE] Old request: \(oldRequest?.handle ?? "nil") (DID: \(oldRequest?.did ?? "nil"))")
+          logger.debug("🔔 [REAUTH-ONCHANGE] New request: \(newRequest?.handle ?? "nil") (DID: \(newRequest?.did ?? "nil"))")
+          
+          if let request = newRequest {
+            // Automatically handle reauthentication when account switching fails
+            logger.info("🔔 [REAUTH-ONCHANGE] Detected new reauthentication request for \(request.handle)")
+            logger.info("🔔 [REAUTH-ONCHANGE] Starting handleReauthentication in Task")
+            Task {
+              await handleReauthentication(request)
+            }
+          } else {
+            logger.debug("🔔 [REAUTH-ONCHANGE] Request is nil, ignoring")
           }
         }
       }
@@ -446,28 +456,55 @@ struct AccountSwitcherView: View {
     }
 
     private func switchToAccount(_ account: AccountViewModel) async {
-      guard !account.isActive else { return }
+      logger.info("🔄 [SWITCH] switchToAccount called for: \(account.handle) (DID: \(account.did))")
+      logger.debug("🔄 [SWITCH] Account isActive: \(account.isActive)")
+      
+      guard !account.isActive else {
+        logger.debug("ℹ️ [SWITCH] Account already active, returning")
+        return
+      }
 
+      logger.debug("🔄 [SWITCH] Setting isLoading = true")
       isLoading = true
 
       do {
         // Use AppState's switchToAccount which has enhanced error handling and reauthentication
+        logger.info("🔄 [SWITCH] Calling appState.switchToAccount(did: \(account.did))")
         try await appState.switchToAccount(did: account.did)
+        logger.info("✅ [SWITCH] appState.switchToAccount completed successfully")
 
         // Refresh account list
+        logger.debug("🔄 [SWITCH] Refreshing account list")
         await loadAccounts()
 
-        // Close the account switcher
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-          dismiss()
+        // Check if reauthentication is pending before dismissing
+        logger.debug("🔄 [SWITCH] Checking if reauthentication is pending: \(appState.pendingReauthenticationRequest != nil)")
+        if let reauthRequest = appState.pendingReauthenticationRequest {
+          // Reauthentication is needed, trigger it immediately instead of relying on onChange
+          logger.info("🔐 [SWITCH] Reauthentication pending, triggering handleReauthentication immediately")
+          logger.debug("🔐 [SWITCH] Request - Handle: \(reauthRequest.handle), DID: \(reauthRequest.did)")
+          Task {
+            await handleReauthentication(reauthRequest)
+          }
+        } else {
+          // Only dismiss if no reauthentication is needed
+          logger.debug("🔄 [SWITCH] No reauthentication pending, scheduling dismiss after 0.5s")
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            dismiss()
+          }
         }
       } catch {
         // If we get here, reauthentication wasn't possible or failed
         // The error will be shown to the user, but reauthentication might be triggered automatically
-        logger.error("Failed to switch account: \(error.localizedDescription)")
+        logger.error("❌ [SWITCH] Failed to switch account: \(error.localizedDescription)")
+        logger.error("❌ [SWITCH] Error type: \(String(describing: type(of: error)))")
+        logger.debug("🔄 [SWITCH] Checking pendingReauthenticationRequest: \(appState.pendingReauthenticationRequest == nil ? "nil" : "present")")
         if appState.pendingReauthenticationRequest == nil {
           // Only show error if reauthentication wasn't triggered
+          logger.debug("⚠️ [SWITCH] No pending reauthentication, showing error to user")
           self.error = "Failed to switch account: \(error.localizedDescription)"
+        } else {
+          logger.info("ℹ️ [SWITCH] Reauthentication was triggered, not showing error")
         }
       }
 
@@ -620,83 +657,120 @@ struct AccountSwitcherView: View {
   }
 
   private func handleReauthentication(_ request: AppState.ReauthenticationRequest) async {
-    logger.info("Handling automatic reauthentication for handle: \(request.handle)")
-    logger.debug("Auth URL: \(request.authURL.absoluteString)")
+    logger.info("🔐 [REAUTH] Starting reauthentication for handle: \(request.handle)")
+    logger.info("🔐 [REAUTH] DID: \(request.did)")
+    logger.info("🔐 [REAUTH] Auth URL: \(request.authURL.absoluteString)")
+    logger.debug("🔐 [REAUTH] Auth URL scheme: \(request.authURL.scheme ?? "no scheme")")
+    logger.debug("🔐 [REAUTH] Auth URL host: \(request.authURL.host ?? "no host")")
 
     // Clear the pending request to prevent repeated attempts
+    logger.debug("🔐 [REAUTH] Clearing pendingReauthenticationRequest")
     appState.pendingReauthenticationRequest = nil
 
     // Update loading state
+    logger.debug("🔐 [REAUTH] Setting isLoading = true, error = nil")
     isLoading = true
     error = nil
 
     // Open web authentication session with the provided auth URL with timeout
     do {
       let callbackURL: URL
-      logger.info("Opening ASWebAuthenticationSession...")
+      logger.info("🌐 [REAUTH] About to open ASWebAuthenticationSession...")
+      logger.debug("🌐 [REAUTH] webAuthenticationSession environment value: \(String(describing: webAuthenticationSession))")
       
       // Add timeout to prevent indefinite hanging
       callbackURL = try await withThrowingTaskGroup(of: URL.self) { group in
         // Main authentication task
         group.addTask {
+          self.logger.info("🌐 [REAUTH] Starting authentication task in TaskGroup")
           if #available(iOS 17.4, *) {
-            return try await self.webAuthenticationSession.authenticate(
+            self.logger.info("🌐 [REAUTH] Using iOS 17.4+ authenticate API with callback .https")
+            self.logger.debug("🌐 [REAUTH] Callback: .https(host: catbird.blue, path: /oauth/callback)")
+            self.logger.debug("🌐 [REAUTH] preferredBrowserSession: .shared")
+            let result = try await self.webAuthenticationSession.authenticate(
               using: request.authURL,
               callback: .https(host: "catbird.blue", path: "/oauth/callback"),
               preferredBrowserSession: .shared,
               additionalHeaderFields: [:]
             )
+            self.logger.info("✅ [REAUTH] authenticate() returned with callback URL: \(result.absoluteString)")
+            return result
           } else {
-            // Fallback on earlier versions - use the actual authURL, not dummy URL
-            return try await self.webAuthenticationSession.authenticate(
+            self.logger.info("🌐 [REAUTH] Using legacy authenticate API with callbackURLScheme")
+            self.logger.debug("🌐 [REAUTH] callbackURLScheme: catbird")
+            self.logger.debug("🌐 [REAUTH] preferredBrowserSession: .shared")
+            let result = try await self.webAuthenticationSession.authenticate(
               using: request.authURL,
               callbackURLScheme: "catbird",
               preferredBrowserSession: .shared
             )
+            self.logger.info("✅ [REAUTH] authenticate() returned with callback URL: \(result.absoluteString)")
+            return result
           }
         }
         
         // Timeout task (2 minutes)
         group.addTask {
+          self.logger.debug("⏱️ [REAUTH] Starting 120-second timeout task")
           try await Task.sleep(nanoseconds: 120_000_000_000) // 120 seconds
+          self.logger.warning("⏱️ [REAUTH] Timeout reached after 120 seconds!")
           throw AuthError.timeout
         }
         
         // Return the first result (either callback or timeout)
+        self.logger.debug("🔄 [REAUTH] Waiting for first TaskGroup result...")
         guard let result = try await group.next() else {
+          self.logger.error("❌ [REAUTH] TaskGroup.next() returned nil - no result available")
           throw AuthError.unknown(NSError(domain: "Authentication", code: -1, userInfo: [NSLocalizedDescriptionKey: "Authentication failed"]))
         }
         
+        self.logger.info("✅ [REAUTH] TaskGroup returned result, cancelling remaining tasks")
         group.cancelAll()
         return result
       }
 
-      logger.info("Reauthentication session completed successfully")
-      logger.debug("Callback URL: \(callbackURL.absoluteString)")
+      logger.info("✅ [REAUTH] Reauthentication session completed successfully")
+      logger.info("🔗 [REAUTH] Callback URL: \(callbackURL.absoluteString)")
+      logger.debug("🔗 [REAUTH] Callback scheme: \(callbackURL.scheme ?? "none")")
+      logger.debug("🔗 [REAUTH] Callback host: \(callbackURL.host ?? "none")")
 
       // Process callback
+      logger.info("🔄 [REAUTH] Processing callback with authManager.handleCallback()")
       try await appState.authManager.handleCallback(callbackURL)
-      logger.info("Callback processed successfully")
+      logger.info("✅ [REAUTH] Callback processed successfully")
 
       // Refresh account list
+      logger.debug("🔄 [REAUTH] Refreshing account list")
       await loadAccounts()
 
       // Try switching to the account again now that it's reauthenticated
       if let account = accounts.first(where: { $0.did == request.did }) {
+        logger.info("🔄 [REAUTH] Re-attempting switch to reauthenticated account: \(account.handle)")
         await switchToAccount(account)
+      } else {
+        logger.warning("⚠️ [REAUTH] Could not find account with DID \(request.did) after reauthentication")
+        // Still dismiss since reauthentication succeeded
+        logger.debug("🔄 [REAUTH] Dismissing view after reauthentication")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+          dismiss()
+        }
       }
 
+      logger.debug("🔄 [REAUTH] Setting isLoading = false")
       isLoading = false
-    } catch _ as ASWebAuthenticationSessionError {
+    } catch let error as ASWebAuthenticationSessionError {
       // User cancelled reauthentication
-      logger.notice("Reauthentication was cancelled by user")
+      logger.notice("🚫 [REAUTH] Reauthentication was cancelled by user")
+      logger.debug("🚫 [REAUTH] ASWebAuthenticationSessionError code: \(error.code.rawValue)")
       authenticationCancelled = true
       isLoading = false
     } catch {
       // Other authentication errors (including timeout)
-      logger.error("Reauthentication error: \(error.localizedDescription)")
+      logger.error("❌ [REAUTH] Reauthentication error: \(error.localizedDescription)")
+      logger.error("❌ [REAUTH] Error type: \(String(describing: type(of: error)))")
       
       if case AuthError.timeout = error {
+        logger.error("⏱️ [REAUTH] Error was timeout")
         self.error = "Authentication timed out. The authentication session took too long to complete. Please try again."
       } else {
         self.error = "Failed to reauthenticate: \(error.localizedDescription)"

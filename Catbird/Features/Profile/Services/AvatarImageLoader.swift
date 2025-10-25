@@ -134,14 +134,10 @@ struct UIKitAvatarView: UIViewRepresentable {
     }
     
     func makeUIView(context: Context) -> UIImageView {
-        let imageView = UIImageView(frame: CGRect(x: 0, y: 0, width: size, height: size))
-        // Change to scaleAspectFill to ensure the image fills the circular area
+        let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = size / 2
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.widthAnchor.constraint(equalToConstant: size).isActive = true
-        imageView.heightAnchor.constraint(equalToConstant: size).isActive = true
         
         // Set placeholder image
         let placeholder = PlatformImage.systemImage(named: "person.crop.circle.fill")
@@ -154,13 +150,18 @@ struct UIKitAvatarView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: UIImageView, context: Context) {
-        // Ensure fixed size via constraints
-        if uiView.constraints.isEmpty {
-            uiView.translatesAutoresizingMaskIntoConstraints = false
-            uiView.widthAnchor.constraint(equalToConstant: size).isActive = true
-            uiView.heightAnchor.constraint(equalToConstant: size).isActive = true
-            uiView.layer.cornerRadius = size / 2
+        // Update size constraints to match current size parameter
+        uiView.constraints.forEach { constraint in
+            if constraint.firstAttribute == .width || constraint.firstAttribute == .height {
+                constraint.isActive = false
+            }
         }
+        
+        NSLayoutConstraint.activate([
+            uiView.widthAnchor.constraint(equalToConstant: size),
+            uiView.heightAnchor.constraint(equalToConstant: size)
+        ])
+        uiView.layer.cornerRadius = size / 2
         
         // Reset to placeholder if no DID and no direct URL
         guard did != nil || avatarURL != nil else {

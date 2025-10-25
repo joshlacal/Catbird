@@ -96,7 +96,6 @@ actor TopicSummaryService {
 
         // Generate the short description using Foundation Models if available.
         #if canImport(FoundationModels)
-        if #available(iOS 26.0, macOS 15.0, *) {
             guard let model = prepareLanguageModel() else { return nil }
 
             // Construct a compact prompt from sampled posts.
@@ -113,7 +112,6 @@ actor TopicSummaryService {
             \(Self.summarizerInstructions)
             """
 
-            do {
                 let session = LanguageModelSession(
                     model: model,
                     instructions: { Instructions { Self.summarizerInstructions } }
@@ -141,8 +139,7 @@ actor TopicSummaryService {
                             }
                             
                             // Post-process the final accumulated text
-                            let cleaned = Self.cleanupOutput(latestContent)
-                            let final = Self.clampToSingleSentence(cleaned)
+                            let final = Self.cleanupOutput(latestContent)
                             
                             // Cache the final result
                             await self.cacheResult(key: key, displayName: topic.displayName, summary: final)
@@ -158,15 +155,7 @@ actor TopicSummaryService {
                         }
                     }
                 }
-            } catch {
-                logger.error("[Summary] Failed to create stream: \(error.localizedDescription, privacy: .public)")
-                return nil
-            }
-        }
         #endif
-
-        logger.info("[Summary] Foundation Models not available; skip streaming summary")
-        return nil
     }
 
     /// Returns a concise one-sentence description for a trending topic, or nil if unavailable.
@@ -210,7 +199,6 @@ actor TopicSummaryService {
 
         // Generate the short description using Foundation Models if available.
         #if canImport(FoundationModels)
-        if #available(iOS 26.0, macOS 15.0, *) {
             guard let model = prepareLanguageModel() else { return fallbackSummary }
 
             do {
@@ -251,7 +239,7 @@ actor TopicSummaryService {
                 // Model failed or refused; do not provide a summary.
                 logger.error("[Summary] Summarization failed: \(error.localizedDescription, privacy: .public)")
             }
-        }
+        
         #endif
 
         return fallbackSummary
@@ -302,9 +290,18 @@ actor TopicSummaryService {
     #endif
 
     private func resolveFeedURI(from linkPath: String, appState: AppState) async -> ATProtocolURI? {
+        // Handle both full URLs (https://bsky.app/...) and relative paths (/profile/...)
+        let pathToProcess: String
+        if linkPath.starts(with: "http://") || linkPath.starts(with: "https://") {
+            guard let url = URL(string: linkPath) else { return nil }
+            pathToProcess = url.path
+        } else {
+            pathToProcess = linkPath
+        }
+        
         // Expected path pattern: /profile/<host>/feed/<rkey>
         // Normalize leading/trailing slashes before splitting.
-        let trimmed = linkPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let trimmed = pathToProcess.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let components = trimmed.split(separator: "/").map(String.init)
         guard components.count >= 4,
               components[0] == "profile",
@@ -319,6 +316,8 @@ actor TopicSummaryService {
         let did: String
         if host == "trending.bsky.app" {
             did = "did:plc:qrz3lhbyuxbeilrc6nekdqme"
+        } else if host.starts(with: "did:") {
+            did = host
         } else {
             do {
                 did = try await appState.atProtoClient?.resolveHandleToDID(handle: host) ?? host
@@ -383,7 +382,6 @@ actor TopicSummaryService {
     /// Prewarm the Foundation model once without fetching content. Call at app launch.
     func prepareModelWarmupIfNeeded() async {
         #if canImport(FoundationModels)
-        guard #available(iOS 26.0, macOS 15.0, *) else { return }
 
         if let cachedModel {
             prewarmLanguageModel(using: cachedModel)
@@ -397,7 +395,6 @@ actor TopicSummaryService {
     /// Prewarm the language model and cache launch summaries when available.
     func prepareLaunchWarmup(appState: AppState, maxTopics: Int = 5) async {
         #if canImport(FoundationModels)
-        guard #available(iOS 26.0, macOS 15.0, *), maxTopics > 0 else { return }
 
         guard appState.appSettings.showTrendingTopics else {
             logger.info("[Summary] Launch warmup skipped: trending topics disabled in settings")
@@ -458,12 +455,8 @@ actor TopicSummaryService {
         let slice = Array(topics.prefix(max))
         logger.info("[Summary] Prime start for \(slice.count, privacy: .public) topics")
         #if canImport(FoundationModels)
-        if #available(iOS 26.0, macOS 15.0, *) {
             let model = SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations)
             logger.info("[Summary] Preflight model availability: \(String(describing: model.availability), privacy: .public)")
-        } else {
-            logger.info("[Summary] Preflight: OS below iOS 26 / macOS 15, skipping model")
-        }
         #else
         logger.info("[Summary] Preflight: FoundationModels not available at compile time")
         #endif
@@ -562,19 +555,18 @@ extension TopicSummaryService {
 
         // Prefer extracting between <output>...</output> (case-insensitive, tolerate attributes/whitespace)
         if let tagged = extractBetweenTags("output", in: trimmed), !tagged.isEmpty {
-            return clampToSingleSentence(tagged)
+            return tagged
         }
 
         // If tags exist but our extractor failed, strip them and proceed
         if containsOutputTags(in: trimmed) {
             let stripped = stripAllTags(in: trimmed)
-            let clamped = clampToSingleSentence(stripped)
-            return clamped.isEmpty ? nil : clamped
+            return stripped.isEmpty ? nil : stripped
         }
 
         // Fallback: remove common filler preambles then clamp to one sentence.
         let defillered = stripFiller(from: trimmed)
-        return clampToSingleSentence(defillered)
+        return defillered
     }
 
     /// Extracts content between <tag>...</tag> (case-insensitive, tolerant of whitespace/attributes); returns nil if not found.
@@ -613,78 +605,6 @@ extension TopicSummaryService {
         // Common openings like "Sure!", "Here is/are", "Here's", "Okay," etc.
         let pattern = #"^(?:Sure!?|Okay[,!]?|Here(?:'s| is| are)[^:]*:?)\s+"#
         return text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
-    }
-
-    /// Returns a single-sentence string by extracting the first sentence robustly.
-    private static func clampToSingleSentence(_ text: String) -> String {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.isEmpty { return t }
-
-        // 1) Prefer linguistic sentence segmentation to avoid cutting after initials like "E.".
-        let tokenizer = NLTokenizer(unit: .sentence)
-        tokenizer.string = t
-        var firstSentence: String?
-        tokenizer.enumerateTokens(in: t.startIndex..<t.endIndex) { range, _ in
-            firstSentence = String(t[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-            return false // stop after first
-        }
-        if let s = firstSentence, !s.isEmpty {
-            // Validate NLTokenizer result - reject if it ends with single letter + period (likely a name initial)
-            if s.hasSuffix(".") {
-                let beforePeriod = s.dropLast().trimmingCharacters(in: .whitespacesAndNewlines)
-                if let lastSpace = beforePeriod.lastIndex(of: " ") {
-                    let lastToken = beforePeriod[beforePeriod.index(after: lastSpace)...]
-                    if lastToken.count == 1 {
-                        // Likely a name initial like "P." - use fallback logic
-                    } else {
-                        return s
-                    }
-                } else {
-                    return s
-                }
-            } else {
-                return s
-            }
-        }
-
-        // 2) Fallback: find first real sentence-ending punctuation, ignoring initials and common abbreviations.
-        let abbreviations: Set<String> = ["mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt", "vs", "etc", "e.g", "i.e", "u.s", "u.k"]
-        var idxOpt: String.Index? = nil
-        var i = t.startIndex
-        while i < t.endIndex {
-            let ch = t[i]
-            if ch == "." || ch == "!" || ch == "?" {
-                if ch == "." {
-                    // Check for abbreviation or single-letter initial before the period.
-                    let tokenStart = t[..<i].lastIndex(where: { $0 == " " || $0 == "\n" || $0 == "\t" })
-                    let start = tokenStart.map { t.index(after: $0) } ?? t.startIndex
-                    let token = t[start..<i]
-                    let tokenStr = token.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                    // If single-letter like "E" or in known abbreviations, skip and continue.
-                    if tokenStr.count == 1 {
-                        i = t.index(after: i)
-                        continue
-                    }
-                    if abbreviations.contains(tokenStr.lowercased()) {
-                        i = t.index(after: i)
-                        continue
-                    }
-                }
-                idxOpt = i
-                break
-            }
-            i = t.index(after: i)
-        }
-        if let idx = idxOpt {
-            let end = t.index(after: idx)
-            return String(t[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        // 3) No terminal punctuation; cap to ~22 words as a safeguard.
-        let words = t.split(separator: " ")
-        if words.count <= 22 { return t }
-        return words.prefix(22).joined(separator: " ")
     }
 }
 

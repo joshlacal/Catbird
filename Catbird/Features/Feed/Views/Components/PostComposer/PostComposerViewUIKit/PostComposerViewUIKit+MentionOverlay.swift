@@ -38,7 +38,8 @@ extension PostComposerViewUIKit {
         suggestions: vm.mappedMentionSuggestions,
         onSuggestionSelected: { suggestion in
           pcMentionLogger.info("PostComposerMention: Mention selected - handle: \(suggestion.profile.handle.description)")
-          _ = vm.insertMention(suggestion.profile)
+          let newCursorPosition = vm.insertMention(suggestion.profile)
+          pendingSelectionRange = NSRange(location: newCursorPosition, length: 0)
           vm.mentionSearchTask?.cancel()
           vm.mentionSuggestions.removeAll()
           mentionOverlayCooldownUntil = Date.now.addingTimeInterval(0.6)

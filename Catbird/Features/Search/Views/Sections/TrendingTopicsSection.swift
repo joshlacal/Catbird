@@ -125,7 +125,9 @@ struct TrendingTopicsSection: View {
     private func topicRow(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
             // Create a full URL from the relative path
-            if let url = URL(string: "https://bsky.app\(topic.link)") {
+            if topic.link.starts(with: "http"), let fullURL = URL(string: topic.link) {
+                _ = appState.urlHandler.handle(fullURL, tabIndex: 1)
+            } else if let url = URL(string: "https://bsky.app\(topic.link)") {
                 _ = appState.urlHandler.handle(url, tabIndex: 1)
             }
             

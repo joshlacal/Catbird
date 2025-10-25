@@ -8,19 +8,13 @@ import OSLog
 @ModelActor
 actor AppModelStore {
   private let log = Logger(subsystem: "blue.catbird", category: "AppModelStore")
-  let modelContainer: ModelContainer
-
-  nonisolated init(container: ModelContainer) {
-    self.modelContainer = container
-    self.modelExecutor = DefaultSerialModelExecutor(
-      modelContext: ModelContext(container)
-    )
-  }
 
   // MARK: - Settings (AppSettingsModel)
 
   func loadAppSettings() throws -> AppSettingsModel {
-    if let s = try modelContext.fetch(FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == "app_settings" })).first {
+    // Capture the static sharedId into a local value so #Predicate treats it as a value, not a key path
+    let sharedId = AppSettingsModel.sharedId
+    if let s = try modelContext.fetch(FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == sharedId })).first {
       return s
     }
     let s = AppSettingsModel()
@@ -31,9 +25,9 @@ actor AppModelStore {
     return s
   }
 
-  func updateAppSettings(_ apply: (inout AppSettingsModel) -> Void) throws {
-    var s = try loadAppSettings()
-    apply(&s)
+  func updateAppSettings(_ apply: (AppSettingsModel) -> Void) throws {
+    let s = try loadAppSettings()
+    apply(s)
     try modelContext.save()
   }
 
@@ -54,11 +48,7 @@ actor AppModelStore {
   }
 
   func deleteDraft(id: UUID) throws {
-    let predicate = #Predicate<DraftPost> { $0.id == id }
-    let descriptor = FetchDescriptor(predicate: predicate)
-    if let d = try modelContext.fetch(descriptor).first {
-      modelContext.delete(d)
-      try modelContext.save()
-    }
+    try modelContext.delete(model: DraftPost.self, where: #Predicate { $0.id == id })
+    try modelContext.save()
   }
 }

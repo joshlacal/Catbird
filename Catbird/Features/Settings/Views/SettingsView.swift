@@ -228,6 +228,17 @@ struct SettingsView: View {
                         .foregroundStyle(.blue)
                 }
             }
+            
+            if #available(iOS 26.0, macOS 26.0, *) {
+                NavigationLink(destination: AdvancedSettingsView()) {
+                    Label {
+                        Text("Advanced")
+                    } icon: {
+                        Image(systemName: "gearshape.2.fill")
+                            .foregroundStyle(.gray)
+                    }
+                }
+            }
         }
         
 

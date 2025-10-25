@@ -194,6 +194,16 @@ final class URLHandler {
             if components.count >= 7 && components[5] == "post" {
                 return parsePostDestination(did: did, rkey: components[6])
             }
+            if components.count >= 7 && components[5] == "feed" {
+                do {
+                    let uri = try ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.generator/\(components[6])")
+                    logger.info("📋 Navigating to feed: \(components[6])")
+                    return .feed(uri)
+                } catch {
+                    logger.error("❌ Error creating feed URI: \(error, privacy: .public)")
+                    return nil
+                }
+            }
             logger.info("👤 Navigating to profile: \(did, privacy: .private(mask: .hash))")
             return .profile(did)
         case "feed":

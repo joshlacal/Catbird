@@ -21,6 +21,10 @@ final class ComposerDraftManager {
   /// Current working draft with full state (persisted in UserDefaults while composing)
   var currentDraft: PostComposerDraft?
   
+  /// ID of the saved draft that was restored (if any)
+  /// This tracks which saved draft should be deleted when discarding or posting
+  var restoredSavedDraftId: UUID?
+  
   /// Saved drafts for current account (loaded from SwiftData)
   var savedDrafts: [DraftPostViewModel] = []
   
@@ -102,7 +106,7 @@ final class ComposerDraftManager {
   
   /// Save current draft to SwiftData for later retrieval
   func saveCurrentDraftToDisk() {
-      logger.info("💾 saveCurrentDraftToDisk called - Has current draft: \(self.currentDraft != nil)")
+      logger.info("💾 saveCurrentDraftToDisk called - Has current draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
     
     guard let draft = currentDraft else {
       logger.debug("⚠️ No current draft to save")
@@ -121,11 +125,19 @@ final class ComposerDraftManager {
     
     Task {
       do {
-        let draftId = try await persistence.saveDraft(draft, accountDID: accountDID)
-        logger.info("✅ Successfully saved draft to SwiftData - ID: \(draftId.uuidString)")
+        // If this draft was restored from a saved draft, update it instead of creating a new one
+        if let restoredId = restoredSavedDraftId {
+          logger.info("♻️ Updating existing saved draft: \(restoredId.uuidString)")
+          try await persistence.updateDraft(id: restoredId, draft: draft, accountDID: accountDID)
+          logger.info("✅ Successfully updated draft in SwiftData - ID: \(restoredId.uuidString)")
+        } else {
+          let draftId = try await persistence.saveDraft(draft, accountDID: accountDID)
+          logger.info("✅ Successfully saved new draft to SwiftData - ID: \(draftId.uuidString)")
+        }
         
         await MainActor.run {
           currentDraft = nil
+          restoredSavedDraftId = nil
           UserDefaults.standard.removeObject(forKey: draftKey)
           logger.debug("🧹 Cleared current draft and UserDefaults entry")
         }
@@ -194,6 +206,11 @@ final class ComposerDraftManager {
     do {
       let draft = try draftViewModel.decodeDraft()
       logger.info("✅ Successfully loaded draft - ID: \(draftViewModel.id.uuidString), Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
+      
+      // Track which saved draft was restored
+      restoredSavedDraftId = draftViewModel.id
+      logger.debug("  Tracking restored draft ID: \(draftViewModel.id.uuidString)")
+      
       return draft
     } catch {
       logger.error("❌ Failed to decode draft - ID: \(draftViewModel.id.uuidString), Error: \(error.localizedDescription)")
@@ -410,14 +427,21 @@ final class ComposerDraftManager {
     storeDraft(draft)
   }
   
-  /// Clear the current draft
+  /// Clear the current draft and delete associated saved draft if applicable
   func clearDraft() {
-      logger.info("🧹 Clearing current draft - Has draft: \(self.currentDraft != nil)")
+      logger.info("🧹 Clearing current draft - Has draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
     
     // Clean up any files referenced by the draft (videos/images saved by Share Extension)
     if let draft = currentDraft {
       logger.debug("🗑️ Cleaning up files for draft")
       cleanUpFiles(for: draft)
+    }
+    
+    // Delete the saved draft that was restored (if any)
+    if let restoredId = restoredSavedDraftId {
+      logger.info("🗑️ Deleting restored saved draft: \(restoredId.uuidString)")
+      deleteSavedDraft(restoredId)
+      restoredSavedDraftId = nil
     }
     
     currentDraft = nil

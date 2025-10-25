@@ -352,7 +352,8 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
 
     } else {
-      logger.info("ATProtoClient already exists.")
+        logger.info("ATProtoClient already exists, updating service DIDs to: bskyAppViewDID=\(self.customAppViewDID), bskyChatDID=\(self.customChatDID)")
+      await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
     }
 
     logger.debug("Client state before checkAuthenticationState: \(self.client == nil ? "NIL" : "Exists")")
@@ -554,6 +555,9 @@ final class AuthenticationManager: AuthProgressDelegate {
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
       if let client = client { await client.setAuthenticationDelegate(self) }
+    } else {
+        logger.info("Client exists, updating service DIDs to: bskyAppViewDID=\(self.customAppViewDID), bskyChatDID=\(self.customChatDID)")
+      await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
     }
     
     guard let client = client else {
@@ -578,10 +582,15 @@ final class AuthenticationManager: AuthProgressDelegate {
           }
           
           let authURL = try await withTimeout(timeout: networkTimeout) {
-            try await client.startOAuthFlow(identifier: handle)
+            // Pass custom service DIDs to OAuth flow
+            try await client.startOAuthFlow(
+              identifier: handle,
+              bskyAppViewDID: self.customAppViewDID,
+              bskyChatDID: self.customChatDID
+            )
           }
-          self.logger.debug("OAuth URL generated successfully: \(authURL)")
           
+          logger.info("OAuth URL generated successfully: \(authURL.absoluteString)")
           await self.updateState(.authenticating(progress: .openingBrowser))
           return authURL
         } catch {
@@ -633,40 +642,53 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
   func handleCallback(_ url: URL) async throws {
-    logger.info("Processing OAuth callback")
+    logger.info("🔗 [CALLBACK] Processing OAuth callback: \(url.absoluteString)")
+    logger.debug("🔗 [CALLBACK] URL scheme: \(url.scheme ?? "none"), host: \(url.host ?? "none")")
+      logger.debug("🔗 [CALLBACK] Current state: \(String(describing: self.state))")
     updateState(.authenticating(progress: .exchangingTokens))
 
     if case .authenticating = state {
-      // expected
+      logger.debug("✅ [CALLBACK] State is .authenticating as expected")
     } else {
-      logger.warning("Received callback in unexpected state: \(String(describing: self.state))")
+      logger.warning("⚠️ [CALLBACK] Received callback in unexpected state: \(String(describing: self.state))")
     }
 
     guard let client = client else {
+      logger.error("❌ [CALLBACK] Client not available")
       let error = AuthError.clientNotInitialized
       updateState(.error(message: error.localizedDescription))
       throw error
     }
+    logger.debug("✅ [CALLBACK] Client is available")
 
     do {
+      logger.debug("🔄 [CALLBACK] Starting OAuth callback processing with timeout")
       try await withTimeout(timeout: networkTimeout) {
         try Task.checkCancellation()
         
+        self.logger.debug("🔄 [CALLBACK] Calling client.handleOAuthCallback")
         try await client.handleOAuthCallback(url: url)
-        self.logger.info("OAuth callback processed successfully")
+        self.logger.info("✅ [CALLBACK] client.handleOAuthCallback completed")
         
         await self.updateState(.authenticating(progress: .creatingSession))
 
+        self.logger.debug("🔄 [CALLBACK] Checking if session is valid")
         let hasValidSession = await client.hasValidSession()
         if !hasValidSession {
-          self.logger.error("Session invalid after OAuth callback processing")
+          self.logger.error("❌ [CALLBACK] Session invalid after OAuth callback processing")
           throw AuthError.invalidSession
         }
+        self.logger.debug("✅ [CALLBACK] Session is valid")
 
         await self.updateState(.authenticating(progress: .finalizing))
 
+        self.logger.debug("🔄 [CALLBACK] Getting DID from client")
         let did = try await client.getDid()
+        self.logger.debug("✅ [CALLBACK] Got DID: \(did)")
+        
+        self.logger.debug("🔄 [CALLBACK] Getting handle from client")
         self.handle = try await client.getHandle()
+        self.logger.debug("✅ [CALLBACK] Got handle: \(self.handle ?? "nil")")
 
         if let handle = self.handle {
           self.storeHandle(handle, for: did)
@@ -1001,42 +1023,64 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Switch to a different account
   @MainActor
   func switchToAccount(did: String) async throws {
+    logger.info("🔄 [AUTHMAN-SWITCH] Starting switchToAccount for DID: \(did)")
+      logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(String(describing: self.state))")
+    logger.debug("🔄 [AUTHMAN-SWITCH] Ensuring client initialized...")
     await ensureClientInitializedForAccountOperations()
 
     guard let client = client else {
+      logger.error("❌ [AUTHMAN-SWITCH] Client not initialized after ensureClientInitializedForAccountOperations")
       throw AuthError.clientNotInitialized
     }
+    logger.debug("✅ [AUTHMAN-SWITCH] Client is available")
 
     if case .authenticated(let currentDid) = state, currentDid == did {
-      logger.info("Already using account with DID: \(did)")
+      logger.info("ℹ️ [AUTHMAN-SWITCH] Already using account with DID: \(did)")
       return
     }
 
-    logger.info("Switching to account with DID: \(did)")
+    logger.info("🔄 [AUTHMAN-SWITCH] Proceeding with account switch to DID: \(did)")
+    logger.debug("🔄 [AUTHMAN-SWITCH] Setting isSwitchingAccount = true")
     isSwitchingAccount = true
 
     do {
+      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .initializing")
       updateState(.initializing)
+      
+      logger.info("🔄 [AUTHMAN-SWITCH] Calling client.switchToAccount(did: \(did))")
       try await client.switchToAccount(did: did)
+      logger.info("✅ [AUTHMAN-SWITCH] client.switchToAccount completed")
 
+      logger.debug("🔄 [AUTHMAN-SWITCH] Fetching DID from client")
       let newDid = try await client.getDid()
+      logger.debug("✅ [AUTHMAN-SWITCH] Got DID: \(newDid)")
+      
+      logger.debug("🔄 [AUTHMAN-SWITCH] Fetching handle from client")
       self.handle = try await client.getHandle()
+      logger.debug("✅ [AUTHMAN-SWITCH] Got handle: \(self.handle ?? "nil")")
 
+      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .authenticated")
       updateState(.authenticated(userDID: newDid))
-      logger.info("Successfully switched to account: \(self.handle ?? "unknown") with DID: \(newDid)")
+      logger.info("✅ [AUTHMAN-SWITCH] Successfully switched to account: \(self.handle ?? "unknown") with DID: \(newDid)")
     } catch {
-      logger.error("Error switching accounts: \(error.localizedDescription)")
+      logger.error("❌ [AUTHMAN-SWITCH] Error switching accounts: \(error.localizedDescription)")
+      logger.error("❌ [AUTHMAN-SWITCH] Error type: \(String(describing: type(of: error)))")
       
       // Clear expired account info when switch fails
       // This prevents automatic re-authentication of the wrong account
+      logger.debug("🔄 [AUTHMAN-SWITCH] Clearing expiredAccountInfo")
       expiredAccountInfo = nil
       
+      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .error")
       updateState(.error(message: "Failed to switch accounts: \(error.localizedDescription)"))
       throw error
     }
 
+    logger.debug("🔄 [AUTHMAN-SWITCH] Setting isSwitchingAccount = false")
     isSwitchingAccount = false
+    logger.debug("🔄 [AUTHMAN-SWITCH] Refreshing available accounts")
     await refreshAvailableAccounts()
+    logger.info("✅ [AUTHMAN-SWITCH] Account switch process completed")
   }
 
   /// Add a new account

@@ -117,13 +117,18 @@ struct PostComposerViewUIKit: View {
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
         return 
       }
-      pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), draft: \(restoringDraftParam != nil)")
+      pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
       let vm = PostComposerViewModel(parentPost: initialParentPost, quotedPost: initialQuotedPost, appState: appState)
+      
+      // Restore from parameter draft or current draft (e.g., after account switch)
       if let draft = restoringDraftParam {
-        pcUIKitLogger.info("PostComposerViewUIKit: Restoring draft state")
+        pcUIKitLogger.info("PostComposerViewUIKit: Restoring draft from parameter")
         vm.restoreDraftState(draft)
-        // Note: linkFacets will be reconstructed from the richAttributedText automatically
+      } else if let currentDraft = appState.composerDraftManager.currentDraft {
+        pcUIKitLogger.info("PostComposerViewUIKit: Restoring current draft (likely from account switch)")
+        vm.restoreDraftState(currentDraft)
       }
+      
       viewModel = vm
       
       if !didSetInitialFocusID {
@@ -417,7 +422,6 @@ struct PostComposerViewUIKit: View {
           #endif
         }
       )
-      .id(appState.currentUserDID ?? "composer-unknown-user")
       .frame(minHeight: 120)
     }
     .padding(.horizontal, 16)

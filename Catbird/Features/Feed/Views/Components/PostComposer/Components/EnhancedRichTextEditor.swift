@@ -253,19 +253,25 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     let textChanged = uiView.attributedText.string != attributedText.string
     let needsFullUpdate = textChanged || context.coordinator.needsAttributeSync
     
-    if needsFullUpdate && !uiView.isFirstResponder {
-      // Only do full update when not editing to avoid disrupting typing
+    // Update text view when content changes, even if it's the first responder
+    // This ensures draft restoration works correctly
+    if needsFullUpdate {
       let previousSelectedRange = uiView.selectedRange
       let displayText = context.coordinator.applyingDefaultFontIfMissing(
         attributedText,
         defaultFont: newFont
       )
-      uiView.attributedText = displayText
       
-      // Restore selection only if no pending selection
-      if pendingSelectionRange == nil {
-        if previousSelectedRange.location <= (uiView.text as NSString).length {
-          uiView.selectedRange = previousSelectedRange
+      // Only update attributed text if not currently editing to avoid disrupting typing
+      // Exception: Always update if text content differs (e.g., draft restoration)
+      if !uiView.isFirstResponder || textChanged {
+        uiView.attributedText = displayText
+        
+        // Restore selection only if no pending selection
+        if pendingSelectionRange == nil {
+          if previousSelectedRange.location <= (uiView.text as NSString).length {
+            uiView.selectedRange = previousSelectedRange
+          }
         }
       }
       context.coordinator.needsAttributeSync = false

@@ -50,6 +50,56 @@ final class DraftPersistence {
     return draftPost.id
   }
   
+  func updateDraft(id: UUID, draft: PostComposerDraft, accountDID: String) throws {
+    logger.info("♻️ updateDraft called - ID: \(id.uuidString), Account: \(accountDID), Post text length: \(draft.postText.count)")
+    
+    let predicate = #Predicate<DraftPost> { $0.id == id }
+    let descriptor = FetchDescriptor(predicate: predicate)
+    
+    logger.debug("  Fetching existing draft to update")
+    let drafts: [DraftPost]
+    do {
+      drafts = try modelContext.fetch(descriptor)
+    } catch {
+      logger.error("❌ Failed to fetch draft for update: \(error.localizedDescription)")
+      throw error
+    }
+    
+    guard let existingDraft = drafts.first else {
+      logger.error("❌ Draft not found for update - ID: \(id.uuidString)")
+      throw DraftError.draftNotFound
+    }
+    
+    logger.debug("  Found existing draft - Preview: '\(existingDraft.previewText.prefix(30))...'")
+    
+    do {
+      let encoder = JSONEncoder()
+      let draftData = try encoder.encode(draft)
+      
+      existingDraft.draftData = draftData
+      existingDraft.modifiedDate = Date()
+      existingDraft.previewText = String(draft.postText.prefix(200))
+      existingDraft.hasMedia = !draft.mediaItems.isEmpty || draft.videoItem != nil
+      existingDraft.isReply = draft.threadEntries.first?.parentPostURI != nil
+      existingDraft.isQuote = draft.threadEntries.first?.quotedPostURI != nil
+      existingDraft.isThread = draft.isThreadMode
+      
+      logger.debug("  Updated draft properties")
+    } catch {
+      logger.error("❌ Failed to encode draft data: \(error.localizedDescription)")
+      throw error
+    }
+    
+    do {
+      try modelContext.save()
+      modelContext.processPendingChanges()
+      logger.info("✅ Updated draft \(id.uuidString) for account \(accountDID)")
+    } catch {
+      logger.error("❌ Failed to save updated draft: \(error.localizedDescription)")
+      throw error
+    }
+  }
+  
   func fetchDrafts(for accountDID: String) throws -> [DraftPost] {
     logger.info("📥 fetchDrafts called - Account: \(accountDID)")
     
