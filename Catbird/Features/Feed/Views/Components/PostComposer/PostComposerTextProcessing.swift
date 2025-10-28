@@ -222,11 +222,25 @@ extension PostComposerViewModel {
     
     @MainActor
     func loadUserLanguagePreference() async {
-        // Implementation would load user's preferred languages
-        // For now, use system language as default
-        if let systemLanguage = Locale.current.language.languageCode?.identifier {
-            selectedLanguages = [LanguageCodeContainer(languageCode: systemLanguage)]
+        logger.debug("PostComposerTextProcessing: Loading user language preference")
+        
+        // Try to load user's saved default language preference
+        if let savedLanguageCode = UserDefaults.standard.string(forKey: "defaultComposerLanguage") {
+            logger.info("PostComposerTextProcessing: Using saved default language: \(savedLanguageCode)")
+            selectedLanguages = [LanguageCodeContainer(languageCode: savedLanguageCode)]
+        } else {
+            // No saved preference - leave empty and let user choose or use detection
+            logger.info("PostComposerTextProcessing: No saved preference, leaving language unset")
+            selectedLanguages = []
         }
+    }
+    
+    /// Call this when user manually changes language to persist their preference
+    func saveDefaultLanguagePreference() {
+        guard let firstLanguage = selectedLanguages.first else { return }
+        let languageCode = firstLanguage.lang.languageCode?.identifier ?? firstLanguage.lang.minimalIdentifier
+        logger.info("PostComposerTextProcessing: Saving new default language preference: \(languageCode)")
+        UserDefaults.standard.set(languageCode, forKey: "defaultComposerLanguage")
     }
     
     // MARK: - URL Handling

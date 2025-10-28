@@ -92,8 +92,10 @@ extension PostComposerViewUIKit {
             
             if index == vm.currentThreadIndex {
               activeEntryMediaSection(vm: vm)
+              activeEntryMetadataSection(vm: vm)
             } else {
               inactiveEntryMediaSection(entry: entry)
+              inactiveEntryMetadataSection(entry: entry, vm: vm)
             }
             
             if index < vm.threadEntries.count - 1 {
@@ -325,6 +327,130 @@ extension PostComposerViewUIKit {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private func activeEntryMetadataSection(vm: PostComposerViewModel) -> some View {
+    VStack(spacing: 8) {
+      // Compact inline outline hashtags
+      if !vm.outlineTags.isEmpty {
+        HStack(spacing: 8) {
+          Image(systemName: "number")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+          
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+              ForEach(vm.outlineTags, id: \.self) { tag in
+                HStack(spacing: 4) {
+                  Text("#\(tag)")
+                    .font(.system(size: 11, weight: .medium))
+                  Button(action: { vm.outlineTags.removeAll { $0 == tag } }) {
+                    Image(systemName: "xmark.circle.fill")
+                      .font(.system(size: 10))
+                      .foregroundColor(.secondary)
+                  }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .foregroundColor(.secondary)
+                .cornerRadius(6)
+              }
+            }
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+      }
+      
+      // Compact inline language chips
+      if !vm.selectedLanguages.isEmpty {
+        HStack(spacing: 8) {
+          Image(systemName: "globe")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+          
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+              ForEach(vm.selectedLanguages, id: \.self) { lang in
+                HStack(spacing: 4) {
+                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                    .font(.system(size: 11, weight: .medium))
+                  Button(action: { vm.toggleLanguage(lang) }) {
+                    Image(systemName: "xmark.circle.fill")
+                      .font(.system(size: 10))
+                      .foregroundColor(.secondary)
+                  }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .foregroundColor(.secondary)
+                .cornerRadius(6)
+              }
+            }
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private func inactiveEntryMetadataSection(entry: ThreadEntry, vm: PostComposerViewModel) -> some View {
+    VStack(spacing: 8) {
+      // Compact inline outline hashtags
+      if !entry.outlineTags.isEmpty {
+        HStack(spacing: 8) {
+          Image(systemName: "number")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+          
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+              ForEach(entry.outlineTags, id: \.self) { tag in
+                Text("#\(tag)")
+                  .font(.system(size: 11, weight: .medium))
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 4)
+                  .background(Color.secondary.opacity(0.1))
+                  .foregroundColor(.secondary)
+                  .cornerRadius(6)
+              }
+            }
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+      }
+      
+      // Compact inline language chips
+      if !entry.selectedLanguages.isEmpty {
+        HStack(spacing: 8) {
+          Image(systemName: "globe")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+          
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+              ForEach(entry.selectedLanguages, id: \.self) { lang in
+                Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                  .font(.system(size: 11, weight: .medium))
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 4)
+                  .background(Color.secondary.opacity(0.1))
+                  .foregroundColor(.secondary)
+                  .cornerRadius(6)
+              }
+            }
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
       }
     }
   }

@@ -347,11 +347,31 @@ extension PostComposerViewModel {
     
     func toggleLanguage(_ language: LanguageCodeContainer) {
         if selectedLanguages.contains(language) {
+            // Allow removing all languages - it's optional
             selectedLanguages.removeAll { $0 == language }
+            // Update saved preference
+            if selectedLanguages.isEmpty {
+                // Clear the saved default if user removed all languages
+                UserDefaults.standard.removeObject(forKey: "defaultComposerLanguage")
+                logger.info("PostComposerCore: Cleared default language preference")
+            } else {
+                // Save the first remaining language as the new default
+                saveDefaultLanguagePreference()
+            }
         } else {
             selectedLanguages.append(language)
+            // Save this language as the default preference
+            saveDefaultLanguagePreference()
         }
         saveDraftIfNeeded()
+    }
+    
+    /// Applies suggested language from detection
+    func applySuggestedLanguage() {
+        guard let suggested = suggestedLanguage else { return }
+        logger.info("PostComposerCore: Applying suggested language: \(suggested.lang.minimalIdentifier)")
+        selectedLanguages = [suggested]
+        saveDefaultLanguagePreference()
     }
     
     // MARK: - Thread Creation
@@ -687,6 +707,8 @@ extension PostComposerViewModel {
         threadEntries[currentThreadIndex].selectedEmbedURL = selectedEmbedURL
         threadEntries[currentThreadIndex].urlsKeptForEmbed = urlsKeptForEmbed
         threadEntries[currentThreadIndex].hashtags = outlineTags
+        threadEntries[currentThreadIndex].selectedLanguages = selectedLanguages
+        threadEntries[currentThreadIndex].outlineTags = outlineTags
     }
     
     func loadEntryState() {
@@ -723,7 +745,8 @@ extension PostComposerViewModel {
         urlCards = entry.urlCards
         selectedEmbedURL = entry.selectedEmbedURL
         urlsKeptForEmbed = entry.urlsKeptForEmbed
-        outlineTags = entry.hashtags
+        outlineTags = entry.hashtags.isEmpty ? entry.outlineTags : entry.hashtags
+        selectedLanguages = entry.selectedLanguages
         
         // Sync attributed text with proper font attributes
         #if os(iOS)

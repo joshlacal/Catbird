@@ -630,13 +630,6 @@ final class AppState {
       logger.debug("🔄 [APPSTATE-SWITCH] Notifying account switched")
       notifyAccountSwitched()
 
-      // Trigger feed loading for all new state managers that will be created
-      logger.debug("🔄 [APPSTATE-SWITCH] Triggering post-authentication feed load")
-      await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
-
-      // Wait to ensure client is ready
-      logger.debug("🔄 [APPSTATE-SWITCH] Sleeping 100ms to ensure client ready")
-      try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
       logger.info("✅ [APPSTATE-SWITCH] Account switch completed successfully")
 
     } catch {
@@ -1343,7 +1336,7 @@ final class AppState {
     // On macOS, present as a new window
     let hostingController = NSHostingController(rootView: composerView)
     let window = NSWindow(contentViewController: hostingController)
-    window.title = "New Post"
+    window.title = "Post"
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
     window.setContentSize(NSSize(width: 600, height: 400))
     window.center()

@@ -58,7 +58,13 @@ struct FeedCollectionView: View {
             headerView: headerView ?? injectedHeaderView
         )
         // Recreate controller on theme or font change to ensure UIKit reflects updates
-        .id("\(ObjectIdentifier(stateManager))-\(stateManager.appState.themeDidChange)-\(stateManager.appState.fontDidChange)")
+        .id(
+            "\(ObjectIdentifier(stateManager))-" +
+            "\(stateManager.appState.themeDidChange)-" +
+            "\(stateManager.appState.fontDidChange)-" +
+            "\(stateManager.appState.currentUserDID ?? "unknown-account-")" +
+            "\(stateManager.currentFeedType.identifier)"
+        )
         .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
     }
 }

@@ -1187,7 +1187,6 @@ struct FeedsStartPage: View {
     .clipped()
   }
 
-  // (Drawer bottom toolbar removed in favor of native toolbar in ContentView)
   
   @ViewBuilder
   private var fallbackGradientBanner: some View {

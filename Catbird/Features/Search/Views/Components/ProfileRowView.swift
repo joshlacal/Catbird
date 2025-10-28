@@ -14,7 +14,11 @@ struct ProfileRowView: View {
         }) {
             HStack(alignment: .top, spacing: 12) {
                 // Profile avatar
-                AsyncProfileImage(url: profile.finalAvatarURL(), size: 44)
+                AsyncProfileImage(
+                    url: profile.finalAvatarURL(),
+                    size: 44,
+                    labels: extractLabels(from: profile)
+                )
                 
                 // Profile info
                 VStack(alignment: .leading, spacing: 4) {
@@ -143,5 +147,16 @@ struct ProfileRowView: View {
                         outlined ? Capsule().stroke(Color.accentColor, lineWidth: 1) : nil
                     )
             )
+    }
+    
+    private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
+        if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            return profileView.labels
+        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            return profileViewBasic.labels
+        } else if let profileViewDetailed = profile as? AppBskyActorDefs.ProfileViewDetailed {
+            return profileViewDetailed.labels
+        }
+        return nil
     }
 }

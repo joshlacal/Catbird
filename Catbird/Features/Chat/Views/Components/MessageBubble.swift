@@ -9,6 +9,7 @@ struct MessageBubble: View {
   let embed: AppBskyEmbedRecord.ViewRecordUnion?
   let position: PositionInUserGroup
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
   @Binding var path: NavigationPath
   
   // Get the conversation ID from the current navigation context
@@ -111,10 +112,10 @@ struct MessageBubble: View {
         }
         .background(
           RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(message.user.isCurrentUser ? Color.accentColor : Color.gray.opacity(0.15))
-            .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
+            .fill(message.user.isCurrentUser ? Color.accentColor : Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
+            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 1, x: 0, y: 1)
         )
-        .foregroundColor(message.user.isCurrentUser ? .white : .primary)
+        .foregroundColor(message.user.isCurrentUser ? .white : Color.dynamicText(appState.themeManager, currentScheme: colorScheme))
         .overlay(
           // Show sending indicator overlay for pending messages
           Group {
@@ -270,6 +271,7 @@ struct ChatPostEmbedView: View {
   let postEmbedData: PostEmbedData
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
   
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -323,10 +325,10 @@ struct ChatPostEmbedView: View {
     .padding(12)
     .background(
       RoundedRectangle(cornerRadius: 12)
-        .fill(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+        .fill(Color.dynamicTertiaryBackground(appState.themeManager, currentScheme: colorScheme))
         .overlay(
           RoundedRectangle(cornerRadius: 12)
-            .stroke(Color(platformColor: PlatformColor.platformSeparator), lineWidth: 0.5)
+            .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), lineWidth: 0.5)
         )
     )
     .onTapGesture {

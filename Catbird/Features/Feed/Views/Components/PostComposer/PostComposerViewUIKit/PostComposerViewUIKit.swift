@@ -55,6 +55,9 @@ struct PostComposerViewUIKit: View {
   @State var showingLanguagePicker = false
   @State var showingDismissAlert = false
   @State var showingDrafts = false
+  @State var showingGifPicker = false
+  @State var showingThreadgate = false
+  @State var showingLabelSelector = false
   @State private var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false
@@ -130,6 +133,8 @@ struct PostComposerViewUIKit: View {
       }
       
       viewModel = vm
+      
+      await vm.loadUserLanguagePreference()
       
       if !didSetInitialFocusID {
         activeEditorFocusID = UUID()
@@ -276,7 +281,7 @@ struct PostComposerViewUIKit: View {
     } else if vm.isThreadMode {
       return "Thread"
     } else {
-      return "New Post"
+      return "Post"
     }
   }
   
@@ -289,9 +294,9 @@ struct PostComposerViewUIKit: View {
           // In thread mode, the active editor is rendered inside threadEntriesSection.
           if !vm.isThreadMode {
             composerEditorSection(vm: vm)
+            mediaAttachmentsSection(vm: vm)
+            metadataSection(vm: vm)
           }
-          mediaAttachmentsSection(vm: vm)
-          metadataSection(vm: vm)
           threadEntriesSection(vm: vm)
         }
         .padding(.top, 8)
@@ -316,6 +321,10 @@ struct PostComposerViewUIKit: View {
           avatarURL: appState.currentUserProfile?.avatar?.url
         )
         .frame(width: 40, height: 40)
+        .contentShape(Circle())
+        .clipShape(Circle())
+        .clipped()
+        .allowsHitTesting(false)
         #else
         if let profile = appState.currentUserProfile, let avatarURL = profile.avatar {
           AsyncImage(url: URL(string: avatarURL.description)) { image in
@@ -385,9 +394,18 @@ struct PostComposerViewUIKit: View {
           pcUIKitLogger.info("PostComposerViewUIKit: Audio action triggered")
           showingAudioRecorder = true 
         },
-        onGifAction: { pcUIKitLogger.info("PostComposerViewUIKit: GIF action triggered") },
-        onLabelsAction: { pcUIKitLogger.info("PostComposerViewUIKit: Labels action triggered") },
-        onThreadgateAction: { pcUIKitLogger.info("PostComposerViewUIKit: Threadgate action triggered") },
+        onGifAction: { 
+          pcUIKitLogger.info("PostComposerViewUIKit: GIF action triggered")
+          showingGifPicker = true
+        },
+        onLabelsAction: { 
+          pcUIKitLogger.info("PostComposerViewUIKit: Labels action triggered")
+          showingLabelSelector = true
+        },
+        onThreadgateAction: { 
+          pcUIKitLogger.info("PostComposerViewUIKit: Threadgate action triggered")
+          showingThreadgate = true
+        },
         onLanguageAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Language action triggered")
           showingLanguagePicker = true 

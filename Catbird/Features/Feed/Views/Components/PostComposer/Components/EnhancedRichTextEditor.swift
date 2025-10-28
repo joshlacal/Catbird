@@ -273,6 +273,13 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
             uiView.selectedRange = previousSelectedRange
           }
         }
+        
+        // Move cursor to end on initial load if text is prefilled
+        if !context.coordinator.hasPerformedInitialCursorPositioning && !attributedText.string.isEmpty {
+          let endPosition = (uiView.text as NSString).length
+          uiView.selectedRange = NSRange(location: endPosition, length: 0)
+          context.coordinator.hasPerformedInitialCursorPositioning = true
+        }
       }
       context.coordinator.needsAttributeSync = false
     }
@@ -337,6 +344,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     private var placeholderLabel: UILabel?
     var needsAttributeSync = false
     var lastTextSnapshot: String = ""
+    var hasPerformedInitialCursorPositioning = false
     
   #if targetEnvironment(macCatalyst)
   fileprivate func installCatalystBottomToolbar(for textView: UITextView) {

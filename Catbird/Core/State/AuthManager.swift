@@ -555,6 +555,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
       if let client = client { await client.setAuthenticationDelegate(self) }
+      
     } else {
         logger.info("Client exists, updating service DIDs to: bskyAppViewDID=\(self.customAppViewDID), bskyChatDID=\(self.customChatDID)")
       await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
@@ -972,7 +973,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     await client?.setAuthProgressDelegate(self)
     await client?.setFailureDelegate(self)
     if let client = client { await client.setAuthenticationDelegate(self) }
-  }
+}
 
   /// Update the available accounts list from locally stored handles when the client is unavailable.
   private func updateAvailableAccountsFromStoredHandles(activeDID: String?) {

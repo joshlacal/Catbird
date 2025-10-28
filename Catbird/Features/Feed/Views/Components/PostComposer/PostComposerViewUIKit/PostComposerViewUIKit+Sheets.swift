@@ -56,6 +56,25 @@ extension PostComposerViewUIKit {
           set: { vm.selectedLanguages = $0 }
         ))
       }
+      .sheet(isPresented: $showingGifPicker) {
+        GifPickerView { gif in
+          pcSheetsLogger.info("PostComposerSheets: GIF selected - URL: \(gif.url)")
+          vm.selectGif(gif)
+          showingGifPicker = false
+        }
+      }
+      .sheet(isPresented: $showingThreadgate) {
+        ThreadgateOptionsView(settings: Binding(
+          get: { vm.threadgateSettings },
+          set: { vm.threadgateSettings = $0 }
+        ))
+      }
+      .sheet(isPresented: $showingLabelSelector) {
+        LabelSelectorView(selectedLabels: Binding(
+          get: { vm.selectedLabels },
+          set: { vm.selectedLabels = $0 }
+        ))
+      }
 
     
     let draftsSheetContent = otherSheetsContent

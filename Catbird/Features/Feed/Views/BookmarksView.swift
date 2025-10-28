@@ -39,7 +39,6 @@ struct BookmarksView: View {
         bookmarksListView
       }
     }
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
     .navigationTitle("Bookmarks")
     .navigationBarTitleDisplayMode(.large)
     .toolbar {
@@ -61,6 +60,7 @@ struct BookmarksView: View {
     } message: {
       Text(errorMessage)
     }
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
   // MARK: - Empty State
@@ -82,6 +82,7 @@ struct BookmarksView: View {
       }
     }
     .padding()
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
   // MARK: - Bookmarks List
@@ -112,6 +113,7 @@ struct BookmarksView: View {
     }
     .listRowInsets(EdgeInsets()) 
     .listStyle(.plain)
+    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
   // MARK: - Bookmark Row

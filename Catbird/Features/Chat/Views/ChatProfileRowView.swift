@@ -21,7 +21,11 @@ struct ChatProfileRowView: View {
         } label: {
             HStack(spacing: 12) {
                 // Avatar
-                AsyncProfileImage(url: profile.finalAvatarURL(), size: 44)
+                AsyncProfileImage(
+                    url: profile.finalAvatarURL(),
+                    size: 44,
+                    labels: extractLabels(from: profile)
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.displayName ?? "")
@@ -173,6 +177,17 @@ struct ChatProfileRowView: View {
             // Unknown setting, let server decide
             return nil
         }
+    }
+    
+    private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
+        if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            return profileView.labels
+        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            return profileViewBasic.labels
+        } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
+            return chatProfile.labels
+        }
+        return nil
     }
 }
 

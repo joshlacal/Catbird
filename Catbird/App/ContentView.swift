@@ -638,6 +638,14 @@ struct MainContentView18: View {
                       }
                       ToolbarItem(placement: .bottomBar) {
                           Button {
+                              guard let did = appState.currentUserDID else { return }
+                              appState.navigationManager.navigate(to: .profile(did))
+                              isDrawerOpen = false
+                          } label: { Label("Profile", systemImage: "person") }
+                              .accessibilityLabel("Profile")
+                      }
+                      ToolbarItem(placement: .bottomBar) {
+                          Button {
                               appState.navigationManager.navigate(to: .bookmarks)
                               isDrawerOpen = false
                           } label: { Label("Bookmarks", systemImage: "bookmark") }

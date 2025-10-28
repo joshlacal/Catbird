@@ -82,6 +82,7 @@ struct FeedView: View {
       guard currentFetch != fetch else { return }
       
       logger.debug("Feed type changed from \(currentFetch?.identifier ?? "nil") to \(fetch.identifier)")
+      appState.feedFeedbackManager.disable()
 
       // Switch to a dedicated state manager per feed to keep per-feed scroll state
       let newManager = feedStateStore.stateManager(for: fetch, appState: appState)

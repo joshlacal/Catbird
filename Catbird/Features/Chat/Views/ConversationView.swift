@@ -440,15 +440,17 @@ struct ConversationView: View {
     return convo.members.first?.displayName ?? "Chat"  // Fallback
   }
 
-  // Helper to create ChatTheme
+  // Helper to create ChatTheme with proper Dim mode support
   private func createChatTheme() -> ChatTheme {
     // Customize colors and images based on your app's theme
     let colors = ChatTheme.Colors(
         mainBG: Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), 
-        mainTint: Color.dynamicText(appState.themeManager, currentScheme: colorScheme), 
+        mainTint: Color.accentColor,
         mainText: Color.dynamicText(appState.themeManager, currentScheme: colorScheme),
-        mainCaptionText: .accentColor, 
-        messageMyBG: .accentColor)
+        mainCaptionText: Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme), 
+        messageMyBG: Color.accentColor,
+        messageFriendBG: Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme)
+    )
 
     let images = ChatTheme.Images(
         arrowSend: Image(systemName: "arrow.up")

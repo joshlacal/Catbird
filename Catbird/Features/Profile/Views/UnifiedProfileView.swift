@@ -11,6 +11,8 @@ import Nuke
 import TipKit
 import SwiftData
 
+
+
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
   @Environment(AppState.self) private var appState
@@ -1441,19 +1443,40 @@ struct ProfileHeader: View {
     }
     
     private var avatarView: some View {
-        Group {
+        let moderationState = getAvatarModerationState(profile.labels)
+        let shouldDisableTap = (moderationState == .hide)
+        
+        return Group {
             if isLabeler {
                 // Square avatar for labelers
-                LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-                    if let image = state.image {
-                        image.resizable().aspectRatio(contentMode: .fill)
+                Group {
+                    if moderationState == .hide {
+                        // Hidden avatar placeholder
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.secondary.opacity(0.3))
+                            .overlay(
+                                Image(systemName: "eye.slash.fill")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .frame(width: avatarSize * 0.4, height: avatarSize * 0.4)
+                            )
                     } else {
-                        RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.3))
+                        LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                            if let image = state.image {
+                                image.resizable().aspectRatio(contentMode: .fill)
+                            } else {
+                                RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.3))
+                            }
+                        }
+                        .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+                        .blur(radius: moderationState == .blur ? 20 : 0)
                     }
                 }
-                .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
                 .onTapGesture {
-                    isShowingProfileImageViewer = true
+                    if !shouldDisableTap {
+                        isShowingProfileImageViewer = true
+                    }
                 }
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -1465,16 +1488,34 @@ struct ProfileHeader: View {
                 .zIndex(10)
             } else {
                 // Circular avatar for regular users
-                LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
-                    if let image = state.image {
-                        image.resizable().aspectRatio(contentMode: .fill)
+                Group {
+                    if moderationState == .hide {
+                        // Hidden avatar placeholder
+                        Circle()
+                            .fill(Color.secondary.opacity(0.3))
+                            .overlay(
+                                Image(systemName: "eye.slash.fill")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .frame(width: avatarSize * 0.4, height: avatarSize * 0.4)
+                            )
                     } else {
-                        Circle().fill(Color.secondary.opacity(0.3))
+                        LazyImage(url: URL(string: profile.avatar?.uriString() ?? "")) { state in
+                            if let image = state.image {
+                                image.resizable().aspectRatio(contentMode: .fill)
+                            } else {
+                                Circle().fill(Color.secondary.opacity(0.3))
+                            }
+                        }
+                        .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
+                        .blur(radius: moderationState == .blur ? 20 : 0)
                     }
                 }
-                .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
                 .onTapGesture {
-                    isShowingProfileImageViewer = true
+                    if !shouldDisableTap {
+                        isShowingProfileImageViewer = true
+                    }
                 }
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(Circle())
@@ -1946,6 +1987,76 @@ struct ProfileHeader: View {
         }
         .buttonStyle(.plain)
         .disabled(isLikeButtonLoading)
+    }
+    
+    // MARK: - Helper Functions
+    private func getAvatarModerationState(_ labels: [ComAtprotoLabelDefs.Label]?) -> AvatarModerationState {
+        guard let labels = labels, !labels.isEmpty else { return .show }
+        
+        // Check if any adult content labels present
+        let hasAdultLabels = labels.contains { label in
+            let lowercasedValue = label.val.lowercased()
+            return ["porn", "nsfw", "nudity", "sexual"].contains(lowercasedValue)
+        }
+        
+        guard hasAdultLabels else { return .show }
+        
+        // CRITICAL: If user is a minor (adult content disabled), HIDE the avatar completely
+        if !appState.isAdultContentEnabled {
+            return .hide
+        }
+        
+        // User is an adult - check their granular preferences
+        if let preferences = try? appState.preferencesManager.getLocalPreferences() {
+            // Find the most restrictive setting among adult labels
+            var mostRestrictive: ContentVisibility = .show
+            
+            for label in labels {
+                let labelValue = label.val.lowercased()
+                guard ["porn", "nsfw", "nudity", "sexual"].contains(labelValue) else { continue }
+                
+                // Map label to preference key
+                let preferenceKey: String
+                switch labelValue {
+                case "porn", "nsfw", "sexual":
+                    preferenceKey = "nsfw"
+                case "nudity":
+                    preferenceKey = "nudity"
+                default:
+                    preferenceKey = labelValue
+                }
+                
+                // Get visibility for this label
+                let visibility = ContentFilterManager.getVisibilityForLabel(
+                    label: preferenceKey,
+                    labelerDid: label.src,
+                    preferences: preferences.contentLabelPrefs
+                )
+                
+                // Track most restrictive
+                switch (mostRestrictive, visibility) {
+                case (_, .hide):
+                    mostRestrictive = .hide
+                case (.show, .warn):
+                    mostRestrictive = .warn
+                default:
+                    break
+                }
+            }
+            
+            // Convert ContentVisibility to AvatarModerationState
+            switch mostRestrictive {
+            case .hide:
+                return .hide
+            case .warn:
+                return .blur
+            case .show:
+                return .show
+            }
+        }
+        
+        // Fallback: if preferences unavailable for adult, blur by default (conservative)
+        return .blur
     }
 }
 

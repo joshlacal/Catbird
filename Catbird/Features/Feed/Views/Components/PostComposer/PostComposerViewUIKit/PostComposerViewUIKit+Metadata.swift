@@ -42,17 +42,11 @@ extension PostComposerViewUIKit {
         }
       }
 
-      // Outline hashtags (compact UI like legacy UIKit composer)
-      if !vm.outlineTags.isEmpty || true { // keep visible to allow adding tags
-        OutlineTagsView(tags: Binding(
-          get: { vm.outlineTags },
-          set: { vm.outlineTags = $0 }
-        ), compact: true)
-      }
+      // Compact inline outline hashtags
+      compactOutlineTagsView(vm: vm)
       
-      if !vm.selectedLanguages.isEmpty {
-        languageChipsView(vm: vm)
-      }
+      // Compact inline language chips (always visible)
+      compactLanguageChipsView(vm: vm)
     }
     .padding(.horizontal, 16)
     .onAppear {
@@ -82,39 +76,129 @@ extension PostComposerViewUIKit {
     }
   }
   
+  // MARK: - Compact Outline Tags View
+  
   @ViewBuilder
-  private func languageChipsView(vm: PostComposerViewModel) -> some View {
+  private func compactOutlineTagsView(vm: PostComposerViewModel) -> some View {
     HStack(spacing: 8) {
-      Image(systemName: "globe")
+      Image(systemName: "number")
+        .font(.system(size: 12))
         .foregroundColor(.secondary)
-        .font(.system(size: 14))
       
       ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 8) {
-          ForEach(vm.selectedLanguages, id: \.self) { lang in
+        HStack(spacing: 6) {
+          ForEach(vm.outlineTags, id: \.self) { tag in
             HStack(spacing: 4) {
-                Text(lang.lang.minimalIdentifier.uppercased())
-                .appFont(AppTextRole.caption)
-                .fontWeight(.medium)
-              
-              Button(action: {
-                vm.selectedLanguages.removeAll { $0 == lang }
-              }) {
+              Text("#\(tag)")
+                .font(.system(size: 11, weight: .medium))
+              Button(action: { removeOutlineTag(tag, vm: vm) }) {
                 Image(systemName: "xmark.circle.fill")
-                  .font(.system(size: 14))
+                  .font(.system(size: 10))
+                  .foregroundColor(.secondary)
               }
-              .buttonStyle(PlainButtonStyle())
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.systemGray5)
-            .cornerRadius(12)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.1))
+            .foregroundColor(.secondary)
+            .cornerRadius(6)
+          }
+          
+          if vm.outlineTags.count < 10 {
+            Button(action: { showAddTagDialog(vm: vm) }) {
+              Image(systemName: "plus.circle")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            }
+          }
+        }
+        .padding(.horizontal, 1)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+  
+  // MARK: - Compact Language Chips View
+  
+  @ViewBuilder
+  private func compactLanguageChipsView(vm: PostComposerViewModel) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 8) {
+        Image(systemName: "globe")
+          .font(.system(size: 12))
+          .foregroundColor(.secondary)
+        
+        if vm.selectedLanguages.isEmpty {
+          // Show add button when no language is set
+          Text("No language set")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+        } else {
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+              ForEach(vm.selectedLanguages, id: \.self) { lang in
+                HStack(spacing: 4) {
+                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                    .font(.system(size: 11, weight: .medium))
+                  Button(action: { vm.toggleLanguage(lang) }) {
+                    Image(systemName: "xmark.circle.fill")
+                      .font(.system(size: 10))
+                      .foregroundColor(.secondary)
+                  }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .foregroundColor(.secondary)
+                .cornerRadius(6)
+              }
+            }
+            .padding(.horizontal, 1)
           }
         }
       }
+      .padding(.vertical, 4)
       
-      Spacer()
+      // Language detection suggestion
+      if let suggested = vm.suggestedLanguage,
+         !vm.selectedLanguages.contains(suggested),
+         !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        HStack {
+          Button(action: {
+            vm.applySuggestedLanguage()
+          }) {
+            HStack(spacing: 6) {
+              Image(systemName: "wand.and.stars")
+                .font(.system(size: 10))
+              Text("Detected: \(Locale.current.localizedString(forLanguageCode: suggested.lang.languageCode?.identifier ?? "") ?? suggested.lang.minimalIdentifier)")
+                .font(.system(size: 11, weight: .medium))
+              Image(systemName: "chevron.right")
+                .font(.system(size: 8))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.accentColor.opacity(0.15))
+            .foregroundColor(.accentColor)
+            .cornerRadius(6)
+          }
+          .buttonStyle(.plain)
+          
+          Spacer()
+        }
+      }
     }
+  }
+  
+  // MARK: - Helper Methods
+  
+  private func removeOutlineTag(_ tag: String, vm: PostComposerViewModel) {
+    vm.outlineTags.removeAll { $0 == tag }
+  }
+  
+  private func showAddTagDialog(vm: PostComposerViewModel) {
+    // For now, users can use the full OutlineTagsView from the toolbar
+    // This is just a placeholder for future inline tag addition
+    pcMetadataLogger.info("PostComposerMetadata: Add tag button tapped")
   }
   
   @ViewBuilder

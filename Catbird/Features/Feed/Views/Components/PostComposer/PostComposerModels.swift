@@ -58,6 +58,8 @@ struct ThreadEntry: Identifiable {
     var urlsKeptForEmbed: Set<String> = []
     var facets: [AppBskyRichtextFacet]?
     var hashtags: [String] = []
+    var selectedLanguages: [LanguageCodeContainer] = []
+    var outlineTags: [String] = []
 }
 
 // MARK: - Platform Compatibility

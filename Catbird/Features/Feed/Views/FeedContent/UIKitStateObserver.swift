@@ -38,8 +38,12 @@ final class UIKitStateObserver<T: Observable> {
                     // For ThemeManager, observe theme-related properties
                     _ = themeManager.colorSchemeOverride
                     _ = themeManager.darkThemeMode
+                } else if let feedback = self.observedObject as? FeedFeedbackManager {
+                    // Explicitly observe feed feedback toggles and feed identity
+                    _ = feedback.isEnabled
+                    _ = feedback.currentFeedType?.identifier
                 } else {
-                    // For other observable objects, just read the object
+                    // For other observable objects, read a known-changing property by re-evaluating the object
                     _ = self.observedObject
                 }
             } onChange: {
