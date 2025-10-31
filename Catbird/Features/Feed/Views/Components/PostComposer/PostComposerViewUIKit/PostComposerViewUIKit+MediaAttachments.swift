@@ -34,65 +34,39 @@ extension PostComposerViewUIKit {
   private func imageAttachmentsView(vm: PostComposerViewModel) -> some View {
     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
       ForEach(Array(vm.mediaItems.enumerated()), id: \.offset) { index, item in
-        ZStack(alignment: .topTrailing) {
-          if let img = item.image {
-            img
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-              .frame(width: 100, height: 100)
-              .clipped()
-              .cornerRadius(8)
-          } else {
-            Rectangle()
-              .fill(Color.systemGray5)
-              .frame(width: 100, height: 100)
-              .cornerRadius(8)
-              .overlay(ProgressView().progressViewStyle(.circular))
-          }
-          
-          Button(action: { 
+        MediaItemView(
+          item: item,
+          onRemove: {
             pcMediaLogger.info("PostComposerMedia: Removing image at index \(index)")
             vm.mediaItems.remove(at: index)
-          }) {
-            Image(systemName: "xmark.circle.fill")
-              .foregroundColor(.white)
-              .background(Circle().fill(Color.black.opacity(0.5)))
+          },
+          onEditAlt: {
+            pcMediaLogger.info("PostComposerMedia: Opening alt text editor for image \(item.id)")
+            vm.beginEditingAltText(for: item.id)
+          },
+          onEditImage: {
+            pcMediaLogger.info("PostComposerMedia: Opening photo editor for image \(item.id) at index \(index)")
+            vm.beginEditingImage(for: item.id, at: index)
           }
-          .buttonStyle(PlainButtonStyle())
-          .padding(4)
-        }
+        )
       }
     }
   }
   
   @ViewBuilder
   private func videoAttachmentView(videoItem: PostComposerViewModel.MediaItem, vm: PostComposerViewModel) -> some View {
-    if let image = videoItem.image {
-      ZStack(alignment: .topTrailing) {
-        image
-          .resizable()
-          .aspectRatio(contentMode: .fill)
-          .frame(height: 200)
-          .cornerRadius(12)
-          .overlay(
-            Image(systemName: "play.circle.fill")
-              .font(.system(size: 48))
-              .foregroundColor(.white)
-              .shadow(radius: 4)
-          )
-        
-        Button(action: { 
-          pcMediaLogger.info("PostComposerMedia: Removing video attachment")
-          vm.videoItem = nil 
-        }) {
-          Image(systemName: "xmark.circle.fill")
-            .foregroundColor(.white)
-            .background(Circle().fill(Color.black.opacity(0.5)))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .padding(8)
-      }
-    }
+    MediaItemView(
+      item: videoItem,
+      onRemove: {
+        pcMediaLogger.info("PostComposerMedia: Removing video attachment")
+        vm.videoItem = nil
+      },
+      onEditAlt: {
+        pcMediaLogger.info("PostComposerMedia: Opening alt text editor for video \(videoItem.id)")
+        vm.beginEditingAltText(for: videoItem.id)
+      },
+      isVideo: true
+    )
   }
   
   @ViewBuilder

@@ -717,6 +717,7 @@ struct MainContentView18: View {
             )
           }
         }
+        .environment(appState)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
@@ -942,6 +943,7 @@ struct MainContentView18: View {
         PostComposerViewUIKit(
           appState: appState
         )
+        .environment(appState)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
@@ -1337,6 +1339,7 @@ struct MainContentView17: View {
         PostComposerViewUIKit(
           appState: appState
         )
+        .environment(appState)
         .presentationDetents([PresentationDetent.large])
         .presentationDragIndicator(.visible)
       }
@@ -1599,6 +1602,7 @@ struct MainContentView17: View {
         PostComposerViewUIKit(
           appState: appState
         )
+        .environment(appState)
         .presentationDetents([PresentationDetent.large])
         .presentationDragIndicator(.hidden)
       }

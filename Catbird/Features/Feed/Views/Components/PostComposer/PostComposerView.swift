@@ -17,9 +17,12 @@ import UniformTypeIdentifiers
 private let postComposerLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposer")
 
 struct PostComposerView: View {
-    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    
+    // Store AppState reference locally to avoid global observation
+    private let appState: AppState
+    
     @State private var viewModel: PostComposerViewModel
     @FocusState private var isTextFieldFocused: Bool
     @State private var showingDismissAlert = false
@@ -67,6 +70,7 @@ struct PostComposerView: View {
     let onMinimize: ((PostComposerViewModel) -> Void)?
     
     init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
+        self.appState = appState
         self._viewModel = State(
             wrappedValue: PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState))
         self.onMinimize = onMinimize
@@ -80,6 +84,7 @@ struct PostComposerView: View {
     
     
     init(restoringFromDraft draft: PostComposerDraft, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
+        self.appState = appState
         let viewModel = PostComposerViewModel(parentPost: nil, quotedPost: nil, appState: appState)
         // Restore full draft state
         viewModel.restoreDraftState(draft)
@@ -1424,6 +1429,7 @@ struct SheetsModifier: ViewModifier {
                             altText: videoItem.altText,
                             image: image,
                             imageId: videoItem.id,
+                            imageData: videoItem.rawData,
                             onSave: viewModel.updateAltText
                         )
                     } else if let index = viewModel.mediaItems.firstIndex(where: { $0.id == editingId }),
@@ -1432,6 +1438,7 @@ struct SheetsModifier: ViewModifier {
                             altText: viewModel.mediaItems[index].altText,
                             image: image,
                             imageId: editingId,
+                            imageData: viewModel.mediaItems[index].rawData,
                             onSave: viewModel.updateAltText
                         )
                     }

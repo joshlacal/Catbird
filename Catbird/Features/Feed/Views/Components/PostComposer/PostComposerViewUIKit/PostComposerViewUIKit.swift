@@ -20,9 +20,11 @@ import UIKit
 private let pcUIKitLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerUIKit")
 
 struct PostComposerViewUIKit: View {
-  @Environment(AppState.self) var appState
   @Environment(\.dismiss) var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
+  
+  // Store AppState reference locally to avoid global observation
+ let appState: AppState
   
   @State var viewModel: PostComposerViewModel?
   private let initialParentPost: AppBskyFeedDefs.PostView?
@@ -69,6 +71,7 @@ struct PostComposerViewUIKit: View {
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
        appState: AppState) {
+    self.appState = appState
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
     self.restoringDraftParam = nil
@@ -76,6 +79,7 @@ struct PostComposerViewUIKit: View {
   
   init(restoringFromDraft draft: PostComposerDraft,
        appState: AppState) {
+    self.appState = appState
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.restoringDraftParam = draft

@@ -20,6 +20,7 @@
 		216E56FF2E0EFEF8001E7844 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; };
 		216E57002E0EFEF8001E7844 /* FaultOrdering in Embed Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E56FE2E0EFEF8001E7844 /* FaultOrdering */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		216E57052E0EFF02001E7844 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 216E57042E0EFF02001E7844 /* FaultOrderingTests */; };
+		217ED1BB2EB4313A00BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; productRef = 217ED1BA2EB4313A00BD113B /* Mantis */; };
 		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
 		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
@@ -220,6 +221,7 @@
 				212E94692D6183D600D3E1DD /* Nuke in Frameworks */,
 				21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */,
 				2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */,
+				217ED1BB2EB4313A00BD113B /* Mantis in Frameworks */,
 				212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
 				215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */,
@@ -362,6 +364,7 @@
 				2121B3F42DF5201E003871F1 /* ExyteChat */,
 				216E56FE2E0EFEF8001E7844 /* FaultOrdering */,
 				215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */,
+				217ED1BA2EB4313A00BD113B /* Mantis */,
 			);
 			productName = Catbird;
 			productReference = 212E93FD2D60132700D3E1DD /* Catbird.app */;
@@ -509,6 +512,7 @@
 				2121B3F32DF5201E003871F1 /* XCRemoteSwiftPackageReference "Chat" */,
 				216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */,
 				215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				217ED1B92EB4313A00BD113B /* XCRemoteSwiftPackageReference "Mantis" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 212E93FE2D60132700D3E1DD /* Products */;
@@ -1344,6 +1348,14 @@
 				minimumVersion = 8.56.1;
 			};
 		};
+		217ED1B92EB4313A00BD113B /* XCRemoteSwiftPackageReference "Mantis" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/guoyingtao/Mantis";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.7.5;
+			};
+		};
 		218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gh123man/LazyPager";
@@ -1409,6 +1421,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 216E56FD2E0EFEDA001E7844 /* XCLocalSwiftPackageReference "../FaultOrdering-1.0.0" */;
 			productName = FaultOrderingTests;
+		};
+		217ED1BA2EB4313A00BD113B /* Mantis */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 217ED1B92EB4313A00BD113B /* XCRemoteSwiftPackageReference "Mantis" */;
+			productName = Mantis;
 		};
 		218B7A8B2D70B1AE0053987F /* LazyPager */ = {
 			isa = XCSwiftPackageProductDependency;

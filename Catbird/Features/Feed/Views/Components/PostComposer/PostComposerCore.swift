@@ -290,13 +290,22 @@ extension PostComposerViewModel {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
+
                         #if os(iOS)
-                        mediaItem.image = Image(uiImage: UIImage(data: data) ?? UIImage())
+                        let platformImage = UIImage(data: data)
+                        if let platformImage = platformImage {
+                            mediaItem.image = Image(uiImage: platformImage)
+                            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+                        }
                         #elseif os(macOS)
-                        mediaItem.image = Image(nsImage: NSImage(data: data) ?? NSImage())
+                        let platformImage = NSImage(data: data)
+                        if let platformImage = platformImage {
+                            mediaItem.image = Image(nsImage: platformImage)
+                            mediaItem.aspectRatio = platformImage.size
+                        }
                         #endif
                         mediaItem.isLoading = false
-                        
+
                         if isDataAnimatedGIF(data) {
                             await processGIFAsVideoFromData(data)
                         } else {
@@ -314,17 +323,26 @@ extension PostComposerViewModel {
     func processDetectedGenmoji(_ genmojiData: Data) async {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
+
         #if os(iOS)
-        mediaItem.image = Image(uiImage: UIImage(data: genmojiData) ?? UIImage())
+        let platformImage = UIImage(data: genmojiData)
+        if let platformImage = platformImage {
+            mediaItem.image = Image(uiImage: platformImage)
+            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+        }
         #elseif os(macOS)
-        mediaItem.image = Image(nsImage: NSImage(data: genmojiData) ?? NSImage())
+        let platformImage = NSImage(data: genmojiData)
+        if let platformImage = platformImage {
+            mediaItem.image = Image(nsImage: platformImage)
+            mediaItem.aspectRatio = platformImage.size
+        }
         #endif
         mediaItem.isLoading = false
-        
+
         let source = MediaSource.genmojiConversion(genmojiData)
         if !isMediaSourceAlreadyAdded(source) {
             trackMediaSource(source)
-            
+
             if mediaItems.count < maxImagesAllowed {
                 mediaItems.append(mediaItem)
             }

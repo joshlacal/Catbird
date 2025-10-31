@@ -123,7 +123,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   private func compactLanguageChipsView(vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 8) {
+      HStack(alignment: .center, spacing: 8) {
         Image(systemName: "globe")
           .font(.system(size: 12))
           .foregroundColor(.secondary)
@@ -133,6 +133,8 @@ extension PostComposerViewUIKit {
           Text("No language set")
             .font(.system(size: 11))
             .foregroundColor(.secondary)
+          
+          Spacer()
         } else {
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {

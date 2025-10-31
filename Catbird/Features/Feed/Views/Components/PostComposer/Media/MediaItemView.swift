@@ -13,20 +13,28 @@ struct MediaItemView: View {
     let item: PostComposerViewModel.MediaItem
     let onRemove: () -> Void
     let onEditAlt: () -> Void
+    let onEditImage: (() -> Void)?
     let isVideo: Bool
-    
+
     // Dimensions for thumbnails
     private let size: CGFloat = 100
-    
-    init(item: PostComposerViewModel.MediaItem, onRemove: @escaping () -> Void, onEditAlt: @escaping () -> Void, isVideo: Bool = false) {
+
+    init(
+      item: PostComposerViewModel.MediaItem,
+      onRemove: @escaping () -> Void,
+      onEditAlt: @escaping () -> Void,
+      onEditImage: (() -> Void)? = nil,
+      isVideo: Bool = false
+    ) {
         self.item = item
         self.onRemove = onRemove
         self.onEditAlt = onEditAlt
+        self.onEditImage = onEditImage
         self.isVideo = isVideo
     }
     
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             // Image or loading state
             Group {
                 if let image = item.image {
@@ -34,7 +42,7 @@ struct MediaItemView: View {
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            
+
                         // Video play indicator if this is a video
                         if isVideo {
                             Image(systemName: "play.circle.fill")
@@ -50,16 +58,54 @@ struct MediaItemView: View {
             .frame(width: size, height: size)
             .background(Color(platformColor: PlatformColor.platformSystemGray5))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            
-            // Remove button
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .appFont(size: 20)
-                    .foregroundStyle(.white, Color(platformColor: PlatformColor.platformSystemGray3))
-                    .background(Circle().fill(Color.black.opacity(0.3)))
+
+            // Top-left: Edit image button (only for images, not videos)
+            if !isVideo, let onEditImage = onEditImage {
+                VStack {
+                    HStack {
+                        if #available(iOS 26.0, *) {
+                            Button(action: onEditImage) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .appFont(size: 14)
+                                    .foregroundStyle(.white)
+                                    .padding(8)
+                            }
+                            .buttonStyle(.plain)
+                            .glassEffect(.regular.interactive())
+                            .accessibilityLabel("Edit image")
+                        } else {
+                            Button(action: onEditImage) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .appFont(size: 14)
+                                    .foregroundStyle(.white)
+                                    .padding(8)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Edit image")
+                        }
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(4)
+            }
+
+            // Top-right: Remove button
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark.circle.fill")
+                            .appFont(size: 20)
+                            .foregroundStyle(.white, Color(platformColor: PlatformColor.platformSystemGray3))
+                            .background(Circle().fill(Color.black.opacity(0.3)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(isVideo ? "video" : "image")")
+                }
+                Spacer()
             }
             .padding(4)
-            .accessibilityLabel("Remove \(isVideo ? "video" : "image")")
             
             // Alt text status indicator
             VStack {
@@ -93,6 +139,22 @@ struct MediaItemView: View {
             onEditAlt()
         }
     }
+}
+
+// Helper for conditional modifiers
+private extension View {
+  @ViewBuilder
+  func `if`<Content: View>(
+    _ condition: Bool,
+    transform: (Self) -> Content,
+    else elseTransform: (Self) -> Content
+  ) -> some View {
+    if condition {
+      transform(self)
+    } else {
+      elseTransform(self)
+    }
+  }
 }
 
 #Preview {

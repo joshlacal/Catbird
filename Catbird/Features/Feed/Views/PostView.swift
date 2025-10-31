@@ -592,11 +592,23 @@ var id: String {
 
       threadSummaryTask = Task {
         do {
-          let summary = try await agent.summarizeThread(at: targetURI)
+          var accumulatedText = ""
+          let stream = await agent.streamThreadSummary(at: targetURI)
+          
+          for try await chunk in stream {
+            guard !Task.isCancelled else { return }
+            
+            accumulatedText += chunk
+            
+            await MainActor.run {
+              self.threadSummaryText = accumulatedText
+            }
+          }
+          
           guard !Task.isCancelled else { return }
 
-          let cleaned = summary.trimmingCharacters(in: .whitespacesAndNewlines)
           await MainActor.run {
+            let cleaned = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
             if cleaned.isEmpty {
               self.threadSummaryError = "The model couldn't generate a summary for this thread."
               self.isThreadSummaryLoading = false

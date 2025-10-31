@@ -6,7 +6,7 @@ import Petrel
 
 struct ConversationRow: View {
   let convo: ChatBskyConvoDefs.ConvoView
-  let did: String  // Needed to identify the other member
+  let currentUserDID: String?  // Current user's DID to identify the other member
 
   // Use @State for properties loaded asynchronously
   @State private var avatarImage: Image?  // Managed by ProfileAvatarView now
@@ -16,8 +16,13 @@ struct ConversationRow: View {
   @Environment(AppState.self) private var appState
   // Determine the other member involved in the conversation
   private var otherMember: ChatBskyActorDefs.ProfileViewBasic? {
+    // Guard against nil currentUserDID - if we don't know who the current user is,
+    // we can't determine who the "other" member is, so return the first member as fallback
+    guard let userDID = currentUserDID else {
+      return convo.members.first
+    }
     // Find the first member whose DID does not match the current user's DID
-    return convo.members.first(where: { $0.did.didString() != did }) ?? nil
+    return convo.members.first(where: { $0.did.didString() != userDID })
   }
   
   // Accessibility description for screen readers

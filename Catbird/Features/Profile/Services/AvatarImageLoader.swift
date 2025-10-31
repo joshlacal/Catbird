@@ -150,13 +150,7 @@ struct UIKitAvatarView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: UIImageView, context: Context) {
-        // Update size constraints to match current size parameter
-        uiView.constraints.forEach { constraint in
-            if constraint.firstAttribute == .width || constraint.firstAttribute == .height {
-                constraint.isActive = false
-            }
-        }
-        
+        // Ensure proper sizing with constraints
         NSLayoutConstraint.activate([
             uiView.widthAnchor.constraint(equalToConstant: size),
             uiView.heightAnchor.constraint(equalToConstant: size)

@@ -60,9 +60,10 @@ extension PostComposerViewModel {
 
         mediaItems.append(contentsOf: newMediaItems)
 
-        // Load each image asynchronously
-        for i in mediaItems.indices where mediaItems[i].image == nil {
-            await loadImageForItem(at: i)
+        // Load each image asynchronously using IDs to avoid index invalidation
+        let itemsToLoad = mediaItems.filter { $0.image == nil }.map { $0.id }
+        for itemId in itemsToLoad {
+            await loadImageForItem(withId: itemId)
         }
         
         // Sync media state to current thread
@@ -83,53 +84,68 @@ extension PostComposerViewModel {
     }
 
     @MainActor
-    private func loadImageForItem(at index: Int) async {
-        guard index < mediaItems.count else { 
-            logger.warning("PostComposerMedia: loadImageForItem - index \(index) out of bounds")
-            return 
+    private func loadImageForItem(withId id: UUID) async {
+        guard let index = mediaItems.firstIndex(where: { $0.id == id }) else {
+            logger.warning("PostComposerMedia: loadImageForItem - item with id \(id) not found")
+            return
         }
 
         // Skip loading if this is pasted content (already has image data)
         guard let pickerItem = mediaItems[index].pickerItem else {
-            logger.debug("PostComposerMedia: Skipping load for pasted content item at index \(index)")
+            logger.debug("PostComposerMedia: Skipping load for pasted content item with id \(id)")
             return
         }
 
-        logger.debug("PostComposerMedia: Loading image for item at index \(index)")
+        logger.debug("PostComposerMedia: Loading image for item with id \(id)")
+        
+        // Ensure isLoading is set to false even if we exit early or throw
+        defer {
+            if let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) {
+                mediaItems[currentIndex].isLoading = false
+            }
+        }
+        
         do {
             let (data, platformImage) = try await loadImageData(from: pickerItem)
 
+            guard let currentIndex = mediaItems.firstIndex(where: { $0.id == id }) else {
+                logger.warning("PostComposerMedia: Item removed during loading for id \(id)")
+                return
+            }
+
             if let platformImage = platformImage {
                 #if os(iOS)
-                mediaItems[index].image = Image(uiImage: platformImage)
+                mediaItems[currentIndex].image = Image(uiImage: platformImage)
                 #elseif os(macOS)
-                mediaItems[index].image = Image(nsImage: platformImage)
+                mediaItems[currentIndex].image = Image(nsImage: platformImage)
                 #endif
-                mediaItems[index].isLoading = false
-                mediaItems[index].aspectRatio = CGSize(
+                mediaItems[currentIndex].aspectRatio = CGSize(
                     width: platformImage.imageSize.width, height: platformImage.imageSize.height)
-                mediaItems[index].rawData = data
-                logger.info("PostComposerMedia: Image loaded successfully at index \(index) - size: \(platformImage.imageSize.width)x\(platformImage.imageSize.height)")
+                mediaItems[currentIndex].rawData = data
+                logger.info("PostComposerMedia: Image loaded successfully for id \(id) - size: \(platformImage.imageSize.width)x\(platformImage.imageSize.height)")
+            } else {
+                logger.error("PostComposerMedia: Failed to create platform image from data for id \(id)")
+                mediaItems.removeAll(where: { $0.id == id })
             }
         } catch let error as NSError {
-            logger.error("PostComposerMedia: Error loading image at index \(index) - code: \(error.code), error: \(error.localizedDescription)")
+            logger.error("PostComposerMedia: Error loading image for id \(id) - code: \(error.code), error: \(error.localizedDescription)")
             
             // Check if this is our special animated GIF error
             if error.code == 100, let gifData = error.userInfo["gifData"] as? Data {
-                logger.info("PostComposerMedia: Caught animated GIF error at index \(index), converting to video")
+                logger.info("PostComposerMedia: Caught animated GIF error for id \(id), converting to video")
                 // Remove this item from mediaItems
-                mediaItems.remove(at: index)
+                mediaItems.removeAll(where: { $0.id == id })
                 // Process as GIF video
                 await processGIFAsVideoFromData(gifData)
             } else {
                 // Remove failed item
-                logger.warning("PostComposerMedia: Removing failed item at index \(index)")
-                mediaItems.remove(at: index)
+                logger.warning("PostComposerMedia: Removing failed item with id \(id)")
+                mediaItems.removeAll(where: { $0.id == id })
             }
         } catch {
-            logger.error("PostComposerMedia: Unexpected error loading image at index \(index) - error: \(error.localizedDescription)")
+            logger.error("PostComposerMedia: Unexpected error loading image for id \(id) - error: \(error.localizedDescription)")
             // Remove failed item
-            mediaItems.remove(at: index)
+            mediaItems.removeAll(where: { $0.id == id })
         }
     }
 
@@ -251,14 +267,63 @@ extension PostComposerViewModel {
         currentEditingMediaId = id
         isAltTextEditorPresented = true
     }
-    
+
+    // MARK: - Photo Editing
+
+    func beginEditingImage(for id: UUID, at index: Int) {
+        currentEditingImageIndex = index
+        isPhotoEditorPresented = true
+    }
+
+    func updateEditedImage(_ newImage: PlatformImage, at index: Int) {
+        guard mediaItems.indices.contains(index) else {
+            logger.warning("PostComposerMedia: Cannot update edited image - index \(index) out of bounds")
+            return
+        }
+
+        logger.info("PostComposerMedia: Updating edited image at index \(index)")
+
+        #if os(iOS)
+        // Convert image to SwiftUI Image
+        mediaItems[index].image = Image(uiImage: newImage)
+
+        // Convert to JPEG data for upload
+        if let jpegData = newImage.jpegData(compressionQuality: 0.9) {
+            mediaItems[index].rawData = jpegData
+            logger.debug("PostComposerMedia: Converted edited image to JPEG - size: \(jpegData.count) bytes")
+        }
+
+        // Update aspect ratio
+        mediaItems[index].aspectRatio = CGSize(
+            width: newImage.size.width,
+            height: newImage.size.height
+        )
+        #elseif os(macOS)
+        // Convert image to SwiftUI Image
+        mediaItems[index].image = Image(nsImage: newImage)
+
+        // Convert to JPEG data for upload
+        if let jpegData = newImage.jpegImageData(compressionQuality: 0.9) {
+            mediaItems[index].rawData = jpegData
+            logger.debug("PostComposerMedia: Converted edited image to JPEG - size: \(jpegData.count) bytes")
+        }
+
+        // Update aspect ratio
+        mediaItems[index].aspectRatio = newImage.size
+        #endif
+
+        logger.info("PostComposerMedia: Image updated successfully at index \(index) - new size: \(self.mediaItems[index].aspectRatio?.width ?? 0)x\(self.mediaItems[index].aspectRatio?.height ?? 0)")
+
+        saveDraftIfNeeded()
+    }
+
     // MARK: - Video Thumbnail Loading
     
     @MainActor
     func loadVideoThumbnail(for videoItem: MediaItem) async {
         logger.debug("DEBUG: Loading video thumbnail")
         
-        guard let index = self.videoItem != nil ? 0 : nil else { return }
+        guard (self.videoItem != nil ? 0 : nil) != nil else { return }
         
         do {
             var asset: AVAsset?

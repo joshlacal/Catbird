@@ -55,6 +55,8 @@ final class PostComposerViewModel {
   var videoItem: MediaItem?
   var currentEditingMediaId: UUID?
   var isAltTextEditorPresented = false
+  var isPhotoEditorPresented = false
+  var currentEditingImageIndex: Int?
   var isVideoUploading: Bool = false
   var mediaUploadManager: MediaUploadManager?
   // If non-nil, posting is blocked due to server policy

@@ -36,7 +36,15 @@ struct OpenSourceLicensesView: View {
               url: "https://github.com/gh123man/LazyPager",
               license: "MIT"
             )
-            
+
+            LicenseRow(
+              name: "Mantis",
+              author: "guoyingtao",
+              version: "2.24.0",
+              url: "https://github.com/guoyingtao/Mantis",
+              license: "MIT"
+            )
+
             LicenseRow(
               name: "MCEmojiPicker",
               author: "izyumkin",

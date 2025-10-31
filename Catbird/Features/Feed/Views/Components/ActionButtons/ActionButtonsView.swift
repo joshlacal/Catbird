@@ -246,6 +246,7 @@ struct ActionButtonsView: View {
           parentPost: post,
           appState: appState
         )
+        .environment(appState)
         #if os(iOS)
         .presentationDetents({
           if #available(iOS 26.0, *) { return [.large] } else { return [PresentationDetent.large] }

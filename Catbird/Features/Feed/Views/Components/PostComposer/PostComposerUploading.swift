@@ -48,10 +48,16 @@ extension PostComposerViewModel {
             
             logger.info("PostComposerUploading: Image \(index + 1) uploaded successfully")
 
-            let aspectRatio = AppBskyEmbedDefs.AspectRatio(
-                width: Int(item.aspectRatio?.width ?? 0),
-                height: Int(item.aspectRatio?.height ?? 0)
-            )
+            // Only include aspect ratio if we have valid dimensions (non-zero)
+            let aspectRatio: AppBskyEmbedDefs.AspectRatio?
+            if let ratio = item.aspectRatio, ratio.width > 0, ratio.height > 0 {
+                aspectRatio = AppBskyEmbedDefs.AspectRatio(
+                    width: Int(ratio.width),
+                    height: Int(ratio.height)
+                )
+            } else {
+                aspectRatio = nil
+            }
 
             let altText = item.altText
             let imageEmbed = AppBskyEmbedImages.Image(

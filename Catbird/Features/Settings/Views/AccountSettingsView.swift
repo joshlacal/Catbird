@@ -173,15 +173,6 @@ struct AccountSettingsView: View {
                         }
                     }
                     
-                    Section("Account Information") {
-                        emailSection
-                        
-                        // Update Email requires OAuth scope not available with current auth flow
-                        // Button("Update Email") {
-                        //     isShowingEmailSheet = true
-                        // }
-                    }
-                    
                     Section("Handle Management") {
                         if let profile = profile {
                             HStack {

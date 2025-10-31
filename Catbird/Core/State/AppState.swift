@@ -85,6 +85,9 @@ final class AppState {
   // Current user's profile data for optimistic updates
   var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
   
+  // Current user's DID - stored to prevent unnecessary reloads from computed property observation
+  var currentUserDID: String?
+  
   // Account switching transition state for smooth UX
   var isTransitioningAccounts: Bool = false
   var prewarmingFeedData: [AppBskyFeedDefs.FeedViewPost]?
@@ -247,6 +250,9 @@ final class AppState {
     
     self.urlHandler = URLHandler()
 
+    // Initialize currentUserDID from auth manager
+    self.currentUserDID = authManager.state.userDID
+
     // Initialize composer draft manager
     self.composerDraftManager = ComposerDraftManager(appState: nil)
 
@@ -289,6 +295,12 @@ final class AppState {
 
       for await state in authManager.stateChanges {
         Task { @MainActor in
+          // Update currentUserDID when auth state changes
+          let newDID = state.userDID
+          if self.currentUserDID != newDID {
+            self.currentUserDID = newDID
+          }
+          
           // When auth state changes, update ALL manager client references
           if case .authenticated = state {
             self.postManager.updateClient(self.authManager.client)
@@ -851,11 +863,6 @@ final class AppState {
   /// Check if user is authenticated
   var isAuthenticated: Bool {
     authManager.state.isAuthenticated
-  }
-
-  /// Current user's DID
-  var currentUserDID: String? {
-    authManager.state.userDID
   }
 
   /// Current auth state

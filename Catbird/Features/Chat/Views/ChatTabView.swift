@@ -244,7 +244,7 @@ struct ChatTabView: View {
   private func conversationRow(for convo: ChatBskyConvoDefs.ConvoView, withSwipeActions: Bool) -> some View {
     ConversationRow(
       convo: convo,
-      did: appState.currentUserDID ?? ""
+      currentUserDID: appState.currentUserDID ?? ""
     )
     .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
     .modifier(ConditionalSwipeActions(conversation: convo, enabled: withSwipeActions))

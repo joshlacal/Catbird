@@ -1,6 +1,7 @@
 import CryptoKit
 import DeviceCheck
 import Foundation
+import Nuke
 import OSLog
 import Petrel
 import SwiftUI
@@ -3113,6 +3114,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   ) {
     notificationLogger.info("Received notification while app in foreground")
 
+    let userInfo = notification.request.content.userInfo
+    if let uriString = userInfo["uri"] as? String,
+       let typeString = userInfo["type"] as? String {
+      Task {
+        await prefetchNotificationContent(uri: uriString, type: typeString)
+      }
+    }
+
     // Show notification banner even when app is in foreground
     completionHandler([.banner, .sound])
   }
@@ -3138,6 +3147,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
         if let uri = uriString, let type = typeString {
           notificationLogger.info("Notification contains URI: \(uri) of type: \(type)")
+          await prefetchNotificationContent(uri: uri, type: type)
           await handleNotificationNavigation(uriString: uri, type: type)
         }
       }
@@ -3147,6 +3157,105 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   }
 
   // MARK: - Notification Navigation Handling
+
+  /// Prefetch content referenced in notification for instant display
+  private func prefetchNotificationContent(uri: String, type: String) async {
+    guard let appState = appState else {
+      notificationLogger.debug("Cannot prefetch - appState unavailable")
+      return
+    }
+
+    let client = await MainActor.run { appState.authManager.client }
+    guard let client else {
+      notificationLogger.debug("Cannot prefetch - no authenticated client")
+      return
+    }
+
+    // Only prefetch for post-related notifications
+    guard ["like", "repost", "reply", "mention", "quote"].contains(type.lowercased()) else {
+      return
+    }
+
+    do {
+      guard let atUri = try? ATProtocolURI(uriString: uri) else {
+        notificationLogger.warning("Invalid URI for prefetching: \(uri)")
+        return
+      }
+
+      notificationLogger.info("Prefetching post content for notification: \(uri)")
+
+      let params = AppBskyFeedGetPosts.Parameters(uris: [atUri])
+      let (responseCode, output) = try await client.app.bsky.feed.getPosts(input: params)
+
+      guard responseCode == 200, let posts = output?.posts, !posts.isEmpty else {
+        notificationLogger.warning("Failed to prefetch post (HTTP \(responseCode))")
+        return
+      }
+
+      notificationLogger.info("✅ Successfully prefetched post for notification")
+
+      // Cache images for immediate display
+      if let post = posts.first {
+        await prefetchPostImages(post)
+      }
+
+    } catch {
+      notificationLogger.error("Error prefetching notification content: \(error.localizedDescription)")
+    }
+  }
+
+  /// Prefetch images from a post for faster rendering
+  private func prefetchPostImages(_ post: AppBskyFeedDefs.PostView) async {
+    var imagesToPrefetch: [URL] = []
+
+    // Author avatar
+    if let avatarUri = post.author.avatar, let avatarUrl = URL(string: avatarUri.uriString()) {
+      imagesToPrefetch.append(avatarUrl)
+    }
+
+    // Embedded images
+    if let embed = post.embed {
+      switch embed {
+      case .appBskyEmbedImagesView(let imagesView):
+        for image in imagesView.images {
+          if let thumbUrl = URL(string: image.thumb.uriString()) {
+            imagesToPrefetch.append(thumbUrl)
+          }
+          if let fullsizeUrl = URL(string: image.fullsize.uriString()) {
+            imagesToPrefetch.append(fullsizeUrl)
+          }
+        }
+      case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
+        if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
+          for image in imagesView.images {
+            if let thumbUrl = URL(string: image.thumb.uriString()) {
+              imagesToPrefetch.append(thumbUrl)
+            }
+          }
+        }
+      default:
+        break
+      }
+    }
+
+    // Prefetch all images using Nuke
+    await withTaskGroup(of: Void.self) { group in
+      for imageUrl in imagesToPrefetch {
+        group.addTask {
+          do {
+            let request = Nuke.ImageRequest(url: imageUrl)
+            _ = try await Nuke.ImagePipeline.shared.image(for: request)
+          } catch {
+            // Silent failure - prefetching is opportunistic
+          }
+        }
+      }
+    }
+
+    if !imagesToPrefetch.isEmpty {
+      notificationLogger.info("Prefetched \(imagesToPrefetch.count) images from notification post")
+    }
+  }
 
   @MainActor
   private func ensureActiveAccount(for did: String) async {
