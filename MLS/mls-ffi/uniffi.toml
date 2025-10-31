@@ -1,0 +1,4 @@
+[bindings.swift]
+module_name = "MLSFFI"
+ffi_module_name = "MLSFFIFFI"
+generate_module_map = true

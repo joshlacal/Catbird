@@ -1,0 +1,578 @@
+import SwiftUI
+import OSLog
+import Petrel
+
+#if os(iOS)
+import ExyteChat
+#endif
+
+// MARK: - MLS Conversation Detail View
+
+/// Chat interface for an end-to-end encrypted MLS conversation with E2EE badge
+#if os(iOS)
+struct MLSConversationDetailView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+    
+    let conversationId: String
+    
+    @State private var messages: [Message] = []
+    @State private var isLoadingMessages = false
+    @State private var isSendingMessage = false
+    @State private var draftMessage = DraftMessage(
+        text: "", medias: [], giphyMedia: nil, recording: nil, replyMessage: nil, createdAt: Date()
+    )
+    @State private var showingMemberManagement = false
+    @State private var showingEncryptionInfo = false
+    @State private var conversation: MLSConversationViewModel?
+    @State private var messageToDelete: Message?
+    @State private var showingDeleteAlert = false
+    @State private var eventStreamManager: MLSEventStreamManager?
+    @State private var typingUsers: Set<String> = []
+
+    private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetail")
+    
+    var body: some View {
+        ZStack {
+            VStack(spacing: DesignTokens.Spacing.none) {
+                #if os(iOS)
+                chatView
+                #endif
+            }
+            
+            if isLoadingMessages && messages.isEmpty {
+                ProgressView("Loading messages...")
+                    .padding()
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .navigationTitle(navigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .themedNavigationBar(appState.themeManager)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                encryptionStatusHeader
+            }
+            
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    if conversation?.isGroupChat == true {
+                        Button {
+                            showingMemberManagement = true
+                        } label: {
+                            Label("Manage Members", systemImage: "person.2")
+                        }
+                    }
+                    
+                    Button {
+                        showingEncryptionInfo = true
+                    } label: {
+                        Label("Encryption Info", systemImage: "info.circle")
+                    }
+                    
+                    Divider()
+                    
+                    Button(role: .destructive) {
+                        leaveConversation()
+                    } label: {
+                        Label("Leave Conversation", systemImage: "arrow.right.square")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .accessibilityLabel("Conversation options")
+                }
+            }
+        }
+        .sheet(isPresented: $showingMemberManagement) {
+            if let conversation = conversation {
+                MLSMemberManagementView(conversation: conversation)
+            }
+        }
+        .sheet(isPresented: $showingEncryptionInfo) {
+            encryptionInfoSheet
+        }
+        .alert("Delete Message", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                if let message = messageToDelete {
+                    deleteMessage(message)
+                }
+            }
+        } message: {
+            Text("This will delete the message locally. Others will still be able to see it.")
+        }
+        .task {
+            await loadConversationAndMessages()
+        }
+        .onAppear {
+            // Start polling for new messages
+            startMessagePolling()
+        }
+        .onDisappear {
+            // Stop polling when leaving
+            stopMessagePolling()
+        }
+    }
+    
+    // MARK: - Encryption Status Header
+    
+    @ViewBuilder
+    private var encryptionStatusHeader: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            VStack(spacing: 2) {
+                Text(navigationTitle)
+                    .designCallout()
+                    .lineLimit(1)
+                
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.green)
+                    
+                    Text("End-to-End Encrypted")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .onTapGesture {
+            showingEncryptionInfo = true
+        }
+        .accessibilityLabel("End-to-end encrypted conversation")
+        .accessibilityHint("Tap to view encryption details")
+    }
+    
+    // MARK: - Chat View
+    
+    #if os(iOS)
+    @ViewBuilder
+    private var chatView: some View {
+        ChatView<EmptyView, EmptyView, CustomMessageMenuAction>(
+            messages: messages,
+            chatType: .conversation,
+            replyMode: .answer,
+            didSendMessage: { (draft: DraftMessage) in
+                Task {
+                    await sendMLSMessage(text: draft.text)
+                }
+            },
+            messageMenuAction: { (action: CustomMessageMenuAction, _, message: Message) in
+                handleMessageMenuAction(action: action, message: message)
+            }
+        )
+        .setAvailableInputs([.text])
+        .showMessageMenuOnLongPress(true)
+        .enableLoadMore(pageSize: 20) { _ in
+            Task {
+                await loadMoreMessages()
+            }
+        }
+        .chatTheme(accentColor: .blue)
+        .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+    }
+    #endif
+    
+    // MARK: - Encryption Info Sheet
+    
+    @ViewBuilder
+    private var encryptionInfoSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.green)
+                            .frame(width: 60)
+                        
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                            Text("End-to-End Encrypted")
+                                .designCallout()
+                            Text("Messages are secured with MLS protocol")
+                                .designFootnote()
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .spacingSM(.vertical)
+                }
+                
+                Section("Encryption Details") {
+                    InfoRow(label: "Protocol", value: "MLS (RFC 9420)")
+                    InfoRow(label: "Group ID", value: conversation?.groupId ?? "Unknown")
+                    InfoRow(label: "Key Rotation", value: "Automatic")
+                    InfoRow(label: "Forward Secrecy", value: "Enabled")
+                    InfoRow(label: "Post-Compromise Security", value: "Enabled")
+                }
+                
+                Section {
+                    Text("This conversation uses the Messaging Layer Security (MLS) protocol, providing end-to-end encryption with forward secrecy and post-compromise security.")
+                        .designFootnote()
+                        .foregroundColor(.secondary)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Encryption Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        showingEncryptionInfo = false
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Helper Views
+    
+    private struct InfoRow: View {
+        let label: String
+        let value: String
+        
+        var body: some View {
+            HStack {
+                Text(label)
+                    .designFootnote()
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(value)
+                    .designFootnote()
+                    .foregroundColor(.primary)
+            }
+        }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var navigationTitle: String {
+        if let name = conversation?.name {
+            return name
+        }
+        
+        if let conversation = conversation, conversation.isGroupChat {
+            let names = conversation.participants.prefix(3).map { $0.displayName ?? $0.handle }
+            if conversation.participants.count > 3 {
+                return names.joined(separator: ", ") + "..."
+            }
+            return names.joined(separator: ", ")
+        }
+        
+        return conversation?.participants.first?.displayName ?? "Secure Chat"
+    }
+    
+    // MARK: - Actions
+    
+    private func loadConversationAndMessages() async {
+        isLoadingMessages = true
+        defer { isLoadingMessages = false }
+        
+        // Load conversation details from AppState
+        conversation = appState.mlsConversations.first { $0.id == conversationId }
+        
+        guard let manager = await appState.getMLSConversationManager() else {
+            logger.error("Failed to get MLS conversation manager")
+            return
+        }
+        
+        do {
+            // Fetch messages from server
+            let apiClient = await appState.getMLSAPIClient()
+            guard let apiClient = apiClient else {
+                logger.error("Failed to get MLS API client")
+                return
+            }
+            
+            let (messageViews, _) = try await apiClient.getMessages(
+                convoId: conversationId,
+                limit: 50,
+                sinceMessage: nil
+            )
+            
+            logger.info("Fetched \(messageViews.count) encrypted messages")
+            
+            // Decrypt and convert messages
+            var decryptedMessages: [Message] = []
+            for messageView in messageViews.reversed() {
+                do {
+                    let plaintext = try await manager.decryptMessage(messageView)
+                    
+                    let isCurrentUser = messageView.sender.description == appState.currentUserDID
+                    let message = Message(
+                        id: messageView.id,
+                        user: User(
+                            id: messageView.sender.description,
+                            name: isCurrentUser ? "You" : formatDID(messageView.sender.description),
+                            avatarURL: nil,
+                            isCurrentUser: isCurrentUser
+                        ),
+                        status: .sent,
+                        createdAt: messageView.createdAt.date,
+                        text: plaintext
+                    )
+                    
+                    decryptedMessages.append(message)
+                    logger.debug("Decrypted message \(message.id): \(plaintext)")
+                } catch {
+                    logger.error("Failed to decrypt message \(messageView.id): \(error.localizedDescription)")
+                }
+            }
+            
+            messages = decryptedMessages
+            logger.info("Loaded and decrypted \(messages.count) messages")
+            
+        } catch {
+            logger.error("Failed to load messages: \(error.localizedDescription)")
+        }
+    }
+    
+    private func loadMoreMessages() async {
+        logger.debug("Loading more messages (pagination not yet implemented)")
+        // TODO: Implement pagination using cursor
+    }
+    
+    private func sendMLSMessage(text: String) async {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !isSendingMessage else { return }
+        
+        // Safety: Small delay to prevent ExyteChat race condition
+        // This fixes the "scroll to out-of-bounds row" crash in UIList
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        
+        isSendingMessage = true
+        defer { isSendingMessage = false }
+        
+        let messageText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Create optimistic message for immediate UI update
+        let optimisticId = UUID().uuidString
+        let optimisticMessage = Message(
+            id: optimisticId,
+            user: User(
+                id: appState.currentUserDID ?? "",
+                name: "You",
+                avatarURL: nil,
+                isCurrentUser: true
+            ),
+            status: .sending,
+            createdAt: Date(),
+            text: messageText
+        )
+        
+        messages.append(optimisticMessage)
+        
+        do {
+            guard let manager = await appState.getMLSConversationManager() else {
+                throw NSError(domain: "MLS", code: -1, userInfo: [NSLocalizedDescriptionKey: "MLS manager not initialized"])
+            }
+            
+            // Encrypt and send message via MLS
+            let (messageId, receivedAt) = try await manager.sendMessage(
+                convoId: conversationId,
+                plaintext: messageText
+            )
+            
+            // Update optimistic message with actual ID and status
+            if let index = messages.firstIndex(where: { $0.id == optimisticId }) {
+                let sentMessage = Message(
+                    id: messageId,
+                    user: optimisticMessage.user,
+                    status: .sent,
+                    createdAt: receivedAt.date,
+                    text: messageText
+                )
+                messages[index] = sentMessage
+            }
+            
+            logger.info("Successfully sent encrypted message: \(messageId)")
+            
+        } catch {
+            // Remove optimistic message on error
+            messages.removeAll { $0.id == optimisticId }
+            
+            // Create a DraftMessage to conform to Message.Status.error payload type
+            let failedDraft = DraftMessage(
+                text: messageText,
+                medias: [],
+                giphyMedia: nil,
+                recording: nil,
+                replyMessage: nil,
+                createdAt: Date()
+            )
+            
+            // Add error message using the expected DraftMessage payload
+            let failedMessage = Message(
+                id: UUID().uuidString,
+                user: optimisticMessage.user,
+                status: .error(failedDraft),
+                createdAt: Date(),
+                text: messageText
+            )
+            messages.append(failedMessage)
+            
+            logger.error("Failed to send message: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Real-Time Events
+    
+    private func startMessagePolling() {
+        logger.debug("Starting SSE subscription for real-time messages")
+        
+        Task {
+            guard let apiClient = await appState.getMLSAPIClient() else {
+                logger.error("Failed to get MLS API client for SSE")
+                return
+            }
+            
+            let streamManager = MLSEventStreamManager(apiClient: apiClient)
+            eventStreamManager = streamManager
+            
+            // Subscribe to conversation events
+            streamManager.subscribe(
+                to: conversationId,
+                handler: MLSEventStreamManager.EventHandler(
+                    onMessage: { messageEvent in
+                        Task { @MainActor in
+                            await self.handleNewMessage(messageEvent)
+                        }
+                    },
+                    onReaction: { reactionEvent in
+                        Task { @MainActor in
+                            await self.handleReaction(reactionEvent)
+                        }
+                    },
+                    onTyping: { typingEvent in
+                        Task { @MainActor in
+                            await self.handleTypingIndicator(typingEvent)
+                        }
+                    },
+                    onInfo: { infoEvent in
+                        // Handle info/heartbeat events
+                    },
+                    onError: { error in
+                        Task { @MainActor in
+                            self.logger.error("SSE error: \(error.localizedDescription)")
+                        }
+                    }
+                )
+            )
+        }
+    }
+    
+    private func stopMessagePolling() {
+        logger.debug("Stopping SSE subscription")
+        eventStreamManager?.stop(conversationId)
+        eventStreamManager = nil
+    }
+    
+    @MainActor
+    private func handleNewMessage(_ event: BlueCatbirdMlsSubscribeConvoEvents.MessageEvent) async {
+        logger.debug("Received new message via SSE: \(event.message.id)")
+        
+        // Decrypt the message
+        guard let manager = await appState.getMLSConversationManager() else {
+            return
+        }
+        
+        do {
+            let plaintext = try await manager.decryptMessage(event.message)
+            
+            let isCurrentUser = event.message.sender.description == appState.currentUserDID
+            let newMessage = Message(
+                id: event.message.id,
+                user: User(
+                    id: event.message.sender.description,
+                    name: isCurrentUser ? "You" : formatDID(event.message.sender.description),
+                    avatarURL: nil,
+                    isCurrentUser: isCurrentUser
+                ),
+                status: .sent,
+                createdAt: event.message.createdAt.date,
+                text: plaintext
+            )
+            
+            // Add to messages if not already present
+            if !messages.contains(where: { $0.id == newMessage.id }) {
+                messages.append(newMessage)
+                logger.debug("Added new message from SSE")
+            }
+            
+        } catch {
+            logger.error("Failed to decrypt SSE message: \(error.localizedDescription)")
+        }
+    }
+    
+    @MainActor
+    private func handleReaction(_ event: BlueCatbirdMlsSubscribeConvoEvents.ReactionEvent) async {
+        logger.debug("Received reaction via SSE: \(event.action) \(event.reaction) on \(event.messageId)")
+        
+        // TODO: Update message reactions in UI
+        // This would require extending the Message model to support reactions
+    }
+    
+    @MainActor
+    private func handleTypingIndicator(_ event: BlueCatbirdMlsSubscribeConvoEvents.TypingEvent) async {
+        let did = event.did.description
+        
+        if event.isTyping {
+            typingUsers.insert(did)
+            logger.debug("User started typing: \(did)")
+        } else {
+            typingUsers.remove(did)
+            logger.debug("User stopped typing: \(did)")
+        }
+        
+        // TODO: Display typing indicator in UI
+        // This would show "Alice is typing..." below the message list
+    }
+    
+    private func handleMessageMenuAction(action: CustomMessageMenuAction, message: Message) {
+        switch action {
+        case .copy:
+            UIPasteboard.general.string = message.text
+        case .report:
+            // TODO: Implement reporting for MLS messages
+            logger.info("Report action not yet implemented for MLS")
+        case .deleteForMe:
+            messageToDelete = message
+            showingDeleteAlert = true
+        }
+    }
+    
+    private func deleteMessage(_ message: Message) {
+        messages.removeAll { $0.id == message.id }
+        logger.info("Deleted message locally: \(message.id)")
+    }
+    
+    private func leaveConversation() {
+        // TODO: Implement leaving MLS group
+        logger.info("Leave conversation not yet implemented: \(conversationId)")
+    }
+    
+    private func formatDID(_ did: String) -> String {
+        // Extract handle or last part of DID for display
+        if let lastPart = did.split(separator: ":").last {
+            return String(lastPart.prefix(12))
+        }
+        return did
+    }
+    
+    private func formatMessageTime(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+// MARK: - Custom Message Menu Action
+
+
+// MARK: - Preview
+
+#Preview {
+    NavigationStack {
+        MLSConversationDetailView(conversationId: "test-conversation-id")
+            .environment(AppState.shared)
+    }
+}
+
+#endif

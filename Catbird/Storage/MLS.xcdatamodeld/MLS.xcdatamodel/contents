@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="22225" systemVersion="23A344" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="">
+    <entity name="MLSConversation" representedClassName="MLSConversation" syncable="YES" codeGenerationType="class">
+        <attribute name="conversationID" attributeType="String"/>
+        <attribute name="groupID" attributeType="Binary"/>
+        <attribute name="epoch" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="lastMessageAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
+        <attribute name="isActive" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="welcomeMessage" optional="YES" attributeType="Binary"/>
+        <attribute name="treeHash" optional="YES" attributeType="Binary"/>
+        <attribute name="memberCount" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="members" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MLSMember" inverseName="conversation" inverseEntity="MLSMember"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MLSMessage" inverseName="conversation" inverseEntity="MLSMessage"/>
+        <relationship name="keyPackages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MLSKeyPackage" inverseName="conversation" inverseEntity="MLSKeyPackage"/>
+        <relationship name="epochKeys" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="MLSEpochKey" inverseName="conversation" inverseEntity="MLSEpochKey"/>
+    </entity>
+    <entity name="MLSMessage" representedClassName="MLSMessage" syncable="YES" codeGenerationType="class">
+        <attribute name="messageID" attributeType="String"/>
+        <attribute name="senderID" attributeType="String"/>
+        <attribute name="content" attributeType="Binary"/>
+        <attribute name="plaintext" optional="YES" attributeType="String"/>
+        <attribute name="contentType" attributeType="String" defaultValueString="text"/>
+        <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="epoch" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="sequenceNumber" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="wireFormat" optional="YES" attributeType="Binary"/>
+        <attribute name="authenticatedData" optional="YES" attributeType="Binary"/>
+        <attribute name="signature" optional="YES" attributeType="Binary"/>
+        <attribute name="isDelivered" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="isRead" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="isSent" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="sendAttempts" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="error" optional="YES" attributeType="String"/>
+        <relationship name="conversation" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="MLSConversation" inverseName="messages" inverseEntity="MLSConversation"/>
+    </entity>
+    <entity name="MLSMember" representedClassName="MLSMember" syncable="YES" codeGenerationType="class">
+        <attribute name="memberID" attributeType="String"/>
+        <attribute name="did" attributeType="String"/>
+        <attribute name="handle" optional="YES" attributeType="String"/>
+        <attribute name="displayName" optional="YES" attributeType="String"/>
+        <attribute name="leafIndex" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="credentialData" optional="YES" attributeType="Binary"/>
+        <attribute name="signaturePublicKey" optional="YES" attributeType="Binary"/>
+        <attribute name="addedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="removedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="isActive" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="role" attributeType="String" defaultValueString="member"/>
+        <attribute name="capabilities" optional="YES" attributeType="Transformable" valueTransformerName="NSSecureUnarchiveFromData" customClassName="[String]"/>
+        <relationship name="conversation" maxCount="1" deletionRule="Nullify" destinationEntity="MLSConversation" inverseName="members" inverseEntity="MLSConversation"/>
+    </entity>
+    <entity name="MLSKeyPackage" representedClassName="MLSKeyPackage" syncable="YES" codeGenerationType="class">
+        <attribute name="keyPackageID" attributeType="String"/>
+        <attribute name="keyPackageData" attributeType="Binary"/>
+        <attribute name="cipherSuite" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="expiresAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="isUsed" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="usedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="ownerDID" attributeType="String"/>
+        <attribute name="initKeyHash" optional="YES" attributeType="Binary"/>
+        <attribute name="leafNodeHash" optional="YES" attributeType="Binary"/>
+        <relationship name="conversation" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="MLSConversation" inverseName="keyPackages" inverseEntity="MLSConversation"/>
+    </entity>
+    <entity name="MLSEpochKey" representedClassName="MLSEpochKey" syncable="YES" codeGenerationType="class">
+        <attribute name="conversationID" attributeType="String"/>
+        <attribute name="epoch" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="deletedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="conversation" maxCount="1" deletionRule="Nullify" destinationEntity="MLSConversation" inverseName="epochKeys" inverseEntity="MLSConversation"/>
+    </entity>
+    <entity name="MLSStorageBlob" representedClassName="MLSStorageBlob" syncable="YES" codeGenerationType="class">
+        <attribute name="storageData" attributeType="Binary"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="userDID" attributeType="String"/>
+    </entity>
+</model>

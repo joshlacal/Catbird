@@ -1,0 +1,4 @@
+module MLSFFIFFI {
+    header "MLSFFIFFI.h"
+    export *
+}
