@@ -20,6 +20,20 @@ struct ChatTabView: View {
   @State private var showingNewMessageSheet = false
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
+  @AppStorage("chatMode") private var chatMode: ChatMode = .bluesky
+
+  enum ChatMode: String, CaseIterable {
+    case bluesky = "Bluesky DMs"
+    case mls = "Secure Groups"
+
+    var icon: String {
+      switch self {
+      case .bluesky: return "bubble.left.and.bubble.right"
+      case .mls: return "lock.shield"
+      }
+    }
+  }
+
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
@@ -29,6 +43,19 @@ struct ChatTabView: View {
   }
 
   var body: some View {
+    Group {
+      // Content based on selected mode
+      if chatMode == .bluesky {
+        blueskyContent
+      } else {
+        mlsContent
+      }
+    }
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+  }
+
+  @ViewBuilder
+  private var blueskyContent: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       chatSidebarContent
     } detail: {
@@ -40,7 +67,7 @@ struct ChatTabView: View {
     .onDisappear(perform: handleOnDisappear)
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
-      
+
       // On iPhone, manage column visibility based on selection
       if !shouldUseSplitView {
         if newValue != nil {
@@ -80,7 +107,12 @@ struct ChatTabView: View {
       }
     }
   }
-  
+
+  @ViewBuilder
+  private var mlsContent: some View {
+    MLSConversationListView()
+  }
+
   // MARK: - Sidebar Content
   
   @ViewBuilder
@@ -93,22 +125,36 @@ struct ChatTabView: View {
   
   @ViewBuilder
   private var conversationList: some View {
-    List(selection: $selectedConvoId) {
-      if !searchText.isEmpty {
-        searchResultsContent
-      } else {
-        mainConversationListContent
+    VStack(spacing: 0) {
+      // Chat mode picker - always visible at top
+      chatModePicker
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.05))
+
+      List(selection: $selectedConvoId) {
+        if !searchText.isEmpty {
+          searchResultsContent
+        } else {
+          mainConversationListContent
+        }
+      }
+      .listStyle(.plain)
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+      .searchable(text: $searchText, prompt: "Search")
+      .onChange(of: searchText) { _, newValue in
+        appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
+      }
+      .refreshable {
+        await appState.chatManager.loadConversations(refresh: true)
+      }
+      .overlay {
+        conversationListOverlay
       }
     }
-    .listStyle(.plain)
-    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle("Messages")
     .themedNavigationBar(appState.themeManager)
     .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 400)
-    .searchable(text: $searchText, prompt: "Search")
-    .onChange(of: searchText) { _, newValue in
-      appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
-    }
     .toolbar {
       ToolbarItem(placement: .cancellationAction) {
         MessageRequestsButton()
@@ -116,12 +162,6 @@ struct ChatTabView: View {
       ToolbarItem(placement: .primaryAction) {
         ChatToolbarMenu()
       }
-    }
-    .refreshable {
-      await appState.chatManager.loadConversations(refresh: true)
-    }
-    .overlay {
-      conversationListOverlay
     }
   }
   
@@ -370,6 +410,17 @@ private struct ConditionalSwipeActions: ViewModifier {
     } else {
       content
     }
+  }
+
+  @ViewBuilder
+  private var chatModePicker: some View {
+    Picker("Chat Mode", selection: $chatMode) {
+      ForEach(ChatMode.allCases, id: \.self) { mode in
+        Label(mode.rawValue, systemImage: mode.icon)
+          .tag(mode)
+      }
+    }
+    .pickerStyle(.segmented)
   }
 }
 

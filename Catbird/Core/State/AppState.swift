@@ -209,6 +209,17 @@ final class AppState {
 
   /// Chat manager for handling Bluesky chat operations
   @ObservationIgnored let chatManager: ChatManager
+
+  /// MLS API client for encrypted messaging
+  @ObservationIgnored
+  private var mlsAPIClientStorage: MLSAPIClient?
+
+  /// MLS conversation manager for group operations
+  @ObservationIgnored
+  private var mlsConversationManagerStorage: MLSConversationManager?
+
+  /// MLS conversations list for encrypted messaging
+  var mlsConversations: [MLSConversationViewModel] = []
   #endif
   
   
@@ -717,6 +728,23 @@ final class AppState {
     chatManager.updateAppState(self) // Wire AppState reference to ChatManager
     await chatManager.updateClient(authManager.client) // Update ChatManager client
     updateChatUnreadCount() // Update chat unread count
+
+    // Reset MLS managers for account switch
+    self.mlsConversationManagerStorage = nil
+    self.mlsAPIClientStorage = nil
+
+    // Switch MLS singleton to new user (saves old user, loads new user)
+    if let newUserDID = currentUserDID {
+      do {
+        try await MLSClient.shared.setUser(newUserDID)
+        logger.info("✅ MLS: Switched to user \(newUserDID)")
+      } catch {
+        logger.error("⚠️ MLS: Failed to switch user: \(error.localizedDescription)")
+      }
+    }
+
+    // Initialize MLS for the new account
+    await initializeMLS()
     #endif
     if let client = authManager.client {
       graphManager = GraphManager(atProtoClient: client)
@@ -874,7 +902,55 @@ final class AppState {
   var imagePipeline: ImagePipeline {
     ImagePipeline.shared
   }
-  
+
+#if os(iOS)
+  /// Get or create MLS API client
+  @MainActor
+  func getMLSAPIClient() async -> MLSAPIClient? {
+    guard let client = authManager.client else { return nil }
+
+    if let existing = mlsAPIClientStorage {
+      return existing
+    }
+
+    // Create MLS client with production environment
+    let mlsClient = await MLSAPIClient(
+      client: client,
+      environment: .production
+    )
+    mlsAPIClientStorage = mlsClient
+    return mlsClient
+  }
+
+  /// Get or create MLS conversation manager
+  @MainActor
+  func getMLSConversationManager() async -> MLSConversationManager? {
+    guard let apiClient = await getMLSAPIClient(),
+          let userDid = currentUserDID else { return nil }
+
+    if let existing = mlsConversationManagerStorage {
+      return existing
+    }
+
+    let manager = MLSConversationManager(
+      apiClient: apiClient,
+      userDid: userDid
+    )
+
+    // Initialize the manager before storing and returning it
+    do {
+      try await manager.initialize()
+      logger.info("MLS: Created and initialized new conversation manager")
+    } catch {
+      logger.error("MLS: Failed to initialize conversation manager: \(error.localizedDescription)")
+      return nil
+    }
+
+    mlsConversationManagerStorage = manager
+    return manager
+  }
+#endif
+
   // MARK: - User Profile Methods
   
   /// Load the current user's profile for optimistic updates
@@ -1179,8 +1255,72 @@ final class AppState {
       logger.debug("Chat unread count updated: \(newCount)")
     }
   }
+
+  // MARK: - MLS (Encrypted Messaging)
+
+  /// Initialize MLS for the current account
+  @MainActor
+  func initializeMLS() async {
+    guard let manager = await getMLSConversationManager() else {
+      logger.warning("MLS: No conversation manager available")
+      return
+    }
+
+    do {
+      logger.info("MLS: Initializing for current account")
+
+      // Initialize the MLS crypto context
+      try await manager.initialize()
+
+      // Publish initial key package for this user
+      try await manager.publishKeyPackage()
+
+      // Load existing conversations
+      await loadMLSConversations()
+
+      logger.info("MLS: Successfully initialized")
+    } catch {
+      logger.error("MLS: Initialization failed: \(error.localizedDescription)")
+    }
+  }
+
+  /// Load MLS conversations from the server
+  @MainActor
+  func loadMLSConversations() async {
+    guard let manager = await getMLSConversationManager() else {
+      logger.debug("MLS: No conversation manager available")
+      mlsConversations = []
+      return
+    }
+
+    do {
+      // Sync with server to get latest conversations
+      try await manager.syncWithServer()
+
+      // Map conversations from manager to view models
+      mlsConversations = Array(manager.conversations.values).map { $0.toViewModel() }
+
+      logger.info("MLS: Synced \(self.mlsConversations.count) conversations from server")
+    } catch {
+      logger.error("MLS: Failed to load conversations: \(error.localizedDescription)")
+      mlsConversations = []
+    }
+  }
+
+  /// Reload MLS conversations (called when new messages arrive)
+  @MainActor
+  func reloadMLSConversations() async {
+    await loadMLSConversations()
+  }
+
+  /// Update MLS conversation list when a message is received
+  @MainActor
+  func handleMLSMessageReceived(conversationID: String) async {
+    await reloadMLSConversations()
+    logger.debug("MLS: Conversations reloaded after message in: \(conversationID)")
+  }
   #endif
-  
+
   #if os(iOS)
   /// Setup chat observers and background polling for unread messages
   private func setupChatObservers() {
@@ -1195,6 +1335,11 @@ final class AppState {
     Task { @MainActor in
       updateChatUnreadCount()
     }
+
+    // Load MLS conversations initially
+    Task { @MainActor in
+      await loadMLSConversations()
+    }
     
     // Set up periodic polling for chat messages (since they don't come through push notifications)
     Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
@@ -1204,6 +1349,9 @@ final class AppState {
         // Load conversations to check for new messages and update unread counts
         await self.chatManager.loadConversations(refresh: true)
         self.updateChatUnreadCount()
+
+        // Also reload MLS conversations
+        await self.loadMLSConversations()
       }
     }
     
@@ -1217,6 +1365,9 @@ final class AppState {
         guard let self = self else { return }
         await self.chatManager.loadConversations(refresh: true)
         self.updateChatUnreadCount()
+
+        // Also reload MLS conversations
+        await self.loadMLSConversations()
       }
     }
   }
