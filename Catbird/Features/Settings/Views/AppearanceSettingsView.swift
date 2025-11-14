@@ -416,8 +416,9 @@ struct AccessibilityQuickActionsRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         AppearanceSettingsView()
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

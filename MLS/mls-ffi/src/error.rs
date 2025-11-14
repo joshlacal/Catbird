@@ -50,6 +50,21 @@ pub enum MLSError {
 
     #[error("Merge failed")]
     MergeFailed,
+
+    #[error("No matching key package found: {message}")]
+    NoMatchingKeyPackage { message: String },
+
+    #[error("Key package desync detected for conversation {convo_id}: {message}")]
+    KeyPackageDesyncDetected { convo_id: String, message: String },
+
+    #[error("Welcome message already consumed or invalid")]
+    WelcomeConsumed,
+
+    #[error("Storage error")]
+    StorageError,
+
+    #[error("Storage operation failed")]
+    StorageFailed,
 }
 
 impl MLSError {
@@ -63,5 +78,16 @@ impl MLSError {
 
     pub fn wire_format_policy_violation(msg: impl Into<String>) -> Self {
         Self::WireFormatPolicyViolation { message: msg.into() }
+    }
+
+    pub fn no_matching_key_package(msg: impl Into<String>) -> Self {
+        Self::NoMatchingKeyPackage { message: msg.into() }
+    }
+
+    pub fn key_package_desync_detected(convo_id: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self::KeyPackageDesyncDetected {
+            convo_id: convo_id.into(),
+            message: msg.into(),
+        }
     }
 }

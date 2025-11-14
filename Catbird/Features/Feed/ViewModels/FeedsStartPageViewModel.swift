@@ -53,7 +53,7 @@ final class FeedsStartPageViewModel {
 
     // Setup observation of authentication state changes to detect logouts
     Task {
-      for await state in appState.authManager.stateChanges {
+      for await state in AppStateManager.shared.authentication.stateChanges {
         if case .unauthenticated = state {
           // Mark that a logout occurred
           self.didLogout = true

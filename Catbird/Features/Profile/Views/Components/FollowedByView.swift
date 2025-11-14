@@ -78,7 +78,8 @@ struct FollowedByView: View {
 }
 
 // #Preview {
-//    let appState = AppState.shared
+//    @Previewable @Environment(AppState.self) var appState
+//    let appState = appState
 //    
 //    // Create mock followers for preview
 //    let mockFollowers = [

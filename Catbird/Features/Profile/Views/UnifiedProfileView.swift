@@ -53,27 +53,13 @@ struct UnifiedProfileView: View {
     appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>,
     path: Binding<NavigationPath>
   ) {
-    // Gracefully handle missing user DID instead of crashing
-    guard let userDID = appState.currentUserDID else {
-      // Create a fallback view model for the case where user isn't logged in
-      let viewModel = ProfileViewModel(
-        client: nil,
-        userDID: "fallback",
-        currentUserDID: nil,
-        stateInvalidationBus: nil
-      )
-      self._viewModel = State(initialValue: viewModel)
-      self._selectedTab = selectedTab
-      self._lastTappedTab = lastTappedTab
-      _navigationPath = path
-      return
-    }
-    
-    // Create ProfileViewModel with unique identity to prevent metadata cache conflicts
-    let viewModel = ProfileViewModel(
+
+       let userDID = appState.userDID
+
+        let viewModel = ProfileViewModel(
       client: appState.atProtoClient,
       userDID: userDID,
-      currentUserDID: appState.currentUserDID,
+      currentUserDID: appState.userDID,
       stateInvalidationBus: appState.stateInvalidationBus
     )
     
@@ -88,7 +74,7 @@ struct UnifiedProfileView: View {
     let viewModel = ProfileViewModel(
       client: appState.atProtoClient,
       userDID: did,
-      currentUserDID: appState.currentUserDID,
+      currentUserDID: appState.userDID,
       stateInvalidationBus: appState.stateInvalidationBus
     )
     
@@ -2090,7 +2076,8 @@ private extension View {
 
 // MARK: - Preview
 //#Preview {
-//  let appState = AppState.shared
+//    @Previewable @Environment(AppState.self) var appState
+//  let appState = appState
 //    NavigationStack {
 //    UnifiedProfileView(
 //      appState: appState,

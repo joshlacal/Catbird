@@ -409,7 +409,7 @@ struct ModerationSettingsView: View {
                     did: didString,
                     handle: mute.handle.description,
                     displayName: mute.displayName,
-                    avatar: mute.avatar?.url
+                    avatar: mute.finalAvatarURL()
                 ))
             }
             
@@ -448,7 +448,7 @@ struct ModerationSettingsView: View {
                     did: didString,
                     handle: block.handle.description,
                     displayName: block.displayName,
-                    avatar: block.avatar?.url
+                    avatar: block.finalAvatarURL()
                 ))
             }
             
@@ -1146,8 +1146,9 @@ struct ContentPreviewView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         ModerationSettingsView()
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

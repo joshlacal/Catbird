@@ -13,7 +13,6 @@ import SwiftUI
 @testable import Catbird
 
 #if os(iOS) && !targetEnvironment(macCatalyst)
-@available(iOS 18.0, *)
 @Suite("Feed Collection UIUpdateLink Optimizations")
 struct FeedCollectionUIUpdateLinkTests {
     

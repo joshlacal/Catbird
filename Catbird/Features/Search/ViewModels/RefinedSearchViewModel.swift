@@ -573,14 +573,14 @@ enum SearchState {
             filters: advancedParams
         )
         
-        let userDID = appState.authManager.state.userDID
+        let userDID = AppStateManager.shared.authentication.state.userDID
         searchHistoryManager.saveSearch(savedSearch, userDID: userDID)
         loadSavedSearches()
     }
     
     /// Load a saved search and apply it
     func loadSavedSearch(_ savedSearch: SavedSearch, client: ATProtoClient) {
-        let userDID = appState.authManager.state.userDID
+        let userDID = AppStateManager.shared.authentication.state.userDID
         searchHistoryManager.updateLastUsed(savedSearch.id, userDID: userDID)
         
         // Apply the saved search
@@ -596,14 +596,14 @@ enum SearchState {
     
     /// Delete a saved search
     func deleteSavedSearch(_ id: UUID) {
-        let userDID = appState.authManager.state.userDID
+        let userDID = AppStateManager.shared.authentication.state.userDID
         searchHistoryManager.deleteSavedSearch(id, userDID: userDID)
         loadSavedSearches()
     }
     
     /// Load saved searches for current user
     private func loadSavedSearches() {
-        let userDID = appState.authManager.state.userDID
+        let userDID = AppStateManager.shared.authentication.state.userDID
         savedSearches = searchHistoryManager.loadSavedSearches(for: userDID)
     }
     
@@ -632,7 +632,7 @@ enum SearchState {
     
     /// Generate account-specific key for recent searches
     private func recentSearchesKey() -> String {
-        if let userDID = appState.authManager.state.userDID {
+        if let userDID = AppStateManager.shared.authentication.state.userDID {
             return "recentSearches_\(userDID)"
         }
         return "recentSearches_default"
@@ -640,7 +640,7 @@ enum SearchState {
     
     /// Generate account-specific key for recent profile searches
     private func recentProfileSearchesKey() -> String {
-        if let userDID = appState.authManager.state.userDID {
+        if let userDID = AppStateManager.shared.authentication.state.userDID {
             return "recentProfileSearches_\(userDID)"
         }
         return "recentProfileSearches_default"
@@ -1097,7 +1097,7 @@ enum SearchState {
     
     /// Save a search configuration for later use
     func saveSearch(_ savedSearch: SavedSearch) {
-        let userDID = appState.currentUserDID
+        let userDID = appState.userDID
         searchHistoryManager.saveSearch(savedSearch, userDID: userDID)
         loadSavedSearches()
     }
@@ -1109,7 +1109,7 @@ enum SearchState {
         advancedParams = savedSearch.filters
         
         // Update the last used timestamp
-        searchHistoryManager.updateLastUsed(savedSearch.id, userDID: appState.currentUserDID)
+        searchHistoryManager.updateLastUsed(savedSearch.id, userDID: appState.userDID)
         
         // Perform the search
         Task {

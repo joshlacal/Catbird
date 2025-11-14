@@ -149,6 +149,7 @@ struct FeedFilterSettingsView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     FeedFilterSettingsView()
-      .environment(AppState.shared)
+      .environment(AppStateManager.shared)
 }

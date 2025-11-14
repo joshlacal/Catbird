@@ -28,7 +28,8 @@ public class MLSKeychainManager {
         case epochSecrets(conversationID: String, epoch: Int64)
         case hpkePrivateKey(keyPackageID: String)
         case currentEpoch(conversationID: String)
-        
+        case welcomeMessage(conversationID: String)
+
         var key: String {
             switch self {
             case .groupState(let id):
@@ -45,6 +46,8 @@ public class MLSKeychainManager {
                 return "mls.hpke.privatekey.\(id)"
             case .currentEpoch(let id):
                 return "mls.currentepoch.\(id)"
+            case .welcomeMessage(let id):
+                return "mls.welcomemessage.\(id)"
             }
         }
         
@@ -57,12 +60,45 @@ public class MLSKeychainManager {
     
     private init() {}
     
-    // MARK: - Group State Management
+    // MARK: - Encryption Key Management (for encrypted storage)
     
+    /// Store or retrieve the master encryption key for MLS state storage
+    /// This key encrypts the MLS state blob stored in Core Data
+    /// - Parameter userDID: User's DID identifier
+    /// - Returns: 32-byte encryption key (AES-256)
+    /// - Throws: KeychainError if generation or storage fails
+    public func getOrCreateEncryptionKey(forUserDID userDID: String) throws -> Data {
+        let key = "mls.encryption.key.\(userDID)"
+        
+        // Try to retrieve existing key
+        if let existingKey = try retrieve(forKey: key) {
+            logger.debug("Retrieved existing encryption key for user: \(userDID)")
+            return existingKey
+        }
+        
+        // Generate new 256-bit AES key
+        let newKey = try generateSecureRandomKey(length: 32)
+        try store(newKey, forKey: key, accessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
+        logger.info("🔑 Generated new encryption key for user: \(userDID)")
+        
+        return newKey
+    }
+    
+    /// Delete encryption key for a user (when logging out or clearing data)
+    /// - Parameter userDID: User's DID identifier
+    /// - Throws: KeychainError if deletion fails
+    public func deleteEncryptionKey(forUserDID userDID: String) throws {
+        let key = "mls.encryption.key.\(userDID)"
+        try delete(forKey: key)
+        logger.info("Deleted encryption key for user: \(userDID)")
+    }
+
+    // MARK: - Group State Management
+
     /// Store encrypted group state for a conversation
     public func storeGroupState(_ data: Data, forConversationID conversationID: String) throws {
         let key = KeychainKey.groupState(conversationID: conversationID)
-        try store(data, forKey: key.key, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        try store(data, forKey: key.key, accessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
         logger.info("Stored group state for conversation: \(conversationID)")
     }
     
@@ -111,7 +147,44 @@ public class MLSKeychainManager {
         try delete(forKey: key.key)
         logger.debug("Deleted current epoch for conversation: \(conversationID)")
     }
-    
+
+    // MARK: - Welcome Message Management
+
+    /// Store Welcome message for a conversation (single-use for security)
+    /// - Parameters:
+    ///   - welcomeData: Serialized Welcome message from server
+    ///   - conversationID: Conversation identifier
+    /// - Throws: KeychainError if storage fails
+    public func storeWelcomeMessage(_ welcomeData: Data, forConversationID conversationID: String) throws {
+        let key = KeychainKey.welcomeMessage(conversationID: conversationID)
+        try store(welcomeData, forKey: key.key, accessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
+        logger.info("Stored Welcome message for conversation: \(conversationID) (\(welcomeData.count) bytes)")
+    }
+
+    /// Retrieve Welcome message for a conversation
+    /// - Parameter conversationID: Conversation identifier
+    /// - Returns: Serialized Welcome message, or nil if not found
+    /// - Throws: KeychainError if retrieval fails
+    public func retrieveWelcomeMessage(forConversationID conversationID: String) throws -> Data? {
+        let key = KeychainKey.welcomeMessage(conversationID: conversationID)
+        let data = try retrieve(forKey: key.key)
+
+        if let data = data {
+            logger.info("Retrieved Welcome message for conversation: \(conversationID) (\(data.count) bytes)")
+        }
+
+        return data
+    }
+
+    /// Delete Welcome message for a conversation (call after successful group join)
+    /// - Parameter conversationID: Conversation identifier
+    /// - Throws: KeychainError if deletion fails
+    public func deleteWelcomeMessage(forConversationID conversationID: String) throws {
+        let key = KeychainKey.welcomeMessage(conversationID: conversationID)
+        try delete(forKey: key.key)
+        logger.info("Deleted Welcome message for conversation: \(conversationID)")
+    }
+
     // MARK: - Private Key Management
     
     /// Store private key for a specific epoch
@@ -202,8 +275,9 @@ public class MLSKeychainManager {
     }
     
     // MARK: - Epoch Secrets Management
-    
+
     /// Store epoch secrets (application secrets, exporter secrets, etc.)
+    /// Also stores metadata for retention policy tracking
     public func storeEpochSecrets(
         _ secrets: Data,
         forConversationID conversationID: String,
@@ -212,6 +286,14 @@ public class MLSKeychainManager {
         let key = KeychainKey.epochSecrets(conversationID: conversationID, epoch: epoch)
         try store(secrets, forKey: key.key, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
         logger.info("Stored epoch secrets for conversation: \(conversationID), epoch: \(epoch)")
+
+        // Store metadata for retention tracking
+        let metadata = EpochKeyMetadata(
+            conversationID: conversationID,
+            epoch: epoch,
+            createdAt: Date()
+        )
+        try storeEpochMetadata(metadata, forConversationID: conversationID, epoch: epoch)
     }
     
     /// Retrieve epoch secrets
@@ -339,8 +421,44 @@ public class MLSKeychainManager {
         }
     }
     
+    // MARK: - Epoch Metadata Management (for retention policy)
+
+    /// Store epoch metadata for retention tracking
+    internal func storeEpochMetadata(
+        _ metadata: EpochKeyMetadata,
+        forConversationID conversationID: String,
+        epoch: Int64
+    ) throws {
+        let key = "mls.epoch.metadata.\(conversationID).epoch.\(epoch)"
+        let data = try JSONEncoder().encode(metadata)
+        try store(data, forKey: key, accessible: kSecAttrAccessibleAfterFirstUnlock)
+        logger.debug("Stored epoch metadata for conversation: \(conversationID), epoch: \(epoch)")
+    }
+
+    /// Retrieve epoch metadata
+    internal func retrieveEpochMetadata(
+        forConversationID conversationID: String,
+        epoch: Int64
+    ) throws -> EpochKeyMetadata? {
+        let key = "mls.epoch.metadata.\(conversationID).epoch.\(epoch)"
+        guard let data = try retrieve(forKey: key) else {
+            return nil
+        }
+        return try JSONDecoder().decode(EpochKeyMetadata.self, from: data)
+    }
+
+    /// Delete epoch metadata
+    internal func deleteEpochMetadata(
+        forConversationID conversationID: String,
+        epoch: Int64
+    ) throws {
+        let key = "mls.epoch.metadata.\(conversationID).epoch.\(epoch)"
+        try delete(forKey: key)
+        logger.debug("Deleted epoch metadata for conversation: \(conversationID), epoch: \(epoch)")
+    }
+
     // MARK: - Key Rotation Support
-    
+
     /// Store archived key for recovery purposes
     public func archiveKey(
         _ key: Data,
@@ -402,7 +520,7 @@ public enum KeychainError: LocalizedError {
     case deleteFailed(OSStatus)
     case randomGenerationFailed(OSStatus)
     case accessVerificationFailed
-    
+
     public var errorDescription: String? {
         switch self {
         case .storeFailed(let status):

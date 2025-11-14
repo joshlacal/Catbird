@@ -261,7 +261,7 @@ struct ActionButtonsView: View {
       .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
       #endif
     }
-    .id(appState.currentUserDID)
+    .id(appState.userDID)
   }
 
   // MARK: - Reply Handling

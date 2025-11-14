@@ -2,6 +2,7 @@ import AVFoundation
 import Sentry
 
 import CoreText
+import GRDB
 import OSLog
 import Petrel
 import Security
@@ -106,6 +107,7 @@ struct CatbirdApp: App {
       if #available(iOS 13.0, *) {
         BGTaskSchedulerManager.schedule()
         ChatBackgroundRefreshManager.schedule()
+        BackgroundCacheRefreshManager.schedule()
       }
       
       return true
@@ -170,7 +172,14 @@ struct CatbirdApp: App {
   
   // MARK: - State
   // Use singleton AppState to prevent multiple instances
-  internal let appState = AppState.shared
+  internal let appStateManager = AppStateManager.shared
+  
+  // Convenience property to access active AppState
+  @MainActor
+  var appState: AppState? {
+    appStateManager.lifecycle.appState
+  }
+  
   @State private var didInitialize = false
   @State private var isAuthenticatedWithBiometric = false
   @State private var showBiometricPrompt = false
@@ -205,6 +214,7 @@ struct CatbirdApp: App {
     if #available(iOS 13.0, *) {
       BGTaskSchedulerManager.registerIfNeeded()
       ChatBackgroundRefreshManager.registerIfNeeded()
+      BackgroundCacheRefreshManager.registerIfNeeded()
     }
     #endif
 
@@ -342,262 +352,73 @@ struct CatbirdApp: App {
     //      """)
   }
 
+  // MARK: - Cache Preloading
+
+  /// Pre-load cached feed data for instant display at startup
+  @MainActor
+  private func preloadCachedFeedData() async {
+    logger.debug("📦 Pre-loading cached feed data for instant startup")
+
+    let modelContext = modelContainer.mainContext
+
+    // Query recent cached posts for the main timeline
+    let sortDescriptors = [SortDescriptor<CachedFeedViewPost>(\.createdAt, order: .reverse)]
+    let descriptor = FetchDescriptor<CachedFeedViewPost>(
+      predicate: #Predicate<CachedFeedViewPost> { post in
+        post.feedType == "following" || post.feedType == "notification-prefetch" || post.feedType == "thread-cache"
+      },
+      sortBy: sortDescriptors
+    )
+
+    do {
+      let cachedPosts = try modelContext.fetch(descriptor)
+      let postCount = cachedPosts.prefix(50).count
+
+      if postCount > 0 {
+        logger.info("✅ Pre-loaded \(postCount) cached posts for instant display")
+
+        // Prefetch images for cached posts to make display truly instant
+        let imageURLs = cachedPosts.prefix(20).compactMap { cachedPost -> URL? in
+            return try? cachedPost.feedViewPost.post.author.finalAvatarURL()
+        }
+
+        if !imageURLs.isEmpty {
+          let imageManager = ImageLoadingManager.shared
+          await imageManager.startPrefetching(urls: imageURLs)
+          logger.debug("🖼️ Pre-fetched \(imageURLs.count) avatar images")
+        }
+      } else {
+        logger.debug("No cached posts found for pre-loading")
+      }
+    } catch {
+      logger.error("Failed to pre-load cached feed data: \(error.localizedDescription)")
+    }
+  }
+
   // MARK: - Body
   var body: some Scene {
     WindowGroup {
-      // Only show content after biometric check is complete or not needed
-      Group {
-        if shouldShowContent {
-          ContentView()
-        } else {
-          // Show loading screen while biometric check is pending
-          LoadingView()
-        }
-      }
+      sceneRoot()
       .onAppear {
-        #if os(iOS)
-        // Set app state reference in app delegate
-        appDelegate.appState = appState
-
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first,
-          let rootVC = window.rootViewController {
-          appState.urlHandler.registerTopViewController(rootVC)
-          
-          // Configure window for state restoration
-          window.restorationIdentifier = "MainWindow"
-          
-          // Enable state restoration for the window
-          window.shouldGroupAccessibilityChildren = true
-          
-          // Trigger state restoration if needed
-          Task {
-            await restoreApplicationState()
-          }
-        }
-        #elseif os(macOS)
-        // macOS doesn't need app delegate setup or window scene handling
-        // URL handler registration will be handled differently on macOS
-        Task {
-          await restoreApplicationState()
-        }
-        #endif
-        
-        #if os(iOS)
-        // Setup background notification observer
-        setupBackgroundNotification()
-        #endif
-        
-        // Initialize persistence with model context
-        PersistentFeedStateManager.initialize(with: modelContainer)
-        
-        // Set up ComposerDraftManager with model context
-        Task { @MainActor in
-          appState.composerDraftManager.setModelContext(self.modelContainer.mainContext)
-          FeedStateStore.shared.setModelContext(modelContext)
-        }
-
-        // Provide shared ModelActor for serialized storage (iOS 26+/macOS 26+)
-        if #available(iOS 26.0, macOS 26.0, *) {
-            let store = AppModelStore(modelContainer: modelContainer)
-          Task { @MainActor in
-            appState.setModelStore(store)
-          }
-        }
-
-        // Import shared drafts from the Share Extension, if any
-        IncomingSharedDraftHandler.importIfAvailable()
+        handleSceneAppear()
       }
-      .environment(appState)
+      .environment(appStateManager)
       .modelContainer(modelContainer)
       // Monitor scene phase for feed state persistence
       .onChange(of: scenePhase) { oldPhase, newPhase in
-        Task { @MainActor in
-          await FeedStateStore.shared.handleScenePhaseChange(newPhase)
-          
-          // Save app state when backgrounding
-          if newPhase == .background {
-            saveApplicationState()
-            
-            #if os(iOS)
-            if #available(iOS 13.0, *) {
-              ChatBackgroundRefreshManager.schedule()
-            }
-            #endif
-          }
-        }
+        handleScenePhaseChange(from: oldPhase, to: newPhase)
       }
-      #if os(iOS)
-      // Handle biometric authentication when app becomes active
-      .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-        Task {
-          await performInitialBiometricCheck()
-        }
-      }
-      #elseif os(macOS)
-      // Handle biometric authentication when app becomes active (macOS)
-      .onReceive(NotificationCenter.default.publisher(for: NSApplication.willBecomeActiveNotification)) { _ in
-        Task {
-          await performInitialBiometricCheck()
-        }
-      }
-      #endif
-      // Initialize app state when the app launches
+      .modifier(BiometricAuthModifier(performCheck: performInitialBiometricCheck))
       .task {
-
-        // Only run the initialization process once
-        guard !didInitialize else {
-          logger.debug("⚠️ Skipping duplicate initialization - already initialized")
-          return
-        }
-
-        // Mark as initialized immediately to prevent duplicate initialization
-        didInitialize = true
-        logger.debug("🎯 Starting first-time app initialization")
-        
-        // Special handling for FaultOrdering measurement phase
-        let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
-                                  ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
-                                  ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-                                  
-        if isFaultOrderingMode {
-          logger.info("⚡ FaultOrdering measurement mode detected - initializing measurement server")
-          
-          // Force set environment variables for physical device
-          setenv("FAULT_ORDERING_ENABLE", "1", 1)
-          
-          // Debug environment variables
-          logger.info("🔍 FaultOrdering debugging:")
-          logger.info("FAULT_ORDERING_ENABLE: \(ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] ?? "not set")")
-          logger.info("RUN_FAULT_ORDER: \(ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] ?? "not set")")
-          logger.info("XCTestConfigurationFilePath: \(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] ?? "not set")")
-          logger.info("DYLD_INSERT_LIBRARIES: \(ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] ?? "not set")")
-          
-          // Check if we're on a physical device
-          #if targetEnvironment(simulator)
-          logger.info("💻 Running on simulator")
-          #else
-          logger.info("📱 Running on physical device")
-          #endif
-          
-          // Check Documents directory for linkmap
-          if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let linkmapURL = documentsURL.appendingPathComponent("linkmap-addresses.json")
-            let exists = FileManager.default.fileExists(atPath: linkmapURL.path)
-            logger.info("🔍 Linkmap file exists at \(linkmapURL.path): \(exists)")
-          }
-          
-          // Keep app alive for FaultOrdering measurement server
-          // The FaultOrdering framework initializes itself when the environment is set
-          Task.detached(priority: .high) {
-            logger.info("⚡ Starting keep-alive task for FaultOrdering measurement")
-            
-            // Keep the app process alive during measurement
-            while !Task.isCancelled {
-              try? await Task.sleep(for: .seconds(1))
-              // This prevents the app from being suspended during measurement
-            }
-          }
-          
-          // Additional background task to prevent app suspension
-          Task.detached(priority: .background) {
-            while !Task.isCancelled {
-              try? await Task.sleep(for: .seconds(5))
-              logger.debug("🔄 FaultOrdering keep-alive ping")
-            }
-          }
-        }
-
-        // Configure TipKit for onboarding tips (skip for FaultOrdering)
-        if !isFaultOrderingMode {
-          #if DEBUG
-            // Reset tips in debug builds for testing
-            try? Tips.resetDatastore()
-          #endif
-          
-          // Configure TipKit with production settings
-          try? Tips.configure([
-            .displayFrequency(.immediate),
-            .datastoreLocation(.applicationDefault)
-          ])
-        }
-        
-        // Perform the initialization process
-        logger.info("Starting app initialization")
-        await appState.initialize()
-        logger.info("App initialization completed")
-
-        // Add a small delay before the post-initialization check
-        // Using separate try-catch to avoid diagnostic issues
-        do {
-          try await Task.sleep(for: .seconds(0.5))
-        } catch {
-          //                        logger.error("Sleep error: \(error)")
-        }
-
-        // Final auth state verification
-        await appState.authManager.checkAuthenticationState()
-        logger.info(
-          "Post-initialization auth check completed: \(String(describing: appState.authState))")
-
-        // Initialize preferences manager with modelContext
-        appState.initializePreferencesManager(with: modelContext)
-        
-        // Check biometric authentication on app launch
-        await performInitialBiometricCheck()
-
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, macOS 15.0, *) {
-          Task(priority: .background) {
-            await TopicSummaryService.shared.prepareLaunchWarmup(appState: appState)
-          }
-        }
-        #endif
-
-          // Only fix timeline feed issues when needed
-          Task {
-            do {
-              if let prefs = try await appState.preferencesManager.loadPreferences(),
-                !prefs.pinnedFeeds.contains(where: { SystemFeedTypes.isTimelineFeed($0) }) {
-                //                try await appState.preferencesManager.fixTimelineFeedIssue()
-              }
-            } catch {
-              logger.error("Error checking timeline feed: \(error)")
-            }
-          }
-          
-          // Apply saved language preferences
-          Task { @MainActor in
-            let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-            if let appLanguage = defaults?.string(forKey: "appLanguage") {
-              AppLanguageManager.shared.applyLanguage(appLanguage)
-              logger.info("Applied saved language preference: \(appLanguage)")
-            }
-          }
-
-          // Fix any issues with timeline feeds and preferences
-          // Task {
-          //   do {
-          //              // First fix specific timeline feed issues
-          //              try await appState.preferencesManager.fixTimelineFeedIssue()
-          //
-          //              // Then perform a more comprehensive preferences repair
-          //              try await appState.preferencesManager.repairPreferences()
-
-          //              logger.info("Preferences repair completed successfully")
-          //   } catch {
-          //     logger.error("Error repairing preferences: \(error.localizedDescription)")
-          //   }
-          // }
-        }
-        // Handle URL callbacks (e.g. OAuth)
-        .onOpenURL { url in
+        await initializeApplicationIfNeeded()
+      }
+      .onOpenURL { url in
           logger.info("Received URL: \(url.absoluteString)")
 
           if url.absoluteString.contains("/oauth/callback") {
             Task {
               do {
-                try await appState.authManager.handleCallback(url)
+                try await appStateManager.authentication.handleCallback(url)
                 logger.info("OAuth callback handled successfully")
               } catch {
                 logger.error("Error handling OAuth callback: \(error)")
@@ -609,51 +430,310 @@ struct CatbirdApp: App {
 
             // Instead of using the navigation system, directly set the selected tab
             Task { @MainActor in
+              guard let appState = self.appState else { return }
               // Access the tab selection mechanism directly
-              if let tabSelection = self.appState.navigationManager.tabSelection {
+              if let tabSelection = appState.navigationManager.tabSelection {
                 tabSelection(2)  // Switch to notifications tab (index 2)
               } else {
                 // Fallback if no tab selection mechanism is available
-                self.appState.navigationManager.updateCurrentTab(2)
+                appState.navigationManager.updateCurrentTab(2)
               }
             }
           } else {
             // Handle all other URLs through the URLHandler
-            _ = appState.urlHandler.handle(url)
+            if let appState = self.appState {
+              _ = appState.urlHandler.handle(url)
+            } else {
+              logger.error("URL received but AppState is unavailable")
+            }
           }
         }
-        .overlay {
-          if showBiometricPrompt && !isAuthenticatedWithBiometric {
-            BiometricAuthenticationOverlay(
-              isAuthenticated: $isAuthenticatedWithBiometric,
-              authManager: appState.authManager
-            )
-          }
-        }
+      }
+      #if os(macOS)
+      .windowStyle(.automatic)
+      .defaultSize(width: 1200, height: 800)
+      .commands {
+        AppCommands()
+      }
+      #endif
     }
   }
-  
-  // MARK: - Content Display Logic
-  private var shouldShowContent: Bool {
-    // Only show content if:
-    // 1. Biometric check has been performed, AND
-    // 2. Either biometric auth is disabled OR user has been authenticated
-    return hasBiometricCheck && (!appState.authManager.biometricAuthEnabled || isAuthenticatedWithBiometric)
+ 
+private extension CatbirdApp {
+  @ViewBuilder
+  func sceneRoot() -> some View {
+    Group {
+      switch appStateManager.lifecycle {
+      case .launching:
+        LoadingView()
+
+      case .unauthenticated:
+        LoginView()
+          .environment(appStateManager)
+
+      case .authenticated(let appState):
+        if shouldShowContentForAuthenticatedState {
+          ContentView()
+            .id(appState.userDID)
+            .environment(appState)
+        } else {
+          LoadingView()  // For biometric check
+        }
+      }
+    }
+    .overlay {
+      biometricOverlay()
+    }
   }
-  
-  // MARK: - Loading View
+
+  @ViewBuilder
+  func biometricOverlay() -> some View {
+    if showBiometricPrompt,
+       !isAuthenticatedWithBiometric {
+      BiometricAuthenticationOverlay(
+        isAuthenticated: $isAuthenticatedWithBiometric,
+        authManager: appStateManager.authentication
+      )
+    }
+  }
+
+  func handleSceneAppear() {
+#if os(iOS)
+    appDelegate.appState = appState
+    if let appState,
+       let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+       let window = windowScene.windows.first,
+       let rootVC = window.rootViewController {
+      appState.urlHandler.registerTopViewController(rootVC)
+      window.restorationIdentifier = "MainWindow"
+      window.shouldGroupAccessibilityChildren = true
+
+      Task {
+        await restoreApplicationState()
+      }
+    }
+#elseif os(macOS)
+    Task {
+      await restoreApplicationState()
+    }
+#endif
+
+#if os(iOS)
+    setupBackgroundNotification()
+#endif
+
+    PersistentFeedStateManager.initialize(with: modelContainer)
+
+    Task { @MainActor in
+      if let appState = self.appState {
+        appState.composerDraftManager.setModelContext(self.modelContainer.mainContext)
+        appState.notificationManager.setModelContext(self.modelContainer.mainContext)
+      }
+      FeedStateStore.shared.setModelContext(modelContext)
+      await preloadCachedFeedData()
+    }
+
+    if #available(iOS 26.0, macOS 26.0, *) {
+      let store = AppModelStore(modelContainer: modelContainer)
+      Task { @MainActor in
+        self.appState?.setModelStore(store)
+      }
+    }
+
+    Task(priority: .background) {
+      IncomingSharedDraftHandler.importIfAvailable()
+    }
+  }
+
+  func handleScenePhaseChange(from _: ScenePhase, to newPhase: ScenePhase) {
+    Task { @MainActor in
+      await FeedStateStore.shared.handleScenePhaseChange(newPhase)
+
+      if newPhase == .background {
+        saveApplicationState()
+#if os(iOS)
+        if #available(iOS 13.0, *) {
+          ChatBackgroundRefreshManager.schedule()
+          BackgroundCacheRefreshManager.schedule()
+        }
+#endif
+      }
+    }
+  }
+
+  func initializeApplicationIfNeeded() async {
+    logger.info("📍 initializeApplicationIfNeeded called")
+    let shouldInitialize = await MainActor.run { () -> Bool in
+      guard !didInitialize else {
+        logger.debug("⚠️ Skipping duplicate initialization - already initialized")
+        return false
+      }
+
+      didInitialize = true
+      logger.info("🎯 Starting first-time app initialization (didInitialize set to true)")
+      return true
+    }
+
+    guard shouldInitialize else {
+      logger.info("⏭️ Skipping initialization (shouldInitialize = false)")
+      return
+    }
+
+    let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
+      ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
+      ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    if isFaultOrderingMode {
+      configureFaultOrderingEnvironment()
+    }
+
+    if !isFaultOrderingMode {
+#if DEBUG
+      try? Tips.resetDatastore()
+#endif
+      try? Tips.configure([
+        .displayFrequency(.immediate),
+        .datastoreLocation(.applicationDefault)
+      ])
+    }
+
+    // Initialize AppStateManager (checks auth, creates AppState if authenticated)
+    logger.info("Starting app initialization")
+    await appStateManager.initialize()
+    logger.info("App initialization completed - lifecycle: \(appStateManager.lifecycle)")
+
+    // If authenticated, initialize preferences manager and app services
+    if let appState = appStateManager.lifecycle.appState {
+      appState.initializePreferencesManager(with: modelContext)
+
+      #if canImport(FoundationModels)
+      if #available(iOS 26.0, macOS 15.0, *) {
+        Task(priority: .background) {
+          await TopicSummaryService.shared.prepareLaunchWarmup(appState: appState)
+        }
+      }
+      #endif
+
+      Task {
+        do {
+          if let prefs = try await appState.preferencesManager.loadPreferences(),
+             !prefs.pinnedFeeds.contains(where: { SystemFeedTypes.isTimelineFeed($0) }) {
+            // Reserved for targeted timeline feed repairs if needed.
+          }
+        } catch {
+          logger.error("Error checking timeline feed: \(error)")
+        }
+      }
+
+      Task(priority: .background) {
+        let retentionDays = appState.appSettings.mlsMessageRetentionDays
+        await MLSEpochKeyRetentionManager.shared.updatePolicyFromSettings(retentionDays: retentionDays)
+        await MLSEpochKeyRetentionManager.shared.startAutomaticCleanup()
+        logger.info("🔐 Started MLS epoch key retention cleanup (\(retentionDays) days retention)")
+      }
+
+      // Trigger smart key package refresh on app launch
+      Task(priority: .background) {
+        do {
+          if let manager = await appState.getMLSConversationManager() {
+            try await manager.smartRefreshKeyPackages()
+            logger.info("📦 Completed app launch key package refresh check")
+          } else {
+            logger.debug("ℹ️ MLS conversation manager not available, skipping key package refresh")
+          }
+        } catch {
+          logger.warning("⚠️ App launch key package refresh failed: \(error.localizedDescription)")
+        }
+      }
+    }
+
+    await performInitialBiometricCheck()
+
+    Task { @MainActor in
+      let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+      if let appLanguage = defaults?.string(forKey: "appLanguage") {
+        AppLanguageManager.shared.applyLanguage(appLanguage)
+        logger.info("Applied saved language preference: \(appLanguage)")
+      }
+    }
+
+    logger.info("🎉 initializeApplicationIfNeeded completed - hasBiometricCheck: \(hasBiometricCheck)")
+  }
+
+  func configureFaultOrderingEnvironment() {
+    logger.info("⚡ FaultOrdering measurement mode detected - initializing measurement server")
+
+    setenv("FAULT_ORDERING_ENABLE", "1", 1)
+
+    logger.info("🔍 FaultOrdering debugging:")
+    logger.info("FAULT_ORDERING_ENABLE: \(ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] ?? "not set")")
+    logger.info("RUN_FAULT_ORDER: \(ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] ?? "not set")")
+    logger.info("XCTestConfigurationFilePath: \(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] ?? "not set")")
+    logger.info("DYLD_INSERT_LIBRARIES: \(ProcessInfo.processInfo.environment["DYLD_INSERT_LIBRARIES"] ?? "not set")")
+#if targetEnvironment(simulator)
+    logger.info("💻 Running on simulator")
+#else
+    logger.info("📱 Running on physical device")
+#endif
+
+    if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+      let linkmapURL = documentsURL.appendingPathComponent("linkmap-addresses.json")
+      let exists = FileManager.default.fileExists(atPath: linkmapURL.path)
+      logger.info("🔍 Linkmap file exists at \(linkmapURL.path): \(exists)")
+    }
+
+    Task.detached(priority: .high) {
+      logger.info("⚡ Starting keep-alive task for FaultOrdering measurement")
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+      }
+    }
+
+    Task.detached(priority: .background) {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(5))
+        logger.debug("🔄 FaultOrdering keep-alive ping")
+      }
+    }
+  }
+
+  var shouldShowContent: Bool {
+    let hasAppState = appState != nil
+    let biometricEnabled = appStateManager.authentication.biometricAuthEnabled
+    let authenticated = isAuthenticatedWithBiometric
+    let result = hasAppState && hasBiometricCheck && (!biometricEnabled || authenticated)
+
+    logger.info("🔍 shouldShowContent check: hasAppState=\(hasAppState), hasBiometricCheck=\(hasBiometricCheck), biometricEnabled=\(biometricEnabled), authenticated=\(authenticated) → result=\(result)")
+
+    guard hasAppState else {
+      logger.warning("⚠️ Not showing content: appState is nil")
+      return false
+    }
+    return hasBiometricCheck && (!biometricEnabled || authenticated)
+  }
+
+  var shouldShowContentForAuthenticatedState: Bool {
+    let biometricEnabled = appStateManager.authentication.biometricAuthEnabled
+    let authenticated = isAuthenticatedWithBiometric
+
+    guard biometricEnabled else {
+      return true  // No biometric check needed
+    }
+
+    return authenticated  // Show content only if biometric passed
+  }
+
   struct LoadingView: View {
     var body: some View {
       VStack(spacing: 20) {
-        // App icon
         Image("CatbirdIcon")
           .resizable()
           .frame(width: 80, height: 80)
           .cornerRadius(16)
-        
+
         ProgressView()
           .scaleEffect(1.5)
-        
+
         Text("Loading...")
           .font(.headline)
           .foregroundColor(.secondary)
@@ -662,87 +742,90 @@ struct CatbirdApp: App {
       .background(Color.systemBackground)
     }
   }
-  
-  // MARK: - Biometric Authentication
-  private func performInitialBiometricCheck() async {
-    // Perform biometric check first
+
+  func performInitialBiometricCheck() async {
+    logger.info("🔐 Starting initial biometric check")
     await checkBiometricAuthentication()
-    
-    // Mark that biometric check has been performed
     await MainActor.run {
+      logger.info("✅ Setting hasBiometricCheck = true")
       hasBiometricCheck = true
+      logger.info("✅ hasBiometricCheck is now: \(hasBiometricCheck)")
     }
+    logger.info("🔐 Completed initial biometric check")
   }
-  
-  private func checkBiometricAuthentication() async {
-    // Check if biometric auth is enabled and we haven't authenticated yet
-    guard appState.authManager.biometricAuthEnabled,
-          !isAuthenticatedWithBiometric else {
+
+  func checkBiometricAuthentication() async {
+    logger.info("🔍 Checking biometric authentication - appState: \(appState != nil)")
+    guard appState != nil else {
+      logger.warning("⚠️ Skipping biometric check - appState is nil")
       return
     }
-    
+    logger.info("🔍 Biometric enabled: \(appStateManager.authentication.biometricAuthEnabled), Already authenticated: \(isAuthenticatedWithBiometric)")
+    guard appStateManager.authentication.biometricAuthEnabled,
+          !isAuthenticatedWithBiometric else {
+      logger.info("ℹ️ Skipping biometric prompt - not needed")
+      return
+    }
+
     await MainActor.run {
+      logger.info("🔓 Showing biometric prompt")
       showBiometricPrompt = true
     }
   }
-  
-  #if os(iOS)
-  // Track background time for biometric timeout
-  private func setupBackgroundNotification() {
+
+#if os(iOS)
+  func setupBackgroundNotification() {
     NotificationCenter.default.addObserver(
       forName: UIApplication.didEnterBackgroundNotification,
       object: nil,
       queue: .main
     ) { _ in
-      // Store background time for timeout check
       UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "backgroundTime")
     }
-    
+
     NotificationCenter.default.addObserver(
       forName: UIApplication.willEnterForegroundNotification,
       object: nil,
       queue: .main
     ) { _ in
-      // Check if we should require re-authentication based on timeout
       let backgroundTime = UserDefaults.standard.double(forKey: "backgroundTime")
       let timeInBackground = Date().timeIntervalSince1970 - backgroundTime
-      
-      // Only require re-auth if app was backgrounded for more than 5 minutes
-      if timeInBackground > 300 { // 5 minutes
-        self.isAuthenticatedWithBiometric = false
-        self.hasBiometricCheck = false
+
+      if timeInBackground > 300 {
+        Task { @MainActor in
+          isAuthenticatedWithBiometric = false
+          hasBiometricCheck = false
+        }
       }
     }
   }
-  #elseif os(macOS)
-  // Track inactive time for biometric timeout (macOS equivalent)
-  private func setupBackgroundNotification() {
+#elseif os(macOS)
+  func setupBackgroundNotification() {
     NotificationCenter.default.addObserver(
       forName: NSApplication.didResignActiveNotification,
       object: nil,
       queue: .main
     ) { _ in
-      // Store inactive time for timeout check
       UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "inactiveTime")
     }
-    
+
     NotificationCenter.default.addObserver(
       forName: NSApplication.willBecomeActiveNotification,
       object: nil,
       queue: .main
     ) { _ in
-      // Check if we should require re-authentication based on timeout
       let inactiveTime = UserDefaults.standard.double(forKey: "inactiveTime")
       let timeInactive = Date().timeIntervalSince1970 - inactiveTime
-      
-      // Only require re-auth if app was inactive for more than 5 minutes
-      if timeInactive > 300 { // 5 minutes
-        self.isAuthenticatedWithBiometric = false
-        self.hasBiometricCheck = false
+
+      if timeInactive > 300 {
+        Task { @MainActor in
+          isAuthenticatedWithBiometric = false
+          hasBiometricCheck = false
+        }
       }
     }
   }
-  #endif
+#endif
 }
 
 // MARK: - Biometric Authentication Overlay
@@ -824,5 +907,31 @@ struct BiometricAuthenticationOverlay: View {
         isAuthenticated = true
       }
     }
+  }
+}
+
+// MARK: - BiometricAuthModifier
+
+private struct BiometricAuthModifier: ViewModifier {
+  let performCheck: () async -> Void
+  
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
+      .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+        Task {
+          await performCheck()
+        }
+      }
+    #elseif os(macOS)
+    content
+      .onReceive(NotificationCenter.default.publisher(for: NSApplication.willBecomeActiveNotification)) { _ in
+        Task {
+          await performCheck()
+        }
+      }
+    #else
+    content
+    #endif
   }
 }

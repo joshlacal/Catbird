@@ -711,7 +711,7 @@ var id: String {
 
   /// Fetch the current user's DID
   private func fetchCurrentUserDid() {
-    postState.currentUserDid = appState.currentUserDID  // Use consolidated state
+    postState.currentUserDid = appState.userDID  // Use consolidated state
   }
 
   /// Get the final avatar URL with fallback handling

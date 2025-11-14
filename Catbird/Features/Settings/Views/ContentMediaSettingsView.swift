@@ -409,8 +409,9 @@ struct ContentMediaSettingsView: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         ContentMediaSettingsView()
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

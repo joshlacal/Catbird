@@ -133,6 +133,7 @@ struct ThreadSeparatorView: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   VStack(spacing: 20) {
     ThreadSeparatorView(hiddenPostCount: 5) {
       logger.debug("Tapped thread continuation")

@@ -2,782 +2,858 @@
 //  MLSStorage.swift
 //  Catbird
 //
-//  MLS Core Data storage layer with reactive updates
+//  MLS SQLCipher storage layer providing CRUD operations for encrypted messages
 //
 
 import Foundation
-import CoreData
-import Combine
 import os.log
+import Observation
+import GRDB
 
-/// MLS Storage Manager providing CRUD operations and reactive updates
-@MainActor
-public class MLSStorage: ObservableObject {
-    
-    // MARK: - Properties
-    
-    public static let shared = MLSStorage()
-    
-    private let logger = Logger(subsystem: "com.catbird.mls", category: "MLSStorage")
-    
-    private lazy var persistentContainer: NSPersistentContainer = {
-        let container = NSPersistentContainer(name: "MLS")
-        
-        container.loadPersistentStores { description, error in
-            if let error = error {
-                self.logger.error("Failed to load Core Data stack: \(error.localizedDescription)")
-                fatalError("Failed to load Core Data stack: \(error)")
-            }
-            self.logger.info("Core Data stack loaded successfully")
-        }
-        
-        container.viewContext.automaticallyMergesChangesFromParent = true
-        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-        
-        return container
-    }()
-    
-    public var viewContext: NSManagedObjectContext {
-        persistentContainer.viewContext
-    }
-    
-    // MARK: - Fetched Results Controllers
-    
-    private var conversationsFRC: NSFetchedResultsController<MLSConversation>?
-    private var conversationsSubject = PassthroughSubject<Void, Never>()
-    
-    public var conversationsPublisher: AnyPublisher<Void, Never> {
-        conversationsSubject.eraseToAnyPublisher()
-    }
-    
-    // MARK: - Initialization
-    
-    private init() {}
-    
-    // MARK: - Context Management
-    
-    public func newBackgroundContext() -> NSManagedObjectContext {
-        let context = persistentContainer.newBackgroundContext()
-        context.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-        return context
-    }
-    
-    public func saveContext(_ context: NSManagedObjectContext? = nil) throws {
-        let contextToSave = context ?? viewContext
-        
-        guard contextToSave.hasChanges else { return }
-        
-        do {
-            try contextToSave.save()
-            logger.debug("Context saved successfully")
-        } catch {
-            logger.error("Failed to save context: \(error.localizedDescription)")
-            throw error
-        }
-    }
-    
-    // MARK: - MLSConversation CRUD
-    
-    public func createConversation(
-        conversationID: String,
-        groupID: Data,
-        epoch: Int64 = 0,
-        title: String? = nil,
-        welcomeMessage: Data? = nil
-    ) throws -> MLSConversation {
-        let conversation = MLSConversation(context: viewContext)
-        conversation.conversationID = conversationID
-        conversation.groupID = groupID
-        conversation.epoch = epoch
-        conversation.createdAt = Date()
-        conversation.updatedAt = Date()
-        conversation.title = title
-        conversation.isActive = true
-        conversation.welcomeMessage = welcomeMessage
-        conversation.memberCount = 0
-        
-        try saveContext()
-        logger.info("Created conversation: \(conversationID)")
-        
-        return conversation
-    }
-    
-    public func fetchConversation(byID conversationID: String) throws -> MLSConversation? {
-        let request = MLSConversation.fetchRequest()
-        request.predicate = NSPredicate(format: "conversationID == %@", conversationID)
-        request.fetchLimit = 1
-        
-        return try viewContext.fetch(request).first
-    }
-    
-    public func fetchAllConversations(activeOnly: Bool = true) throws -> [MLSConversation] {
-        let request = MLSConversation.fetchRequest()
-        
-        if activeOnly {
-            request.predicate = NSPredicate(format: "isActive == YES")
-        }
-        
-        request.sortDescriptors = [
-            NSSortDescriptor(keyPath: \MLSConversation.lastMessageAt, ascending: false),
-            NSSortDescriptor(keyPath: \MLSConversation.updatedAt, ascending: false)
-        ]
-        
-        return try viewContext.fetch(request)
-    }
-    
-    public func updateConversation(
-        _ conversation: MLSConversation,
-        epoch: Int64? = nil,
-        title: String? = nil,
-        treeHash: Data? = nil,
-        memberCount: Int32? = nil
-    ) throws {
-        if let epoch = epoch {
-            conversation.epoch = epoch
-        }
-        if let title = title {
-            conversation.title = title
-        }
-        if let treeHash = treeHash {
-            conversation.treeHash = treeHash
-        }
-        if let memberCount = memberCount {
-            conversation.memberCount = memberCount
-        }
-        
-        conversation.updatedAt = Date()
-        
-        try saveContext()
-        logger.debug("Updated conversation: \(conversation.conversationID ?? "unknown")")
-    }
-    
-    public func deleteConversation(_ conversation: MLSConversation) throws {
-        viewContext.delete(conversation)
-        try saveContext()
-        logger.info("Deleted conversation: \(conversation.conversationID ?? "unknown")")
-    }
-    
-    // MARK: - MLSMessage CRUD
-    
-    public func createMessage(
-        messageID: String,
-        conversationID: String,
-        senderID: String,
-        content: Data,
-        plaintext: String? = nil,
-        contentType: String = "text",
-        epoch: Int64,
-        sequenceNumber: Int64,
-        wireFormat: Data? = nil
-    ) throws -> MLSMessage {
-        guard let conversation = try fetchConversation(byID: conversationID) else {
-            throw MLSStorageError.conversationNotFound(conversationID)
-        }
+/// MLS Storage Manager providing encrypted database operations using SQLCipher
+///
+/// Note: No @MainActor - database operations should run on background threads.
+/// Methods are async and use GRDB's built-in concurrency handling.
+@Observable
+final class MLSStorage {
 
-        let message = MLSMessage(context: viewContext)
-        message.messageID = messageID
-        message.senderID = senderID
-        message.content = content
-        message.plaintext = plaintext
-        message.contentType = contentType
-        message.timestamp = Date()
-        message.epoch = epoch
-        message.sequenceNumber = sequenceNumber
-        message.wireFormat = wireFormat
-        message.isDelivered = false
-        message.isRead = false
-        message.isSent = false
-        message.sendAttempts = 0
-        message.conversation = conversation
-        
-        conversation.lastMessageAt = Date()
-        conversation.updatedAt = Date()
-        
-        try saveContext()
-        logger.info("Created message: \(messageID)")
-        
-        return message
-    }
-    
-    public func fetchMessage(byID messageID: String) throws -> MLSMessage? {
-        let request = MLSMessage.fetchRequest()
-        request.predicate = NSPredicate(format: "messageID == %@", messageID)
-        request.fetchLimit = 1
-        
-        return try viewContext.fetch(request).first
-    }
-    
-    public func fetchMessages(
-        forConversationID conversationID: String,
-        limit: Int? = nil
-    ) throws -> [MLSMessage] {
-        let request = MLSMessage.fetchRequest()
-        request.predicate = NSPredicate(format: "conversation.conversationID == %@", conversationID)
-        request.sortDescriptors = [
-            NSSortDescriptor(keyPath: \MLSMessage.timestamp, ascending: true)
-        ]
-        
-        if let limit = limit {
-            request.fetchLimit = limit
-        }
-        
-        return try viewContext.fetch(request)
-    }
-    
-    public func updateMessage(
-        _ message: MLSMessage,
-        plaintext: String? = nil,
-        isDelivered: Bool? = nil,
-        isRead: Bool? = nil,
-        isSent: Bool? = nil,
-        error: String? = nil
-    ) throws {
-        if let plaintext = plaintext {
-            message.plaintext = plaintext
-        }
-        if let isDelivered = isDelivered {
-            message.isDelivered = isDelivered
-        }
-        if let isRead = isRead {
-            message.isRead = isRead
-        }
-        if let isSent = isSent {
-            message.isSent = isSent
-        }
-        if let error = error {
-            message.error = error
-        }
+  // MARK: - Properties
 
-        try saveContext()
-        logger.debug("Updated message: \(message.messageID ?? "unknown")")
-    }
-    
-    public func deleteMessage(_ message: MLSMessage) throws {
-        viewContext.delete(message)
-        try saveContext()
-        logger.info("Deleted message: \(message.messageID ?? "unknown")")
-    }
-    
-    // MARK: - MLSMember CRUD
-    
-    public func createMember(
-        memberID: String,
-        conversationID: String,
-        did: String,
-        handle: String? = nil,
-        displayName: String? = nil,
-        leafIndex: Int32,
-        credentialData: Data? = nil,
-        signaturePublicKey: Data? = nil,
-        role: String = "member"
-    ) throws -> MLSMember {
-        guard let conversation = try fetchConversation(byID: conversationID) else {
-            throw MLSStorageError.conversationNotFound(conversationID)
-        }
-        
-        let member = MLSMember(context: viewContext)
-        member.memberID = memberID
-        member.did = did
-        member.handle = handle
-        member.displayName = displayName
-        member.leafIndex = leafIndex
-        member.credentialData = credentialData
-        member.signaturePublicKey = signaturePublicKey
-        member.addedAt = Date()
-        member.updatedAt = Date()
-        member.isActive = true
-        member.role = role
-        member.conversation = conversation
-        
-        conversation.memberCount = Int32((conversation.members?.count ?? 0) + 1)
-        conversation.updatedAt = Date()
-        
-        try saveContext()
-        logger.info("Created member: \(memberID)")
-        
-        return member
-    }
-    
-    public func fetchMember(byID memberID: String) throws -> MLSMember? {
-        let request = MLSMember.fetchRequest()
-        request.predicate = NSPredicate(format: "memberID == %@", memberID)
-        request.fetchLimit = 1
-        
-        return try viewContext.fetch(request).first
-    }
-    
-    public func fetchMembers(
-        forConversationID conversationID: String,
-        activeOnly: Bool = true
-    ) throws -> [MLSMember] {
-        let request = MLSMember.fetchRequest()
-        
-        var predicates = [NSPredicate(format: "conversation.conversationID == %@", conversationID)]
-        if activeOnly {
-            predicates.append(NSPredicate(format: "isActive == YES"))
-        }
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        
-        request.sortDescriptors = [
-            NSSortDescriptor(keyPath: \MLSMember.leafIndex, ascending: true)
-        ]
-        
-        return try viewContext.fetch(request)
-    }
-    
-    public func updateMember(
-        _ member: MLSMember,
-        handle: String? = nil,
-        displayName: String? = nil,
-        role: String? = nil,
-        isActive: Bool? = nil
-    ) throws {
-        if let handle = handle {
-            member.handle = handle
-        }
-        if let displayName = displayName {
-            member.displayName = displayName
-        }
-        if let role = role {
-            member.role = role
-        }
-        if let isActive = isActive {
-            member.isActive = isActive
-            if !isActive {
-                member.removedAt = Date()
-            }
-        }
-        
-        member.updatedAt = Date()
-        
-        try saveContext()
-        logger.debug("Updated member: \(member.memberID ?? "unknown")")
-    }
-    
-    public func deleteMember(_ member: MLSMember) throws {
-        if let conversation = member.conversation {
-            conversation.memberCount = Int32(max(0, Int(conversation.memberCount) - 1))
-            conversation.updatedAt = Date()
-        }
-        
-        viewContext.delete(member)
-        try saveContext()
-        logger.info("Deleted member: \(member.memberID ?? "unknown")")
-    }
-    
-    // MARK: - MLSEpochKey CRUD
+  static let shared = MLSStorage()
 
-    public func recordEpochKey(conversationID: String, epoch: Int64) async throws {
-        guard let conversation = try fetchConversation(byID: conversationID) else {
-            throw MLSStorageError.conversationNotFound(conversationID)
-        }
+  private let logger = Logger(subsystem: "com.catbird.mls", category: "MLSStorage")
 
-        let epochKey = MLSEpochKey(context: viewContext)
-        epochKey.conversationID = conversationID
-        epochKey.epoch = epoch
-        epochKey.createdAt = Date()
-        epochKey.conversation = conversation
+  // MARK: - Initialization
 
-        try saveContext()
-        logger.info("Recorded epoch key for conversation: \(conversationID), epoch: \(epoch)")
+  private init() {
+    logger.info("MLSStorage initialized with SQLCipher backend")
+  }
+
+  // MARK: - Database Access
+
+  /// Get the encrypted database for the current user
+  private func getDatabase() async throws -> DatabaseQueue {
+      guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+    return try await MLSGRDBManager.shared.getDatabaseQueue(for: userDID)
+  }
+
+  /// Get current user DID from AppState
+  /// Returns nil during account transitions to prevent race conditions
+  @MainActor
+  private func getCurrentUserDID() -> String? {
+    // Check if we're in a transition state to prevent operations during account switch
+    guard !AppStateManager.shared.isTransitioning else {
+      logger.warning("⚠️ MLSStorage accessed during account transition - deferring operation")
+      return nil
     }
 
-    public func deleteOldEpochKeys(conversationID: String, keepLast: Int) async throws {
-        let request = MLSEpochKey.fetchRequest()
-        request.predicate = NSPredicate(format: "conversationID == %@ AND deletedAt == nil", conversationID)
-        request.sortDescriptors = [NSSortDescriptor(key: "epoch", ascending: false)]
+    return AppStateManager.shared.lifecycle.appState?.userDID
+  }
 
-        let allKeys = try viewContext.fetch(request)
+  // MARK: - Conversation Operations
 
-        guard allKeys.count > keepLast else {
-            logger.debug("No old epoch keys to delete for conversation: \(conversationID)")
-            return
-        }
-
-        let keysToDelete = allKeys.dropFirst(keepLast)
-        let deleteCount = keysToDelete.count
-
-        for key in keysToDelete {
-            key.deletedAt = Date()
-            logger.debug("Marked epoch key for deletion: epoch \(key.epoch)")
-        }
-
-        try saveContext()
-        logger.info("Marked \(deleteCount) epoch keys for deletion in conversation: \(conversationID)")
+  /// Ensure a conversation exists in database, creating it if necessary (idempotent)
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - groupID: MLS group ID (hex-encoded string)
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if creation fails
+  @discardableResult
+  func ensureConversationExists(
+    conversationID: String,
+    groupID: String,
+    database: DatabaseQueue
+  ) async throws -> String {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
     }
 
-    public func cleanupMessageKeys(olderThan date: Date) async throws {
-        let request = NSFetchRequest<NSFetchRequestResult>(entityName: "MLSMessage")
-        request.predicate = NSPredicate(format: "timestamp < %@", date as NSDate)
-
-        let deleteRequest = NSBatchDeleteRequest(fetchRequest: request)
-        deleteRequest.resultType = .resultTypeObjectIDs
-
-        let result = try viewContext.execute(deleteRequest) as? NSBatchDeleteResult
-
-        if let objectIDs = result?.result as? [NSManagedObjectID] {
-            let changes = [NSDeletedObjectsKey: objectIDs]
-            NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [viewContext])
-            logger.info("Cleaned up \(objectIDs.count) message keys older than \(date)")
-        }
+    // Check if conversation already exists
+    let exists = try await database.read { db in
+      let count = try MLSConversationModel
+        .filter(MLSConversationModel.Columns.conversationID == conversationID)
+        .filter(MLSConversationModel.Columns.currentUserDID == userDID)
+        .fetchCount(db)
+      return count > 0
     }
 
-    public func fetchEpochKeys(forConversationID conversationID: String, activeOnly: Bool = true) throws -> [MLSEpochKey] {
-        let request = MLSEpochKey.fetchRequest()
-
-        var predicates = [NSPredicate(format: "conversationID == %@", conversationID)]
-        if activeOnly {
-            predicates.append(NSPredicate(format: "deletedAt == nil"))
-        }
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-
-        request.sortDescriptors = [
-            NSSortDescriptor(keyPath: \MLSEpochKey.epoch, ascending: false)
-        ]
-
-        return try viewContext.fetch(request)
+    if exists {
+      logger.debug("Conversation already exists: \(conversationID)")
+      return conversationID
     }
 
-    public func deleteMarkedEpochKeys() async throws {
-        let request = NSFetchRequest<NSFetchRequestResult>(entityName: "MLSEpochKey")
-        request.predicate = NSPredicate(format: "deletedAt != nil")
+    // Create new conversation
+    try await database.write { db in
+      // Convert groupID string to Data
+      guard let groupIDData = Data(hexEncoded: groupID) else {
+        throw MLSStorageError.invalidGroupID(groupID)
+      }
 
-        let deleteRequest = NSBatchDeleteRequest(fetchRequest: request)
-        deleteRequest.resultType = .resultTypeObjectIDs
-
-        let result = try viewContext.execute(deleteRequest) as? NSBatchDeleteResult
-
-        if let objectIDs = result?.result as? [NSManagedObjectID] {
-            let changes = [NSDeletedObjectsKey: objectIDs]
-            NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [viewContext])
-            logger.info("Permanently deleted \(objectIDs.count) marked epoch keys")
-        }
+      var conversation = MLSConversationModel(
+        conversationID: conversationID,
+        currentUserDID: userDID,
+        groupID: groupIDData,
+        createdAt: Date(),
+        updatedAt: Date()
+      )
+      try conversation.insert(db)
     }
 
-    // MARK: - MLSKeyPackage CRUD
+    logger.info("✅ Created conversation: \(conversationID)")
+    return conversationID
+  }
 
-    public func createKeyPackage(
-        keyPackageID: String,
-        keyPackageData: Data,
-        cipherSuite: Int16,
-        ownerDID: String,
-        expiresAt: Date? = nil,
-        conversationID: String? = nil
-    ) throws -> MLSKeyPackage {
-        let keyPackage = MLSKeyPackage(context: viewContext)
-        keyPackage.keyPackageID = keyPackageID
-        keyPackage.keyPackageData = keyPackageData
-        keyPackage.cipherSuite = cipherSuite
-        keyPackage.ownerDID = ownerDID
-        keyPackage.createdAt = Date()
-        keyPackage.expiresAt = expiresAt
-        keyPackage.isUsed = false
-        
-        if let conversationID = conversationID,
-           let conversation = try fetchConversation(byID: conversationID) {
-            keyPackage.conversation = conversation
-        }
-        
-        try saveContext()
-        logger.info("Created key package: \(keyPackageID)")
-        
-        return keyPackage
+  /// Fetch a persisted conversation for the current user if it exists
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - currentUserDID: Current authenticated user's DID
+  ///   - database: Database queue to read from
+  /// - Returns: Stored `MLSConversationModel` or `nil` when missing
+  func fetchConversation(
+    conversationID: String,
+    currentUserDID: String,
+    database: DatabaseQueue
+  ) async throws -> MLSConversationModel? {
+    try await database.read { db in
+      try MLSConversationModel
+        .filter(MLSConversationModel.Columns.conversationID == conversationID)
+        .filter(MLSConversationModel.Columns.currentUserDID == currentUserDID)
+        .fetchOne(db)
     }
-    
-    public func fetchKeyPackage(byID keyPackageID: String) throws -> MLSKeyPackage? {
-        let request = MLSKeyPackage.fetchRequest()
-        request.predicate = NSPredicate(format: "keyPackageID == %@", keyPackageID)
-        request.fetchLimit = 1
-        
-        return try viewContext.fetch(request).first
+  }
+
+  // MARK: - Message Plaintext Caching
+
+  /// Save plaintext for a message after decryption
+  ///
+  /// **CRITICAL**: MLS ratchet burns secrets after first decryption - must cache immediately!
+  ///
+  /// **SECURITY MODEL**:
+  /// - Plaintext stored in SQLCipher database with AES-256-CBC encryption
+  /// - Per-user encryption keys stored in iOS Keychain
+  /// - Database excluded from iCloud/iTunes backup
+  /// - iOS Data Protection (FileProtectionType.complete) for at-rest security
+  ///
+  /// - Parameters:
+  ///   - messageID: Unique message identifier
+  ///   - conversationID: Conversation this message belongs to
+  ///   - plaintext: Decrypted message text
+  ///   - senderID: DID of message sender
+  ///   - currentUserDID: DID of current user
+  ///   - embed: Optional embed data (GIF, Bluesky post, etc.)
+  ///   - epoch: MLS epoch number
+  ///   - sequenceNumber: MLS sequence number within epoch
+  ///   - timestamp: Message timestamp
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if save fails
+  func savePlaintextForMessage(
+    messageID: String,
+    conversationID: String,
+    plaintext: String,
+    senderID: String,
+    currentUserDID: String,
+    embed: MLSEmbedData? = nil,
+    epoch: Int64,
+    sequenceNumber: Int64,
+    timestamp: Date,
+    database: DatabaseQueue
+  ) async throws {
+    logger.info("💾 Caching plaintext: \(messageID) (epoch: \(epoch), seq: \(sequenceNumber), hasEmbed: \(embed != nil))")
+
+    // Encode embed data if provided
+    var embedDataEncoded: Data?
+    if let embed = embed {
+      let encoder = JSONEncoder()
+      encoder.dateEncodingStrategy = .iso8601
+      embedDataEncoded = try encoder.encode(embed)
+      logger.debug("Encoded embed data (\(embedDataEncoded?.count ?? 0) bytes)")
     }
-    
-    public func fetchAvailableKeyPackages(
-        forOwnerDID ownerDID: String,
-        cipherSuite: Int16? = nil
-    ) throws -> [MLSKeyPackage] {
-        let request = MLSKeyPackage.fetchRequest()
-        
-        var predicates = [
-            NSPredicate(format: "ownerDID == %@", ownerDID),
-            NSPredicate(format: "isUsed == NO"),
-            NSPredicate(format: "expiresAt == nil OR expiresAt > %@", Date() as NSDate)
-        ]
-        
-        if let cipherSuite = cipherSuite {
-            predicates.append(NSPredicate(format: "cipherSuite == %d", cipherSuite))
-        }
-        
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        request.sortDescriptors = [
-            NSSortDescriptor(keyPath: \MLSKeyPackage.createdAt, ascending: false)
-        ]
-        
-        return try viewContext.fetch(request)
-    }
-    
-    public func markKeyPackageAsUsed(_ keyPackage: MLSKeyPackage, conversationID: String) throws {
-        keyPackage.isUsed = true
-        keyPackage.usedAt = Date()
-        
-        if let conversation = try fetchConversation(byID: conversationID) {
-            keyPackage.conversation = conversation
-        }
-        
-        try saveContext()
-        logger.info("Marked key package as used: \(keyPackage.keyPackageID ?? "unknown")")
-    }
-    
-    public func deleteKeyPackage(_ keyPackage: MLSKeyPackage) throws {
-        viewContext.delete(keyPackage)
-        try saveContext()
-        logger.info("Deleted key package: \(keyPackage.keyPackageID ?? "unknown")")
-    }
-    
-    // MARK: - Fetched Results Controller Setup
-    
-    public func setupConversationsFRC(delegate: NSFetchedResultsControllerDelegate? = nil) {
-        let request = MLSConversation.fetchRequest()
-        request.predicate = NSPredicate(format: "isActive == YES")
-        request.sortDescriptors = [
-            NSSortDescriptor(keyPath: \MLSConversation.lastMessageAt, ascending: false),
-            NSSortDescriptor(keyPath: \MLSConversation.updatedAt, ascending: false)
-        ]
-        
-        conversationsFRC = NSFetchedResultsController(
-            fetchRequest: request,
-            managedObjectContext: viewContext,
-            sectionNameKeyPath: nil,
-            cacheName: "MLSConversations"
+
+    try await database.write { db in
+      // Check if message exists
+      let count = try MLSMessageModel
+        .filter(MLSMessageModel.Columns.messageID == messageID)
+        .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
+        .fetchCount(db)
+      let exists = count > 0
+
+      if exists {
+        // Update existing message
+        try db.execute(sql: """
+          UPDATE MLSMessageModel
+          SET plaintext = ?,
+              embedData = ?,
+              epoch = ?,
+              sequenceNumber = ?,
+              timestamp = ?,
+              plaintextExpired = 0
+          WHERE messageID = ? AND currentUserDID = ?;
+        """, arguments: [plaintext, embedDataEncoded, epoch, sequenceNumber, timestamp, messageID, currentUserDID])
+
+        logger.debug("Updated existing message with plaintext cache")
+      } else {
+        // Create new message
+        var message = MLSMessageModel(
+          messageID: messageID,
+          currentUserDID: currentUserDID,
+          conversationID: conversationID,
+          senderID: senderID,
+          plaintext: plaintext,
+          embedDataJSON: embedDataEncoded,
+          wireFormat: Data(),
+          contentType: "text/plain",
+          timestamp: timestamp,
+          epoch: epoch,
+          sequenceNumber: sequenceNumber,
+          authenticatedData: nil,
+          signature: nil,
+          isDelivered: true,
+          isRead: false,
+          isSent: true,
+          sendAttempts: 0,
+          error: nil,
+          processingState: "cached",
+          gapBefore: false,
+          plaintextExpired: false
         )
-        
-        if let delegate = delegate {
-            conversationsFRC?.delegate = delegate
-        }
-        
-        do {
-            try conversationsFRC?.performFetch()
-            logger.info("Conversations FRC setup complete")
-        } catch {
-            logger.error("Failed to perform fetch for conversations FRC: \(error.localizedDescription)")
-        }
+        try message.insert(db)
+
+        logger.debug("Created new message with plaintext cache")
+      }
     }
-    
-    public var conversations: [MLSConversation] {
-        conversationsFRC?.fetchedObjects ?? []
+
+    logger.info("✅ Plaintext cached: \(messageID)")
+  }
+
+  /// Fetch cached plaintext for a message
+  ///
+  /// Returns cached plaintext if available, or nil if message hasn't been decrypted yet.
+  /// This prevents re-decryption attempts that would fail with SecretReuseError.
+  ///
+  /// - Parameters:
+  ///   - messageID: The message ID to fetch
+  ///   - currentUserDID: The DID of the current user
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Cached plaintext if available, nil otherwise
+  /// - Throws: MLSStorageError if fetch fails
+  func fetchPlaintextForMessage(
+    _ messageID: String,
+    currentUserDID: String,
+    database: DatabaseQueue
+  ) async throws -> String? {
+    logger.debug("Fetching plaintext: \(messageID)")
+
+    let plaintext = try await database.read { db in
+      try MLSMessageModel
+        .filter(MLSMessageModel.Columns.messageID == messageID)
+        .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
+        .fetchOne(db)?.plaintext
     }
-    
-    // MARK: - Batch Operations
-    
-    public func deleteAllMessages(forConversationID conversationID: String) throws {
-        let request = NSFetchRequest<NSFetchRequestResult>(entityName: "MLSMessage")
-        request.predicate = NSPredicate(format: "conversation.conversationID == %@", conversationID)
-        
-        let deleteRequest = NSBatchDeleteRequest(fetchRequest: request)
-        deleteRequest.resultType = .resultTypeObjectIDs
-        
-        let result = try viewContext.execute(deleteRequest) as? NSBatchDeleteResult
-        
-        if let objectIDs = result?.result as? [NSManagedObjectID] {
-            let changes = [NSDeletedObjectsKey: objectIDs]
-            NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [viewContext])
-        }
-        
-        logger.info("Deleted all messages for conversation: \(conversationID)")
+
+    if let plaintext = plaintext {
+      logger.debug("✅ Found cached plaintext: \(messageID)")
+      return plaintext
+    } else {
+      logger.warning("⚠️ No cached plaintext found: \(messageID)")
+      return nil
     }
-    
-    public func deleteExpiredKeyPackages() throws {
-        let request = NSFetchRequest<NSFetchRequestResult>(entityName: "MLSKeyPackage")
-        request.predicate = NSPredicate(
-            format: "expiresAt != nil AND expiresAt < %@",
-            Date() as NSDate
+  }
+
+  /// Fetch cached embed data for a message
+  ///
+  /// Returns cached embed if available, or nil if no embed was cached.
+  ///
+  /// - Parameters:
+  ///   - messageID: The message ID to fetch
+  ///   - currentUserDID: The DID of the current user
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Cached embed data if available, nil otherwise
+  /// - Throws: MLSStorageError if fetch fails
+  func fetchEmbedForMessage(
+    _ messageID: String,
+    currentUserDID: String,
+    database: DatabaseQueue
+  ) async throws -> MLSEmbedData? {
+    logger.debug("Fetching embed: \(messageID)")
+
+    let embed = try await database.read { db in
+      try MLSMessageModel
+        .filter(MLSMessageModel.Columns.messageID == messageID)
+        .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
+        .fetchOne(db)?.parsedEmbed
+    }
+
+    if embed != nil {
+      logger.debug("✅ Found cached embed: \(messageID)")
+    }
+
+    return embed
+  }
+
+  /// Fetch cached sender DID for a message
+  ///
+  /// Returns the sender's DID extracted from MLS credentials during decryption.
+  ///
+  /// - Parameters:
+  ///   - messageID: The message ID to fetch
+  ///   - currentUserDID: The DID of the current user
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Sender DID if available, nil otherwise
+  /// - Throws: MLSStorageError if fetch fails
+  func fetchSenderForMessage(
+    _ messageID: String,
+    currentUserDID: String,
+    database: DatabaseQueue
+  ) async throws -> String? {
+    logger.debug("Fetching sender: \(messageID)")
+
+    let senderID = try await database.read { db in
+      try MLSMessageModel
+        .filter(MLSMessageModel.Columns.messageID == messageID)
+        .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
+        .fetchOne(db)?.senderID
+    }
+
+    if let senderID = senderID {
+      logger.debug("✅ Found cached sender: \(messageID) -> \(senderID)")
+      return senderID
+    } else {
+      logger.warning("⚠️ No cached sender found: \(messageID)")
+      return nil
+    }
+  }
+
+  /// Fetch the most recent cached messages for a conversation.
+  ///
+  /// Returns up to `limit` messages sorted for display (oldest → newest) while prioritizing
+  /// the newest decrypted records when trimming large conversations.
+  /// Useful for cache-first display before fetching from server.
+  ///
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - currentUserDID: The DID of the current user
+  ///   - database: DatabaseQueue to use for operations
+  ///   - limit: Maximum number of messages to return (default: 50)
+  /// - Returns: Array of cached messages sorted from oldest to newest
+  /// - Throws: MLSStorageError if fetch fails
+  func fetchMessagesForConversation(
+    _ conversationID: String,
+    currentUserDID: String,
+    database: DatabaseQueue,
+    limit: Int = 50
+  ) async throws -> [MLSMessageModel] {
+    logger.debug("Fetching cached messages for conversation: \(conversationID), limit: \(limit)")
+
+    let messages = try await database.read { db in
+      try MLSMessageModel
+        .filter(MLSMessageModel.Columns.conversationID == conversationID)
+        .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
+        .order(MLSMessageModel.Columns.epoch.desc, MLSMessageModel.Columns.sequenceNumber.desc)
+        .limit(limit)
+        .fetchAll(db)
+    }
+
+    let orderedMessages = Array(messages.reversed())
+    logger.debug("✅ Returning \(orderedMessages.count) cached messages for conversation: \(conversationID)")
+    return orderedMessages
+  }
+
+  // MARK: - Epoch Key Management
+
+  /// Store epoch secret with actual key material
+  /// - Parameters:
+  ///   - conversationID: Hex-encoded conversation/group ID
+  ///   - epoch: MLS epoch number
+  ///   - secretData: Epoch secret key material
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if save fails
+  func saveEpochSecret(
+    conversationID: String,
+    epoch: UInt64,
+    secretData: Data,
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+
+    do {
+      try await database.write { db in
+        var epochKey = MLSEpochKeyModel(
+          epochKeyID: "\(conversationID)-\(epoch)",
+          conversationID: conversationID,
+          currentUserDID: userDID,
+          epoch: Int64(epoch),
+          keyMaterial: secretData,  // Actual epoch secret
+          createdAt: Date(),
+          expiresAt: nil,
+          isActive: true
         )
-        
-        let deleteRequest = NSBatchDeleteRequest(fetchRequest: request)
-        deleteRequest.resultType = .resultTypeObjectIDs
-        
-        let result = try viewContext.execute(deleteRequest) as? NSBatchDeleteResult
-        
-        if let objectIDs = result?.result as? [NSManagedObjectID] {
-            let changes = [NSDeletedObjectsKey: objectIDs]
-            NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [viewContext])
-        }
-        
-        logger.info("Deleted expired key packages")
+        // ⭐ CRITICAL FIX: Use save() instead of insert() to handle duplicate epoch exports
+        // This allows epoch 0 to be exported both at group creation AND before merge_pending_commit
+        // without hitting UNIQUE constraint violations
+        try epochKey.save(db)
+      }
+
+      logger.info("✅ Saved epoch secret: \(conversationID) epoch \(epoch), \(secretData.count) bytes")
+    } catch let error as DatabaseError {
+      // ⭐ FIXED: Foreign key violations should NEVER occur now that we create
+      // the SQLCipher conversation record BEFORE creating the MLS group
+      if error.resultCode == .SQLITE_CONSTRAINT && error.message?.contains("FOREIGN KEY") == true {
+        logger.error("❌ [EPOCH-STORAGE] CRITICAL: Foreign key violation storing epoch secret - conversation \(conversationID.prefix(16))... not found. This indicates a bug in conversation creation order!")
+        throw MLSStorageError.foreignKeyViolation("Conversation \(conversationID) must exist before storing epoch secrets")
+      }
+      // Re-throw all database errors
+      throw error
     }
-    
-    // MARK: - Migration Support
+  }
 
-    public func migrateFromLegacyStorage() async throws {
-        logger.info("Starting migration from legacy storage")
-
-        // This is a placeholder for actual migration logic
-        // Implementation would depend on the existing storage format
-
-        logger.info("Migration from legacy storage completed")
-    }
-
-    // MARK: - MLS Storage Blob Persistence
-
-    /// Save the MLS storage blob to Core Data
-    ///
-    /// Stores the serialized MLS storage state for the given user. Only one blob
-    /// per user is maintained (singleton pattern).
-    ///
-    /// - Parameters:
-    ///   - storageData: Serialized storage bytes from Rust FFI
-    ///   - userDID: User's DID identifier
-    /// - Throws: MLSStorageError if save fails
-    public func saveMLSStorageBlob(_ storageData: Data, forUser userDID: String) throws {
-        logger.info("Saving MLS storage blob for user: \(userDID), size: \(storageData.count) bytes")
-
-        // Fetch existing blob for this user (singleton)
-        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "MLSStorageBlob")
-        fetchRequest.predicate = NSPredicate(format: "userDID == %@", userDID)
-        fetchRequest.fetchLimit = 1
-
-        let existingBlob = try viewContext.fetch(fetchRequest).first
-
-        if let blob = existingBlob {
-            // Update existing
-            blob.setValue(storageData, forKey: "storageData")
-            blob.setValue(Date(), forKey: "updatedAt")
-            logger.debug("Updated existing storage blob")
-        } else {
-            // Create new
-            let blob = NSEntityDescription.insertNewObject(forEntityName: "MLSStorageBlob", into: viewContext)
-            blob.setValue(storageData, forKey: "storageData")
-            blob.setValue(Date(), forKey: "updatedAt")
-            blob.setValue(userDID, forKey: "userDID")
-            logger.debug("Created new storage blob")
-        }
-
-        try saveContext()
-        logger.info("MLS storage blob saved successfully")
+  /// Retrieve epoch secret key material
+  /// - Parameters:
+  ///   - conversationID: Hex-encoded conversation/group ID
+  ///   - epoch: MLS epoch number
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Epoch secret data if found, nil otherwise
+  func getEpochSecret(
+    conversationID: String,
+    epoch: UInt64,
+    database: DatabaseQueue
+  ) async throws -> Data? {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
     }
 
-    /// Load the MLS storage blob from Core Data
-    ///
-    /// Retrieves the serialized MLS storage state for the given user.
-    ///
-    /// - Parameter userDID: User's DID identifier
-    /// - Returns: Serialized storage bytes, or nil if no blob exists
-    /// - Throws: MLSStorageError if fetch fails
-    public func loadMLSStorageBlob(forUser userDID: String) throws -> Data? {
-        logger.info("Loading MLS storage blob for user: \(userDID)")
-
-        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "MLSStorageBlob")
-        fetchRequest.predicate = NSPredicate(format: "userDID == %@", userDID)
-        fetchRequest.fetchLimit = 1
-
-        guard let blob = try viewContext.fetch(fetchRequest).first,
-              let storageData = blob.value(forKey: "storageData") as? Data else {
-            logger.info("No storage blob found for user")
-            return nil
-        }
-
-        logger.info("Loaded storage blob: \(storageData.count) bytes")
-        return storageData
+    let secret = try await database.read { db in
+      try MLSEpochKeyModel
+        .filter(MLSEpochKeyModel.Columns.conversationID == conversationID)
+        .filter(MLSEpochKeyModel.Columns.currentUserDID == userDID)
+        .filter(MLSEpochKeyModel.Columns.epoch == Int64(epoch))
+        .filter(MLSEpochKeyModel.Columns.isActive == true)
+        .fetchOne(db)?
+        .keyMaterial
     }
 
-    /// Delete the MLS storage blob for a user
-    ///
-    /// Used when logging out or clearing user data.
-    ///
-    /// - Parameter userDID: User's DID identifier
-    /// - Throws: MLSStorageError if deletion fails
-    public func deleteMLSStorageBlob(forUser userDID: String) throws {
-        logger.info("Deleting MLS storage blob for user: \(userDID)")
-
-        let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "MLSStorageBlob")
-        fetchRequest.predicate = NSPredicate(format: "userDID == %@", userDID)
-
-        let blobs = try viewContext.fetch(fetchRequest)
-
-        for blob in blobs {
-            viewContext.delete(blob)
-        }
-
-        try saveContext()
-        logger.info("Deleted \(blobs.count) storage blob(s)")
+    if let secret = secret {
+      logger.debug("Retrieved epoch secret: \(conversationID) epoch \(epoch), \(secret.count) bytes")
+    } else {
+      logger.debug("No epoch secret found: \(conversationID) epoch \(epoch)")
     }
 
-    // MARK: - Message Plaintext Helpers
+    return secret
+  }
 
-    /// Save plaintext for a sent message (for MLS forward secrecy)
-    /// This allows self-sent messages to be displayed even though MLS prevents decryption after sending
-    public func savePlaintextForMessage(messageID: String, conversationID: String, plaintext: String, senderID: String) throws {
-        logger.info("Saving plaintext for message: \(messageID)")
-
-        // Check if message already exists
-        let fetchRequest = MLSMessage.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "messageID == %@", messageID)
-        fetchRequest.fetchLimit = 1
-
-        if let existingMessage = try viewContext.fetch(fetchRequest).first {
-            // Update existing message with plaintext
-            existingMessage.plaintext = plaintext
-            logger.debug("Updated existing message with plaintext")
-        } else {
-            // Create minimal message entry with plaintext
-            let message = MLSMessage(context: viewContext)
-            message.messageID = messageID
-            message.senderID = senderID
-            message.plaintext = plaintext
-            message.content = Data() // Empty data as placeholder
-            message.timestamp = Date()
-            message.epoch = 0
-            message.sequenceNumber = 0
-
-            // Try to link to conversation if it exists in Core Data
-            if let conversation = try? fetchConversation(byID: conversationID) {
-                message.conversation = conversation
-                logger.debug("Created new message with plaintext and linked to conversation")
-            } else {
-                // Conversation doesn't exist in Core Data yet - save message without it
-                logger.debug("Created new message with plaintext (no conversation link)")
-            }
-        }
-
-        try saveContext()
-        logger.info("Plaintext saved successfully for message: \(messageID)")
+  /// Delete epoch secret
+  /// - Parameters:
+  ///   - conversationID: Hex-encoded conversation/group ID
+  ///   - epoch: MLS epoch number
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func deleteEpochSecret(
+    conversationID: String,
+    epoch: UInt64,
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
     }
 
-    /// Fetch plaintext for a message (returns nil if not found)
-    public func fetchPlaintextForMessage(messageID: String) throws -> String? {
-        let fetchRequest = MLSMessage.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "messageID == %@", messageID)
-        fetchRequest.fetchLimit = 1
-
-        guard let message = try viewContext.fetch(fetchRequest).first else {
-            return nil
-        }
-
-        return message.plaintext
+    try await database.write { db in
+      let now = Date()
+      try db.execute(sql: """
+        UPDATE MLSEpochKeyModel
+        SET deletedAt = ?, isActive = ?
+        WHERE conversationID = ? AND currentUserDID = ? AND epoch = ?;
+      """, arguments: [now, false, conversationID, userDID, Int64(epoch)])
     }
+
+    logger.info("Deleted epoch secret: \(conversationID) epoch \(epoch)")
+  }
+
+  /// Record an epoch key for forward secrecy tracking (deprecated - use saveEpochSecret)
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - epoch: MLS epoch number
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if save fails
+  @available(*, deprecated, message: "Use saveEpochSecret instead")
+  func recordEpochKey(
+    conversationID: String,
+    epoch: Int64,
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+
+    try await database.write { db in
+      var epochKey = MLSEpochKeyModel(
+        epochKeyID: "\(conversationID)-\(epoch)",
+        conversationID: conversationID,
+        currentUserDID: userDID,
+        epoch: epoch,
+        keyMaterial: Data(), // Placeholder - actual key material should be provided
+        createdAt: Date(),
+        expiresAt: nil,
+        isActive: true
+      )
+      try epochKey.insert(db)
+    }
+
+    logger.info("Recorded epoch key: \(conversationID) epoch \(epoch)")
+  }
+
+  /// Delete old epoch keys, keeping only the most recent ones
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - keepLast: Number of recent keys to keep
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func deleteOldEpochKeys(
+    conversationID: String,
+    keepLast: Int,
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+
+    try await database.write { db in
+      // Get all epoch keys for this conversation
+      let allKeys = try MLSEpochKeyModel
+        .filter(MLSEpochKeyModel.Columns.conversationID == conversationID)
+        .filter(MLSEpochKeyModel.Columns.currentUserDID == userDID)
+        .filter(MLSEpochKeyModel.Columns.isActive == true)
+        .order(MLSEpochKeyModel.Columns.epoch.desc)
+        .fetchAll(db)
+
+      guard allKeys.count > keepLast else {
+        logger.debug("No old epoch keys to delete")
+        return
+      }
+
+      // Mark old keys for deletion
+      let keysToDelete = allKeys.dropFirst(keepLast)
+      let now = Date()
+
+      for key in keysToDelete {
+        try db.execute(sql: """
+          UPDATE MLSEpochKeyModel
+          SET deletedAt = ?
+          WHERE conversationID = ? AND currentUserDID = ? AND epoch = ?;
+        """, arguments: [now, conversationID, userDID, key.epoch])
+      }
+
+      logger.info("Marked \(keysToDelete.count) epoch keys for deletion")
+    }
+  }
+
+  /// Clean up old message keys older than specified date
+  /// - Parameters:
+  ///   - date: Delete messages older than this date
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func cleanupMessageKeys(
+    olderThan date: Date,
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+
+    let deletedCount = try await database.write { db -> Int in
+      try db.execute(sql: """
+        DELETE FROM MLSMessageModel
+        WHERE currentUserDID = ? AND timestamp < ?;
+      """, arguments: [userDID, date])
+
+      return db.changesCount
+    }
+
+    logger.info("Cleaned up \(deletedCount) message keys older than \(date)")
+  }
+
+  /// Delete epoch keys that have been marked for deletion
+  /// - Parameters:
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func deleteMarkedEpochKeys(
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+
+    let deletedCount = try await database.write { db -> Int in
+      try db.execute(sql: """
+        DELETE FROM MLSEpochKeyModel
+        WHERE currentUserDID = ? AND deletedAt IS NOT NULL;
+      """, arguments: [userDID])
+
+      return db.changesCount
+    }
+
+    logger.info("Deleted \(deletedCount) marked epoch keys")
+  }
+
+  /// Delete expired key packages
+  /// - Parameters:
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func deleteExpiredKeyPackages(
+    database: DatabaseQueue
+  ) async throws {
+    guard let userDID = await getCurrentUserDID() else {
+      throw MLSStorageError.noAuthentication
+    }
+
+    let now = Date()
+    let deletedCount = try await database.write { db -> Int in
+      try db.execute(sql: """
+        DELETE FROM MLSKeyPackageModel
+        WHERE currentUserDID = ? AND expiresAt IS NOT NULL AND expiresAt < ?;
+      """, arguments: [userDID, now])
+
+      return db.changesCount
+    }
+
+    logger.info("Deleted \(deletedCount) expired key packages")
+  }
+
+  // MARK: - Member Queries
+
+  /// Get count of active members in a conversation
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - currentUserDID: Current user DID
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Number of active members
+  /// - Throws: MLSStorageError if query fails
+  func getMemberCount(
+    conversationID: String,
+    currentUserDID: String,
+    database: DatabaseQueue
+  ) async throws -> Int {
+    return try await database.read { db in
+      try MLSMemberModel
+        .filter(MLSMemberModel.Columns.conversationID == conversationID)
+        .filter(MLSMemberModel.Columns.currentUserDID == currentUserDID)
+        .filter(MLSMemberModel.Columns.isActive == true)
+        .fetchCount(db)
+    }
+  }
+
+  /// Fetch active members for a conversation
+  /// - Parameters:
+  ///   - conversationID: Conversation identifier
+  ///   - currentUserDID: Current user DID
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Array of active members
+  /// - Throws: MLSStorageError if query fails
+   func fetchMembers(
+    conversationID: String,
+    currentUserDID: String,
+    database: DatabaseQueue
+  ) async throws -> [MLSMemberModel] {
+    return try await database.read { db in
+      try MLSMemberModel
+        .filter(MLSMemberModel.Columns.conversationID == conversationID)
+        .filter(MLSMemberModel.Columns.currentUserDID == currentUserDID)
+        .filter(MLSMemberModel.Columns.isActive == true)
+        .order(MLSMemberModel.Columns.addedAt)
+        .fetchAll(db)
+    }
+  }
+
+  // MARK: - Reports
+
+  /// Save a moderation report
+  /// - Parameters:
+  ///   - report: Report model to save
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if save fails
+  func saveReport(
+    _ report: MLSReportModel,
+    database: DatabaseQueue
+  ) async throws {
+    try await database.write { db in
+      var mutableReport = report
+      try mutableReport.save(db)
+    }
+    logger.info("Saved report: \(report.id)")
+  }
+
+  /// Load reports for a conversation
+  /// - Parameters:
+  ///   - convoID: Conversation identifier
+  ///   - status: Optional status filter (e.g., "pending", "resolved")
+  ///   - limit: Maximum number of reports to return
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Array of reports matching criteria
+  /// - Throws: MLSStorageError if query fails
+  func loadReports(
+    for convoID: String,
+    status: String? = nil,
+    limit: Int = 50,
+    database: DatabaseQueue
+  ) async throws -> [MLSReportModel] {
+    return try await database.read { db in
+      var query = MLSReportModel
+        .filter(MLSReportModel.Columns.convoID == convoID)
+        .order(MLSReportModel.Columns.createdAt.desc)
+        .limit(limit)
+
+      if let status = status {
+        query = query.filter(MLSReportModel.Columns.status == status)
+      }
+
+      return try query.fetchAll(db)
+    }
+  }
+
+  /// Update report status with resolution details
+  /// - Parameters:
+  ///   - reportID: Report identifier
+  ///   - action: Action taken (e.g., "ban", "warn", "no_action")
+  ///   - notes: Optional resolution notes
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if update fails
+  func updateReportStatus(
+    reportID: String,
+    action: String,
+    notes: String?,
+    database: DatabaseQueue
+  ) async throws {
+    try await database.write { db in
+      try db.execute(sql: """
+        UPDATE MLSReportModel
+        SET status = 'resolved',
+            action = ?,
+            resolution_notes = ?,
+            resolved_at = ?
+        WHERE id = ?;
+      """, arguments: [action, notes, Date(), reportID])
+    }
+    logger.info("Updated report status: \(reportID) -> \(action)")
+  }
+
+  /// Delete a report
+  /// - Parameters:
+  ///   - reportID: Report identifier
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func deleteReport(
+    _ reportID: String,
+    database: DatabaseQueue
+  ) async throws {
+    try await database.write { db in
+      try db.execute(sql: """
+        DELETE FROM MLSReportModel WHERE id = ?;
+      """, arguments: [reportID])
+    }
+    logger.info("Deleted report: \(reportID)")
+  }
+
+  // MARK: - Admin Roster
+
+  /// Save encrypted admin roster for a conversation
+  /// - Parameters:
+  ///   - convoID: Conversation identifier
+  ///   - version: Roster version number
+  ///   - hash: Hash of roster contents for verification
+  ///   - encryptedRoster: Encrypted roster data
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if save fails
+  func saveAdminRoster(
+    convoID: String,
+    version: Int,
+    hash: String,
+    encryptedRoster: Data,
+    database: DatabaseQueue
+  ) async throws {
+    try await database.write { db in
+      var roster = MLSAdminRosterModel(
+        convoID: convoID,
+        version: version,
+        rosterHash: hash,
+        encryptedRoster: encryptedRoster,
+        updatedAt: Date()
+      )
+      try roster.save(db)
+    }
+    logger.info("Saved admin roster: \(convoID) v\(version)")
+  }
+
+  /// Load admin roster for a conversation
+  /// - Parameters:
+  ///   - convoID: Conversation identifier
+  ///   - database: DatabaseQueue to use for operations
+  /// - Returns: Tuple with version, hash, and encrypted roster data if found
+  /// - Throws: MLSStorageError if query fails
+  func loadAdminRoster(
+    for convoID: String,
+    database: DatabaseQueue
+  ) async throws -> (version: Int, hash: String, roster: Data)? {
+    return try await database.read { db in
+      guard let roster = try MLSAdminRosterModel
+        .filter(MLSAdminRosterModel.Columns.convoID == convoID)
+        .fetchOne(db) else {
+        return nil
+      }
+
+      return (version: roster.version, hash: roster.rosterHash, roster: roster.encryptedRoster)
+    }
+  }
+
+  /// Delete admin roster for a conversation
+  /// - Parameters:
+  ///   - convoID: Conversation identifier
+  ///   - database: DatabaseQueue to use for operations
+  /// - Throws: MLSStorageError if deletion fails
+  func deleteAdminRoster(
+    for convoID: String,
+    database: DatabaseQueue
+  ) async throws {
+    try await database.write { db in
+      try db.execute(sql: """
+        DELETE FROM MLSAdminRosterModel WHERE convo_id = ?;
+      """, arguments: [convoID])
+    }
+    logger.info("Deleted admin roster: \(convoID)")
+  }
 }
 
 // MARK: - Errors
 
-public enum MLSStorageError: LocalizedError {
-    case conversationNotFound(String)
-    case memberNotFound(String)
-    case messageNotFound(String)
-    case keyPackageNotFound(String)
-    case saveFailed(Error)
-    
-    public var errorDescription: String? {
-        switch self {
-        case .conversationNotFound(let id):
-            return "Conversation not found: \(id)"
-        case .memberNotFound(let id):
-            return "Member not found: \(id)"
-        case .messageNotFound(let id):
-            return "Message not found: \(id)"
-        case .keyPackageNotFound(let id):
-            return "Key package not found: \(id)"
-        case .saveFailed(let error):
-            return "Failed to save: \(error.localizedDescription)"
-        }
+enum MLSStorageError: LocalizedError {
+  case noAuthentication
+  case conversationNotFound(String)
+  case memberNotFound(String)
+  case messageNotFound(String)
+  case keyPackageNotFound(String)
+  case invalidGroupID(String)
+  case saveFailed(Error)
+  case foreignKeyViolation(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .noAuthentication:
+      return "No authenticated user"
+    case .conversationNotFound(let id):
+      return "Conversation not found: \(id)"
+    case .memberNotFound(let id):
+      return "Member not found: \(id)"
+    case .messageNotFound(let id):
+      return "Message not found: \(id)"
+    case .keyPackageNotFound(let id):
+      return "Key package not found: \(id)"
+    case .invalidGroupID(let id):
+      return "Invalid group ID format: \(id)"
+    case .saveFailed(let error):
+      return "Failed to save: \(error.localizedDescription)"
+    case .foreignKeyViolation(let message):
+      return "Foreign key constraint violation: \(message)"
     }
+  }
 }

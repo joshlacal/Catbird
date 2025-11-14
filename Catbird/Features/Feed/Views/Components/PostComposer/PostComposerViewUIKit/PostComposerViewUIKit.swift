@@ -118,7 +118,7 @@ struct PostComposerViewUIKit: View {
       }
     }
     // Root-level stable identity: recreate composer only on account switch
-    .id(appState.currentUserDID ?? "composer-unknown-user")
+    .id(appState.userDID ?? "composer-unknown-user")
     .task {
       guard viewModel == nil else { 
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
@@ -319,10 +319,10 @@ struct PostComposerViewUIKit: View {
       }) {
         #if os(iOS)
         UIKitAvatarView(
-          did: appState.currentUserDID,
+          did: appState.userDID,
           client: appState.atProtoClient,
           size: 40,
-          avatarURL: appState.currentUserProfile?.avatar?.url
+          avatarURL: appState.currentUserProfile?.finalAvatarURL()
         )
         .frame(width: 40, height: 40)
         .contentShape(Circle())

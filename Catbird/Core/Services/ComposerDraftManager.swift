@@ -81,7 +81,7 @@ final class ComposerDraftManager {
       accountObservation = Task { [weak self] in
         guard let self = self else { return }
         var lastDID: String? = nil
-        for await state in appState.authManager.stateChanges {
+        for await state in await AppStateManager.shared.authentication.stateChanges {
           let currentDID = state.userDID
           // Reload drafts whenever the active DID changes, including logout/login
           if currentDID != lastDID {
@@ -105,7 +105,7 @@ final class ComposerDraftManager {
   // MARK: - Saved Drafts (SwiftData)
   
   /// Save current draft to SwiftData for later retrieval
-  func saveCurrentDraftToDisk() {
+  @MainActor func saveCurrentDraftToDisk() {
       logger.info("💾 saveCurrentDraftToDisk called - Has current draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
     
     guard let draft = currentDraft else {
@@ -149,7 +149,7 @@ final class ComposerDraftManager {
   }
   
   /// Save a new draft directly to SwiftData
-  func createSavedDraft(_ draft: PostComposerDraft) {
+  @MainActor func createSavedDraft(_ draft: PostComposerDraft) {
     logger.info("📝 createSavedDraft called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
     
     guard let accountDID = currentAccountDID else {
@@ -178,7 +178,7 @@ final class ComposerDraftManager {
   func createSavedDraftAndWait(_ draft: PostComposerDraft) async {
     logger.info("📝 createSavedDraftAndWait called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
     
-    guard let accountDID = currentAccountDID else {
+    guard let accountDID = await currentAccountDID else {
       logger.warning("❌ Cannot create draft - no account DID available")
       return
     }
@@ -239,57 +239,48 @@ final class ComposerDraftManager {
   }
   
   /// Reload all saved drafts for current account from SwiftData
+  @MainActor
   func loadSavedDrafts() async {
       logger.info("📂 loadSavedDrafts called - Has persistence: \(self.draftPersistence != nil), Account DID: \(self.currentAccountDID ?? "nil")")
-    
+
     guard let persistence = draftPersistence else {
       logger.warning("⚠️ No persistence available - cannot load drafts")
-      await MainActor.run { 
-        savedDrafts = []
-        draftsLoaded = false
-      }
+      savedDrafts = []
+      draftsLoaded = false
       return
     }
-    
+
     guard let accountDID = currentAccountDID else {
       logger.info("ℹ️ No account DID - clearing drafts list")
-      await MainActor.run { 
-        savedDrafts = []
-        draftsLoaded = true
-      }
+      savedDrafts = []
+      draftsLoaded = true
       return
     }
-    
+
     do {
       logger.debug("🔍 Fetching drafts for account: \(accountDID)")
-      
-      let drafts = try await MainActor.run {
-        try persistence.fetchDrafts(for: accountDID)
-      }
+
+      let drafts = try persistence.fetchDrafts(for: accountDID)
       logger.info("📥 Fetched \(drafts.count) drafts from persistence")
-      
+
       let viewModels = drafts.map { DraftPostViewModel(draftPost: $0) }
-      await MainActor.run {
-        savedDrafts = viewModels
-        draftsLoaded = true
-        logger.info("✅ Loaded \(self.savedDrafts.count) saved drafts for account \(accountDID)")
-        
-        if !savedDrafts.isEmpty {
-          logger.debug("📋 Draft summaries:")
-          for vm in savedDrafts.prefix(5) {
-            logger.debug("  - ID: \(vm.id.uuidString), Preview: '\(vm.previewText.prefix(30))...', Modified: \(vm.modifiedDate)")
-          }
-          if savedDrafts.count > 5 {
-              logger.debug("  ... and \(self.savedDrafts.count - 5) more")
-          }
+      savedDrafts = viewModels
+      draftsLoaded = true
+      logger.info("✅ Loaded \(self.savedDrafts.count) saved drafts for account \(accountDID)")
+
+      if !savedDrafts.isEmpty {
+        logger.debug("📋 Draft summaries:")
+        for vm in savedDrafts.prefix(5) {
+          logger.debug("  - ID: \(vm.id.uuidString), Preview: '\(vm.previewText.prefix(30))...', Modified: \(vm.modifiedDate)")
+        }
+        if savedDrafts.count > 5 {
+            logger.debug("  ... and \(self.savedDrafts.count - 5) more")
         }
       }
     } catch {
       logger.error("❌ Failed to load saved drafts for account \(accountDID): \(error.localizedDescription)")
-      await MainActor.run { 
-        savedDrafts = []
-        draftsLoaded = true
-      }
+      savedDrafts = []
+      draftsLoaded = true
     }
   }
   
@@ -299,9 +290,10 @@ final class ComposerDraftManager {
   }
   
   // MARK: - Current Account DID
-  
+
+  @MainActor
   private var currentAccountDID: String? {
-    appState?.authManager.state.userDID
+      AppStateManager.shared.lifecycle.userDID
   }
   
   // MARK: - Legacy Migration
@@ -363,7 +355,7 @@ final class ComposerDraftManager {
       var failedCount = 0
       
       // Use current account DID or a placeholder for orphaned drafts
-      let accountDID = currentAccountDID ?? "unknown_account"
+      let accountDID = await currentAccountDID ?? "unknown_account"
       logger.info("🔑 Using account DID for migration: \(accountDID)")
       
       for fileURL in jsonFiles {

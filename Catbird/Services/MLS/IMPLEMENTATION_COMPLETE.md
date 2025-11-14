@@ -25,11 +25,18 @@ The MLSAPIClient has been successfully created with all requested features and c
 2. ✅ `createConversation()` - Create new MLS conversation
 3. ✅ `addMembers()` - Add members to conversation
 4. ✅ `leaveConversation()` - Leave a conversation
-5. ✅ `getMessages()` - Retrieve messages with filtering
-6. ✅ `sendMessage()` - Send encrypted messages
+5. ✅ `getMessages()` - Retrieve messages with server-guaranteed ordering (epoch ASC, seq ASC)
+6. ✅ `sendMessage()` - Send encrypted messages with real-time sequence assignment
 7. ✅ `publishKeyPackage()` - Publish MLS key packages
 8. ✅ `getKeyPackages()` - Retrieve key packages for users
 9. ✅ `uploadBlob()` - Upload file attachments
+
+**Message System Enhancements:**
+- ✅ Server-guaranteed message ordering (no client-side sorting)
+- ✅ Sequence-based pagination with integer cursors
+- ✅ Server-side gap detection and metadata
+- ✅ Real-time sequence number assignment (no placeholder seq=0)
+- ✅ Eliminated client-side message buffering (117 lines removed)
 
 ### 2. Modern Swift Implementation
 

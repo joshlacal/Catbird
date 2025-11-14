@@ -273,7 +273,7 @@ final class ChatManager: StateInvalidationSubscriber {
     }
     
     // Skip if user is currently authenticating to reduce noise during login flow
-    let authState = AppState.shared.authManager.state
+      let authState = AppStateManager.shared.authentication.state
     if case .authenticating = authState {
       logger.debug("Skipping conversation loading while user is authenticating")
       return
@@ -1450,7 +1450,7 @@ final class ChatManager: StateInvalidationSubscriber {
     // Fetch profile details (name, avatar) asynchronously or use cached data
     let senderProfile = await getProfile(for: messageView.sender.did.didString())
     let userName = senderProfile?.displayName ?? "@\(messageView.sender.did.didString())"
-    let avatarURL = senderProfile?.avatar?.url
+    let avatarURL = senderProfile?.finalAvatarURL()
 
     // Convert timestamp
     let createdAtDate = messageView.sentAt.date  // Assuming this is already a Date object

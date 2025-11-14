@@ -1081,6 +1081,7 @@ struct SkeletonPostCard: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   FeedDiscoveryCardsView()
-        .environment(AppState.shared)
+        .environment(AppStateManager.shared)
 }

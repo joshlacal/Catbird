@@ -1124,8 +1124,8 @@ extension PostComposerViewModel {
         for (handle, range) in mentions {
             do {
                 // Try to resolve the profile
-                let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
-                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActors(input: params)
+                let params = AppBskyActorSearchActorsTypeahead.Parameters(q: handle, limit: 1)
+                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
                 
                 if responseCode >= 200 && responseCode < 300,
                    let response = searchResponse,

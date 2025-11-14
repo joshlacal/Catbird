@@ -111,7 +111,7 @@ struct ExternalEmbedView: View {
                           URL(string: external.uri.uriString()) != nil &&
                           ExternalMediaType.detect(from: URL(string: external.uri.uriString())!) != nil &&
                           shouldShowWebViewEmbed(for: ExternalMediaType.detect(from: URL(string: external.uri.uriString())!)!)
-        
+
         // ContentLabelManager handles all blur logic now - no need for shouldBlur checks
         VStack(alignment: .leading, spacing: 3) {
             thumbnailImageContent
@@ -126,11 +126,15 @@ struct ExternalEmbedView: View {
         )
         .onTapGesture {
             if canShowEmbed {
+                // Show webview embed
                 withAnimation(.easeInOut(duration: 0.3)) {
                     userTappedToShowEmbed = true
                 }
-            } else if let url = URL(string: external.uri.uriString()) {
-                _ = appState.urlHandler.handle(url)
+            } else {
+                // Open URL in browser
+                if let url = URL(string: external.uri.uriString()) {
+                    _ = appState.urlHandler.handle(url)
+                }
             }
         }
     }
@@ -520,14 +524,14 @@ struct ExternalEmbedView: View {
                     .lineLimit(3)
                     .truncationMode(.tail)
             }
-            
+
             if !external.description.isEmpty {
                 Text(external.description)
                     .appFont(AppTextRole.subheadline)
                     .lineLimit(3)
                     .truncationMode(.tail)
             }
-            
+
             // Show subtle indicator if embed is available
             if appState.appSettings.useWebViewEmbeds,
                let url = URL(string: external.uri.uriString()),

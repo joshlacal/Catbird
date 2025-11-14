@@ -207,12 +207,7 @@ struct FeedsStartPage: View {
 
     do {
       // Get the DID first
-      let did: String
-      if let currentUserDID = appState.currentUserDID {
-        did = currentUserDID
-      } else {
-        did = try await client.getDid()
-      }
+      let did: String = appState.userDID
 
       // Fetch the profile
       let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
@@ -954,7 +949,7 @@ struct FeedsStartPage: View {
       HStack(spacing: max(8, horizontalPadding * 0.4)) {
         // Avatar with responsive sizing
         Group {
-          if let avatarURL = profile?.avatar?.url {
+          if let avatarURL = profile?.finalAvatarURL() {
             AsyncProfileImage(url: avatarURL, size: avatarSize)
           } else {
             // Fallback avatar
@@ -1003,10 +998,9 @@ struct FeedsStartPage: View {
     .clipped()
     .contentShape(Rectangle())
     .onTapGesture {
-      if let userDID = appState.authManager.state.userDID {
-        appState.navigationManager.navigate(to: .profile(userDID))
-        isDrawerOpen = false
-      }
+      let userDID = appState.userDID
+      appState.navigationManager.navigate(to: .profile(userDID))
+      isDrawerOpen = false
     }
     .onLongPressGesture {
       #if os(iOS)

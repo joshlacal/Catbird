@@ -157,6 +157,7 @@ struct AsyncProfileImage: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     VStack(spacing: 20) {
         AsyncProfileImage(url: URL(string: "https://example.com/missing.jpg"), size: 40)
         AsyncProfileImage(url: URL(string: "https://avatars.githubusercontent.com/u/1?v=4"), size: 60)

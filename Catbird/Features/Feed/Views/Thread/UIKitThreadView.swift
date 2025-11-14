@@ -8,7 +8,10 @@ extension UIViewController {
     func getCurrentColorScheme() -> ColorScheme {
         let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         // Use ThemeManager's effective color scheme to account for manual overrides
-            return AppState.shared.themeManager.effectiveColorScheme(for: systemScheme)
+        if let activeState = AppStateManager.shared.lifecycle.appState {
+            return activeState.themeManager.effectiveColorScheme(for: systemScheme)
+        }
+        return systemScheme
     }
 }
 
@@ -16,7 +19,10 @@ extension UIView {
     func getCurrentColorScheme() -> ColorScheme {
         let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         // Use ThemeManager's effective color scheme to account for manual overrides
-            return AppState.shared.themeManager.effectiveColorScheme(for: systemScheme)
+        if let activeState = AppStateManager.shared.lifecycle.appState {
+            return activeState.themeManager.effectiveColorScheme(for: systemScheme)
+        }
+        return systemScheme
     }
 }
 

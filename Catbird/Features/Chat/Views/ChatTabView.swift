@@ -43,12 +43,20 @@ struct ChatTabView: View {
   }
 
   var body: some View {
-    Group {
+    VStack(spacing: 0) {
+      // Chat mode picker - always visible at top
+      chatModePicker
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.05))
+
       // Content based on selected mode
-      if chatMode == .bluesky {
-        blueskyContent
-      } else {
-        mlsContent
+      Group {
+        if chatMode == .bluesky {
+          blueskyContent
+        } else {
+          mlsContent
+        }
       }
     }
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
@@ -125,32 +133,24 @@ struct ChatTabView: View {
   
   @ViewBuilder
   private var conversationList: some View {
-    VStack(spacing: 0) {
-      // Chat mode picker - always visible at top
-      chatModePicker
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.05))
-
-      List(selection: $selectedConvoId) {
-        if !searchText.isEmpty {
-          searchResultsContent
-        } else {
-          mainConversationListContent
-        }
+    List(selection: $selectedConvoId) {
+      if !searchText.isEmpty {
+        searchResultsContent
+      } else {
+        mainConversationListContent
       }
-      .listStyle(.plain)
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-      .searchable(text: $searchText, prompt: "Search")
-      .onChange(of: searchText) { _, newValue in
-        appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.currentUserDID)
-      }
-      .refreshable {
-        await appState.chatManager.loadConversations(refresh: true)
-      }
-      .overlay {
-        conversationListOverlay
-      }
+    }
+    .listStyle(.plain)
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+    .searchable(text: $searchText, prompt: "Search")
+    .onChange(of: searchText) { _, newValue in
+      appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.userDID)
+    }
+    .refreshable {
+      await appState.chatManager.loadConversations(refresh: true)
+    }
+    .overlay {
+      conversationListOverlay
     }
     .navigationTitle("Messages")
     .themedNavigationBar(appState.themeManager)
@@ -284,7 +284,7 @@ struct ChatTabView: View {
   private func conversationRow(for convo: ChatBskyConvoDefs.ConvoView, withSwipeActions: Bool) -> some View {
     ConversationRow(
       convo: convo,
-      currentUserDID: appState.currentUserDID ?? ""
+      currentUserDID: appState.userDID ?? ""
     )
     .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
     .modifier(ConditionalSwipeActions(conversation: convo, enabled: withSwipeActions))
@@ -292,6 +292,19 @@ struct ChatTabView: View {
       ConversationContextMenu(conversation: convo)
     }
     .tag(convo.id)
+  }
+  
+  // MARK: - Chat Mode Picker
+  
+  @ViewBuilder
+  private var chatModePicker: some View {
+    Picker("Chat Mode", selection: $chatMode) {
+      ForEach(ChatMode.allCases, id: \.self) { mode in
+        Label(mode.rawValue, systemImage: mode.icon)
+          .tag(mode)
+      }
+    }
+    .pickerStyle(.segmented)
   }
   
   // MARK: - Helper Properties
@@ -410,17 +423,6 @@ private struct ConditionalSwipeActions: ViewModifier {
     } else {
       content
     }
-  }
-
-  @ViewBuilder
-  private var chatModePicker: some View {
-    Picker("Chat Mode", selection: $chatMode) {
-      ForEach(ChatMode.allCases, id: \.self) { mode in
-        Label(mode.rawValue, systemImage: mode.icon)
-          .tag(mode)
-      }
-    }
-    .pickerStyle(.segmented)
   }
 }
 

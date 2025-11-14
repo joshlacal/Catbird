@@ -13,7 +13,7 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 
 [dependencies]
-openmls = "0.6"
+openmls = { version = "0.6", features = ["test-utils"] }
 openmls_traits = "0.3"
 openmls_basic_credential = "0.3"
 openmls_rust_crypto = { version = "0.3", features = ["test-utils"] }
@@ -28,6 +28,7 @@ hex = "0.4"
 sha2 = "0.10"
 uuid = { version = "1.11", features = ["v4"] }
 uniffi = { version = "0.28", features = ["cli"] }
+once_cell = "1.21"
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

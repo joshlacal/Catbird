@@ -177,48 +177,30 @@ public final class MLSEventStreamManager: ObservableObject {
 
         logger.debug("Received event for conversation: \(convoId)")
 
-        // Decode the event type from the raw data
-        let decoder = JSONDecoder()
+        // Handle the event based on the union type
+        switch output.event {
+        case .blueCatbirdMlsStreamConvoEventsMessageEvent(let messageEvent):
+            logger.debug("Message event: \(messageEvent.message.id)")
+            lastCursor[convoId] = messageEvent.cursor
+            await handler.onMessage?(messageEvent)
 
-        // First, decode to get the $type discriminator
-        guard let json = try? JSONSerialization.jsonObject(with: output.data) as? [String: Any],
-              let typeIdentifier = json["$type"] as? String else {
-            logger.warning("Failed to extract $type from event data")
-            return
-        }
+        case .blueCatbirdMlsStreamConvoEventsReactionEvent(let reactionEvent):
+            logger.debug("Reaction event: \(reactionEvent.action) - \(reactionEvent.reaction)")
+            lastCursor[convoId] = reactionEvent.cursor
+            await handler.onReaction?(reactionEvent)
 
-        // Decode the appropriate event type based on $type
-        do {
-            switch typeIdentifier {
-            case BlueCatbirdMlsStreamConvoEvents.MessageEvent.typeIdentifier:
-                let messageEvent = try decoder.decode(BlueCatbirdMlsStreamConvoEvents.MessageEvent.self, from: output.data)
-                logger.debug("Message event: \(messageEvent.message.id)")
-                lastCursor[convoId] = messageEvent.cursor
-                await handler.onMessage?(messageEvent)
+        case .blueCatbirdMlsStreamConvoEventsTypingEvent(let typingEvent):
+            logger.debug("Typing event: \(typingEvent.did)")
+            lastCursor[convoId] = typingEvent.cursor
+            await handler.onTyping?(typingEvent)
 
-            case BlueCatbirdMlsStreamConvoEvents.ReactionEvent.typeIdentifier:
-                let reactionEvent = try decoder.decode(BlueCatbirdMlsStreamConvoEvents.ReactionEvent.self, from: output.data)
-                logger.debug("Reaction event: \(reactionEvent.action) - \(reactionEvent.reaction)")
-                lastCursor[convoId] = reactionEvent.cursor
-                await handler.onReaction?(reactionEvent)
+        case .blueCatbirdMlsStreamConvoEventsInfoEvent(let infoEvent):
+            logger.debug("Info event: \(infoEvent.info)")
+            lastCursor[convoId] = infoEvent.cursor
+            await handler.onInfo?(infoEvent)
 
-            case BlueCatbirdMlsStreamConvoEvents.TypingEvent.typeIdentifier:
-                let typingEvent = try decoder.decode(BlueCatbirdMlsStreamConvoEvents.TypingEvent.self, from: output.data)
-                logger.debug("Typing event: \(typingEvent.did)")
-                lastCursor[convoId] = typingEvent.cursor
-                await handler.onTyping?(typingEvent)
-
-            case BlueCatbirdMlsStreamConvoEvents.InfoEvent.typeIdentifier:
-                let infoEvent = try decoder.decode(BlueCatbirdMlsStreamConvoEvents.InfoEvent.self, from: output.data)
-                logger.debug("Info event: \(infoEvent.info)")
-                lastCursor[convoId] = infoEvent.cursor
-                await handler.onInfo?(infoEvent)
-
-            default:
-                logger.warning("Unexpected event type: \(typeIdentifier)")
-            }
-        } catch {
-            logger.error("Failed to decode event: \(error.localizedDescription)")
+        case .unexpected(let container):
+            logger.warning("Unexpected event type: \(container.textRepresentation)")
         }
     }
 }

@@ -30,7 +30,7 @@ struct PrivacySecuritySettingsView: View {
     @State private var mutedProfiles: [String] = []
     
     // Privacy settings
-    @State private var loggedOutVisibility: Bool
+    @State private var loggedOutVisibility: Bool = false
     @State private var biometricAuthEnabled: Bool = false
     
     // Biometric error handling
@@ -42,12 +42,12 @@ struct PrivacySecuritySettingsView: View {
     private let logger = Logger(subsystem: "blue.catbird", category: "PrivacySecuritySettings")
     
     init() {
-        _loggedOutVisibility = State(initialValue: AppState.shared.appSettings.loggedOutVisibility)
+        // Initialization will happen in onAppear
     }
     
     /// Display name for the current biometric type
     private var biometricDisplayName: String {
-        switch appState.authManager.biometricType {
+        switch AppStateManager.shared.authentication.biometricType {
         case .faceID:
             return "Face ID"
         case .touchID:
@@ -62,7 +62,7 @@ struct PrivacySecuritySettingsView: View {
     var body: some View {
         Form {
             // Biometric Authentication Section
-            if appState.authManager.biometricType != .none {
+            if AppStateManager.shared.authentication.biometricType != .none {
                 Section("App Security") {
                     Toggle(biometricDisplayName, isOn: $biometricAuthEnabled)
                         .tint(.blue)
@@ -141,7 +141,55 @@ struct PrivacySecuritySettingsView: View {
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
-            
+
+            Section("MLS Encrypted Chat") {
+                Picker("Message Retention", selection: Binding(
+                    get: {
+                        let days = appState.appSettings.mlsMessageRetentionDays
+                        // Map stored days to tag values
+                        switch days {
+                        case 1: return "24h"
+                        case 7: return "7d"
+                        case 30: return "30d"
+                        case 90: return "90d"
+                        default: return "30d"
+                        }
+                    },
+                    set: {
+                        // Map tag values to days
+                        let days: Int
+                        switch $0 {
+                        case "24h": days = 1
+                        case "7d": days = 7
+                        case "30d": days = 30
+                        case "90d": days = 90
+                        default: days = 30
+                        }
+                        appState.appSettings.mlsMessageRetentionDays = days
+
+                        // Update retention manager immediately
+                        Task {
+                            await MLSEpochKeyRetentionManager.shared.updatePolicyFromSettings(retentionDays: days)
+                        }
+                    }
+                )) {
+                    Text("24 Hours").tag("24h")
+                    Text("7 Days").tag("7d")
+                    Text("30 Days").tag("30d")
+                    Text("90 Days").tag("90d")
+                }
+                .pickerStyle(.menu)
+
+                Text("Forward secrecy automatically rotates encryption keys. Messages older than the retention period will be unreadable, even if keys are compromised.")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 4)
+
+                Text("This setting only affects message storage. Messages are always end-to-end encrypted in transit.")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Social Graph Management") {
                 NavigationLink {
                     BlockedAccountsView()
@@ -217,10 +265,11 @@ struct PrivacySecuritySettingsView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
         .task {
+            loggedOutVisibility = appState.appSettings.loggedOutVisibility
             await loadData()
             // Initialize biometric state
             await MainActor.run {
-                biometricAuthEnabled = appState.authManager.biometricAuthEnabled
+                biometricAuthEnabled = AppStateManager.shared.authentication.biometricAuthEnabled
             }
         }
         .alert("Biometric Authentication", isPresented: $showBiometricError) {
@@ -247,17 +296,17 @@ struct PrivacySecuritySettingsView: View {
         }
         
         // Call the AuthManager to set biometric auth
-        await appState.authManager.setBiometricAuthEnabled(enabled)
+        await AppStateManager.shared.authentication.setBiometricAuthEnabled(enabled)
         
         // Update local state to match AuthManager state
         await MainActor.run {
             isEnablingBiometric = false
-            biometricAuthEnabled = appState.authManager.biometricAuthEnabled
+            biometricAuthEnabled = AppStateManager.shared.authentication.biometricAuthEnabled
             
             // Check if the operation failed
             if biometricAuthEnabled != enabled && enabled {
                 // The toggle didn't work as expected, show an error
-                if let error = appState.authManager.lastBiometricError {
+                if let error = AppStateManager.shared.authentication.lastBiometricError {
                     switch error.code {
                     case .userCancel:
                         // User cancelled, no need to show error
@@ -841,7 +890,7 @@ struct BlockedAccountsView: View {
                             did: profile.did.didString(),
                             handle: profile.handle.description,
                             displayName: profile.displayName,
-                            avatar: profile.avatar?.url
+                            avatar: profile.finalAvatarURL()
                         )
                     }
                     collectedProfiles.append(contentsOf: profiles)
@@ -1022,7 +1071,7 @@ struct MutedAccountsView: View {
                             did: profile.did.didString(),
                             handle: profile.handle.description,
                             displayName: profile.displayName,
-                            avatar: profile.avatar?.url
+                            avatar: profile.finalAvatarURL()
                         )
                     }
                     collectedProfiles.append(contentsOf: profiles)
@@ -1091,8 +1140,9 @@ struct AppPassword: Identifiable {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         PrivacySecuritySettingsView()
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

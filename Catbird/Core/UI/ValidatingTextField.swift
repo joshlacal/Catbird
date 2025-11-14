@@ -69,6 +69,7 @@ struct ValidatingTextField: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     VStack {
         ValidatingTextField(
             text: .constant("test"),

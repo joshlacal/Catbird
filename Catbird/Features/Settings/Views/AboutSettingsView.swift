@@ -542,8 +542,9 @@ struct AboutSettingsView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         AboutSettingsView()
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

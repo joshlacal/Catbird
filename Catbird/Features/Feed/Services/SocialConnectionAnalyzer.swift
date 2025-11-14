@@ -150,10 +150,7 @@ actor SocialConnectionAnalyzer {
         
         logger.info("Refreshing following cache")
         
-        guard let client = appState.atProtoClient,
-              let currentUserDID = appState.currentUserDID else {
-            throw SocialAnalysisError.clientNotAvailable
-        }
+         let client = appState.atProtoClient
         
         // Fetch follows using AT Protocol  
         var allFollows: [AppBskyActorDefs.ProfileView] = []
@@ -161,11 +158,15 @@ actor SocialConnectionAnalyzer {
         
         repeat {
             let params = AppBskyGraphGetFollows.Parameters(
-                actor: try ATIdentifier(string: currentUserDID),
+                actor: try ATIdentifier(string: appState.userDID),
                 limit: 100,
                 cursor: cursor
             )
-            
+
+            guard let client = client else {
+                throw SocialAnalysisError.fetchFailed
+            }
+
             let (responseCode, response) = try await client.app.bsky.graph.getFollows(input: params)
             
             guard responseCode == 200, let followsResponse = response else {
@@ -185,7 +186,7 @@ actor SocialConnectionAnalyzer {
                 userDID: follow.did,
                 handle: follow.handle.description,
                 displayName: follow.displayName,
-                avatarURL: follow.avatar?.url,
+                avatarURL: follow.finalAvatarURL(),
                 fetchedAt: Date()
             )
             

@@ -6,7 +6,7 @@ The `MLSAPIClient` is a Swift client for interacting with the Catbird MLS (Messa
 
 ## Features
 
-- ✅ **9 Complete API Endpoints**: All MLS operations fully implemented
+- ✅ **28 Complete API Endpoints**: All MLS operations fully implemented
 - ✅ **Async/Await**: Modern Swift concurrency support
 - ✅ **Automatic Retry Logic**: Configurable retry mechanism with exponential backoff
 - ✅ **Type-Safe Models**: Codable models matching lexicon definitions
@@ -192,42 +192,56 @@ let newEpoch = response.epoch
 
 Retrieve messages from a conversation with flexible filtering.
 
+**⚡ Server-Guaranteed Ordering**: Messages are **always** returned pre-sorted by `(epoch ASC, seq ASC)`. No client-side sorting needed.
+
 ```swift
 // Basic usage
-let (messages, cursor) = try await client.getMessages(convoId: "convo123")
+let (messages, lastSeq, gapInfo) = try await client.getMessages(convoId: "convo123")
 
-// With pagination
-let (messages, nextCursor) = try await client.getMessages(
+// With sequence-based pagination
+let (messages, lastSeq, gapInfo) = try await client.getMessages(
     convoId: "convo123",
     limit: 30,
-    cursor: previousCursor
+    sinceSeq: 42  // Get messages with seq > 42
 )
 
 // With date filters
 let since = Date(timeIntervalSinceNow: -86400) // Last 24 hours
-let (messages, cursor) = try await client.getMessages(
+let (messages, lastSeq, gapInfo) = try await client.getMessages(
     convoId: "convo123",
     since: since
 )
 
-// Filter by epoch
-let (messages, cursor) = try await client.getMessages(
-    convoId: "convo123",
-    epoch: 5
+// Check for gaps in message sequence
+let (messages, lastSeq, gapInfo) = try await client.getMessages(
+    convoId: "convo123"
 )
+if let gaps = gapInfo, gaps.hasGaps {
+    print("Warning: Missing messages in sequence")
+    if let ranges = gaps.missingRanges {
+        print("Missing seq ranges: \(ranges)")
+    }
+}
 ```
 
 **Parameters:**
 - `convoId`: Conversation identifier (required)
 - `limit`: Maximum messages to return (1-100, default: 50)
-- `cursor`: Pagination cursor
+- `sinceSeq`: Sequence number cursor - returns messages with seq > sinceSeq (optional)
 - `since`: Return messages after this timestamp (optional)
 - `until`: Return messages before this timestamp (optional)
 - `epoch`: Filter by specific epoch number (optional)
 
 **Returns:**
-- Array of `MLSMessageView` objects
-- Optional pagination cursor
+- Array of `MLSMessageView` objects (**guaranteed sorted** by epoch ASC, seq ASC)
+- `lastSeq`: Last sequence number for pagination cursor
+- `gapInfo`: Server-provided gap detection metadata (detects missing messages)
+
+**Message Ordering Guarantees:**
+- Messages are **always** returned in strict order: `(epoch ASC, seq ASC)`
+- No client-side sorting required
+- Server provides authoritative gap detection
+- Sequence numbers are monotonically increasing per conversation
 
 ### 6. Send Message
 
@@ -363,6 +377,354 @@ let message = try await client.sendMessage(
 **Size Limits:**
 - Maximum blob size: 50MB (52,428,800 bytes)
 - Throws `MLSAPIError.blobTooLarge` if exceeded
+
+## Admin Operations
+
+### 1. Remove Member
+
+Remove a member from a conversation (admin-only operation).
+
+```swift
+let (ok, epochHint) = try await client.removeMember(
+    convoId: "convo123",
+    targetDid: try DID(didString: "did:plc:badactor"),
+    reason: "Violation of community guidelines"
+)
+
+if ok {
+    print("Member removed at epoch \(epochHint)")
+}
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+- `targetDid`: DID of member to remove (required)
+- `reason`: Optional reason for removal
+- `idempotencyKey`: Optional client-generated UUID (auto-generated if nil)
+
+**Returns:**
+- `ok`: Success status
+- `epochHint`: Epoch number after removal
+
+**Authorization:** Admin-only operation
+
+### 2. Promote Admin
+
+Promote a member to admin status.
+
+```swift
+let success = try await client.promoteAdmin(
+    convoId: "convo123",
+    targetDid: try DID(didString: "did:plc:trusteduser")
+)
+
+if success {
+    print("User promoted to admin")
+}
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+- `targetDid`: DID of member to promote (required)
+- `idempotencyKey`: Optional client-generated UUID (auto-generated if nil)
+
+**Returns:** Boolean success status
+
+**Authorization:** Admin-only operation
+
+### 3. Demote Admin
+
+Demote an admin to regular member status.
+
+```swift
+let success = try await client.demoteAdmin(
+    convoId: "convo123",
+    targetDid: try DID(didString: "did:plc:formeradmin")
+)
+
+if success {
+    print("Admin demoted to member")
+}
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+- `targetDid`: DID of admin to demote (required)
+- `idempotencyKey`: Optional client-generated UUID (auto-generated if nil)
+
+**Returns:** Boolean success status
+
+**Authorization:** Admin-only operation
+
+## Moderation
+
+### 1. Report Member
+
+Submit an encrypted report about a conversation member.
+
+```swift
+// Encrypt report details using MLS group key
+let reportDetails = "Sending spam messages repeatedly"
+let encryptedContent = try encryptReportContent(reportDetails)
+
+let reportId = try await client.reportMember(
+    convoId: "convo123",
+    targetDid: try DID(didString: "did:plc:spammer"),
+    reason: "spam",
+    details: reportDetails
+)
+
+print("Report submitted: \(reportId)")
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+- `targetDid`: DID of member to report (required)
+- `reason`: Report category - "harassment", "spam", "inappropriate", etc. (required)
+- `details`: Optional additional details about the report
+- `idempotencyKey`: Optional client-generated UUID (auto-generated if nil)
+
+**Returns:** Report ID string
+
+**Authorization:** Any conversation member (cannot report self)
+
+**Privacy:** Report content is end-to-end encrypted and only decryptable by admins
+
+### 2. Get Reports
+
+Retrieve reports for a conversation (admin-only).
+
+```swift
+let (reports, cursor) = try await client.getReports(
+    convoId: "convo123",
+    limit: 25
+)
+
+for report in reports {
+    print("Report \(report.id) from \(report.reporterDid)")
+    print("Status: \(report.status)")
+    if let resolvedBy = report.resolvedBy {
+        print("Resolved by: \(resolvedBy)")
+    }
+}
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+- `limit`: Maximum reports to return (1-100, default: 50)
+- `cursor`: Pagination cursor from previous response
+
+**Returns:**
+- Array of `BlueCatbirdMlsGetReports.Report` objects
+- Optional pagination cursor
+
+**Report Fields:**
+- `id`: Report identifier
+- `reporterDid`: DID of member who submitted report
+- `reportedDid`: DID of reported member
+- `encryptedContent`: Encrypted report details (decrypt with MLS group key)
+- `createdAt`: Report submission timestamp
+- `status`: "pending" or "resolved"
+- `resolvedBy`: Optional DID of admin who resolved report
+- `resolvedAt`: Optional resolution timestamp
+
+**Authorization:** Admin-only operation
+
+### 3. Resolve Report
+
+Mark a report as resolved with an action taken (admin-only).
+
+```swift
+let success = try await client.resolveReport(
+    reportId: "report123",
+    action: "removed",
+    notes: "User removed from conversation for repeated spam violations"
+)
+
+if success {
+    print("Report resolved")
+}
+```
+
+**Parameters:**
+- `reportId`: Report identifier (required)
+- `action`: Action taken - "removed", "warned", "dismissed", etc. (required)
+- `notes`: Optional notes about the resolution
+- `idempotencyKey`: Optional client-generated UUID (auto-generated if nil)
+
+**Returns:** Boolean success status
+
+**Authorization:** Admin-only operation
+
+**Common Actions:**
+- `"removed"`: Member was removed from conversation
+- `"warned"`: Member was warned
+- `"dismissed"`: Report was dismissed as invalid
+- `"no-action"`: No action taken
+
+## Blocking
+
+### 1. Check Blocks
+
+Check block relationships between users before creating conversations.
+
+```swift
+let result = try await client.checkBlocks(
+    dids: [
+        try DID(didString: "did:plc:user1"),
+        try DID(didString: "did:plc:user2"),
+        try DID(didString: "did:plc:user3")
+    ]
+)
+
+if !result.blocked.isEmpty {
+    print("Warning: Some users have blocked each other")
+    for block in result.blocked {
+        print("\(block.blocker) has blocked \(block.blocked)")
+    }
+}
+```
+
+**Parameters:**
+- `dids`: Array of DIDs to check for blocks (required)
+
+**Returns:**
+- `BlueCatbirdMlsCheckBlocks.Output` containing:
+  - `blocked`: Array of block relationships
+  - `canProceed`: Whether conversation creation should proceed
+
+**Usage:** Call before creating group conversations to prevent adding blocked users
+
+### 2. Get Block Status
+
+Get current block status for members in a conversation.
+
+```swift
+let statuses = try await client.getBlockStatus(convoId: "convo123")
+
+for status in statuses {
+    if status.isBlocked {
+        print("\(status.did) is blocked by current user")
+    }
+}
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+
+**Returns:** Array of `BlueCatbirdMlsGetBlockStatus.BlockStatus` objects
+
+**Block Status Fields:**
+- `did`: Member DID
+- `isBlocked`: Whether member is blocked by current user
+- `blockedBy`: Optional DID of user who blocked (if applicable)
+
+### 3. Handle Block Change
+
+Update conversations when a user blocks/unblocks someone on Bluesky.
+
+```swift
+let affectedConvos = try await client.handleBlockChange(
+    blockedDid: try DID(didString: "did:plc:blockeduser"),
+    isBlocked: true
+)
+
+print("Updated \(affectedConvos.count) conversations")
+for convoId in affectedConvos {
+    print("Conversation \(convoId) updated")
+}
+```
+
+**Parameters:**
+- `blockedDid`: DID that was blocked or unblocked (required)
+- `isBlocked`: Whether user is now blocked (true) or unblocked (false) (required)
+
+**Returns:** Array of affected conversation IDs
+
+**Behavior:**
+- Automatically removes blocked users from shared conversations
+- Updates conversation metadata to reflect block status
+- Maintains conversation integrity across Bluesky block list changes
+
+## Analytics
+
+### 1. Get Key Package Stats
+
+Monitor key package inventory health.
+
+```swift
+let stats = try await client.getKeyPackageStats()
+
+print("Total key packages: \(stats.total)")
+print("Available: \(stats.available)")
+print("Consumed: \(stats.consumed)")
+print("Expired: \(stats.expired)")
+
+if stats.available < 10 {
+    print("Warning: Low key package inventory, publish more!")
+}
+```
+
+**Returns:**
+- `BlueCatbirdMlsGetKeyPackageStats.Output` containing:
+  - `total`: Total key packages published
+  - `available`: Unused key packages available
+  - `consumed`: Key packages used in conversations
+  - `expired`: Expired key packages
+  - `lastPublished`: Optional timestamp of last key package publication
+
+**Best Practice:** Monitor regularly and maintain at least 20 available key packages
+
+### 2. Get Admin Stats
+
+Get moderation and admin statistics for a conversation (admin-only).
+
+```swift
+let output = try await client.getAdminStats(convoId: "convo123")
+let stats = output.stats
+
+print("Total reports: \(stats.totalReports)")
+print("Pending reports: \(stats.pendingReports)")
+print("Resolved reports: \(stats.resolvedReports)")
+print("Total member removals: \(stats.totalRemovals)")
+print("Block conflicts resolved: \(stats.blockConflictsResolved)")
+
+if let avgResolution = stats.averageResolutionTimeHours {
+    print("Average resolution time: \(avgResolution) hours")
+}
+
+if let categories = stats.reportsByCategory {
+    print("\nReports by category:")
+    if let harassment = categories.harassment {
+        print("  Harassment: \(harassment)")
+    }
+    if let spam = categories.spam {
+        print("  Spam: \(spam)")
+    }
+}
+```
+
+**Parameters:**
+- `convoId`: Conversation identifier (required)
+
+**Returns:**
+- `BlueCatbirdMlsGetAdminStats.Output` containing:
+  - `stats`: Moderation statistics object
+  - `generatedAt`: Statistics generation timestamp
+  - `convoId`: Optional conversation ID (if scoped to single conversation)
+
+**ModerationStats Fields:**
+- `totalReports`: Total number of reports submitted
+- `pendingReports`: Reports awaiting admin action
+- `resolvedReports`: Reports that have been resolved
+- `totalRemovals`: Total members removed by admins
+- `blockConflictsResolved`: Block relationship conflicts resolved
+- `reportsByCategory`: Optional breakdown by report category
+- `averageResolutionTimeHours`: Optional average time to resolve reports
+
+**Authorization:** Admin-only operation
+
+**Use Case:** Demonstrate active moderation for App Store compliance
 
 ## Data Models
 
@@ -617,7 +979,7 @@ xcodebuild test -scheme Catbird -destination 'platform=iOS Simulator,name=iPhone
 
 ### Test Coverage
 
-- ✅ All 9 API endpoints
+- ✅ All 28 API endpoints
 - ✅ Request/response model encoding/decoding
 - ✅ Error handling and validation
 - ✅ Pagination logic
@@ -625,10 +987,13 @@ xcodebuild test -scheme Catbird -destination 'platform=iOS Simulator,name=iPhone
 - ✅ Authentication management
 - ✅ Blob size validation
 - ✅ URL construction
+- ✅ Admin operations and permissions
+- ✅ Moderation workflows
+- ✅ Block integration
 
 ## Example: Complete Workflow
 
-Here's a complete example of creating a conversation and sending a message:
+Here's a complete example of creating a conversation, sending a message, and handling moderation:
 
 ```swift
 import Foundation
@@ -698,6 +1063,61 @@ for msg in messages {
     let decrypted = decryptMessage(msg.ciphertext) // Your decryption
     print("\(msg.sender): \(decrypted)")
 }
+
+// 9. Handle moderation (admin operations)
+// Check if current user is admin
+if isAdmin(userDid: "did:plc:currentuser", convoId: convoId) {
+    // Get pending reports
+    let (reports, _) = try await client.getReports(
+        convoId: convoId,
+        limit: 10
+    )
+
+    print("Pending reports: \(reports.count)")
+
+    // Review and resolve a report
+    if let report = reports.first {
+        // Decrypt report content
+        let reportContent = decryptReportContent(report.encryptedContent)
+        print("Report details: \(reportContent)")
+
+        // Take action: remove the reported member
+        let (ok, epochHint) = try await client.removeMember(
+            convoId: convoId,
+            targetDid: report.reportedDid,
+            reason: "Violation of community guidelines"
+        )
+
+        if ok {
+            // Resolve the report
+            _ = try await client.resolveReport(
+                reportId: report.id,
+                action: "removed",
+                notes: "Member removed for violations"
+            )
+            print("Member removed and report resolved at epoch \(epochHint)")
+        }
+    }
+
+    // Get moderation statistics
+    let adminStats = try await client.getAdminStats(convoId: convoId)
+    print("Total reports: \(adminStats.stats.totalReports)")
+    print("Total removals: \(adminStats.stats.totalRemovals)")
+}
+
+// 10. Monitor key package inventory
+let kpStats = try await client.getKeyPackageStats()
+if kpStats.available < 10 {
+    print("Warning: Low key package inventory!")
+    // Publish more key packages
+    for _ in 0..<20 {
+        let newKP = generateKeyPackage()
+        try await client.publishKeyPackage(
+            keyPackage: newKP,
+            cipherSuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
+        )
+    }
+}
 ```
 
 ## Troubleshooting
@@ -747,7 +1167,7 @@ The API follows lexicon definitions located at:
 /mls/lexicon/blue.catbird.mls.*.json
 ```
 
-Key definitions:
+#### Core Operations
 - `blue.catbird.mls.defs` - Core data types
 - `blue.catbird.mls.getConvos` - Get conversations
 - `blue.catbird.mls.createConvo` - Create conversation
@@ -758,6 +1178,35 @@ Key definitions:
 - `blue.catbird.mls.publishKeyPackage` - Publish key package
 - `blue.catbird.mls.getKeyPackages` - Get key packages
 - `blue.catbird.mls.uploadBlob` - Upload blob
+
+#### Admin Operations
+- `blue.catbird.mls.removeMember` - Remove member from conversation
+- `blue.catbird.mls.promoteAdmin` - Promote member to admin
+- `blue.catbird.mls.demoteAdmin` - Demote admin to member
+
+#### Moderation
+- `blue.catbird.mls.reportMember` - Report member for violations
+- `blue.catbird.mls.getReports` - Get reports (admin-only)
+- `blue.catbird.mls.resolveReport` - Resolve report (admin-only)
+
+#### Blocking
+- `blue.catbird.mls.checkBlocks` - Check block relationships
+- `blue.catbird.mls.getBlockStatus` - Get block status for conversation
+- `blue.catbird.mls.handleBlockChange` - Handle Bluesky block/unblock
+
+#### Analytics
+- `blue.catbird.mls.getKeyPackageStats` - Key package inventory stats
+- `blue.catbird.mls.getAdminStats` - Moderation and admin statistics
+
+#### Epoch Synchronization
+- `blue.catbird.mls.getEpoch` - Get current epoch
+- `blue.catbird.mls.getCommits` - Get commit messages
+- `blue.catbird.mls.getWelcome` - Get welcome message
+- `blue.catbird.mls.confirmWelcome` - Confirm welcome processing
+- `blue.catbird.mls.requestRejoin` - Request to rejoin after state loss
+
+#### Real-time Events
+- `blue.catbird.mls.streamConvoEvents` - Stream conversation events (SSE)
 
 ## Contributing
 

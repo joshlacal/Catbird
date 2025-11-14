@@ -18,9 +18,12 @@
 
 ### 3. Encryption/Decryption
 - **Message Encryption**: Encrypt plaintext messages using MLS group context
-- **Message Decryption**: Decrypt received ciphertext messages
+- **Message Decryption**: Decrypt received ciphertext messages (guaranteed in-order by server)
 - **Content Types**: Support for different content types (text/plain, etc.)
 - **Attachments**: Handle encrypted message attachments via blob references
+- **Message Ordering**: Server guarantees messages arrive in (epoch ASC, seq ASC) order
+- **Sequence Numbers**: Real server-assigned seq immediately available (no placeholder seq=0)
+- **Gap Detection**: Server provides authoritative gap detection metadata
 
 ### 4. Server Synchronization
 - **Full Sync**: Retrieve all conversations from server

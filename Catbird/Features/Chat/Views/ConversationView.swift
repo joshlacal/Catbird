@@ -427,9 +427,7 @@ struct ConversationView: View {
       return "Chat"  // Fallback title
     }
 
-    guard let clientDid = appState.currentUserDID else {
-      return "Chat"  // Fallback if client info unavailable
-    }
+    let clientDid = appState.userDID
 
     // Find the other member
     if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {

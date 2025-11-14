@@ -555,7 +555,7 @@ private struct InlineTopicSummaryLine: View {
             appState.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
             HStack(spacing: 8) {
-                AsyncProfileImage(url: actor.avatar?.url, size: 32)
+                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(actor.displayName ?? "@\(actor.handle)")

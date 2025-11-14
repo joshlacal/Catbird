@@ -24,7 +24,7 @@ struct LabelerView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Header with profile info
             HStack(spacing: 12) {
-                ProfileImageView(url: labeler.creator.avatar?.url, size: 44)
+                ProfileImageView(url: labeler.creator.finalAvatarURL(), size: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(labeler.creator.displayName ?? labeler.creator.handle.description)
@@ -149,7 +149,7 @@ struct LabelerDetailedView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Header with profile info
             HStack(spacing: 12) {
-                ProfileImageView(url: labeler.creator.avatar?.url, size: 44)
+                ProfileImageView(url: labeler.creator.finalAvatarURL(), size: 44)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(labeler.creator.displayName ?? labeler.creator.handle.description)

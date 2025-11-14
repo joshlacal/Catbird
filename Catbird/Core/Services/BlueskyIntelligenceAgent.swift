@@ -587,10 +587,60 @@ private enum ToolFormatter {
             return nil
         }
 
-        let sanitized = sanitize(feedPost.text, limit: maxLength)
-        guard !sanitized.isEmpty else {
-            logger.debug("Post text is empty after sanitization")
-            return nil
+        var sanitized = sanitize(feedPost.text, limit: maxLength)
+        
+        // If text is empty, check for embed content
+        if sanitized.isEmpty {
+            if let embed = post.embed {
+                switch embed {
+                case .appBskyEmbedImagesView(let imagesView):
+                    let altTexts = imagesView.images.compactMap { image -> String? in
+                        guard !image.alt.isEmpty else { return nil }
+                        return image.alt
+                    }
+                    if !altTexts.isEmpty {
+                        sanitized = "[images: \(altTexts.joined(separator: "; "))]"
+                    } else {
+                        sanitized = "[image post]"
+                    }
+                case .appBskyEmbedVideoView(let videoView):
+                    if let alt = videoView.alt, !alt.isEmpty {
+                        sanitized = "[video: \(alt)]"
+                    } else {
+                        sanitized = "[video post]"
+                    }
+                case .appBskyEmbedExternalView(let external):
+                    sanitized = "[link: \(external.external.title ?? "external link")]"
+                case .appBskyEmbedRecordView:
+                    sanitized = "[quoted post]"
+                case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
+                    // Check for alt text in nested media
+                    var mediaDesc = "[post with media]"
+                    switch recordWithMedia.media {
+                    case .appBskyEmbedImagesView(let imagesView):
+                        let altTexts = imagesView.images.compactMap { image -> String? in
+                            guard !image.alt.isEmpty else { return nil }
+                            return image.alt
+                        }
+                        if !altTexts.isEmpty {
+                            mediaDesc = "[post with images: \(altTexts.joined(separator: "; "))]"
+                        }
+                    case .appBskyEmbedVideoView(let videoView):
+                        if let alt = videoView.alt, !alt.isEmpty {
+                            mediaDesc = "[post with video: \(alt)]"
+                        }
+                    default:
+                        break
+                    }
+                    sanitized = mediaDesc
+                default:
+                    sanitized = "[media post]"
+                }
+            } else {
+                // Truly empty post - skip it
+                logger.debug("Post has no text and no embed")
+                return nil
+            }
         }
 
         let handle = post.author.handle.description

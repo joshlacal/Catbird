@@ -139,5 +139,6 @@ private struct LicenseRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   OpenSourceLicensesView()
 }

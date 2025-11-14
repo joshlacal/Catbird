@@ -510,7 +510,7 @@ func getConversation(_ id: String) async throws -> BlueCatbirdMlsDefs.ConvoView 
 - [ ] Add `blue.catbird.mls.removeMembers` lexicon
 - [ ] Add `blue.catbird.mls.leaveConvo` lexicon
 - [ ] Add `blue.catbird.mls.getKeyPackages` lexicon
-- [ ] Implement real-time updates via WebSocket
+- [ ] Implement real-time updates via SSE
 - [ ] Add message reactions support
 - [ ] Add typing indicators via separate lexicon
 

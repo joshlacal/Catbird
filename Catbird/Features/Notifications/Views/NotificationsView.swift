@@ -482,7 +482,7 @@ struct NotificationCard: View {
     }
 
     // Check if the parent post author is the current user
-    let currentUserDid = appState.currentUserDID
+    let currentUserDid = appState.userDID
     let isReplyToCurrentUser = parentPost.author.did.didString() == currentUserDid
 
     if isReplyToCurrentUser {

@@ -66,12 +66,13 @@ enum ChatBackgroundRefreshManager {
     schedule()
 
     let refreshWork = Task<Bool, Never> {
-      guard AppState.shared.isAuthenticated else {
+      guard let activeState = await AppStateManager.shared.lifecycle.appState,
+            activeState.isAuthenticated else {
         logger.info("Skipping chat refresh - user not authenticated")
         return true
       }
 
-      let appState = AppState.shared
+      let appState = activeState
 
       if Task.isCancelled { return false }
       await appState.chatManager.loadConversations(refresh: true)

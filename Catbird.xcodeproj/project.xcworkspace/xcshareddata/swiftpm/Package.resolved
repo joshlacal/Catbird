@@ -1,5 +1,5 @@
 {
-  "originHash" : "451dcf6f03b100e54093d4e1c0da3ef220754a353b3fb1396b668ce29ecb5131",
+  "originHash" : "f0cc321dfbdae550f516467c74a543fa4b1915fafee10c7aad35bb867987345a",
   "pins" : [
     {
       "identity" : "activityindicatorview",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/exyte/Chat.git",
       "state" : {
-        "revision" : "7dae57fc5b147fb38054c61d821e8e85610e86a0",
-        "version" : "2.7.3"
+        "revision" : "f5d93619556fbb988985c3a5fe2444ce96190f39",
+        "version" : "2.7.4"
       }
     },
     {
@@ -35,6 +35,15 @@
       "state" : {
         "revision" : "e45a26384239e028ec87fbcc788f513b67e10d8f",
         "version" : "1.9.0"
+      }
+    },
+    {
+      "identity" : "faultordering",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/FaultOrdering",
+      "state" : {
+        "branch" : "main",
+        "revision" : "1b2afbd62f02933ec85d58bcaf40ed12f3dbed91"
       }
     },
     {
@@ -53,6 +62,15 @@
       "state" : {
         "revision" : "37f5b1ff6cf8bc4a78c0bc5eb1b814381bac9580",
         "version" : "2.2.16"
+      }
+    },
+    {
+      "identity" : "grdb.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/groue/GRDB.swift",
+      "state" : {
+        "revision" : "18497b68fdbb3a09528d260a0a0e1e7e61c8c53d",
+        "version" : "7.8.0"
       }
     },
     {
@@ -114,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/exyte/MediaPicker.git",
       "state" : {
-        "revision" : "89c95cee740d5f3aa24263dcffcb83ebfd0a12ba",
-        "version" : "3.2.3"
+        "revision" : "fd71c0b560aa79eee1b87f73ce93fac5576a01df",
+        "version" : "3.2.4"
       }
     },
     {
@@ -150,7 +168,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/EmergeTools/SimpleDebugger",
       "state" : {
-        "revision" : "e0ad1cd304132efa0ab3b4707bd0eea761dbe2b5"
+        "revision" : "f065263eb5db95874b690408d136b573c939db9e",
+        "version" : "1.0.0"
+      }
+    },
+    {
+      "identity" : "sqlcipher.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sqlcipher/SQLCipher.swift.git",
+      "state" : {
+        "revision" : "247b042574b4838c7eefdb95d6a250a843dcf1ad",
+        "version" : "4.11.0"
       }
     },
     {

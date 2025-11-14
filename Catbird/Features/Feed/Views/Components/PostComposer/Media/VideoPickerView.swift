@@ -133,6 +133,7 @@ struct VideoPickerView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     VideoPickerView(
         videoItem: .constant({
             var item = PostComposerViewModel.MediaItem()

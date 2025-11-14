@@ -97,7 +97,7 @@ struct BatchMessageView: View {
               ConversationSelectionRow(
                 conversation: convo,
                 isSelected: selectedConversations.contains(convo.id),
-                currentUserDID: appState.currentUserDID ?? ""
+                currentUserDID: appState.userDID ?? ""
               ) {
                 if selectedConversations.contains(convo.id) {
                   selectedConversations.remove(convo.id)

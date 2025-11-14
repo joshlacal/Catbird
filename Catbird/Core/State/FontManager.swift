@@ -761,14 +761,14 @@ enum AppTextRole: CaseIterable {
 
 struct AppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
-    @Environment(AppState.self) private var appState
+    @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
-    
+
     let role: AppTextRole
-    
+
     func body(content: Content) -> some View {
         let baseWeight = getBaseWeight(for: role)
-        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState.appSettings.boldText)
+        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState?.appSettings.boldText ?? false)
         
         content
             .font(fontManager.fontForTextRole(role).weight(adjustedWeight))
@@ -778,7 +778,7 @@ struct AppFontModifier: ViewModifier {
     
     private func getAccessibleTextColor() -> Color {
         // Apply high contrast if enabled
-        if appState.appSettings.increaseContrast {
+        if let appState = appState, appState.appSettings.increaseContrast {
             return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
         } else {
             return Color.primary
@@ -820,15 +820,15 @@ struct AppFontModifier: ViewModifier {
 
 struct CustomAppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
-    @Environment(AppState.self) private var appState
+    @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
-    
+
     let size: CGFloat
     let weight: Font.Weight
     let textStyle: Font.TextStyle?
-    
+
     func body(content: Content) -> some View {
-        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState.appSettings.boldText)
+        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState?.appSettings.boldText ?? false)
         
         content
             .font(fontManager.scaledFont(
@@ -842,7 +842,7 @@ struct CustomAppFontModifier: ViewModifier {
     
     private func getAccessibleTextColor() -> Color {
         // Apply high contrast if enabled
-        if appState.appSettings.increaseContrast {
+        if let appState = appState, appState.appSettings.increaseContrast {
             return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
         } else {
             return Color.primary

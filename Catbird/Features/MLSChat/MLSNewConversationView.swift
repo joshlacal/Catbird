@@ -468,13 +468,9 @@ struct MLSNewConversationView: View {
         do {
             logger.info("Searching for participants: \(query)")
             
-            guard let client = appState.authManager.client else {
-                logger.warning("No client available for search")
-                return
-            }
-            
-            let params = AppBskyActorSearchActors.Parameters(q: query, limit: 20)
-            let (code, response) = try await client.app.bsky.actor.searchActors(input: params)
+             let client = appState.client 
+            let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 20)
+            let (code, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
             
             guard code >= 200 && code < 300, let actors = response?.actors else {
                 logger.warning("Search failed with code: \(code)")
@@ -498,21 +494,24 @@ struct MLSNewConversationView: View {
     
     private func createMLSConversation() async {
         guard !selectedParticipants.isEmpty else { return }
-        guard let conversationManager = await appState.getMLSConversationManager() else {
+        guard let database = appState.mlsDatabase,
+              let conversationManager = await appState.getMLSConversationManager() else {
             errorMessage = "MLS service not available"
             showingError = true
             return
         }
-        
+
         isCreatingConversation = true
         currentStep = .creating
-        
+
         do {
             creationProgress = "Fetching encryption keys..."
             logger.info("Creating MLS conversation with \(selectedParticipants.count) participants")
-            
-            // Create the ViewModel
-            let viewModel = MLSNewConversationViewModel(conversationManager: conversationManager)
+
+            let viewModel = MLSNewConversationViewModel(
+                database: database,
+                conversationManager: conversationManager
+            )
             
             if !conversationName.isEmpty {
                 viewModel.conversationName = conversationName

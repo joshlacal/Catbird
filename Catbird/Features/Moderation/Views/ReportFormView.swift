@@ -212,6 +212,7 @@ struct ReportFormView: View {
 }
 
 // #Preview {
+//    @Previewable @Environment(AppState.self) var appState
 //    // Mock data for preview
 //    let mockReportingService = ReportingService(client: ATProtoClient(authMethod: .legacy, oauthConfig: .init(), baseURL: URL(string: "https://bsky.social")!, namespace: "", environment: .production))
 //    

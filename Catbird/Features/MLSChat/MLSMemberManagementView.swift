@@ -11,9 +11,11 @@ struct MLSMemberManagementView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    
-    let conversation: MLSConversationViewModel
-    
+
+    let conversationId: String
+
+    @State private var viewModel: MLSMemberManagementViewModel?
+    @State private var conversation: MLSConversationViewModel?
     @State private var searchText = ""
     @State private var searchResults: [MLSParticipantViewModel] = []
     @State private var isSearching = false
@@ -24,64 +26,121 @@ struct MLSMemberManagementView: View {
     @State private var showingError = false
     @State private var errorMessage: String?
     @State private var memberRoles: [String: MemberRole] = [:]
-    
+    @State private var showingMemberActions = false
+    @State private var selectedMemberForActions: BlueCatbirdMlsDefs.MemberView?
+
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSMemberManagement")
     
     var body: some View {
         NavigationStack {
-            List {
-                currentMembersSection
-                
-                if isAdmin {
-                    addMembersSection
-                }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Group Members")
-            .navigationBarTitleDisplayMode(.inline)
-            .themedNavigationBar(appState.themeManager)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
+            memberListContent
+                .overlay {
+                    if isAddingMember || isRemovingMember {
+                        loadingOverlay
                     }
                 }
+        }
+        .alert("Remove Member", isPresented: $showingRemoveAlert) {
+            removeMemberAlertButtons
+        } message: {
+            removeMemberAlertMessage
+        }
+        .alert("Error", isPresented: $showingError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            errorAlertMessage
+        }
+        .sheet(item: $selectedMemberForActions) { member in
+            memberActionsSheet(for: member)
+        }
+        .task {
+            await initializeViewModel()
+            loadMemberRoles()
+        }
+    }
+
+    // MARK: - View Components
+
+    @ViewBuilder
+    private var memberListContent: some View {
+        List {
+            currentMembersSection
+
+            if isAdmin {
+                addMembersSection
             }
-            .searchable(text: $searchText, prompt: "Search to add members")
-            .onChange(of: searchText) { _, newValue in
-                Task {
-                    await searchPotentialMembers(query: newValue)
-                }
-            }
-            .overlay {
-                if isAddingMember || isRemovingMember {
-                    loadingOverlay
-                }
-            }
-            .alert("Remove Member", isPresented: $showingRemoveAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Remove", role: .destructive) {
-                    if let member = memberToRemove {
-                        Task {
-                            await removeMember(member)
-                        }
-                    }
-                }
-            } message: {
-                if let member = memberToRemove {
-                    Text("Are you sure you want to remove \(member.displayName ?? member.handle) from this secure group?")
-                }
-            }
-            .alert("Error", isPresented: $showingError) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                if let errorMessage = errorMessage {
-                    Text(errorMessage)
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Group Members")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    dismiss()
                 }
             }
         }
-        .task {
-            loadMemberRoles()
+        .searchable(text: $searchText, prompt: "Search to add members")
+        .onChange(of: searchText) { _, newValue in
+            Task {
+                await searchPotentialMembers(query: newValue)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var removeMemberAlertButtons: some View {
+        Button("Cancel", role: .cancel) {}
+        Button("Remove", role: .destructive) {
+            if let member = memberToRemove {
+                Task {
+                    await removeMember(member)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var removeMemberAlertMessage: some View {
+        if let member = memberToRemove {
+            Text("Are you sure you want to remove \(member.displayName ?? member.handle) from this secure group?")
+        }
+    }
+
+    @ViewBuilder
+    private var errorAlertMessage: some View {
+        if let errorMessage = errorMessage {
+            Text(errorMessage)
+        }
+    }
+
+    @ViewBuilder
+    private func memberActionsSheet(for member: BlueCatbirdMlsDefs.MemberView) -> some View {
+        MLSMemberActionsSheetWrapper(
+            conversationId: conversationId,
+            member: member,
+            currentUserDid: appState.userDID,
+            isCurrentUserAdmin: isAdmin,
+            isCurrentUserCreator: false, // TODO: Get from conversation
+            appState: appState
+        )
+    }
+
+    private func initializeViewModel() async {
+        if viewModel == nil {
+            guard let database = appState.mlsDatabase,
+                  let apiClient = await appState.getMLSAPIClient() else {
+                logger.error("Cannot initialize view: dependencies not available")
+                errorMessage = "MLS service not available. Please restart the app."
+                showingError = true
+                return
+            }
+
+            viewModel = MLSMemberManagementViewModel(
+                conversationId: conversationId,
+                database: database,
+                apiClient: apiClient
+            )
         }
     }
     
@@ -90,19 +149,38 @@ struct MLSMemberManagementView: View {
     @ViewBuilder
     private var currentMembersSection: some View {
         Section {
-            ForEach(conversation.participants, id: \.id) { participant in
-                MemberRowView(
-                    participant: participant,
-                    role: memberRoles[participant.id] ?? .member,
-                    isCurrentUser: participant.id == appState.currentUserDID
-                )
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    swipeActionsContent(for: participant)
+            if let viewModel = viewModel {
+                ForEach(viewModel.members, id: \.did) { member in
+                    MemberRowEnhanced(
+                        member: member,
+                        isCurrentUser: member.did.description == appState.userDID,
+                        isCreator: false // TODO: Get from conversation
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedMemberForActions = member
+                    }
+                    .accessibilityHint("Double tap to view member actions")
                 }
+            } else if let participants = conversation?.participants {
+                ForEach(participants, id: \.id) { participant in
+                    MemberRowView(
+                        participant: participant,
+                        role: memberRoles[participant.id] ?? .member,
+                        isCurrentUser: participant.id == appState.userDID
+                    )
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        swipeActionsContent(for: participant)
+                    }
+                }
+            } else {
+                ProgressView("Loading members...")
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding()
             }
         } header: {
             HStack {
-                Text("Members (\(conversation.participants.count))")
+                Text("Members (\(conversation?.participants.count ?? 0))")
                     .designCaption()
                 Spacer()
                 Image(systemName: "lock.shield.fill")
@@ -210,13 +288,13 @@ struct MLSMemberManagementView: View {
     // MARK: - Computed Properties
     
     private var isAdmin: Bool {
-        guard let currentUserDID = appState.currentUserDID else { return false }
+        let currentUserDID = appState.userDID
         return memberRoles[currentUserDID] == .admin
     }
     
     @ViewBuilder
     private func swipeActionsContent(for participant: MLSParticipantViewModel) -> some View {
-        if isAdmin && participant.id != appState.currentUserDID {
+        if isAdmin && participant.id != appState.userDID {
             Button(role: .destructive) {
                 memberToRemove = participant
                 showingRemoveAlert = true
@@ -238,23 +316,29 @@ struct MLSMemberManagementView: View {
     }
     
     private var filteredSearchResults: [MLSParticipantViewModel] {
-        let currentMemberIds = Set(conversation.participants.map { $0.id })
+        guard let participants = conversation?.participants else {
+            return searchResults
+        }
+        let currentMemberIds = Set(participants.map { $0.id })
         return searchResults.filter { !currentMemberIds.contains($0.id) }
     }
     
     // MARK: - Actions
     
     private func loadMemberRoles() {
-        // TODO: Load member roles from MLS group metadata
-        // For now, assume first participant is admin
-        if let firstParticipant = conversation.participants.first {
+        guard let participants = conversation?.participants else {
+            logger.warning("Cannot load member roles: conversation not loaded")
+            return
+        }
+
+        if let firstParticipant = participants.first {
             memberRoles[firstParticipant.id] = .admin
         }
-        
-        for participant in conversation.participants.dropFirst() {
+
+        for participant in participants.dropFirst() {
             memberRoles[participant.id] = .member
         }
-        
+
         logger.info("Loaded member roles for \(memberRoles.count) members")
     }
     
@@ -409,29 +493,145 @@ enum MemberRole {
     case member
 }
 
+// MARK: - Enhanced Member Row with Admin Badges
+
+struct MemberRowEnhanced: View {
+    let member: BlueCatbirdMlsDefs.MemberView
+    let isCurrentUser: Bool
+    let isCreator: Bool
+
+    private var displayName: String {
+        // In production, would resolve DID to display name
+        member.did.description
+    }
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.base) {
+            // Avatar placeholder
+            Circle()
+                .fill(Color.blue.gradient)
+                .frame(width: DesignTokens.Size.avatarMD, height: DesignTokens.Size.avatarMD)
+                .overlay {
+                    Text(String(displayName.prefix(1)))
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Text(displayName)
+                        .designCallout()
+                        .foregroundColor(.primary)
+
+                    if isCurrentUser {
+                        Text("(You)")
+                            .designCaption()
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Text("Joined \(formattedJoinDate)")
+                    .designFootnote()
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            // Badges
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                if isCreator {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: DesignTokens.Size.iconSM))
+                            .foregroundColor(.yellow)
+
+                        Text("Creator")
+                            .designCaption()
+                            .foregroundColor(.yellow)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.yellow.opacity(0.2))
+                    .clipShape(Capsule())
+                    .accessibilityLabel("Conversation creator")
+                }
+
+                if member.isAdmin {
+                    HStack(spacing: 4) {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: DesignTokens.Size.iconSM))
+                            .foregroundColor(.orange)
+
+                        Text("Admin")
+                            .designCaption()
+                            .foregroundColor(.orange)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.2))
+                    .clipShape(Capsule())
+                    .accessibilityLabel("Group administrator")
+                }
+            }
+        }
+        .spacingSM(.vertical)
+    }
+
+    private var formattedJoinDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: member.joinedAt.date)
+    }
+}
+
 // MARK: - AsyncProfileImage Helper
 
 
 // MARK: - Preview
 
 #Preview {
-    let sampleConversation = MLSConversationViewModel(
-        id: "sample-convo",
-        name: "Test Group",
-        participants: [
-            MLSParticipantViewModel(id: "user1", handle: "alice.bsky.social", displayName: "Alice", avatarURL: nil),
-            MLSParticipantViewModel(id: "user2", handle: "bob.bsky.social", displayName: "Bob", avatarURL: nil),
-            MLSParticipantViewModel(id: "user3", handle: "charlie.bsky.social", displayName: "Charlie", avatarURL: nil)
-        ],
-        lastMessagePreview: "Hello everyone!",
-        lastMessageTimestamp: Date(),
-        unreadCount: 0,
-        isGroupChat: true,
-        groupId: "sample-group-id"
-    )
-    
-    MLSMemberManagementView(conversation: sampleConversation)
-        .environment(AppState.shared)
+    @Previewable @Environment(AppState.self) var appState
+    MLSMemberManagementView(conversationId: "sample-convo-id")
+        .environment(AppStateManager.shared)
 }
 
 #endif
+
+// MARK: - Wrapper for async manager access
+
+private struct MLSMemberActionsSheetWrapper: View {
+    let conversationId: String
+    let member: BlueCatbirdMlsDefs.MemberView
+    let currentUserDid: String
+    let isCurrentUserAdmin: Bool
+    let isCurrentUserCreator: Bool
+    let appState: AppState
+
+    @State private var conversationManager: MLSConversationManager?
+
+    var body: some View {
+        Group {
+            if let conversationManager = conversationManager {
+                MLSMemberActionsSheet(
+                    conversationId: conversationId,
+                    member: member,
+                    currentUserDid: currentUserDid,
+                    isCurrentUserAdmin: isCurrentUserAdmin,
+                    isCurrentUserCreator: isCurrentUserCreator,
+                    conversationManager: conversationManager
+                )
+            } else {
+                ProgressView("Loading...")
+            }
+        }
+        .task {
+            conversationManager = await appState.getMLSConversationManager()
+        }
+    }
+}
+ extension BlueCatbirdMlsDefs.MemberView: Identifiable {
+     public var id: String {
+        return id
+    }
+}

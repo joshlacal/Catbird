@@ -249,7 +249,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
 
     Task {
-      await AppState.shared.notificationManager.cleanupNotifications(previousClient: client)
+      if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
+        await appState.notificationManager.cleanupNotifications(previousClient: client)
+      }
     }
 
     updateState(.unauthenticated)
@@ -314,7 +316,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func setAuthenticatedStateForFaultOrdering() {
     logger.info("⚡ FaultOrdering: Setting authenticated state without full initialization")
-    updateState(.authenticated(userDID: AppState.shared.currentUserDID ?? ""))
+    let currentDID = AppStateManager.shared.lifecycle.userDID ?? ""
+    updateState(.authenticated(userDID: currentDID))
   }
     
   // MARK: - Public API
@@ -377,7 +380,8 @@ final class AuthenticationManager: AuthProgressDelegate {
     if ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" {
       logger.info("⚡ FaultOrdering mode - skipping token refresh, using existing session")
       if await client.hasValidSession() {
-        updateState(.authenticated(userDID: AppState.shared.currentUserDID ?? ""))
+        let currentDID = AppStateManager.shared.lifecycle.userDID ?? ""
+        updateState(.authenticated(userDID: currentDID))
         logger.info("✅ Using existing valid session for FaultOrdering")
       } else {
         if !isAuthenticationCancelled {
@@ -696,12 +700,14 @@ final class AuthenticationManager: AuthProgressDelegate {
         }
 
         await client.clearTemporaryAccountStorage()
-        
-        await MainActor.run {
-          self.isAuthenticationCancelled = false
-          self.expiredAccountInfo = nil
-          self.updateState(.authenticated(userDID: did))
-        }
+
+        self.isAuthenticationCancelled = false
+        self.expiredAccountInfo = nil
+          await self.updateState(.authenticated(userDID: did))
+
+        // Create/switch to AppState for this account
+        _ = await AppStateManager.shared.switchAccount(to: did)
+
         self.logger.info("Authentication successful for user \(self.handle ?? "unknown")")
       }
     } catch {
@@ -730,9 +736,15 @@ final class AuthenticationManager: AuthProgressDelegate {
     isAuthenticationCancelled = false
     updateState(.unauthenticated)
 
+    // Cleanup notifications before logging out
     Task {
-      await AppState.shared.notificationManager.cleanupNotifications(previousClient: client)
+      if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
+        await appState.notificationManager.cleanupNotifications(previousClient: client)
+      }
     }
+
+    // Clear active account from AppStateManager
+    await AppStateManager.shared.logout()
 
     if let client = client {
       do {
@@ -1062,6 +1074,10 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .authenticated")
       updateState(.authenticated(userDID: newDid))
+
+      // Account switching is now handled by AppStateManager.transitionToAuthenticated()
+      // which is called automatically when the AuthManager state changes to .authenticated
+
       logger.info("✅ [AUTHMAN-SWITCH] Successfully switched to account: \(self.handle ?? "unknown") with DID: \(newDid)")
     } catch {
       logger.error("❌ [AUTHMAN-SWITCH] Error switching accounts: \(error.localizedDescription)")

@@ -251,6 +251,52 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureStr
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE_METHOD0
+typedef void (*UniffiCallbackInterfaceEpochSecretStorageMethod0)(uint64_t, RustBuffer, uint64_t, RustBuffer, int8_t* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE_METHOD1
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE_METHOD1
+typedef void (*UniffiCallbackInterfaceEpochSecretStorageMethod1)(uint64_t, RustBuffer, uint64_t, RustBuffer* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE_METHOD2
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE_METHOD2
+typedef void (*UniffiCallbackInterfaceEpochSecretStorageMethod2)(uint64_t, RustBuffer, uint64_t, int8_t* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_MLS_LOGGER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_MLS_LOGGER_METHOD0
+typedef void (*UniffiCallbackInterfaceMlsLoggerMethod0)(uint64_t, RustBuffer, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_EPOCH_SECRET_STORAGE
+typedef struct UniffiVTableCallbackInterfaceEpochSecretStorage {
+    UniffiCallbackInterfaceEpochSecretStorageMethod0 _Nonnull storeEpochSecret;
+    UniffiCallbackInterfaceEpochSecretStorageMethod1 _Nonnull getEpochSecret;
+    UniffiCallbackInterfaceEpochSecretStorageMethod2 _Nonnull deleteEpochSecret;
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+} UniffiVTableCallbackInterfaceEpochSecretStorage;
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_MLS_LOGGER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_MLS_LOGGER
+typedef struct UniffiVTableCallbackInterfaceMlsLogger {
+    UniffiCallbackInterfaceMlsLoggerMethod0 _Nonnull log;
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+} UniffiVTableCallbackInterfaceMlsLogger;
+
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_CLONE_MLSCONTEXT
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_CLONE_MLSCONTEXT
 void*_Nonnull uniffi_mls_ffi_fn_clone_mlscontext(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
@@ -282,6 +328,11 @@ void uniffi_mls_ffi_fn_method_mlscontext_clear_pending_commit(void*_Nonnull ptr,
 RustBuffer uniffi_mls_ffi_fn_method_mlscontext_commit_pending_proposals(void*_Nonnull ptr, RustBuffer group_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_COMPUTE_KEY_PACKAGE_HASH
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_COMPUTE_KEY_PACKAGE_HASH
+RustBuffer uniffi_mls_ffi_fn_method_mlscontext_compute_key_package_hash(void*_Nonnull ptr, RustBuffer key_package_bytes, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_CREATE_GROUP
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_CREATE_GROUP
 RustBuffer uniffi_mls_ffi_fn_method_mlscontext_create_group(void*_Nonnull ptr, RustBuffer identity_bytes, RustBuffer config, RustCallStatus *_Nonnull out_status
@@ -292,9 +343,19 @@ RustBuffer uniffi_mls_ffi_fn_method_mlscontext_create_group(void*_Nonnull ptr, R
 RustBuffer uniffi_mls_ffi_fn_method_mlscontext_create_key_package(void*_Nonnull ptr, RustBuffer identity_bytes, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DEBUG_GROUP_MEMBERS
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DEBUG_GROUP_MEMBERS
+RustBuffer uniffi_mls_ffi_fn_method_mlscontext_debug_group_members(void*_Nonnull ptr, RustBuffer group_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DECRYPT_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DECRYPT_MESSAGE
 RustBuffer uniffi_mls_ffi_fn_method_mlscontext_decrypt_message(void*_Nonnull ptr, RustBuffer group_id, RustBuffer ciphertext, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DELETE_GROUP
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DELETE_GROUP
+void uniffi_mls_ffi_fn_method_mlscontext_delete_group(void*_Nonnull ptr, RustBuffer group_id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_DESERIALIZE_STORAGE
@@ -320,6 +381,16 @@ RustBuffer uniffi_mls_ffi_fn_method_mlscontext_export_secret(void*_Nonnull ptr, 
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GET_EPOCH
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GET_EPOCH
 uint64_t uniffi_mls_ffi_fn_method_mlscontext_get_epoch(void*_Nonnull ptr, RustBuffer group_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GET_GROUP_MEMBER_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GET_GROUP_MEMBER_COUNT
+uint32_t uniffi_mls_ffi_fn_method_mlscontext_get_group_member_count(void*_Nonnull ptr, RustBuffer group_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GET_KEY_PACKAGE_BUNDLE_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GET_KEY_PACKAGE_BUNDLE_COUNT
+uint64_t uniffi_mls_ffi_fn_method_mlscontext_get_key_package_bundle_count(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_GROUP_EXISTS
@@ -372,9 +443,39 @@ void uniffi_mls_ffi_fn_method_mlscontext_remove_proposal(void*_Nonnull ptr, Rust
 RustBuffer uniffi_mls_ffi_fn_method_mlscontext_serialize_storage(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_SET_EPOCH_SECRET_STORAGE
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_SET_EPOCH_SECRET_STORAGE
+void uniffi_mls_ffi_fn_method_mlscontext_set_epoch_secret_storage(void*_Nonnull ptr, uint64_t storage, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_SET_LOGGER
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_SET_LOGGER
+void uniffi_mls_ffi_fn_method_mlscontext_set_logger(void*_Nonnull ptr, uint64_t logger, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_STORE_PROPOSAL
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_METHOD_MLSCONTEXT_STORE_PROPOSAL
-void uniffi_mls_ffi_fn_method_mlscontext_store_proposal(void*_Nonnull ptr, RustBuffer group_id, RustBuffer proposal_ref, RustCallStatus *_Nonnull out_status
+void uniffi_mls_ffi_fn_method_mlscontext_store_proposal(void*_Nonnull ptr, RustBuffer group_id, RustBuffer _proposal_ref, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_INIT_CALLBACK_VTABLE_EPOCHSECRETSTORAGE
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_INIT_CALLBACK_VTABLE_EPOCHSECRETSTORAGE
+void uniffi_mls_ffi_fn_init_callback_vtable_epochsecretstorage(UniffiVTableCallbackInterfaceEpochSecretStorage* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_INIT_CALLBACK_VTABLE_MLSLOGGER
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_INIT_CALLBACK_VTABLE_MLSLOGGER
+void uniffi_mls_ffi_fn_init_callback_vtable_mlslogger(UniffiVTableCallbackInterfaceMlsLogger* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_FUNC_MLS_COMPUTE_KEY_PACKAGE_HASH
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_FUNC_MLS_COMPUTE_KEY_PACKAGE_HASH
+RustBuffer uniffi_mls_ffi_fn_func_mls_compute_key_package_hash(RustBuffer key_package_bytes, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_FUNC_MLS_SET_LOGGER
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_FN_FUNC_MLS_SET_LOGGER
+void uniffi_mls_ffi_fn_func_mls_set_logger(uint64_t logger, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_MLS_FFI_RUSTBUFFER_ALLOC
@@ -657,6 +758,18 @@ void ffi_mls_ffi_rust_future_free_void(uint64_t handle
 void ffi_mls_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_FUNC_MLS_COMPUTE_KEY_PACKAGE_HASH
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_FUNC_MLS_COMPUTE_KEY_PACKAGE_HASH
+uint16_t uniffi_mls_ffi_checksum_func_mls_compute_key_package_hash(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_FUNC_MLS_SET_LOGGER
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_FUNC_MLS_SET_LOGGER
+uint16_t uniffi_mls_ffi_checksum_func_mls_set_logger(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_ADD_MEMBERS
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_ADD_MEMBERS
 uint16_t uniffi_mls_ffi_checksum_method_mlscontext_add_members(void
@@ -675,6 +788,12 @@ uint16_t uniffi_mls_ffi_checksum_method_mlscontext_commit_pending_proposals(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_COMPUTE_KEY_PACKAGE_HASH
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_COMPUTE_KEY_PACKAGE_HASH
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_compute_key_package_hash(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_CREATE_GROUP
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_CREATE_GROUP
 uint16_t uniffi_mls_ffi_checksum_method_mlscontext_create_group(void
@@ -687,9 +806,21 @@ uint16_t uniffi_mls_ffi_checksum_method_mlscontext_create_key_package(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_DEBUG_GROUP_MEMBERS
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_DEBUG_GROUP_MEMBERS
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_debug_group_members(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_DECRYPT_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_DECRYPT_MESSAGE
 uint16_t uniffi_mls_ffi_checksum_method_mlscontext_decrypt_message(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_DELETE_GROUP
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_DELETE_GROUP
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_delete_group(void
     
 );
 #endif
@@ -720,6 +851,18 @@ uint16_t uniffi_mls_ffi_checksum_method_mlscontext_export_secret(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_GET_EPOCH
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_GET_EPOCH
 uint16_t uniffi_mls_ffi_checksum_method_mlscontext_get_epoch(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_GET_GROUP_MEMBER_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_GET_GROUP_MEMBER_COUNT
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_get_group_member_count(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_GET_KEY_PACKAGE_BUNDLE_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_GET_KEY_PACKAGE_BUNDLE_COUNT
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_get_key_package_bundle_count(void
     
 );
 #endif
@@ -783,6 +926,18 @@ uint16_t uniffi_mls_ffi_checksum_method_mlscontext_serialize_storage(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_SET_EPOCH_SECRET_STORAGE
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_SET_EPOCH_SECRET_STORAGE
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_set_epoch_secret_storage(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_SET_LOGGER
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_SET_LOGGER
+uint16_t uniffi_mls_ffi_checksum_method_mlscontext_set_logger(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_STORE_PROPOSAL
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSCONTEXT_STORE_PROPOSAL
 uint16_t uniffi_mls_ffi_checksum_method_mlscontext_store_proposal(void
@@ -792,6 +947,30 @@ uint16_t uniffi_mls_ffi_checksum_method_mlscontext_store_proposal(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_CONSTRUCTOR_MLSCONTEXT_NEW
 #define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_CONSTRUCTOR_MLSCONTEXT_NEW
 uint16_t uniffi_mls_ffi_checksum_constructor_mlscontext_new(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_EPOCHSECRETSTORAGE_STORE_EPOCH_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_EPOCHSECRETSTORAGE_STORE_EPOCH_SECRET
+uint16_t uniffi_mls_ffi_checksum_method_epochsecretstorage_store_epoch_secret(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_EPOCHSECRETSTORAGE_GET_EPOCH_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_EPOCHSECRETSTORAGE_GET_EPOCH_SECRET
+uint16_t uniffi_mls_ffi_checksum_method_epochsecretstorage_get_epoch_secret(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_EPOCHSECRETSTORAGE_DELETE_EPOCH_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_EPOCHSECRETSTORAGE_DELETE_EPOCH_SECRET
+uint16_t uniffi_mls_ffi_checksum_method_epochsecretstorage_delete_epoch_secret(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSLOGGER_LOG
+#define UNIFFI_FFIDEF_UNIFFI_MLS_FFI_CHECKSUM_METHOD_MLSLOGGER_LOG
+uint16_t uniffi_mls_ffi_checksum_method_mlslogger_log(void
     
 );
 #endif

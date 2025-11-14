@@ -102,7 +102,10 @@ final class AppSettingsModel {
     
     // Privacy
     var loggedOutVisibility: Bool = true
-    
+
+    // MLS Chat Settings
+    var mlsMessageRetentionDays: Int = 30  // Default: 30 days (balanced policy)
+
     // Developer Settings
     
     
@@ -219,7 +222,13 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = defaults.bool(forKey: "loggedOutVisibility")
-        
+
+        // MLS Chat Settings
+        if defaults.object(forKey: "mlsMessageRetentionDays") != nil {
+            mlsMessageRetentionDays = defaults.integer(forKey: "mlsMessageRetentionDays")
+        }
+        if mlsMessageRetentionDays == 0 { mlsMessageRetentionDays = 30 }  // Ensure valid default
+
         // Developer Settings
         
     }
@@ -312,7 +321,10 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = true
-        
+
+        // MLS Chat Settings
+        mlsMessageRetentionDays = 30
+
         // Developer Settings
         
     }

@@ -36,7 +36,7 @@ final class PostContextMenuViewModel {
     }
 
     func deletePost() async {
-        guard let did = appState.currentUserDID else { return }
+         let did = appState.userDID
         do {
             let input = ComAtprotoRepoDeleteRecord.Input(
                 repo: try ATIdentifier(string: did),
@@ -54,7 +54,7 @@ final class PostContextMenuViewModel {
     }
 
     func blockUser() async {
-        guard let did = appState.currentUserDID else { return }
+         let did = appState.userDID
         let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
         do {
             let input = ComAtprotoRepoCreateRecord.Input(

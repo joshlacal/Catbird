@@ -34,7 +34,7 @@ final class ListMemberManagementViewModel {
   var canAddMembers: Bool {
     guard let listDetails = listDetails else { return false }
     // Only allow adding members to own lists or lists with appropriate permissions
-    guard let currentUserDID = appState.currentUserDID else { return false }
+    let currentUserDID = appState.userDID
     return listDetails.creator.did.didString() == currentUserDID
   }
   

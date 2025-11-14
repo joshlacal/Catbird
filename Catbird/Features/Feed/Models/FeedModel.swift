@@ -1006,7 +1006,7 @@ final class FeedModel: StateInvalidationSubscriber {
         contentLabelPreferences: contentLabelPrefs,
         hideAdultContent: hideAdultContent,
         hiddenPosts: hiddenPosts,
-        currentUserDid: appState.currentUserDID
+        currentUserDid: appState.userDID
       )
     } catch {
       logger.warning("Failed to get feed preferences, using defaults: \(error)")

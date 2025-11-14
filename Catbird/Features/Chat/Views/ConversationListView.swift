@@ -178,7 +178,7 @@ struct ConversationListView: View {
   private func conversationRowView(for convo: ChatBskyConvoDefs.ConvoView, showMuteOption: Bool) -> some View {
     ConversationRow(
       convo: convo,
-      currentUserDID: appState.currentUserDID
+      currentUserDID: AppStateManager.shared.authentication.state.userDID ?? ""
     )
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       swipeActionsContent(for: convo, showMuteOption: showMuteOption)

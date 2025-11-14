@@ -82,7 +82,12 @@ enum BGTaskSchedulerManager {
     // Process outbox items with timeout protection
     Task {
       do {
-        await ComposerOutbox.shared.processAll(appState: AppState.shared)
+        guard let activeState = await AppStateManager.shared.lifecycle.appState else {
+          logger.warning("BGTask - no active state available")
+          task.setTaskCompleted(success: false)
+          return
+        }
+        await ComposerOutbox.shared.processAll(appState: activeState)
         logger.info("BGTask completed successfully")
         task.setTaskCompleted(success: true)
       } catch {

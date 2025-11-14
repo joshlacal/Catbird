@@ -30,7 +30,7 @@ final class ListDetailViewModel {
   
   var isOwnList: Bool {
     guard let listDetails = listDetails else { return false }
-    return listDetails.creator.did.didString() == appState.currentUserDID
+    return listDetails.creator.did.didString() == appState.userDID
   }
   
   // MARK: - Initialization
@@ -215,7 +215,7 @@ struct ListDetailView: View {
     VStack(spacing: 12) {
       HStack(spacing: 12) {
         // List Avatar
-        LazyImage(url: listDetails.avatar?.url) { state in
+        LazyImage(url: listDetails.finalAvatarURL()) { state in
           if let image = state.image {
             image
               .resizable()
@@ -283,7 +283,7 @@ struct ListDetailView: View {
             path.append(NavigationDestination.profile(member.did.didString()))
           } label: {
             HStack(spacing: 12) {
-              LazyImage(url: member.avatar?.url) { state in
+              LazyImage(url: member.finalAvatarURL()) { state in
                 if let image = state.image {
                   image
                     .resizable()

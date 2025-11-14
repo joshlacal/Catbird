@@ -181,6 +181,7 @@ struct QuickFilterSheet: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   QuickFilterSheet()
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }

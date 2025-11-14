@@ -113,7 +113,7 @@ final class AddToListSheetViewModel {
 struct AddToListSheet: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
-  @State private var viewModel: AddToListSheetViewModel
+  @State private var viewModel: AddToListSheetViewModel?
   
   let userDID: String
   let userHandle: String
@@ -123,63 +123,66 @@ struct AddToListSheet: View {
     self.userDID = userDID
     self.userHandle = userHandle
     self.userDisplayName = userDisplayName
-    self._viewModel = State(wrappedValue: AddToListSheetViewModel(userDID: userDID, appState: AppState.shared))
   }
   
   var body: some View {
     NavigationStack {
-      contentView
-        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-        .navigationTitle("Add to List")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-        .toolbar {
-          ToolbarItem(placement: .cancellationAction) {
-            Button("Cancel", systemImage: "xmark") {
-              dismiss()
+      if let viewModel = viewModel {
+        contentView(viewModel: viewModel)
+          .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+          .navigationTitle("Add to List")
+      #if os(iOS)
+      .toolbarTitleDisplayMode(.inline)
+      #endif
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Cancel", systemImage: "xmark") {
+                dismiss()
+              }
+            }
+            
+            ToolbarItem(placement: .primaryAction) {
+              Button("New List") {
+                viewModel.showingCreateList = true
+              }
             }
           }
-          
-          ToolbarItem(placement: .primaryAction) {
-            Button("New List") {
-              viewModel.showingCreateList = true
+          .alert("Error", isPresented: Binding(
+            get: { viewModel.showingError },
+            set: { viewModel.showingError = $0 }
+          )) {
+            Button("OK") {
+              viewModel.showingError = false
+            }
+          } message: {
+            if let errorMessage = viewModel.errorMessage {
+              Text(errorMessage)
             }
           }
-        }
-        .onAppear {
-          viewModel = AddToListSheetViewModel(userDID: userDID, appState: appState)
-          Task {
-            await viewModel.loadData()
+          .sheet(isPresented: Binding(
+            get: { viewModel.showingCreateList },
+            set: { viewModel.showingCreateList = $0 }
+          )) {
+            CreateListView()
           }
-        }
-        .alert("Error", isPresented: $viewModel.showingError) {
-          Button("OK") {
-            viewModel.showingError = false
+      } else {
+        ProgressView()
+          .task {
+            viewModel = AddToListSheetViewModel(userDID: userDID, appState: appState)
+            await viewModel?.loadData()
           }
-        } message: {
-          if let errorMessage = viewModel.errorMessage {
-            Text(errorMessage)
-          }
-        }
-        .sheet(isPresented: $viewModel.showingCreateList) {
-          CreateListView()
-        }
+      }
     }
-    #if os(iOS)
-    .presentationDetents([.medium, .large])
-    #endif
-    .presentationDragIndicator(.visible)
   }
   
   @ViewBuilder
-  private var contentView: some View {
+  private func contentView(viewModel: AddToListSheetViewModel) -> some View {
     if viewModel.isLoading {
       loadingView
     } else if !viewModel.hasLists {
       emptyStateView
     } else {
-      listsView
+      listsView(viewModel: viewModel)
     }
   }
   
@@ -212,7 +215,7 @@ struct AddToListSheet: View {
       }
       
       Button("Create Your First List") {
-        viewModel.showingCreateList = true
+        viewModel?.showingCreateList = true
       }
       .buttonStyle(.borderedProminent)
     }
@@ -220,7 +223,8 @@ struct AddToListSheet: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
-  private var listsView: some View {
+  @ViewBuilder
+  private func listsView(viewModel: AddToListSheetViewModel) -> some View {
     VStack(spacing: 0) {
       // User Info Header
       userInfoHeader
@@ -290,7 +294,7 @@ struct ListSelectionRow: View {
   var body: some View {
     HStack(spacing: 12) {
       // List Avatar
-        LazyImage(url: list.avatar?.url) { state in
+        LazyImage(url: list.finalAvatarURL()) { state in
         if let image = state.image {
           image
             .resizable()

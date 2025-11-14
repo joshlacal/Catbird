@@ -121,7 +121,7 @@
     @State private var selectedRecipient: RecipientSelection? = nil
     @State private var isSending = false
     @State private var isSearching = false
-    @State private var searchResults: [AppBskyActorDefs.ProfileView] = []
+    @State private var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
     @State private var showingPostPreview = false
     @State private var keyboardHeight: CGFloat = 0
     @FocusState private var isMessageFieldFocused: Bool
@@ -131,7 +131,7 @@
 
     enum RecipientSelection: Equatable {
       case conversation(ChatBskyConvoDefs.ConvoView)
-      case profile(AppBskyActorDefs.ProfileView)
+      case profile(AppBskyActorDefs.ProfileViewBasic)
 
       var displayName: String {
         switch self {
@@ -411,7 +411,7 @@
 
             ForEach(filteredConversations) { conversation in
               if let otherMember = conversation.members.first(where: {
-                $0.did.didString() != appState.currentUserDID
+                $0.did.didString() != appState.userDID
               }) {
                 ModernRecipientRow(
                   title: otherMember.displayName ?? otherMember.handle.description,
@@ -473,7 +473,7 @@
       return conversations.filter { conversation in
         guard
           let otherMember = conversation.members.first(where: {
-            $0.did.didString() != appState.currentUserDID
+            $0.did.didString() != appState.userDID
           })
         else {
           return false
@@ -487,7 +487,7 @@
       }
     }
 
-    private func selectProfile(_ profile: AppBskyActorDefs.ProfileView) {
+    private func selectProfile(_ profile: AppBskyActorDefs.ProfileViewBasic) {
       withAnimation(.smooth(duration: 0.3)) {
         selectedRecipient = .profile(profile)
         searchText = ""
@@ -516,9 +516,9 @@
         isSearching = true
 
         do {
-          let params = AppBskyActorSearchActors.Parameters(
+          let params = AppBskyActorSearchActorsTypeahead.Parameters(
             q: query.trimmingCharacters(in: .whitespacesAndNewlines), limit: 10)
-          let (responseCode, response) = try await client.app.bsky.actor.searchActors(input: params)
+          let (responseCode, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
 
           await MainActor.run {
             isSearching = false
@@ -587,7 +587,7 @@
       }
     }
 
-    private func sendToNewConversation(with profile: AppBskyActorDefs.ProfileView) {
+    private func sendToNewConversation(with profile: AppBskyActorDefs.ProfileViewBasic) {
       Task {
         if let convoId = await appState.chatManager.startConversationWith(
           userDID: profile.did.didString())

@@ -166,7 +166,7 @@ struct WelcomeOnboardingView: View {
   private func navigateToProfile() {
     // Navigate to profile tab after dismissing onboarding
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-      guard let currentUserDID = appState.currentUserDID else { return }
+    let currentUserDID = appState.userDID
       appState.navigationManager.navigate(to: .profile(currentUserDID), in: 3) // Profile tab
     }
   }
@@ -203,6 +203,7 @@ private struct PlatformPresentationModifier: ViewModifier {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   WelcomeOnboardingView()
-    .environment(AppState.shared)
+    .environment(appState)
 }

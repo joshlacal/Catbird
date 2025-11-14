@@ -452,8 +452,8 @@ extension PostComposerViewModel {
         
         logger.info("PostComposerTextProcessing: Searching profiles for query: '\(query)'")
         do {
-            let params = AppBskyActorSearchActors.Parameters(q: query, limit: 5)
-            let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActors(input: params)
+            let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 5)
+            let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
             
             if responseCode >= 200 && responseCode < 300, let response = searchResponse {
                 logger.info("PostComposerTextProcessing: Profile search successful - found \(response.actors.count) actors")

@@ -104,13 +104,14 @@ struct FeedView: View {
         await feedStateStore.handleScenePhaseChange(newPhase)
       }
     }
-    .id((appState.currentUserDID ?? "") + fetch.identifier) // Reset view when user or feed changes
+    .id((appState.userDID ?? "") + fetch.identifier) // Reset view when user or feed changes
   }
 }
 
 // MARK: - Preview
 
 //#Preview {
+//    @Previewable @Environment(AppState.self) var appState
 //  @State var navigationPath = NavigationPath()
 //  @State var selectedTab = 0
 //  

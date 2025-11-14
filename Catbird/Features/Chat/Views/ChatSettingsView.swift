@@ -248,7 +248,8 @@ struct ChatDataExportView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   ChatSettingsView()
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }
 #endif

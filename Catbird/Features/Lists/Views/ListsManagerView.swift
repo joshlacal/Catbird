@@ -133,20 +133,27 @@ final class ListsManagerViewModel {
 struct ListsManagerView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
-  @State private var viewModel: ListsManagerViewModel
+  @State private var viewModel: ListsManagerViewModel?
   
   init() {
-    self._viewModel = State(wrappedValue: ListsManagerViewModel(appState: AppState.shared))
+    // ViewModel will be initialized in .task
   }
   
   var body: some View {
-    contentView
-      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-      .navigationTitle("My Lists")
-      #if os(iOS)
-      .toolbarTitleDisplayMode(.large)
-      #endif
-      .toolbar {
+    Group {
+      if let viewModel = viewModel {
+        contentView(viewModel: viewModel)
+      } else {
+        ProgressView()
+      }
+    }
+    .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+    .navigationTitle("My Lists")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.large)
+    #endif
+    .toolbar {
+      if let viewModel = viewModel {
         ToolbarItem(placement: .primaryAction) {
           Button {
             viewModel.showingCreateList = true
@@ -155,49 +162,62 @@ struct ListsManagerView: View {
           }
         }
       }
-      .onAppear {
+    }
+    .task {
+      if viewModel == nil {
         viewModel = ListsManagerViewModel(appState: appState)
-        Task {
-          await viewModel.loadData()
-        }
+        await viewModel?.loadData()
       }
-      .refreshable {
-        await viewModel.refreshData()
+    }
+    .refreshable {
+      await viewModel?.refreshData() ?? ()
+    }
+    .searchable(text: Binding(
+      get: { viewModel?.searchText ?? "" },
+      set: { viewModel?.searchText = $0 }
+    ), prompt: "Search your lists")
+    .alert("Error", isPresented: Binding(
+      get: { viewModel?.showingError ?? false },
+      set: { if !$0 { viewModel?.showingError = false } }
+    )) {
+      Button("OK") {
+        viewModel?.showingError = false
       }
-      .searchable(text: $viewModel.searchText, prompt: "Search your lists")
-      .alert("Error", isPresented: $viewModel.showingError) {
-        Button("OK") {
-          viewModel.showingError = false
-        }
-      } message: {
-        if let errorMessage = viewModel.errorMessage {
-          Text(errorMessage)
-        }
+    } message: {
+      if let errorMessage = viewModel?.errorMessage {
+        Text(errorMessage)
       }
-      .alert("Delete List", isPresented: $viewModel.showingDeleteConfirmation) {
-        Button("Cancel", role: .cancel) {
-          viewModel.listToDelete = nil
-        }
-        Button("Delete", role: .destructive) {
-          if let list = viewModel.listToDelete {
-            Task {
-              await viewModel.deleteList(list)
-            }
+    }
+    .alert("Delete List", isPresented: Binding(
+      get: { viewModel?.showingDeleteConfirmation ?? false },
+      set: { if !$0 { viewModel?.showingDeleteConfirmation = false } }
+    )) {
+      Button("Cancel", role: .cancel) {
+        viewModel?.listToDelete = nil
+      }
+      Button("Delete", role: .destructive) {
+        if let list = viewModel?.listToDelete {
+          Task {
+            await viewModel?.deleteList(list)
           }
-          viewModel.listToDelete = nil
         }
-      } message: {
-        if let list = viewModel.listToDelete {
-          Text("Are you sure you want to delete \"\(list.name)\"? This action cannot be undone.")
-        }
+        viewModel?.listToDelete = nil
       }
-      .sheet(isPresented: $viewModel.showingCreateList) {
-        CreateListView()
+    } message: {
+      if let list = viewModel?.listToDelete {
+        Text("Are you sure you want to delete \"\(list.name)\"? This action cannot be undone.")
       }
+    }
+    .sheet(isPresented: Binding(
+      get: { viewModel?.showingCreateList ?? false },
+      set: { if !$0 { viewModel?.showingCreateList = false } }
+    )) {
+      CreateListView()
+    }
   }
   
   @ViewBuilder
-  private var contentView: some View {
+  private func contentView(viewModel: ListsManagerViewModel) -> some View {
     if viewModel.isLoading && viewModel.userLists.isEmpty {
       loadingView
     } else if !viewModel.hasLists {
@@ -236,7 +256,7 @@ struct ListsManagerView: View {
       }
       
       Button("Create Your First List") {
-        viewModel.showingCreateList = true
+        viewModel?.showingCreateList = true
       }
       .buttonStyle(.borderedProminent)
     }
@@ -244,27 +264,32 @@ struct ListsManagerView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
+  @ViewBuilder
   private var listsView: some View {
-    List {
-      ForEach(Array(viewModel.groupedLists.keys.sorted()), id: \.self) { category in
-        Section(category) {
-          ForEach(viewModel.groupedLists[category] ?? [], id: \.uri) { list in
-            ListManagerRow(
-              list: list,
-              onDelete: {
-                viewModel.confirmDelete(list)
-              }
-            )
+    if let viewModel = viewModel {
+      let sortedCategories = Array(viewModel.groupedLists.keys.sorted())
+      List {
+        ForEach(sortedCategories, id: \.self) { category in
+          let categoryLists = viewModel.groupedLists[category] ?? []
+          Section(category) {
+            ForEach(categoryLists, id: \.uri) { list in
+              ListManagerRow(
+                list: list,
+                onDelete: {
+                  viewModel.confirmDelete(list)
+                }
+              )
+            }
           }
         }
       }
+      #if os(iOS)
+      .listStyle(.insetGrouped)
+      .scrollContentBackground(.hidden)
+      #elseif os(macOS)
+      .listStyle(.inset)
+      #endif
     }
-#if os(iOS)
-    .listStyle(.insetGrouped)
-    .scrollContentBackground(.hidden)
-#elseif os(macOS)
-    .listStyle(.inset)
-#endif
   }
 }
 
@@ -281,7 +306,7 @@ struct ListManagerRow: View {
     } label: {
       HStack(spacing: 12) {
         // List Avatar
-        LazyImage(url: list.avatar?.url) { state in
+        LazyImage(url: list.finalAvatarURL()) { state in
           if let image = state.image {
             image
               .resizable()

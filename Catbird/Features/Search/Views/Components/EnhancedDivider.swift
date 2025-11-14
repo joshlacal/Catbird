@@ -9,6 +9,7 @@ struct EnhancedDivider: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     VStack {
         Text("Item 1")
             .padding()

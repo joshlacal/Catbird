@@ -44,22 +44,29 @@ class AvatarImageLoader {
     func loadAvatar(for did: String, client: ATProtoClient?, size: CGFloat = 24, completion: @escaping (PlatformImage?) -> Void) {
         // Use size-specific cache key
         let cacheKey = NSString(string: "avatar-\(did)-\(size)")
+        avatarLogger.debug("[AVATAR] 🔍 Looking for cached avatar - DID: \(did.prefix(20))..., size: \(size)")
+
         if let cachedImage = cache.object(forKey: cacheKey) {
+            avatarLogger.info("[AVATAR] ✅ Cache hit for DID: \(did.prefix(20))..., size: \(size)")
             completion(cachedImage)
             return
         }
-        
+
+        avatarLogger.debug("[AVATAR] ❌ Cache miss, will fetch from server")
+
         // Cancel any existing task for this DID
         loadingTasks[did]?.cancel()
-        
+
         // Start new loading task
         let task = Task<PlatformImage?, Error> {
             do {
                 guard let client = client else {
-                    avatarLogger.debug("Client is nil, cannot load avatar for DID: \(did)")
+                    avatarLogger.error("[AVATAR] ❌ Client is nil, cannot load avatar for DID: \(did.prefix(20))...")
                     return nil as PlatformImage?
                 }
-                
+
+                avatarLogger.debug("[AVATAR] 📡 Fetching profile for avatar - DID: \(did.prefix(20))...")
+
                 // Fetch profile
                 let profile = try await client.app.bsky.actor.getProfile(
                     input: .init(actor: try ATIdentifier(string: did))
@@ -67,50 +74,68 @@ class AvatarImageLoader {
                 
                 // Download avatar if available using Nuke (off-main decode + caching)
                 if let avatarURL = profile?.finalAvatarURL() {
+                    avatarLogger.info("[AVATAR] 🌐 Found avatar URL: \(avatarURL.absoluteString)")
                     #if os(iOS)
+                    avatarLogger.debug("[AVATAR] 📥 Downloading image with Nuke...")
                     let request = ImageRequest(url: avatarURL)
                     let response = try await ImagePipeline.shared.image(for: request)
                     let image = response
+                    avatarLogger.debug("[AVATAR] ✅ Image downloaded, size: \(image.size.debugDescription)")
                     // Cache the rounded result for consistent reuse
                     let targetSize = CGSize(width: size, height: size)
                     if let rounded = image.circularCroppedImage(to: targetSize) {
                         self.cache.setObject(rounded, forKey: cacheKey)
+                        avatarLogger.info("[AVATAR] 💾 Cached rounded avatar for DID: \(did.prefix(20))...")
                         return rounded
                     } else {
                         self.cache.setObject(image, forKey: cacheKey)
+                        avatarLogger.info("[AVATAR] 💾 Cached original avatar for DID: \(did.prefix(20))...")
                         return image
                     }
                     #else
+                    avatarLogger.debug("[AVATAR] 📥 Downloading image with URLSession...")
                     let (data, _) = try await URLSession.shared.data(from: avatarURL)
                     if let image = PlatformImage(data: data) {
+                        avatarLogger.debug("[AVATAR] ✅ Image downloaded, size: \(data.count) bytes")
                         let sizeToUse = CGSize(width: size, height: size)
                         if let resizedImage = self.resizeImage(image, to: sizeToUse) {
                             self.cache.setObject(resizedImage, forKey: cacheKey)
+                            avatarLogger.info("[AVATAR] 💾 Cached resized avatar for DID: \(did.prefix(20))...")
                             return resizedImage
                         } else {
                             self.cache.setObject(image, forKey: cacheKey)
+                            avatarLogger.info("[AVATAR] 💾 Cached original avatar for DID: \(did.prefix(20))...")
                             return image
                         }
                     }
                     #endif
+                } else {
+                    avatarLogger.warning("[AVATAR] ⚠️ No avatar URL found in profile for DID: \(did.prefix(20))...")
                 }
                 return nil as PlatformImage?
             } catch {
-                avatarLogger.debug("Avatar loading error: \(error.localizedDescription)")
+                avatarLogger.error("[AVATAR] ❌ Avatar loading error: \(error.localizedDescription)")
                 return nil as PlatformImage?
             }
         }
         
         loadingTasks[did] = task
-        
+
         // Handle completion
         Task {
             do {
                 let image = try await task.value
+                if image != nil {
+                    avatarLogger.info("[AVATAR] ✅ Avatar loaded successfully for DID: \(did.prefix(20))...")
+                } else {
+                    avatarLogger.warning("[AVATAR] ⚠️ Avatar loaded but image is nil for DID: \(did.prefix(20))...")
+                }
                 DispatchQueue.main.async {
+                    avatarLogger.debug("[AVATAR] 🎨 Calling completion handler on main thread")
                     completion(image)
                 }
             } catch {
+                avatarLogger.error("[AVATAR] ❌ Task failed with error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     completion(nil)
                 }
@@ -137,45 +162,60 @@ struct UIKitAvatarView: UIViewRepresentable {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
+
+        // Disable autoresizing mask to ensure SwiftUI frame is respected
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        
+
+        // Set explicit size constraints to prevent toolbar from stretching
+        NSLayoutConstraint.activate([
+            imageView.widthAnchor.constraint(equalToConstant: size),
+            imageView.heightAnchor.constraint(equalToConstant: size)
+        ])
+
         // Set placeholder image
         let placeholder = PlatformImage.systemImage(named: "person.crop.circle.fill")
         imageView.image = placeholder
         #if os(iOS)
         imageView.tintColor = UIColor.secondaryLabel
         #endif
-        
+
         return imageView
     }
     
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIImageView, context: Context) -> CGSize {
+        return CGSize(width: size, height: size)
+    }
+
     func updateUIView(_ uiView: UIImageView, context: Context) {
-        // Ensure proper sizing with constraints
-        NSLayoutConstraint.activate([
-            uiView.widthAnchor.constraint(equalToConstant: size),
-            uiView.heightAnchor.constraint(equalToConstant: size)
-        ])
+        // Update corner radius for circular clipping
         uiView.layer.cornerRadius = size / 2
-        
+
+        avatarLogger.debug("[AVATAR] 🔄 UIKitAvatarView.updateUIView called - DID: \(did ?? "nil"), avatarURL: \(avatarURL?.absoluteString ?? "nil")")
+
         // Reset to placeholder if no DID and no direct URL
         guard did != nil || avatarURL != nil else {
+            avatarLogger.warning("[AVATAR] ⚠️ No DID and no avatarURL, showing placeholder")
             uiView.image = PlatformImage.systemImage(named: "person.crop.circle.fill")
             return
         }
-        
+
         // Prefer direct avatarURL when available (avoids extra profile fetch)
         if let directURL = avatarURL {
+            avatarLogger.info("[AVATAR] 🌐 Loading from direct URL: \(directURL.absoluteString)")
             let request = ImageRequest(url: directURL)
             ImagePipeline.shared.loadImage(with: request) { result in
                 switch result {
                 case .success(let response):
                     let image = response.image
+                    avatarLogger.info("[AVATAR] ✅ Direct URL image loaded successfully")
                     DispatchQueue.main.async {
                         UIView.transition(with: uiView, duration: 0.25, options: .transitionCrossDissolve) {
                             uiView.image = image
                         }
+                        avatarLogger.debug("[AVATAR] 🎨 UIImageView updated with avatar")
                     }
-                case .failure:
+                case .failure(let error):
+                    avatarLogger.error("[AVATAR] ❌ Direct URL loading failed: \(error.localizedDescription)")
                     DispatchQueue.main.async {
                         uiView.image = PlatformImage.systemImage(named: "person.crop.circle.fill")
                     }
@@ -186,12 +226,16 @@ struct UIKitAvatarView: UIViewRepresentable {
 
         // Fallback: load via DID using profile fetch
         if let did = did {
+            avatarLogger.debug("[AVATAR] 🔄 Falling back to DID-based loading for: \(did.prefix(20))...")
             AvatarImageLoader.shared.loadAvatar(for: did, client: client, size: size) { image in
                 if let image = image {
+                    avatarLogger.info("[AVATAR] ✅ DID-based avatar loaded successfully")
                     UIView.transition(with: uiView, duration: 0.3, options: .transitionCrossDissolve) {
                         uiView.image = image
                     }
+                    avatarLogger.debug("[AVATAR] 🎨 UIImageView updated with avatar")
                 } else {
+                    avatarLogger.warning("[AVATAR] ⚠️ DID-based loading returned nil, showing placeholder")
                     uiView.image = PlatformImage.systemImage(named: "person.crop.circle.fill")
                 }
             }
@@ -203,20 +247,22 @@ struct NSKitAvatarView: NSViewRepresentable {
     let did: String?
     let client: ATProtoClient?
     let size: CGFloat
-    
-    init(did: String?, client: ATProtoClient?, size: CGFloat = 24) {
+    let avatarURL: URL?
+
+    init(did: String?, client: ATProtoClient?, size: CGFloat = 24, avatarURL: URL? = nil) {
         self.did = did
         self.client = client
         self.size = size
+        self.avatarURL = avatarURL
     }
-    
+
     func makeNSView(context: Context) -> NSImageView {
         let imageView = NSImageView(frame: CGRect(x: 0, y: 0, width: size, height: size))
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = size / 2
         imageView.layer?.masksToBounds = true
-        
+
         // Set placeholder image
         if #available(macOS 11.0, *) {
             let placeholder = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
@@ -225,16 +271,16 @@ struct NSKitAvatarView: NSViewRepresentable {
             // Fallback for older macOS versions
             imageView.image = NSImage(named: "person.crop.circle.fill")
         }
-        
+
         return imageView
     }
-    
+
     func updateNSView(_ nsView: NSImageView, context: Context) {
         // Set frame explicitly
         nsView.frame = CGRect(x: 0, y: 0, width: size, height: size)
-        
-        // Reset to placeholder if no DID
-        guard let did = did else {
+
+        // Reset to placeholder if no DID and no direct URL
+        guard did != nil || avatarURL != nil else {
             if #available(macOS 11.0, *) {
                 nsView.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
             } else {
@@ -242,20 +288,48 @@ struct NSKitAvatarView: NSViewRepresentable {
             }
             return
         }
-        
-        // Load avatar
-        AvatarImageLoader.shared.loadAvatar(for: did, client: client, size: size) { image in
-            DispatchQueue.main.async {
-                if let image = image {
-                    NSAnimationContext.runAnimationGroup { context in
-                        context.duration = 0.3
-                        nsView.animator().image = image
+
+        // Prefer direct avatarURL when available (avoids extra profile fetch)
+        if let directURL = avatarURL {
+            Task {
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: directURL)
+                    if let image = NSImage(data: data) {
+                        DispatchQueue.main.async {
+                            NSAnimationContext.runAnimationGroup { context in
+                                context.duration = 0.25
+                                nsView.animator().image = image
+                            }
+                        }
                     }
-                } else {
-                    if #available(macOS 11.0, *) {
-                        nsView.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
+                } catch {
+                    DispatchQueue.main.async {
+                        if #available(macOS 11.0, *) {
+                            nsView.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
+                        } else {
+                            nsView.image = NSImage(named: "person.crop.circle.fill")
+                        }
+                    }
+                }
+            }
+            return
+        }
+
+        // Fallback: load via DID using profile fetch
+        if let did = did {
+            AvatarImageLoader.shared.loadAvatar(for: did, client: client, size: size) { image in
+                DispatchQueue.main.async {
+                    if let image = image {
+                        NSAnimationContext.runAnimationGroup { context in
+                            context.duration = 0.3
+                            nsView.animator().image = image
+                        }
                     } else {
-                        nsView.image = NSImage(named: "person.crop.circle.fill")
+                        if #available(macOS 11.0, *) {
+                            nsView.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
+                        } else {
+                            nsView.image = NSImage(named: "person.crop.circle.fill")
+                        }
                     }
                 }
             }
@@ -271,18 +345,20 @@ public struct AvatarView: View {
     let did: String?
     let client: ATProtoClient?
     let size: CGFloat
-    
-    public init(did: String?, client: ATProtoClient?, size: CGFloat = 24) {
+    let avatarURL: URL?
+
+    public init(did: String?, client: ATProtoClient?, size: CGFloat = 24, avatarURL: URL? = nil) {
         self.did = did
         self.client = client
         self.size = size
+        self.avatarURL = avatarURL
     }
-    
+
     public var body: some View {
         #if os(iOS)
-        UIKitAvatarView(did: did, client: client, size: size)
+        UIKitAvatarView(did: did, client: client, size: size, avatarURL: avatarURL)
         #elseif os(macOS)
-        NSKitAvatarView(did: did, client: client, size: size)
+        NSKitAvatarView(did: did, client: client, size: size, avatarURL: avatarURL)
         #else
         // Fallback for other platforms
         Circle()

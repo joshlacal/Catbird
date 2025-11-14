@@ -471,8 +471,9 @@ struct HashtagFilterView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         HashtagView(tag: "bluesky", path: .constant(NavigationPath()))
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

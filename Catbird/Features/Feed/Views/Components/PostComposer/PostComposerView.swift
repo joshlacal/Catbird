@@ -126,13 +126,13 @@ struct PostComposerView: View {
                     }) {
                         #if os(iOS)
                         UIKitAvatarView(
-                            did: appState.currentUserDID,
+                            did: appState.userDID,
                             client: appState.atProtoClient,
                             size: 32
                         )
                         #else
                         AvatarView(
-                            did: appState.currentUserDID,
+                            did: appState.userDID,
                             client: appState.atProtoClient,
                             size: 32
                         )
@@ -194,7 +194,7 @@ struct PostComposerView: View {
             .task {
                 await viewModel.loadUserLanguagePreference()
             }
-            .id(appState.currentUserDID)
+            .id(appState.userDID)
     }
     
     private var configuredWithModifiers: some View {
@@ -1204,7 +1204,7 @@ struct PostComposerView: View {
                     errorMessage = error.localizedDescription
                 }
                 
-                viewModel.alertItem = PostComposerViewModel.AlertItem(
+                viewModel.alertItem = AlertItem(
                     title: "Failed to Create Post",
                     message: errorMessage
                 )
@@ -1525,7 +1525,8 @@ struct SheetsModifier: ViewModifier {
                     isTextFieldFocused = true
                 }
             }) {
-                AccountSwitcherView()
+                // Pass current draft when switching accounts from composer
+                AccountSwitcherView(draftToTransfer: viewModel.saveDraftState())
             }
     }
 }

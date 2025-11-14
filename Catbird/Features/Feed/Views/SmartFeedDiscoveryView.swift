@@ -770,7 +770,7 @@ struct EnhancedRecommendationCard: View {
     private var feedPreviewSheet: some View {
         NavigationStack (path: $path){
             FeedScreen(path: $path, uri: recommendation.feed.uri)
-                .environment(AppState.shared)
+                .environment(AppStateManager.shared)
                 .navigationTitle(recommendation.feed.displayName)
     #if os(iOS)
                 .toolbarTitleDisplayMode(.inline)
@@ -1185,8 +1185,9 @@ struct InterestTag: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         SmartFeedDiscoveryView()
-            .environment(AppState.shared)
+            .environment(AppStateManager.shared)
     }
 }

@@ -297,7 +297,7 @@ struct MLSConversationDetailView: View {
                 do {
                     let plaintext = try await manager.decryptMessage(messageView)
                     
-                    let isCurrentUser = messageView.sender.description == appState.currentUserDID
+                    let isCurrentUser = messageView.sender.description == appState.userDID
                     let message = Message(
                         id: messageView.id,
                         user: User(
@@ -349,7 +349,7 @@ struct MLSConversationDetailView: View {
         let optimisticMessage = Message(
             id: optimisticId,
             user: User(
-                id: appState.currentUserDID ?? "",
+                id: appState.userDID ?? "",
                 name: "You",
                 avatarURL: nil,
                 isCurrentUser: true
@@ -478,7 +478,7 @@ struct MLSConversationDetailView: View {
         do {
             let plaintext = try await manager.decryptMessage(event.message)
             
-            let isCurrentUser = event.message.sender.description == appState.currentUserDID
+            let isCurrentUser = event.message.sender.description == appState.userDID
             let newMessage = Message(
                 id: event.message.id,
                 user: User(
@@ -569,6 +569,7 @@ struct MLSConversationDetailView: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         MLSConversationDetailView(conversationId: "test-conversation-id")
             .environment(AppState.shared)

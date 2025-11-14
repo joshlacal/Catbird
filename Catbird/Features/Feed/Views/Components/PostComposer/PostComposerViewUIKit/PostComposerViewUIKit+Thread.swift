@@ -26,10 +26,10 @@ extension PostComposerViewUIKit {
                 }) {
                   #if os(iOS)
                   UIKitAvatarView(
-                    did: appState.currentUserDID,
+                    did: appState.userDID,
                     client: appState.atProtoClient,
                     size: 60,
-                    avatarURL: appState.currentUserProfile?.avatar?.url
+                    avatarURL: appState.currentUserProfile?.finalAvatarURL()
                   )
                   .frame(width: 60, height: 60)
                   #else
@@ -183,7 +183,7 @@ extension PostComposerViewUIKit {
         #endif
       }
     )
-    .id(appState.currentUserDID ?? "composer-unknown-user")
+    .id(appState.userDID ?? "composer-unknown-user")
     .frame(minHeight: 120)
     .frame(maxWidth: .infinity)
     .onAppear {

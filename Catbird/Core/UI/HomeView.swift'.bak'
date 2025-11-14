@@ -132,7 +132,7 @@ struct HomeView: View {
         showingSettings = true
       }) {
         AvatarView(
-          did: appState.currentUserDID,
+          did: appState.userDID,
           client: appState.atProtoClient,
           size: 30
         )

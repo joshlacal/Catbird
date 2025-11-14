@@ -178,7 +178,7 @@ struct MessageRequestRow: View {
   @State private var showingPreview = false
   
   private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
-    request.members.filter { $0.did.didString() != appState.currentUserDID }
+    request.members.filter { $0.did.didString() != appState.userDID }
   }
   
   private var primaryMember: ChatBskyActorDefs.ProfileViewBasic? {
@@ -427,7 +427,7 @@ struct MessageRequestPreviewView: View {
   @State private var isProcessing = false
   
   private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
-    request.members.filter { $0.did.didString() != appState.currentUserDID }
+    request.members.filter { $0.did.didString() != appState.userDID }
   }
   
   var body: some View {
@@ -600,8 +600,9 @@ struct MessageRequestPreviewView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   MessageRequestsView()
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }
 
 #endif

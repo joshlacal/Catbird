@@ -397,6 +397,7 @@ private struct LegacyTextRegionButton: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   if #available(iOS 26.0, macOS 26.0, *) {
     OCRTextSelectionView(
       image: Image(systemName: "photo"),

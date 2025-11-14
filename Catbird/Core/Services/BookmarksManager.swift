@@ -22,10 +22,8 @@ actor BookmarksManager {
     /// Cache of bookmark URIs keyed by post URI for deletion
     private var bookmarkUrisCache: [String: ATProtocolURI] = [:]
     
-    /// Shared singleton instance
-    static let shared = BookmarksManager()
-    
-    private init() {}
+    /// Public initializer
+    init() {}
     
     // MARK: - Bookmark Operations
     

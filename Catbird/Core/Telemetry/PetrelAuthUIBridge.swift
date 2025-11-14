@@ -19,7 +19,7 @@ enum PetrelAuthUIBridge {
                 let (did, reason) = parseLogout(event.message)
                 Task { @MainActor in
                     logger.error("UI handling auto logout did=\(did ?? "nil") reason=\(reason ?? "nil")")
-                    await AppState.shared.authManager.handleAutoLogoutFromPetrel(did: did, reason: reason)
+                    await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
                 }
                 return
             }
@@ -33,7 +33,7 @@ enum PetrelAuthUIBridge {
                         let reason = dict["reason"] as? String
                         Task { @MainActor in
                             logger.error("UI handling AutoLogoutTriggered did=\(did ?? "nil") reason=\(reason ?? "nil")")
-                            await AppState.shared.authManager.handleAutoLogoutFromPetrel(did: did, reason: reason)
+                            await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
                         }
                     }
                 }

@@ -282,7 +282,7 @@ struct ThreadViewMainPostView: View, Equatable {
         }
         
         // Fetch current user DID
-        currentUserDid = appState.currentUserDID
+        currentUserDid = appState.userDID
     }
     
     // MARK: - Helper Views

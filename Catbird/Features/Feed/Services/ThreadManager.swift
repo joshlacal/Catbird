@@ -8,6 +8,7 @@
 import Foundation
 import Observation
 import Petrel
+import SwiftData
 import os
 
 /// Manages loading and caching of thread data
@@ -34,9 +35,12 @@ final class ThreadManager: StateInvalidationSubscriber {
 
   /// Reference to the app state
   private let appState: AppState
-  
+
   /// The URI of the currently loaded thread (for state invalidation)
   private var currentThreadURI: ATProtocolURI?
+
+  /// Model context for SwiftData cache operations
+  @ObservationIgnored private var modelContext: ModelContext?
 
   /// The ATPROTO client for API calls
   private var client: ATProtoClient? {
@@ -51,13 +55,47 @@ final class ThreadManager: StateInvalidationSubscriber {
     // Subscribe to state invalidation events
     appState.stateInvalidationBus.subscribe(self)
   }
-  
+
   deinit {
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
   }
 
+  /// Configure with model context for SwiftData cache operations
+  func setModelContext(_ context: ModelContext) {
+    self.modelContext = context
+    logger.debug("ThreadManager configured with ModelContext for caching")
+  }
+
   // MARK: - Thread Loading
+
+  /// Check if cached thread data exists
+  /// - Parameter uri: The post URI to look up in cache
+  /// - Returns: True if cache exists for this thread
+  @MainActor
+  private func hasCachedThread(uri: ATProtocolURI) async -> Bool {
+    guard let modelContext = modelContext else {
+      return false
+    }
+
+    let descriptor = FetchDescriptor<CachedFeedViewPost>(
+      predicate: #Predicate<CachedFeedViewPost> { post in
+          post.uri == uri && post.feedType == "thread-cache"
+      }
+    )
+
+    do {
+      let cachedPosts = try modelContext.fetch(descriptor)
+      let hasCached = !cachedPosts.isEmpty
+      if hasCached {
+        logger.info("✅ Found cached posts for thread: \(uri.uriString())")
+      }
+      return hasCached
+    } catch {
+      logger.error("Failed to check cached thread: \(error.localizedDescription)")
+      return false
+    }
+  }
 
   /// Load a thread by its URI
   /// - Parameter uri: The post URI to load
@@ -68,6 +106,12 @@ final class ThreadManager: StateInvalidationSubscriber {
     currentThreadURI = uri
 
     logger.debug("Loading thread: \(uri.uriString())")
+
+    // Check if we have cached data (just for logging/optimization hints)
+    let hasCached = await hasCachedThread(uri: uri)
+    if hasCached {
+      logger.info("📦 Cache exists for this thread - will refresh with fresh data")
+    }
 
     do {
       guard let client = client else {
@@ -94,6 +138,9 @@ final class ThreadManager: StateInvalidationSubscriber {
 
         // Store the thread data directly (no shadow merging needed with v2)
         self.threadData = output
+
+        // Save thread posts to cache for instant display on future visits
+        await cacheThreadPosts(output.thread)
       } else {
         // Handle specific errors
         if responseCode == 404 {
@@ -205,8 +252,76 @@ final class ThreadManager: StateInvalidationSubscriber {
     }
   }
 
+  // MARK: - Cache Management
 
-  // MARK: - State Invalidation Handling
+  /// Save thread posts to SwiftData cache for instant display on future visits
+  private func cacheThreadPosts(_ threadItems: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]) async {
+    guard let modelContext = modelContext else {
+      logger.debug("Cannot cache thread posts - modelContext unavailable")
+      return
+    }
+
+    var savedCount = 0
+
+    for threadItem in threadItems {
+      // Only cache actual posts (not blocked/notfound items)
+      guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = threadItem.value else {
+        continue
+      }
+
+      // Convert to FeedViewPost for caching
+      let feedViewPost = AppBskyFeedDefs.FeedViewPost(
+        post: threadItemPost.post,
+        reply: nil,
+        reason: nil,
+        feedContext: nil,
+        reqId: nil
+      )
+
+      // Create cached post with special feedType for thread cache
+      guard let cachedPost = CachedFeedViewPost(
+        from: feedViewPost,
+        cursor: nil,
+        feedType: "thread-cache",
+        feedOrder: nil
+      ) else {
+        continue
+      }
+
+      await MainActor.run {
+        // Check if post already exists to avoid duplicates
+        let postId = cachedPost.id
+        let descriptor = FetchDescriptor<CachedFeedViewPost>(
+          predicate: #Predicate<CachedFeedViewPost> { post in
+            post.id == postId
+          }
+        )
+
+        do {
+          let existing = try modelContext.fetch(descriptor)
+          if existing.isEmpty {
+            modelContext.insert(cachedPost)
+            savedCount += 1
+          }
+        } catch {
+          logger.error("Failed to check/save thread post to cache: \(error.localizedDescription)")
+        }
+      }
+    }
+
+    // Save all changes at once
+    await MainActor.run {
+      do {
+        if savedCount > 0 {
+          try modelContext.save()
+          logger.info("✅ Saved \(savedCount) thread posts to cache")
+        }
+      } catch {
+        logger.error("Failed to save thread posts to cache: \(error.localizedDescription)")
+      }
+    }
+  }
+
   // MARK: - State Invalidation Handling
   
   /// Check if this manager is interested in a specific event

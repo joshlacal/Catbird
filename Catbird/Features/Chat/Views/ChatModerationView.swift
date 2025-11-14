@@ -399,9 +399,10 @@ struct MessageContextRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   NavigationView {
     ChatModerationView()
-      .environment(AppState.shared)
+      .environment(AppStateManager.shared)
   }
 }
 #endif

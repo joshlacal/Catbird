@@ -1,0 +1,227 @@
+//
+//  MLSReportsViewModel.swift
+//  Catbird
+//
+//  ViewModel for managing MLS conversation reports (admin-only)
+//
+
+import Foundation
+import Petrel
+import Observation
+import OSLog
+
+/// ViewModel for managing reports in an MLS conversation
+@Observable
+final class MLSReportsViewModel {
+    // MARK: - Properties
+
+    /// All reports (pending + resolved)
+    private(set) var allReports: [BlueCatbirdMlsGetReports.ReportView] = []
+
+    /// Pending reports (requiring action)
+    var pendingReports: [BlueCatbirdMlsGetReports.ReportView] {
+        allReports.filter { $0.status == "pending" }
+    }
+
+    /// Resolved reports (for audit trail)
+    var resolvedReports: [BlueCatbirdMlsGetReports.ReportView] {
+        allReports.filter { $0.status != "pending" }
+    }
+
+    /// Loading states
+    private(set) var isLoadingReports = false
+    private(set) var isResolvingReport = false
+
+    /// Error state
+    private(set) var error: Error?
+
+    /// Pagination cursor
+    private var cursor: String?
+
+    /// Whether there are more reports to load
+    private(set) var hasMoreReports = false
+
+    /// Conversation ID
+    let conversationId: String
+
+    // MARK: - Dependencies
+
+    private let conversationManager: MLSConversationManager
+    private let logger = Logger(subsystem: "blue.catbird", category: "MLSReportsViewModel")
+
+    // MARK: - Initialization
+
+    init(
+        conversationId: String,
+        conversationManager: MLSConversationManager
+    ) {
+        self.conversationId = conversationId
+        self.conversationManager = conversationManager
+        logger.debug("MLSReportsViewModel initialized for conversation: \(conversationId)")
+    }
+
+    // MARK: - Public Methods
+
+    /// Load reports for the conversation
+    @MainActor
+    func loadReports(refresh: Bool = false) async {
+        guard !isLoadingReports else { return }
+
+        if refresh {
+            cursor = nil
+            allReports = []
+            hasMoreReports = false
+        }
+
+        isLoadingReports = true
+        error = nil
+
+        do {
+            let (reports, newCursor) = try await conversationManager.loadReports(
+                for: conversationId,
+                limit: 50,
+                cursor: cursor
+            )
+
+            if refresh {
+                allReports = reports
+            } else {
+                allReports.append(contentsOf: reports)
+            }
+
+            cursor = newCursor
+            hasMoreReports = newCursor != nil
+
+            logger.debug("Loaded \(reports.count) reports (total: \(self.allReports.count))")
+        } catch {
+            self.error = error
+            logger.error("Failed to load reports: \(error.localizedDescription)")
+        }
+
+        isLoadingReports = false
+    }
+
+    /// Load more reports (pagination)
+    @MainActor
+    func loadMoreReports() async {
+        guard !isLoadingReports, hasMoreReports else { return }
+        await loadReports(refresh: false)
+    }
+
+    /// Resolve a report
+    @MainActor
+    func resolveReport(
+        _ report: BlueCatbirdMlsGetReports.ReportView,
+        action: ResolutionAction,
+        notes: String?
+    ) async throws {
+        guard !isResolvingReport else { return }
+
+        isResolvingReport = true
+        error = nil
+
+        do {
+            try await conversationManager.resolveReport(
+                report.id,
+                action: action.rawValue,
+                notes: notes
+            )
+
+            // Remove the resolved report from our list and reload
+            if let index = allReports.firstIndex(where: { $0.id == report.id }) {
+                allReports.remove(at: index)
+            }
+
+            logger.info("Successfully resolved report: \(report.id) with action: \(action.rawValue)")
+
+            // Reload to get updated status
+            await loadReports(refresh: true)
+        } catch {
+            self.error = error
+            logger.error("Failed to resolve report: \(error.localizedDescription)")
+            throw error
+        }
+
+        isResolvingReport = false
+    }
+
+    /// Clear error state
+    @MainActor
+    func clearError() {
+        error = nil
+    }
+
+    /// Refresh reports
+    @MainActor
+    func refresh() async {
+        await loadReports(refresh: true)
+    }
+
+    // MARK: - Resolution Actions
+
+    enum ResolutionAction: String, CaseIterable {
+        case removeMember = "remove_member"
+        case warn = "warn"
+        case dismiss = "dismiss"
+
+        var title: String {
+            switch self {
+            case .removeMember: return "Remove Member"
+            case .warn: return "Warn Member"
+            case .dismiss: return "Dismiss Report"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .removeMember: return "Remove the reported member from the conversation"
+            case .warn: return "Issue a warning to the reported member"
+            case .dismiss: return "Dismiss this report as unfounded"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .removeMember: return "person.fill.xmark"
+            case .warn: return "exclamationmark.triangle"
+            case .dismiss: return "xmark.circle"
+            }
+        }
+
+        var isDestructive: Bool {
+            switch self {
+            case .removeMember, .dismiss: return true
+            case .warn: return false
+            }
+        }
+    }
+}
+
+// MARK: - Report Helpers
+
+extension MLSReportsViewModel {
+    /// Get display name for a DID (placeholder - would resolve in production)
+    func getDisplayName(for did: DID) -> String {
+        // In production, would resolve DID to handle/display name
+        did.description
+    }
+
+    /// Get relative time string for report
+    func getRelativeTime(for date: ATProtocolDate) -> String {
+        let now = Date()
+        let reportDate = date.date
+        let interval = now.timeIntervalSince(reportDate)
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: reportDate, relativeTo: now)
+    }
+
+    /// Get absolute date string for report
+    func getAbsoluteDate(for date: ATProtocolDate) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date.date)
+    }
+}

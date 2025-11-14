@@ -190,66 +190,75 @@ final class ListDiscoveryViewModel {
 
 struct ListDiscoveryView: View {
   @Environment(AppState.self) private var appState
-  @State private var viewModel: ListDiscoveryViewModel
+  @State private var viewModel: ListDiscoveryViewModel?
   @State private var navigationPath = NavigationPath()
   
   init() {
-    self._viewModel = State(wrappedValue: ListDiscoveryViewModel(appState: AppState.shared))
+    // ViewModel will be initialized in onAppear
   }
   
   var body: some View {
     NavigationStack(path: $navigationPath) {
-      contentView
-        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-        .navigationTitle("Discover Lists")
+      if let viewModel = viewModel {
+        contentView(viewModel: viewModel)
+          .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+          .navigationTitle("Discover Lists")
 #if os(iOS)
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
-    #endif
+        .toolbarTitleDisplayMode(.large)
 #endif
-        .onAppear {
-          viewModel = ListDiscoveryViewModel(appState: appState)
-          Task {
-            await viewModel.loadInitialData()
+          .searchable(text: Binding(
+            get: { viewModel.searchText },
+            set: { viewModel.searchText = $0 }
+          ), prompt: "Search lists")
+          .onChange(of: viewModel.searchText) { _, _ in
+            viewModel.searchLists()
           }
-        }
-        .searchable(text: $viewModel.searchText, prompt: "Search lists")
-        .onChange(of: viewModel.searchText) { _, _ in
-          viewModel.searchLists()
-        }
-        .alert("Error", isPresented: $viewModel.showingError) {
-          Button("OK") {
-            viewModel.showingError = false
+          .alert("Error", isPresented: Binding(
+            get: { viewModel.showingError },
+            set: { viewModel.showingError = $0 }
+          )) {
+            Button("OK") {
+              viewModel.showingError = false
+            }
+          } message: {
+            if let errorMessage = viewModel.errorMessage {
+              Text(errorMessage)
+            }
           }
-        } message: {
-          if let errorMessage = viewModel.errorMessage {
-            Text(errorMessage)
+          .navigationDestination(for: NavigationDestination.self) { destination in
+            NavigationHandler.viewForDestination(destination, path: $navigationPath, appState: appState, selectedTab: .constant(0))
           }
-        }
-        .navigationDestination(for: NavigationDestination.self) { destination in
-          NavigationHandler.viewForDestination(destination, path: $navigationPath, appState: appState, selectedTab: .constant(0))
-        }
+      } else {
+        ProgressView()
+      }
+    }
+    .task {
+      if viewModel == nil {
+        viewModel = ListDiscoveryViewModel(appState: appState)
+        await viewModel?.loadInitialData()
+      }
     }
   }
   
   @ViewBuilder
-  private var contentView: some View {
+  private func contentView(viewModel: ListDiscoveryViewModel) -> some View {
     VStack(spacing: 0) {
       // Filter Picker
-      filterPicker
+      filterPicker(viewModel: viewModel)
       
       // Content
       if viewModel.isLoading && viewModel.discoveredLists.isEmpty {
         loadingView
       } else if !viewModel.hasLists {
-        emptyStateView
+        emptyStateView(viewModel: viewModel)
       } else {
-        listsView
+        listsView(viewModel: viewModel)
       }
     }
   }
   
-  private var filterPicker: some View {
+  @ViewBuilder
+  private func filterPicker(viewModel: ListDiscoveryViewModel) -> some View {
     ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: 12) {
         ForEach(ListDiscoveryViewModel.ListFilter.allCases, id: \.self) { filter in
@@ -278,7 +287,8 @@ struct ListDiscoveryView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
-  private var emptyStateView: some View {
+  @ViewBuilder
+  private func emptyStateView(viewModel: ListDiscoveryViewModel) -> some View {
     VStack(spacing: 24) {
       Image(systemName: "magnifyingglass.circle")
         .font(.system(size: 64))
@@ -308,7 +318,8 @@ struct ListDiscoveryView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
-  private var listsView: some View {
+  @ViewBuilder
+  private func listsView(viewModel: ListDiscoveryViewModel) -> some View {
     List {
       ForEach(viewModel.displayedLists, id: \.uri) { list in
         DiscoveryListRow(
@@ -379,7 +390,7 @@ struct DiscoveryListRow: View {
       VStack(spacing: 12) {
         HStack(spacing: 12) {
           // List Avatar
-          LazyImage(url: list.avatar?.url) { state in
+          LazyImage(url: list.finalAvatarURL()) { state in
             if let image = state.image {
               image
                 .resizable()

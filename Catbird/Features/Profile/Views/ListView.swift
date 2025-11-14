@@ -288,6 +288,7 @@ struct ListItemRow: View {
 
 // Preview with safer URI creation
 // #Preview {
+//    @Previewable @Environment(AppState.self) var appState
 //    NavigationStack {
 //        ListView(
 //            listURI: ATProtocolURI(from: "at://did:example/app.bsky.graph.list/123")!,

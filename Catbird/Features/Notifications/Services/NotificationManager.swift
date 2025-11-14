@@ -4,6 +4,7 @@ import Foundation
 import Nuke
 import OSLog
 import Petrel
+import SwiftData
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -43,6 +44,9 @@ final class NotificationManager: NSObject {
 
   /// Reference to the app state for navigation
   private weak var appState: AppState?
+
+  /// Model context for SwiftData cache operations
+  @ObservationIgnored private var modelContext: ModelContext?
 
   /// Pending UI prompt when a re-attestation flow is required.
   var pendingReattestationPrompt: ReattestationPrompt?
@@ -429,7 +433,7 @@ final class NotificationManager: NSObject {
   /// Save chat notification preference for the current account
   private func saveChatNotificationPreference() {
     guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
-          let did = appState?.currentUserDID else {
+          let did = appState?.userDID else {
       return
     }
     
@@ -530,6 +534,12 @@ final class NotificationManager: NSObject {
 
     // Initialize widget data with current count
     updateWidgetUnreadCount(unreadCount)
+  }
+
+  /// Configure with model context for SwiftData cache operations
+  func setModelContext(_ context: ModelContext) {
+    self.modelContext = context
+    notificationLogger.debug("NotificationManager configured with ModelContext for caching")
   }
 
   // MARK: - Public API
@@ -3165,7 +3175,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return
     }
 
-    let client = await MainActor.run { appState.authManager.client }
+    let client = await MainActor.run { AppStateManager.shared.authentication.client }
     guard let client else {
       notificationLogger.debug("Cannot prefetch - no authenticated client")
       return
@@ -3194,13 +3204,67 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       notificationLogger.info("✅ Successfully prefetched post for notification")
 
-      // Cache images for immediate display
-      if let post = posts.first {
-        await prefetchPostImages(post)
+      // Cache post to SwiftData for instant display
+      if let postView = posts.first {
+        await savePrefetchedPostToCache(postView)
+
+        // Cache images for immediate display
+        await prefetchPostImages(postView)
       }
 
     } catch {
       notificationLogger.error("Error prefetching notification content: \(error.localizedDescription)")
+    }
+  }
+
+  /// Save prefetched post to SwiftData cache for instant display
+  private func savePrefetchedPostToCache(_ postView: AppBskyFeedDefs.PostView) async {
+    guard let modelContext = modelContext else {
+      notificationLogger.debug("Cannot cache post - modelContext unavailable")
+      return
+    }
+
+    // Convert PostView to FeedViewPost for caching
+    let feedViewPost = AppBskyFeedDefs.FeedViewPost(
+      post: postView,
+      reply: nil,
+      reason: nil,
+      feedContext: nil,
+      reqId: nil
+    )
+
+    // Create cached post with special feedType for notification prefetch
+    guard let cachedPost = CachedFeedViewPost(
+      from: feedViewPost,
+      cursor: nil,
+      feedType: "notification-prefetch",
+      feedOrder: nil
+    ) else {
+      notificationLogger.warning("Failed to create CachedFeedViewPost from prefetched post")
+      return
+    }
+
+    await MainActor.run {
+      // Check if post already exists to avoid duplicates
+      let postId = cachedPost.id
+      let descriptor = FetchDescriptor<CachedFeedViewPost>(
+        predicate: #Predicate<CachedFeedViewPost> { post in
+          post.id == postId
+        }
+      )
+
+      do {
+        let existing = try modelContext.fetch(descriptor)
+        if existing.isEmpty {
+          modelContext.insert(cachedPost)
+          try? modelContext.save()
+          notificationLogger.info("✅ Saved prefetched post to cache: \(postView.uri.uriString())")
+        } else {
+          notificationLogger.debug("Post already cached, skipping: \(postView.uri.uriString())")
+        }
+      } catch {
+        notificationLogger.error("Failed to save prefetched post to cache: \(error.localizedDescription)")
+      }
     }
   }
 
@@ -3259,25 +3323,19 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   @MainActor
   private func ensureActiveAccount(for did: String) async {
-    guard let appState = appState else {
-      notificationLogger.error("Cannot switch accounts - appState unavailable")
-      return
-    }
+    // Get the AppStateManager to handle account switching
+    let appStateManager = AppStateManager.shared
 
-    let authManager = appState.authManager
-    let currentDid = authManager.state.userDID
-
-    if currentDid == did {
+    // Check if we're already on the correct account
+    if appStateManager.lifecycle.userDID == did {
       return
     }
 
     notificationLogger.info("Switching active account to \(did) for notification navigation")
 
-    do {
-      try await appState.switchToAccount(did: did)
-    } catch {
-      notificationLogger.error("Failed to switch account for notification: \(error.localizedDescription)")
-    }
+    // Use AppStateManager to switch accounts - it manages multiple AppState instances
+    _ = await appStateManager.switchAccount(to: did)
+    notificationLogger.info("✅ Switched to account \(did) for notification navigation")
   }
 
   /// Handle navigation from a notification tap

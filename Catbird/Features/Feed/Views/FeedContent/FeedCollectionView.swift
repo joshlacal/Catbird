@@ -62,7 +62,7 @@ struct FeedCollectionView: View {
             "\(ObjectIdentifier(stateManager))-" +
             "\(stateManager.appState.themeDidChange)-" +
             "\(stateManager.appState.fontDidChange)-" +
-            "\(stateManager.appState.currentUserDID ?? "unknown-account-")" +
+            "\(stateManager.appState.userDID ?? "unknown-account-")" +
             "\(stateManager.currentFeedType.identifier)"
         )
         .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
@@ -102,40 +102,6 @@ extension FeedCollectionView {
             onScrollOffsetChanged: handler,
             headerView: headerView
         )
-    }
-}
-
-// MARK: - Preview Support
-
-#Preview {
-    @Previewable @State var navigationPath = NavigationPath()
-    
-    // Mock state manager for preview
-    let mockFeedManager = FeedManager(
-        client: AppState.shared.atProtoClient,
-        fetchType: .timeline
-    )
-    
-    let mockFeedModel = FeedModel(
-        feedManager: mockFeedManager,
-        appState: AppState.shared
-    )
-    
-    let mockStateManager = FeedStateManager(
-        appState: AppState.shared,
-        feedModel: mockFeedModel,
-        feedType: .timeline
-    )
-    
-    NavigationStack(path: $navigationPath) {
-        FeedCollectionView(
-            stateManager: mockStateManager,
-            navigationPath: $navigationPath
-        )
-        .navigationTitle("Feed")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
-    #endif
     }
 }
 

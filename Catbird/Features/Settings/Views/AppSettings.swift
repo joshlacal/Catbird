@@ -719,7 +719,16 @@ import OSLog
             saveChanges()
         }
     }
-    
+
+    // MLS Chat Settings
+    var mlsMessageRetentionDays: Int {
+        get { settingsModel?.mlsMessageRetentionDays ?? defaults.mlsMessageRetentionDays }
+        set {
+            settingsModel?.mlsMessageRetentionDays = newValue
+            saveChanges()
+        }
+    }
+
     // Developer Settings
     
     

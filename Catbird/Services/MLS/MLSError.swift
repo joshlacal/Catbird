@@ -12,7 +12,9 @@ public enum MLSError: LocalizedError {
     case conversationNotFound
     case noCurrentUser
     case operationFailed
-    
+    case welcomeProcessingTimeout(message: String)
+    case configurationError
+
     public var errorDescription: String? {
         switch self {
         case .conversationNotFound:
@@ -21,6 +23,11 @@ public enum MLSError: LocalizedError {
             return "No current user authenticated"
         case .operationFailed:
             return "The operation failed."
+        case .welcomeProcessingTimeout(message: let message):
+            return "Welcome message processing timed out: \(message)"
+        case .configurationError:
+            return "MLS client not properly configured"
+
         }
     }
 }

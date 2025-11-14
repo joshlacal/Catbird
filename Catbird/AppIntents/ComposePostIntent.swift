@@ -14,7 +14,7 @@ struct ComposePostIntent: AppIntent {
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
     await MainActor.run {
-      let appState = AppState.shared
+      let appState = AppStateManager.shared.lifecycle.appState
       var combined = text ?? ""
       if let u = url { combined += (combined.isEmpty ? "" : " ") + u.absoluteString }
       let draft = PostComposerDraft(
@@ -31,7 +31,9 @@ struct ComposePostIntent: AppIntent {
         parentPostURI: nil,
         quotedPostURI: nil
       )
-      appState.composerDraftManager.storeDraft(draft)
+      if let activeState = AppStateManager.shared.lifecycle.appState {
+        activeState.composerDraftManager.storeDraft(draft)
+      }
     }
     return .result(dialog: "Draft created. Open the app to continue composing.")
   }

@@ -6,7 +6,7 @@
 #ifndef MLSFFI_Bridging_h
 #define MLSFFI_Bridging_h
 
-// Import the UniFFI-generated header from the framework
+// Import the UniFFI-generated module header
 #import <MLSFFI/MLSFFIFFI.h>
 
 #endif /* MLSFFI_Bridging_h */

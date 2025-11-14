@@ -7,6 +7,7 @@ import SwiftUI
 import UserNotifications
 import AVKit
 import NaturalLanguage
+import GRDB
 
 /// Central state container for the Catbird app
 @Observable
@@ -48,27 +49,19 @@ final class AppState {
     }
   }
 
-  // MARK: - Singleton Pattern
-  
-  /// Shared instance to prevent multiple AppState creation
-  static let shared = AppState()
-  
   // MARK: - Core Properties
-  
-  // Static tracking to prevent multiple instances
-  private static var initializationCount = 0
-  #if DEBUG
-  // Reset method for debugging purposes only
-  static func resetInitializationCount() {
-    initializationCount = 0
-  }
-  #endif
+
+  /// User DID for this AppState instance (one AppState per account)
+  let userDID: String
+
+  /// Authenticated Petrel client (passed from AppStateManager)
+  let client: ATProtoClient
+
+  /// MLS database queue for encrypted messaging storage
+  private(set) var mlsDatabase: DatabaseQueue?
 
   // Logger
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "AppState")
-
-  // Authentication manager - handles all auth operations
-  @ObservationIgnored let authManager = AuthenticationManager()  // Instance of the AuthenticationManager class defined in AuthManager.swift
 
   // Graph manager - handles social graph operations
   @ObservationIgnored var graphManager: GraphManager
@@ -84,10 +77,7 @@ final class AppState {
   
   // Current user's profile data for optimistic updates
   var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
-  
-  // Current user's DID - stored to prevent unnecessary reloads from computed property observation
-  var currentUserDID: String?
-  
+
   // Account switching transition state for smooth UX
   var isTransitioningAccounts: Bool = false
   var prewarmingFeedData: [AppBskyFeedDefs.FeedViewPost]?
@@ -101,11 +91,11 @@ final class AppState {
   @ObservationIgnored private var lastSettingsHash: Int = 0
   @ObservationIgnored private var settingsUpdateDebounceTimer: Timer?
 
-  /// Post shadow manager for handling interaction state (likes, reposts)
-  @ObservationIgnored let postShadowManager = PostShadowManager.shared
+  /// Post shadow manager for handling interaction state (likes, reposts) - per account
+  @ObservationIgnored let postShadowManager: PostShadowManager
 
-  /// Bookmarks manager for handling bookmark operations
-  @ObservationIgnored let bookmarksManager = BookmarksManager.shared
+  /// Bookmarks manager for handling bookmark operations - per account
+  @ObservationIgnored let bookmarksManager: BookmarksManager
 
   /// Post manager for handling post creation and management
   @ObservationIgnored let postManager: PostManager
@@ -218,8 +208,16 @@ final class AppState {
   @ObservationIgnored
   private var mlsConversationManagerStorage: MLSConversationManager?
 
+  /// MLS event stream manager for real-time messaging
+  @ObservationIgnored
+  private var mlsEventStreamManagerStorage: MLSEventStreamManager?
+
   /// MLS conversations list for encrypted messaging
   var mlsConversations: [MLSConversationViewModel] = []
+
+  /// Profile enricher for MLS participants
+  @ObservationIgnored
+  let mlsProfileEnricher = MLSProfileEnricher()
   #endif
   
   
@@ -249,20 +247,18 @@ final class AppState {
 
   // MARK: - Initialization
 
-  private init() {
-    AppState.initializationCount += 1
-    logger.debug("AppState initializing (instance #\(AppState.initializationCount))")
-    
-    if AppState.initializationCount > 1 {
-      logger.warning("⚠️ Multiple AppState instances detected! This may indicate a problem with view recreation.")
-    }
-    
+  init(userDID: String, client: ATProtoClient) {
+    self.userDID = userDID
+    self.client = client
+    logger.info("AppState initializing for account: \(userDID)")
+
     let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1"
-    
+
     self.urlHandler = URLHandler()
 
-    // Initialize currentUserDID from auth manager
-    self.currentUserDID = authManager.state.userDID
+    // Create per-account manager instances
+    self.postShadowManager = PostShadowManager()
+    self.bookmarksManager = BookmarksManager()
 
     // Initialize composer draft manager
     self.composerDraftManager = ComposerDraftManager(appState: nil)
@@ -270,21 +266,21 @@ final class AppState {
     // Initialize theme manager with font manager dependency
     self._themeManager = ThemeManager(fontManager: _fontManager)
 
-    // Initialize post manager with nil client (will be updated later)
-    self.postManager = PostManager(client: nil, appState: nil)
+    // Initialize post manager with authenticated client
+    self.postManager = PostManager(client: client, appState: nil)
 
-    // Initialize graph manager with nil client (will be updated when auth is complete)
-    self.graphManager = GraphManager(atProtoClient: nil)
+    // Initialize graph manager with authenticated client
+    self.graphManager = GraphManager(atProtoClient: client)
 
-    // Initialize list manager with nil client (will be updated when auth is complete)
-    self.listManager = ListManager(client: nil, appState: nil)
-    
+    // Initialize list manager with authenticated client
+    self.listManager = ListManager(client: client, appState: nil)
+
     // Initialize post hiding manager (preferences manager will be set after auth)
     self.postHidingManager = PostHidingManager()
 
     #if os(iOS)
-    // Initialize chat manager with nil client (will be updated with self reference after initialization)
-    self.chatManager = ChatManager(client: nil, appState: nil)
+    // Initialize chat manager with authenticated client
+    self.chatManager = ChatManager(client: client, appState: nil)
     #endif
 
     // Load user settings
@@ -300,11 +296,15 @@ final class AppState {
       notificationManager.configure(with: self)
     }
 
-    // Set up observation of authentication state changes (simplified for FaultOrdering)
+    // NOTE: Auth state observation removed in new architecture
+    // Client is passed in already authenticated, no need to observe state changes
+    // Managers are initialized with the client in init
+
+    /* REMOVED: authStateObservationTask observer - no longer needed
     authStateObservationTask = Task { [weak self] in
       guard let self = self else { return }
 
-      for await state in authManager.stateChanges {
+      for await state in XYZ.stateChanges {
         Task { @MainActor in
           // Update currentUserDID when auth state changes
           let newDID = state.userDID
@@ -314,17 +314,23 @@ final class AppState {
           
           // When auth state changes, update ALL manager client references
           if case .authenticated = state {
-            self.postManager.updateClient(self.authManager.client)
-            self.preferencesManager.updateClient(self.authManager.client)
-            if !isFaultOrderingMode {
-              await self.notificationManager.updateClient(self.authManager.client)
+            // Setup MLS database for authenticated user
+            if let userDID = state.userDID {
+              self.logger.info("🔐 User authenticated - setting up MLS database")
+              await self.setupMLSDatabase(for: userDID)
             }
-            if let client = self.authManager.client {
+
+            self.postManager.updateClient(self.client)
+            self.preferencesManager.updateClient(self.client)
+            if !isFaultOrderingMode {
+              await self.notificationManager.updateClient(self.client)
+            }
+            if let client = self.client {
               self.graphManager = GraphManager(atProtoClient: client)
               self.listManager.updateClient(client)
               self.listManager.updateAppState(self)
               self.activitySubscriptionService.updateClient(client)
-              
+
               // Update preferences manager reference and load hidden posts
               Task { @MainActor in
                 self.postHidingManager.updatePreferencesManager(self.preferencesManager)
@@ -403,14 +409,20 @@ final class AppState {
           } else if case .unauthenticated = state {
             // Always clear clients when state becomes unauthenticated, regardless of initialization status.
             self.logger.info("Auth state changed to unauthenticated. Clearing clients.")
-            
+
+            // Close MLS database for logged out user
+            if let oldUserDID = self.currentUserDID {
+              self.logger.info("🔒 User logged out - closing MLS database")
+              self.clearMLSDatabase(for: oldUserDID)
+            }
+
             // Clear current user profile on logout/session expiry
             self.currentUserProfile = nil
             self.logger.debug("Cleared current user profile on unauthenticated state")
-            
+
             // Clear user-specific composer drafts
             self.logger.debug("Cleared composer drafts on unauthenticated state")
-            
+
             // Clear client on logout or session expiry
             self.postManager.updateClient(nil)
             self.preferencesManager.updateClient(nil)
@@ -442,6 +454,7 @@ final class AppState {
         }
       }
     }
+    */ // End of removed authStateObservationTask
 
     // Set up circular references after initialization
     postManager.updateAppState(self)
@@ -467,14 +480,30 @@ final class AppState {
     logger.debug("AppState initialization complete")
   }
 
-  
-  
+
+
   deinit {
     // Clean up notification observers
     NotificationCenter.default.removeObserver(self)
     // Cancel auth state observation task
     authStateObservationTask?.cancel()
     backgroundPollingTask?.cancel()
+  }
+
+  /// Cleanup method called when this AppState is evicted from cache
+  /// This cancels long-running tasks and releases resources without deallocating the object
+  @MainActor
+  func cleanup() {
+      logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
+
+    // Cancel long-running tasks
+    authStateObservationTask?.cancel()
+    authStateObservationTask = nil
+
+    backgroundPollingTask?.cancel()
+    backgroundPollingTask = nil
+
+    logger.debug("AppState cleanup complete")
   }
 
   // MARK: - Background Polling
@@ -510,72 +539,48 @@ final class AppState {
 
   @MainActor
   func initialize() async {
-    logger.info("🚀 Starting AppState.initialize()")
-    
+    logger.info("🚀 Starting AppState.initialize() for user: \(self.userDID)")
+
     // Fast path for FaultOrdering tests - skip expensive operations
     let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
                               ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
                               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    
+
     if isFaultOrderingMode {
       logger.info("⚡ FaultOrdering mode - using minimal initialization")
-      
-      // Even more aggressive optimization - skip auth entirely if we have any stored credentials
-      // This avoids both keychain operations and network token refresh
-      let hasStoredCredentials = UserDefaults(suiteName: "group.blue.catbird.shared")?.data(forKey: "lastLoggedInUser") != nil
-      
-      if hasStoredCredentials {
-        logger.info("⚡ Found stored credentials, marking as authenticated without keychain/network operations")
-        // Mark as authenticated without going through full initialization
-        // Note: authManager.setAuthenticatedStateForFaultOrdering() would be called here
-        // but we'll skip full auth for now to speed up FaultOrdering
-        self.isAuthManagerInitialized = true
-      } else {
-        logger.info("⚡ No stored credentials, doing minimal auth initialization")
-        await authManager.initialize()
-        self.isAuthManagerInitialized = true
-      }
-      
       // Skip ALL expensive operations
       logger.info("🏁 AppState.initialize() completed (FaultOrdering mode)")
       return
     }
-    
+
     // Normal initialization path
     // Configure Nuke image pipeline with GIF support
     configureImagePipeline()
-    
+
     configureURLHandler()
 
-    // Initialize AuthManager FIRST
-    await authManager.initialize()
-    // Mark AuthManager initialization as complete AFTER it finishes
-    self.isAuthManagerInitialized = true
-    logger.info(
-      "🏁 AuthManager.initialize() completed. isAuthManagerInitialized = \(self.isAuthManagerInitialized)"
-    )
+    // NOTE: Auth initialization removed - client is already authenticated and passed in init
+    // All managers were initialized with the client in init
 
-    // Update client references in all managers (potentially redundant if handled by stateChanges observer, but safe)
-    // This ensures managers have the correct client *after* initialization completes.
-    logger.info("Updating manager clients after AuthManager initialization.")
-      
-    postManager.updateClient(authManager.client)
-    preferencesManager.updateClient(authManager.client)
-    await notificationManager.updateClient(authManager.client)
-    if let client = authManager.client {
-      graphManager = GraphManager(atProtoClient: client)
-      listManager.updateClient(client)
-      listManager.updateAppState(self)
-      #if os(iOS)
-      chatManager.updateAppState(self) // Wire AppState reference to ChatManager
-      await chatManager.updateClient(client) // Update ChatManager client if uncommented
-      updateChatUnreadCount() // Update chat unread count
-      #endif
-    } else {
-      graphManager = GraphManager(atProtoClient: nil)  // Ensure graphManager is also updated if client is nil post-init
-      listManager.updateClient(nil)
-      listManager.updateAppState(nil)
-    }
+    // Setup MLS database for this authenticated user
+    logger.info("🔐 Setting up MLS database for: \(self.userDID)")
+    await setupMLSDatabase(for: userDID)
+
+    // Update manager client references (should already be set from init, but ensure consistency)
+    logger.info("Updating manager clients for authenticated user")
+
+    postManager.updateClient(client)
+    preferencesManager.updateClient(client)
+    await notificationManager.updateClient(client)
+    graphManager = GraphManager(atProtoClient: client)
+    listManager.updateClient(client)
+    listManager.updateAppState(self)
+
+    #if os(iOS)
+    chatManager.updateAppState(self)
+    await chatManager.updateClient(client)
+    updateChatUnreadCount()
+    #endif
 
     // Setup other components as needed (skip for FaultOrdering)
     if !isFaultOrderingMode {
@@ -597,7 +602,7 @@ final class AppState {
     // Get accounts list if authenticated (skip for FaultOrdering)
     if isAuthenticated && !isFaultOrderingMode {
       Task {
-        await authManager.refreshAvailableAccounts()
+        await AppStateManager.shared.authentication.refreshAvailableAccounts()
 
         // Synchronize server preferences with app settings
         do {
@@ -615,146 +620,67 @@ final class AppState {
     logger.info("🏁 AppState.initialize() completed")
   }
 
-  @MainActor
-  func switchToAccount(did: String) async throws {
-    logger.info("🔄 [APPSTATE-SWITCH] Starting switchToAccount for DID: \(did)")
-    logger.debug("🔄 [APPSTATE-SWITCH] Looking up account info in availableAccounts")
-
-    // Get account info before switching (for potential reauthentication)
-    let accountInfo = authManager.availableAccounts.first { $0.did == did }
-    logger.debug("🔄 [APPSTATE-SWITCH] Account info found: \(accountInfo != nil ? "yes" : "no")")
-    if let info = accountInfo {
-      logger.debug("🔄 [APPSTATE-SWITCH] Account - Handle: \(info.handle ?? "nil"), isActive: \(info.isActive)")
-    }
-
-    // Clear current user profile before switching
-    currentUserProfile = nil
-    logger.debug("🔄 [APPSTATE-SWITCH] Cleared current user profile")
-
-    // Yield before account switch to ensure UI updates
-    await Task.yield()
-    logger.debug("🔄 [APPSTATE-SWITCH] Yielded after resetting profile state")
-
-    do {
-      // Switch account in AuthManager
-      logger.info("🔄 [APPSTATE-SWITCH] Calling authManager.switchToAccount(did: \(did))")
-      try await authManager.switchToAccount(did: did)
-      logger.info("✅ [APPSTATE-SWITCH] AuthManager switched account successfully")
-
-      // Update client references in all managers and complete transition
-      // IMPORTANT: refreshAfterAccountSwitch sets isTransitioningAccounts = true,
-      // completes all setup, then sets it back to false
-      logger.debug("🔄 [APPSTATE-SWITCH] Calling refreshAfterAccountSwitch()")
-      await refreshAfterAccountSwitch()
-      logger.debug("✅ [APPSTATE-SWITCH] refreshAfterAccountSwitch completed")
-
-      // AFTER refresh completes, notify to clear old state managers
-      // This ensures new managers are created with fully configured client
-      logger.debug("🔄 [APPSTATE-SWITCH] Notifying account switched")
-      notifyAccountSwitched()
-
-      logger.info("✅ [APPSTATE-SWITCH] Account switch completed successfully")
-
-    } catch {
-      // If switching failed due to auth issues, trigger reauthentication
-      logger.error("❌ [APPSTATE-SWITCH] Account switch failed: \(error.localizedDescription)")
-      logger.error("❌ [APPSTATE-SWITCH] Error type: \(String(describing: type(of: error)))")
-
-      // Check if we have account info to attempt reauthentication
-      if let accountInfo = accountInfo {
-        let handle = accountInfo.handle ?? accountInfo.did
-        logger.info("🔐 [APPSTATE-SWITCH] Attempting to trigger reauthentication for handle: \(handle)")
-
-        do {
-          // Initiate reauthentication flow by starting OAuth for this account
-          logger.debug("🔐 [APPSTATE-SWITCH] Calling authManager.addAccount(handle: \(handle))")
-          let authURL = try await authManager.addAccount(handle: handle)
-          logger.info("✅ [APPSTATE-SWITCH] Got OAuth URL for reauthentication: \(authURL.absoluteString)")
-
-          // Store the pending reauthentication request for the UI to handle
-          logger.debug("🔐 [APPSTATE-SWITCH] Creating ReauthenticationRequest")
-          pendingReauthenticationRequest = ReauthenticationRequest(
-            handle: handle,
-            did: did,
-            authURL: authURL
-          )
-
-          logger.info("✅ [APPSTATE-SWITCH] Reauthentication flow initiated for handle: \(handle)")
-          logger.info("🌐 [APPSTATE-SWITCH] UI should present OAuth session for URL: \(authURL.absoluteString)")
-
-          // Don't re-throw the error here - the UI will handle reauthentication
-          logger.debug("ℹ️ [APPSTATE-SWITCH] Returning without throwing error (UI will handle reauth)")
-          return
-        } catch {
-          logger.error("❌ [APPSTATE-SWITCH] Failed to initiate reauthentication: \(error.localizedDescription)")
-          logger.error("❌ [APPSTATE-SWITCH] Reauthentication error type: \(String(describing: type(of: error)))")
-          // Re-throw the original account switch error
-          throw error
-        }
-      } else {
-        logger.warning("⚠️ [APPSTATE-SWITCH] No account info available for reauthentication")
-      }
-
-      // Re-throw the error if we couldn't initiate reauthentication
-      logger.debug("❌ [APPSTATE-SWITCH] Re-throwing error")
-      throw error
-    }
-  }
+  // REMOVED: switchToAccount(did:) method
+  // AppState represents a SINGLE account (userDID is immutable).
+  // Account switching is handled by AppStateManager, which creates/retrieves different AppState instances.
+  // See AppStateManager.switchAccount(to:withDraft:) for proper account switching.
 
   @MainActor
   func refreshAfterAccountSwitch() async {
     // Update client references in all managers
     logger.info("Refreshing data after account switch")
-    
+
     // Set transition state for smooth UX
     isTransitioningAccounts = true
 
-    // Clear current user profile to ensure fresh data
-    currentUserProfile = nil
-    logger.debug("SWITCH: Cleared current user profile in refresh")
-
-
     // Clear old prefetched data
     await prefetchedFeedCache.clear()
-    
+
     // Clear post interaction shadow state to prevent state leakage between accounts
     await postShadowManager.clearAll()
 
-    // Update client references in all managers
-    postManager.updateClient(authManager.client)
-    preferencesManager.updateClient(authManager.client)
-    await notificationManager.updateClient(authManager.client)
+    // Setup MLS database for this account (AppState represents single account with userDID)
+    logger.info("🔐 Setting up MLS database for account: \(self.userDID)")
+    await setupMLSDatabase(for: userDID)
+
+    // Update client references in all managers (client is immutable authenticated client for this account)
+    postManager.updateClient(client)
+    preferencesManager.updateClient(client)
+    await notificationManager.updateClient(client)
     #if os(iOS)
     chatManager.updateAppState(self) // Wire AppState reference to ChatManager
-    await chatManager.updateClient(authManager.client) // Update ChatManager client
+    await chatManager.updateClient(client) // Update ChatManager client
     updateChatUnreadCount() // Update chat unread count
 
     // Reset MLS managers for account switch
+    // Stop all active event stream subscriptions before switching
+    self.mlsEventStreamManagerStorage?.stopAll()
+    self.mlsEventStreamManagerStorage = nil
     self.mlsConversationManagerStorage = nil
     self.mlsAPIClientStorage = nil
 
-    // Switch MLS singleton to new user (saves old user, loads new user)
-    if let newUserDID = currentUserDID {
-      do {
-        try await MLSClient.shared.setUser(newUserDID)
-        logger.info("✅ MLS: Switched to user \(newUserDID)")
-      } catch {
-        logger.error("⚠️ MLS: Failed to switch user: \(error.localizedDescription)")
-      }
+    // Load MLS storage for this user
+    logger.info("MLS: Loading storage for user \(self.userDID)")
+    do {
+      try await MLSClient.shared.loadStorage(for: userDID)
+      logger.info("✅ MLS: Loaded storage for user \(self.userDID)")
+    } catch {
+      logger.error("⚠️ MLS: Failed to load storage for user: \(error.localizedDescription)")
     }
 
     // Initialize MLS for the new account
-    await initializeMLS()
-    #endif
-    if let client = authManager.client {
-      graphManager = GraphManager(atProtoClient: client)
-      listManager.updateClient(client)
-      listManager.updateAppState(self)
-    } else {
-      graphManager = GraphManager(atProtoClient: nil)
-      listManager.updateClient(nil)
-      listManager.updateAppState(nil)
+    do {
+      try await initializeMLS()
+      logger.info("✅ MLS: Initialized successfully")
+    } catch {
+      logger.error("⚠️ MLS: Initialization failed: \(error.localizedDescription)")
+      // Don't fail account setup if MLS init fails - user can retry later
     }
+    #endif
+    // Client is non-optional now, so we can use it directly
+    graphManager = GraphManager(atProtoClient: client)
+    listManager.updateClient(client)
+    listManager.updateAppState(self)
 
     // Reload preferences
     do {
@@ -769,13 +695,9 @@ final class AppState {
       logger.error("Failed to refresh preferences after account switch: \(error)")
     }
 
-    // Load the new user's profile
-    if let userDID = currentUserDID {
-      logger.info("Loading current user profile for new account: \(userDID)")
-      await loadCurrentUserProfile(did: userDID)
-    } else {
-      logger.warning("No current user DID available after account switch")
-    }
+    // Load this account's profile
+    logger.info("Loading current user profile for account: \(self.userDID)")
+    await loadCurrentUserProfile(did: userDID)
     
     // Pre-warm the following feed for smooth transition
     await prewarmFollowingFeed()
@@ -787,10 +709,8 @@ final class AppState {
   /// Pre-warms the Following feed for the new account to enable smooth crossfade
   @MainActor
   private func prewarmFollowingFeed() async {
-    guard let client = authManager.client else {
-      logger.debug("No client available for feed pre-warming")
-      return
-    }
+    // Use this AppState's authenticated client
+    let client = self.client
     
     do {
       logger.info("Pre-warming following feed for smooth account transition")
@@ -825,11 +745,11 @@ final class AppState {
 
   // MARK: - OAuth Callback Handling
 
-  /// Handles OAuth callback URLs - delegates to auth manager
+  /// Handles OAuth callback URLs - delegates to AppStateManager's auth manager
   @MainActor
   func handleOAuthCallback(_ url: URL) async throws {
     logger.info("AppState handling OAuth callback")
-    try await authManager.handleCallback(url)
+    try await AppStateManager.shared.authentication.handleCallback(url)
   }
 
   /// Force updates the authentication state (used in rare cases where state updates aren't properly propagated)
@@ -865,9 +785,9 @@ final class AppState {
 
   // MARK: - Convenience Accessors
 
-  /// Access to the AT Protocol client
+  /// Access to the AT Protocol client (returns this AppState's authenticated client)
   var atProtoClient: ATProtoClient? {
-    authManager.client
+    client
   }
 
 #if canImport(FoundationModels)
@@ -877,7 +797,7 @@ final class AppState {
       return blueskyAgentStorage
     }
 
-    let agent = BlueskyIntelligenceAgent(client: authManager.client)
+    let agent = BlueskyIntelligenceAgent(client: client)
     blueskyAgentStorage = agent
     return agent
   }
@@ -885,17 +805,19 @@ final class AppState {
 
   /// Update post manager when client changes
   private func updatePostManagerClient() {
-    postManager.updateClient(authManager.client)
+    postManager.updateClient(client)
   }
 
   /// Check if user is authenticated
+  // NOTE: In new architecture, AppState only exists for authenticated users
   var isAuthenticated: Bool {
-    authManager.state.isAuthenticated
+    true  // AppState is only created for authenticated accounts
   }
 
   /// Current auth state
+  /// NOTE: This property is deprecated in new architecture - access auth via AppStateManager
   var authState: AuthState {
-    authManager.state
+    .authenticated(userDID: userDID)  // AppState is always authenticated
   }
 
   /// The shared Nuke image pipeline
@@ -907,62 +829,158 @@ final class AppState {
   /// Get or create MLS API client
   @MainActor
   func getMLSAPIClient() async -> MLSAPIClient? {
-    guard let client = authManager.client else { return nil }
+    // Use this AppState's authenticated client
+    let client = self.client
 
     if let existing = mlsAPIClientStorage {
+      logger.debug("MLS: Reusing existing API client")
       return existing
     }
 
+    logger.info("MLS: Creating new API client for production environment")
     // Create MLS client with production environment
     let mlsClient = await MLSAPIClient(
       client: client,
       environment: .production
     )
     mlsAPIClientStorage = mlsClient
+    logger.info("MLS: API client created successfully")
     return mlsClient
   }
 
   /// Get or create MLS conversation manager
   @MainActor
   func getMLSConversationManager() async -> MLSConversationManager? {
-    guard let apiClient = await getMLSAPIClient(),
-          let userDid = currentUserDID else { return nil }
+    // Use this AppState's userDID (AppState represents single authenticated account)
+    let userDid = self.userDID
+    logger.debug("MLS: Using userDID: \(userDid)")
 
-    if let existing = mlsConversationManagerStorage {
-      return existing
+    guard let apiClient = await getMLSAPIClient() else {
+      logger.error("MLS: Cannot create conversation manager - failed to get API client")
+      return nil
     }
 
+    // Check if existing manager is for the same user
+    if let existing = mlsConversationManagerStorage {
+      // Verify the manager is for the current user
+      if existing.userDid == userDid {
+        logger.debug("MLS: Reusing existing conversation manager for user: \(userDid)")
+        return existing
+      } else {
+        logger.warning("MLS: Existing conversation manager is for different user (\(existing.userDid ?? "nil")), creating new one")
+        mlsConversationManagerStorage = nil
+      }
+    }
+
+    // Ensure database is available
+    guard let database = mlsDatabase else {
+      logger.error("MLS: Cannot create conversation manager - database not initialized")
+      return nil
+    }
+
+    // Ensure ATProtoClient is available for device registration
+    guard let atProtoClient = atProtoClient else {
+      logger.error("MLS: Cannot create conversation manager - atProtoClient is nil")
+      return nil
+    }
+
+    logger.info("MLS: Creating new conversation manager for user: \(userDid)")
     let manager = MLSConversationManager(
       apiClient: apiClient,
-      userDid: userDid
+      database: database,
+      userDid: userDid,
+      atProtoClient: atProtoClient
     )
 
     // Initialize the manager before storing and returning it
     do {
       try await manager.initialize()
-      logger.info("MLS: Created and initialized new conversation manager")
+      logger.info("MLS: ✅ Created and initialized new conversation manager successfully")
     } catch {
-      logger.error("MLS: Failed to initialize conversation manager: \(error.localizedDescription)")
+      logger.error("MLS: ❌ Failed to initialize conversation manager: \(error.localizedDescription)")
+      logger.error("MLS: Initialization error details: \(String(describing: error))")
       return nil
     }
 
     mlsConversationManagerStorage = manager
     return manager
   }
+
+  /// Get or create MLS event stream manager
+  @MainActor
+  func getMLSEventStreamManager() async -> MLSEventStreamManager? {
+    guard let apiClient = await getMLSAPIClient() else {
+      logger.error("MLS: Cannot create event stream manager - failed to get API client")
+      return nil
+    }
+
+    if let existing = mlsEventStreamManagerStorage {
+      logger.debug("MLS: Reusing existing event stream manager")
+      return existing
+    }
+
+    logger.info("MLS: Creating new event stream manager")
+    let manager = MLSEventStreamManager(apiClient: apiClient)
+    mlsEventStreamManagerStorage = manager
+    logger.info("MLS: Event stream manager created successfully")
+    return manager
+  }
 #endif
 
+  // MARK: - MLS Database Management
+
+  /// Setup encrypted MLS database for current user (async to avoid main thread blocking)
+  /// - Parameter userDID: User's decentralized identifier
+  @MainActor
+  private func setupMLSDatabase(for userDID: String) async {
+    let start = Date()
+
+    do {
+      // Get database asynchronously (non-blocking)
+      let database = try await MLSGRDBManager.shared.getDatabaseQueue(for: userDID)
+
+      // Store in AppState
+      self.mlsDatabase = database
+
+      let duration = Date().timeIntervalSince(start)
+      logger.info("✅ MLS database configured for \(userDID) in \(Int(duration * 1000))ms")
+
+    } catch {
+      logger.error("❌ Failed to setup MLS database: \(error.localizedDescription)")
+      self.mlsDatabase = nil
+    }
+  }
+
+  /// Clear MLS database for current user (called on logout)
+  @MainActor
+  private func clearMLSDatabase(for userDID: String) {
+    logger.info("🔒 Closing MLS database for user: \(userDID)")
+
+    // Close the database
+    MLSGRDBManager.shared.closeDatabase(for: userDID)
+
+    // Clear local reference
+    self.mlsDatabase = nil
+  }
+
   // MARK: - User Profile Methods
-  
+
   /// Load the current user's profile for optimistic updates
   @MainActor
   private func loadCurrentUserProfile(did: String) async {
-    guard let client = atProtoClient else { return }
-    
+    logger.info("[AVATAR] 🔄 Starting to load current user profile for DID: \(did)")
+
+    guard let client = atProtoClient else {
+      logger.error("[AVATAR] ❌ Cannot load profile - atProtoClient is nil")
+      return
+    }
+
     do {
+      logger.debug("[AVATAR] 📡 Fetching profile from server...")
       let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
         input: .init(actor: ATIdentifier(string: did))
       )
-      
+
       if responseCode == 200, let profile = profileData {
         // Convert ProfileViewDetailed to ProfileViewBasic
         currentUserProfile = AppBskyActorDefs.ProfileViewBasic(
@@ -977,13 +995,16 @@ final class AppState {
           verification: profile.verification,
           status: profile.status
         )
-        
-        logger.debug("Loaded current user profile: @\(profile.handle.description)")
+
+        logger.info("[AVATAR] ✅ Loaded current user profile: @\(profile.handle.description)")
+        logger.debug("[AVATAR] 📸 Avatar URI: \(profile.avatar?.uriString() ?? "nil")")
+        logger.debug("[AVATAR] 🌐 Avatar finalURL: \(profile.finalAvatarURL()?.absoluteString ?? "nil")")
+        logger.debug("[AVATAR] 💾 currentUserProfile set, views should update now")
       } else {
-        logger.error("Failed to load current user profile: HTTP \(responseCode)")
+        logger.error("[AVATAR] ❌ Failed to load current user profile: HTTP \(responseCode)")
       }
     } catch {
-      logger.error("Failed to load current user profile: \(error.localizedDescription)")
+      logger.error("[AVATAR] ❌ Failed to load current user profile: \(error.localizedDescription)")
     }
   }
 
@@ -1260,28 +1281,21 @@ final class AppState {
 
   /// Initialize MLS for the current account
   @MainActor
-  func initializeMLS() async {
+  func initializeMLS() async throws {
     guard let manager = await getMLSConversationManager() else {
       logger.warning("MLS: No conversation manager available")
-      return
+      throw MLSInitializationError.noConversationManager
     }
 
-    do {
-      logger.info("MLS: Initializing for current account")
+    logger.info("MLS: Initializing for current account")
 
-      // Initialize the MLS crypto context
-      try await manager.initialize()
+    // Initialize the MLS crypto context
+    try await manager.initialize()
 
-      // Publish initial key package for this user
-      try await manager.publishKeyPackage()
+    // Load existing conversations (this processes pending Welcome messages)
+    await loadMLSConversations()
 
-      // Load existing conversations
-      await loadMLSConversations()
-
-      logger.info("MLS: Successfully initialized")
-    } catch {
-      logger.error("MLS: Initialization failed: \(error.localizedDescription)")
-    }
+    logger.info("MLS: Successfully initialized")
   }
 
   /// Load MLS conversations from the server
@@ -1299,6 +1313,37 @@ final class AppState {
 
       // Map conversations from manager to view models
       mlsConversations = Array(manager.conversations.values).map { $0.toViewModel() }
+
+      // Enrich participant data with Bluesky profiles
+      if let client = atProtoClient {
+        await mlsProfileEnricher.enrichConversations(mlsConversations, using: client)
+      }
+
+      // Update conversation participants with enriched profile data
+      mlsConversations = mlsConversations.map { conversation in
+        let enrichedParticipants = conversation.participants.map { participant in
+          if let profileData = mlsProfileEnricher.getCachedProfile(for: participant.id) {
+            return MLSParticipantViewModel(
+              id: participant.id,
+              handle: profileData.handle,
+              displayName: profileData.displayName,
+              avatarURL: profileData.avatarURL
+            )
+          }
+          return participant
+        }
+
+        return MLSConversationViewModel(
+          id: conversation.id,
+          name: conversation.name,
+          participants: enrichedParticipants,
+          lastMessagePreview: conversation.lastMessagePreview,
+          lastMessageTimestamp: conversation.lastMessageTimestamp,
+          unreadCount: conversation.unreadCount,
+          isGroupChat: conversation.isGroupChat,
+          groupId: conversation.groupId
+        )
+      }
 
       logger.info("MLS: Synced \(self.mlsConversations.count) conversations from server")
     } catch {
@@ -1384,31 +1429,31 @@ final class AppState {
 
   // MARK: - Authentication Methods (for backward compatibility)
 
-  /// Logs out the current user (delegates to AuthenticationManager)
+  /// Logs out the current user (delegates to AppStateManager's authentication manager)
   @MainActor
   func handleLogout() async throws {
-    logger.info("Logout requested - delegating to AuthManager")
+    logger.info("Logout requested - delegating to AppStateManager")
 
     // Clear preferences before logging out
     await preferencesManager.clearAllPreferences()
     logger.info("User preferences cleared during logout")
 
-    // Perform the actual logout
-    await authManager.logout()
+    // Perform the actual logout via AppStateManager
+    await AppStateManager.shared.logout()
   }
 
-  /// Add a new account
+  /// Add a new account (delegates to AppStateManager's authentication manager)
   @MainActor
   func addAccount(handle: String) async throws -> URL {
     logger.info("Adding new account: \(handle)")
-    return try await authManager.addAccount(handle: handle)
+    return try await AppStateManager.shared.authentication.addAccount(handle: handle)
   }
 
-  /// Remove an account
+  /// Remove an account (delegates to AppStateManager's authentication manager)
   @MainActor
   func removeAccount(did: String) async throws {
     logger.info("Removing account: \(did)")
-    try await authManager.removeAccount(did: did)
+    try await AppStateManager.shared.authentication.removeAccount(did: did)
 
     // Check if we still have any accounts
     if isAuthenticated {
@@ -1634,8 +1679,8 @@ final class AppState {
   /// This ensures consistent filtering across feeds, threads, profiles, and search
   @MainActor
   func buildFilterSettings() async -> FeedTunerSettings {
-    // Get current user DID
-      let currentUserDid = authManager.state.userDID
+    // Get current user DID (AppState represents single account)
+    let currentUserDid = self.userDID
     
     // Get moderation preferences from PreferencesManager
     var contentLabelPrefs: [ContentLabelPreference] = []
@@ -1687,6 +1732,19 @@ final class AppState {
       hiddenPosts: hiddenPosts,
       currentUserDid: currentUserDid
     )
+  }
+}
+
+// MARK: - MLS Initialization Errors
+
+enum MLSInitializationError: Error, LocalizedError {
+  case noConversationManager
+
+  var errorDescription: String? {
+    switch self {
+    case .noConversationManager:
+      return "MLS conversation manager not available"
+    }
   }
 }
 

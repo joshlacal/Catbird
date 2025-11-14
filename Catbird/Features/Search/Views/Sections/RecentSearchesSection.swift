@@ -213,6 +213,7 @@ extension RecentSearchesSection {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     RecentSearchesSection(
         searches: ["bluesky", "atproto", "trending", "blockchain", "pets"],
         onSelect: { _ in },

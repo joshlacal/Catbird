@@ -6,6 +6,7 @@
 	<array>
 		<string>blue.catbird.posting.retry</string>
 		<string>blue.catbird.chat.refresh</string>
+		<string>blue.catbird.cache.refresh</string>
 	</array>
 	<key>DCAppAttestService</key>
 	<dict>

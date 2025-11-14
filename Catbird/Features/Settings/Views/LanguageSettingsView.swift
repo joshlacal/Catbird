@@ -747,8 +747,9 @@ struct ContentLanguageRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         LanguageSettingsView()
-            .environment(AppState.shared)
+            .environment(appState)
     }
 }

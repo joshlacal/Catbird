@@ -22,11 +22,11 @@ struct ThreadPostEditorView: View {
     HStack(alignment: .top, spacing: 12) {
       // Avatar
       AvatarView(
-        did: appState.currentUserDID,
+        did: appState.userDID,
         client: appState.atProtoClient,
         size: 60
       )
-      .id("avatar:\(appState.currentUserDID ?? "unknown"):\(appState.currentUserProfile?.avatar?.description ?? "")")
+      .id("avatar:\(appState.userDID ?? "unknown"):\(appState.currentUserProfile?.avatar?.description ?? "")")
       .frame(width: 60, height: 60)
 
       // Text preview (no gray background)

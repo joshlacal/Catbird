@@ -60,8 +60,6 @@ echo ""
 echo "📄 Checking Core Files..."
 check_file "$STORAGE_DIR/MLSStorage.swift" "MLSStorage.swift"
 check_file "$STORAGE_DIR/MLSKeychainManager.swift" "MLSKeychainManager.swift"
-check_file "$STORAGE_DIR/MLSStorageMigration.swift" "MLSStorageMigration.swift"
-check_file "$STORAGE_DIR/MLSStorageIntegration.swift" "MLSStorageIntegration.swift"
 echo ""
 
 echo "📊 Checking Core Data Model..."
@@ -128,13 +126,6 @@ else
     echo -e "${RED}✗${NC} MLSKeychainManager class not found"
     all_checks_passed=false
 fi
-
-if grep -q "class MLSStorageMigration" "$STORAGE_DIR/MLSStorageMigration.swift"; then
-    echo -e "${GREEN}✓${NC} MLSStorageMigration class defined"
-else
-    echo -e "${RED}✗${NC} MLSStorageMigration class not found"
-    all_checks_passed=false
-fi
 echo ""
 
 echo "🧪 Checking Test Coverage..."
@@ -149,7 +140,7 @@ echo ""
 
 echo "📝 Summary Report..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Implementation Files:    7"
+echo "Implementation Files:    2"
 echo "Swift Files:            $swift_files"
 echo "Lines of Code:          $total_lines"
 echo "Test Methods:           $total_tests"

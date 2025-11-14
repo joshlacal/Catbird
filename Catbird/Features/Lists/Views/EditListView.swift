@@ -161,77 +161,97 @@ final class EditListViewModel {
 struct EditListView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
-  @State private var viewModel: EditListViewModel
+  @State private var viewModel: EditListViewModel?
   @State private var showingDiscardAlert = false
   
   let listURI: String
   
   init(listURI: String) {
     self.listURI = listURI
-    self._viewModel = State(wrappedValue: EditListViewModel(listURI: listURI, appState: AppState.shared))
   }
   
   var body: some View {
     NavigationStack {
-      Group {
-        if viewModel.isLoading {
-          loadingView
-        } else {
-          formView
+      contentView
+        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+        .navigationTitle("Edit List")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+          toolbarContent
+        }
+        .task {
+          viewModel = EditListViewModel(listURI: listURI, appState: appState)
+          if let vm = viewModel {
+            await vm.loadListData()
+          }
+        }
+        .alert("Discard Changes?", isPresented: $showingDiscardAlert) {
+          Button("Discard", role: .destructive) {
+            dismiss()
+          }
+          Button("Keep Editing", role: .cancel) {}
+        } message: {
+          Text("You have unsaved changes. Are you sure you want to discard them?")
+        }
+        .alert("Error", isPresented: errorAlertBinding) {
+          Button("OK") {
+            viewModel?.showingError = false
+          }
+        } message: {
+          if let errorMessage = viewModel?.errorMessage {
+            Text(errorMessage)
+          }
+        }
+    }
+  }
+  
+  @ViewBuilder
+  private var contentView: some View {
+    if let viewModel = viewModel {
+      if viewModel.isLoading {
+        loadingView
+      } else {
+        formView(viewModel: viewModel)
+      }
+    } else {
+      ProgressView()
+    }
+  }
+  
+  @ToolbarContentBuilder
+  private var toolbarContent: some ToolbarContent {
+    if let viewModel = viewModel {
+      ToolbarItem(placement: .cancellationAction) {
+        Button("Cancel", systemImage: "xmark") {
+          if viewModel.hasUnsavedChanges {
+            showingDiscardAlert = true
+          } else {
+            dismiss()
+          }
         }
       }
-      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-      .navigationTitle("Edit List")
-      #if os(iOS)
-      .toolbarTitleDisplayMode(.inline)
-      #endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel", systemImage: "xmark") {
-            if viewModel.hasUnsavedChanges {
-              showingDiscardAlert = true
-            } else {
+      
+      ToolbarItem(placement: .primaryAction) {
+        Button("Save") {
+          Task {
+            await viewModel.saveChanges()
+            if viewModel.errorMessage == nil {
               dismiss()
             }
           }
         }
-        
-        ToolbarItem(placement: .primaryAction) {
-          Button("Save") {
-            Task {
-              await viewModel.saveChanges()
-              if viewModel.errorMessage == nil {
-                dismiss()
-              }
-            }
-          }
-          .disabled(!viewModel.isFormValid || viewModel.isSaving)
-        }
-      }
-      .onAppear {
-        viewModel = EditListViewModel(listURI: listURI, appState: appState)
-        Task {
-          await viewModel.loadListData()
-        }
-      }
-      .alert("Discard Changes?", isPresented: $showingDiscardAlert) {
-        Button("Discard", role: .destructive) {
-          dismiss()
-        }
-        Button("Keep Editing", role: .cancel) {}
-      } message: {
-        Text("You have unsaved changes. Are you sure you want to discard them?")
-      }
-      .alert("Error", isPresented: $viewModel.showingError) {
-        Button("OK") {
-          viewModel.showingError = false
-        }
-      } message: {
-        if let errorMessage = viewModel.errorMessage {
-          Text(errorMessage)
-        }
+        .disabled(!viewModel.isFormValid || viewModel.isSaving)
       }
     }
+  }
+  
+  private var errorAlertBinding: Binding<Bool> {
+    Binding(
+      get: { viewModel?.showingError ?? false },
+      set: { newValue in viewModel?.showingError = newValue }
+    )
   }
   
   // MARK: - View Components
@@ -247,25 +267,27 @@ struct EditListView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
-  private var formView: some View {
+  @ViewBuilder
+  private func formView(viewModel: EditListViewModel) -> some View {
+    let bindableViewModel = Bindable(viewModel)
     Form {
       // Avatar Section
       Section {
-        avatarSection
+        avatarSection(viewModel: bindableViewModel)
       } header: {
         Text("List Avatar")
       }
       
       // Basic Info Section
       Section {
-        basicInfoSection
+        basicInfoSection(viewModel: bindableViewModel)
       } header: {
         Text("List Information")
       }
       
       // List Type Section
       Section {
-        listTypeSection
+        listTypeSection(viewModel: viewModel)
       } header: {
         Text("List Type")
       } footer: {
@@ -288,11 +310,12 @@ struct EditListView: View {
     }
   }
   
-  private var avatarSection: some View {
+  @ViewBuilder
+  private func avatarSection(viewModel: Bindable<EditListViewModel>) -> some View {
     HStack(spacing: 16) {
       // Current Avatar Display
       Group {
-        if let avatarData = viewModel.avatarData {
+        if let avatarData = viewModel.wrappedValue.avatarData {
           #if os(iOS)
           if let uiImage = UIImage(data: avatarData) {
             Image(uiImage: uiImage)
@@ -306,7 +329,7 @@ struct EditListView: View {
               .scaledToFill()
           }
           #endif
-        } else if let avatarURLString = viewModel.listDetails?.avatar?.uriString(),
+        } else if let avatarURLString = viewModel.wrappedValue.listDetails?.avatar?.uriString(),
                    let avatarURL = URL(string: avatarURLString) {
           LazyImage(url: avatarURL) { state in
             if let image = state.image {
@@ -333,7 +356,7 @@ struct EditListView: View {
           .foregroundStyle(.secondary)
         
         PhotosPicker(
-          selection: $viewModel.selectedImage,
+          selection: viewModel.selectedImage,
           matching: .images
         ) {
           Text("Choose Photo")
@@ -358,23 +381,24 @@ struct EditListView: View {
       }
   }
   
-  private var basicInfoSection: some View {
+  @ViewBuilder
+  private func basicInfoSection(viewModel: Bindable<EditListViewModel>) -> some View {
     VStack(spacing: 16) {
       // Name Field
       VStack(alignment: .leading, spacing: 4) {
         HStack {
           Text("Name")
           Spacer()
-          Text("\(viewModel.characterCount)/64")
+          Text("\(viewModel.wrappedValue.characterCount)/64")
             .font(.caption)
-            .foregroundStyle(viewModel.isNameValid ? Color.secondary : Color.red)
+            .foregroundStyle(viewModel.wrappedValue.isNameValid ? Color.secondary : Color.red)
         }
         
-        TextField("My awesome list", text: $viewModel.name)
+        TextField("My awesome list", text: viewModel.name)
           .textFieldStyle(.roundedBorder)
           .overlay(
             RoundedRectangle(cornerRadius: 8)
-              .stroke(viewModel.isNameValid ? Color.clear : Color.red, lineWidth: 1)
+              .stroke(viewModel.wrappedValue.isNameValid ? Color.clear : Color.red, lineWidth: 1)
           )
       }
       
@@ -383,27 +407,28 @@ struct EditListView: View {
         HStack {
           Text("Description")
           Spacer()
-          Text("\(viewModel.descriptionCharacterCount)/300")
+          Text("\(viewModel.wrappedValue.descriptionCharacterCount)/300")
             .font(.caption)
-            .foregroundStyle(viewModel.isDescriptionValid ? Color.secondary : Color.red)
+            .foregroundStyle(viewModel.wrappedValue.isDescriptionValid ? Color.secondary : Color.red)
         }
         
         TextField(
           "A curated collection of accounts...",
-          text: $viewModel.description,
+          text: viewModel.description,
           axis: .vertical
         )
         .textFieldStyle(.roundedBorder)
         .lineLimit(3...6)
         .overlay(
           RoundedRectangle(cornerRadius: 8)
-            .stroke(viewModel.isDescriptionValid ? Color.clear : Color.red, lineWidth: 1)
+            .stroke(viewModel.wrappedValue.isDescriptionValid ? Color.clear : Color.red, lineWidth: 1)
         )
       }
     }
   }
   
-  private var listTypeSection: some View {
+  @ViewBuilder
+  private func listTypeSection(viewModel: EditListViewModel) -> some View {
     VStack(spacing: 12) {
       ForEach([
         AppBskyGraphDefs.ListPurpose.appbskygraphdefscuratelist,

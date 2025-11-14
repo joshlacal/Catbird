@@ -277,7 +277,7 @@ struct ChatPostEmbedView: View {
     VStack(alignment: .leading, spacing: 8) {
       // Post header with author info
       HStack(spacing: 8) {
-        AsyncImage(url: postEmbedData.postView.author.avatar?.url) { image in
+        AsyncImage(url: postEmbedData.postView.author.finalAvatarURL()) { image in
           image
             .resizable()
             .aspectRatio(contentMode: .fill)

@@ -113,7 +113,7 @@ struct ConversationInvitationRow: View {
   @State private var isProcessing = false
   
   private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
-    conversation.members.filter { $0.did.didString() != appState.currentUserDID }
+    conversation.members.filter { $0.did.didString() != appState.userDID }
   }
   
   var body: some View {
@@ -208,9 +208,10 @@ struct ConversationInvitationRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   NavigationView {
     ConversationInvitationsView()
-      .environment(AppState.shared)
+      .environment(AppStateManager.shared)
   }
 }
 

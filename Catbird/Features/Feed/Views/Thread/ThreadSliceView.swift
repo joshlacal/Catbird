@@ -38,7 +38,7 @@ struct ThreadSliceItemView: View {
             // Author info
             HStack {
                 AsyncProfileImage(
-                    url: item.post.author.avatar?.url,
+                    url: item.post.author.finalAvatarURL(),
                     size: 24
                 )
                 
@@ -73,6 +73,7 @@ struct ThreadSliceItemView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     // Preview would need mock data
     EmptyView()
 }

@@ -199,6 +199,7 @@ struct SaveSearchSheet: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     SaveSearchSheet(
         query: "artificial intelligence",
         filters: AdvancedSearchParams(),

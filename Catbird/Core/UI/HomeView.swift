@@ -159,14 +159,22 @@ struct HomeView: View {
       Button(action: {
         showingSettings = true
       }) {
-        AvatarView(
-          did: appState.currentUserDID,
+        let avatarURL = appState.currentUserProfile?.finalAvatarURL()
+        let _ = {
+          logger.debug("[AVATAR] 🎨 HomeView rendering avatar - DID: \(appState.userDID ?? "nil"), avatarURL: \(avatarURL?.absoluteString ?? "nil"), profileLoaded: \(appState.currentUserProfile != nil)")
+        }()
+
+        return AvatarView(
+          did: appState.userDID,
           client: appState.atProtoClient,
-          size: 30
+          size: 30,
+          avatarURL: avatarURL
         )
         .frame(width: 30, height: 30)
-        .aspectRatio(1, contentMode: .fit)
+        .clipShape(Circle())
+        .id("\(appState.userDID ?? "unknown")-\(appState.currentUserProfile?.avatar?.description ?? "noavatar")")
       }
+      .buttonStyle(.plain)
       .accessibilityLabel("Profile and settings")
       .accessibilityHint("Opens your profile and app settings")
       .accessibilityAddTraits(.isButton)

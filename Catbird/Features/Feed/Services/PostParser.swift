@@ -8,7 +8,7 @@
 import Foundation
 import Petrel
 
-struct URLCardResponse: Codable, Identifiable {
+struct URLCardResponse: Codable, Identifiable, Hashable {
   var id: String { url }
   let error: String
   let likelyType: String

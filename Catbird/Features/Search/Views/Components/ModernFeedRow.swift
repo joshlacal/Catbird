@@ -34,6 +34,7 @@ struct ModernFeedRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     // Placeholder for preview
     VStack {
         Text("Feed Row Preview")

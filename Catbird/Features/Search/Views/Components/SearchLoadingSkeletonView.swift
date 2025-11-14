@@ -212,6 +212,7 @@ extension View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     SearchLoadingSkeletonView()
-        .environment(AppState.shared)
+        .environment(appState)
 }

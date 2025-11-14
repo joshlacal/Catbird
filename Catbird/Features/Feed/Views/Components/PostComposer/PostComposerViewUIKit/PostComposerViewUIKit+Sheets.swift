@@ -42,7 +42,8 @@ extension PostComposerViewUIKit {
         )
       }
       .sheet(isPresented: $showingAccountSwitcher) {
-        AccountSwitcherView(showsDismissButton: true)
+        // Pass current draft when switching accounts from composer
+        AccountSwitcherView(showsDismissButton: true, draftToTransfer: vm.saveDraftState())
           .environment(appState)
           .onDisappear {
             handleAccountSwitchComplete(vm: vm)

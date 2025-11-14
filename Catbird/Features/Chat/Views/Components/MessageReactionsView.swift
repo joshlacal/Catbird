@@ -24,7 +24,7 @@ struct MessageReactionsView: View {
   // Check if current user has reacted with specific emoji
   private func currentUserReacted(to emoji: String) -> Bool {
     guard let userReactions = groupedReactions[emoji] else { return false }
-    return userReactions.contains { $0.sender.did.didString() == appState.currentUserDID }
+    return userReactions.contains { $0.sender.did.didString() == appState.userDID }
   }
 
   var body: some View {

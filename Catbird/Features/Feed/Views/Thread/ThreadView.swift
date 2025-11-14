@@ -1,5 +1,6 @@
 import Petrel
 import SwiftUI
+import SwiftData
 import OSLog
 
 // Import cross-platform modifiers for iOS-specific modifiers
@@ -43,6 +44,7 @@ private struct UIKitThreadViewWrapper: View {
 /// Pure SwiftUI ThreadView implementation optimized for macOS
 private struct SwiftUIThreadView: View {
     @Environment(AppState.self) private var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
     
@@ -90,25 +92,16 @@ private struct SwiftUIThreadView: View {
                             contentOpacity = 1
                         }
                     }
+            } else if let nf = mainNotFound {
+                PostNotFoundView(uri: nf.uri, reason: .notFound, path: $path)
+            } else if let blocked = mainBlocked {
+                BlockedPostView(blockedPost: blocked, path: $path)
             } else {
-                VStack(spacing: 12) {
-                    if let nf = mainNotFound {
-                        PostNotFoundView(uri: nf.uri, reason: .notFound, path: $path)
-                    } else if let blocked = mainBlocked {
-                        BlockedPostView(blockedPost: blocked, path: $path)
-                    } else {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 32))
-                            .foregroundColor(.orange)
-                        Text("Could not load thread")
-                            .font(.headline)
-                        Text("This post may have been deleted or is not available.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
+                ContentUnavailableView {
+                    Label("Post Not Available", systemImage: "exclamationmark.circle")
+                } description: {
+                    Text("This post may have been deleted or is not available.")
                 }
-                .padding(.horizontal)
             }
         }
         .navigationTitle("Thread")
@@ -488,8 +481,9 @@ private struct SwiftUIThreadView: View {
         logger.debug("loadInitialThread: Starting for URI: \(postURI.uriString())")
         isLoading = true
         contentOpacity = 0
-        
+
         threadManager = ThreadManager(appState: appState)
+        threadManager?.setModelContext(modelContext)
         await threadManager?.loadThread(uri: postURI)
         
         processThreadData()

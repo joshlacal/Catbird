@@ -65,10 +65,11 @@ struct PostHeaderView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     PostHeaderView(
         displayName: "Josh", 
         handle: "josh.uno", 
         timeAgo: Date()
     )
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }

@@ -335,15 +335,15 @@ final class SmartFeedRecommendationEngine {
     }
     
     private func getFollowedUsers() async -> [String] {
-        let appStateRef = AppState.shared
-        guard appStateRef != nil else {
+        let appStateRef = await AppStateManager.shared.lifecycle.appState
+        guard let appState = appStateRef else {
             logger.warning("AppState not available for social graph lookup")
             return []
         }
         
         do {
             // Use GraphManager to get following relationships
-            let followingMap = try await appStateRef.graphManager.refreshFollowingCache()
+            let followingMap = try await appState.graphManager.refreshFollowingCache()
             let followedDIDs = Array(followingMap.keys)
             
             logger.debug("Retrieved \(followedDIDs.count) followed users for recommendation scoring")

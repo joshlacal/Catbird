@@ -43,6 +43,10 @@ import os
     /// Load more coordination
     var loadMoreTask: Task<Void, Never>?
 
+    /// Update serialization - prevents concurrent performUpdate calls
+    private var updateTask: Task<Void, Never>?
+    private var isPerformingUpdate = false
+
     /// State observation with proper @Observable integration
     var stateObserver: UIKitStateObserver<FeedStateManager>?
 
@@ -242,6 +246,7 @@ import os
       feedbackObserver?.stopObserving()
       appStateObserver?.stopObserving()
       loadMoreTask?.cancel()
+      updateTask?.cancel()
 
       if let backgroundObserver = backgroundObserver {
         NotificationCenter.default.removeObserver(backgroundObserver)
@@ -417,7 +422,7 @@ import os
 
         // Configure cell with UIHostingConfiguration and inject required environment
         let appState = self.stateManager.appState
-        let accountID = appState.currentUserDID ?? "unknown-account"
+        let accountID = appState.userDID ?? "unknown-account"
         let feedID = self.stateManager.currentFeedType.identifier
         let hostingIdentity = "\(accountID)-\(feedID)-\(post.id)"
         cell.contentConfiguration = UIHostingConfiguration {
@@ -519,44 +524,87 @@ import os
         return
       }
 
-      // Always end refreshing, even on error
-      if isRefreshing {
-        #if !targetEnvironment(macCatalyst)
-          refreshControl.endRefreshing()
-        #endif
-        isRefreshing = false
+      // Prevent concurrent updates - if already updating, cancel previous and wait
+      if isPerformingUpdate {
+        controllerLogger.debug("⚠️ Update already in progress, cancelling previous")
+        updateTask?.cancel()
+        // Brief wait to allow cancellation to complete
+        try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
       }
 
-      // Check for errors before updating UI
-      if case .error(let error) = stateManager.loadingState {
-        controllerLogger.error("❌ Feed update error: \(error.localizedDescription)")
-        // Keep existing posts visible, user can retry
+      // Cancel any pending update task
+      updateTask?.cancel()
+
+      // Create new update task
+      updateTask = Task { @MainActor in
+        // Mark as performing update
+        isPerformingUpdate = true
+        defer {
+          isPerformingUpdate = false
+        }
+
+        guard !Task.isCancelled else { return }
+
+        // Always end refreshing, even on error
+        if isRefreshing {
+          #if !targetEnvironment(macCatalyst)
+            refreshControl.endRefreshing()
+          #endif
+          isRefreshing = false
+        }
+
+        // Check for errors before updating UI
+        if case .error(let error) = stateManager.loadingState {
+          controllerLogger.error("❌ Feed update error: \(error.localizedDescription)")
+          // Keep existing posts visible, user can retry
+          updateBackgroundState()
+          return
+        }
+
+        controllerLogger.debug("🔄 Fast update: Creating snapshot")
+
+        // CRITICAL: Capture state at this moment to prevent race conditions
+        // Do NOT read from stateManager during snapshot application
+        let capturedPosts = stateManager.posts
+        let capturedHeaderPresent = headerView != nil
+        let accountID = stateManager.appState.userDID ?? "unknown-account"
+        let feedID = stateManager.currentFeedType.identifier
+
+        guard !Task.isCancelled else { return }
+
+        // Build snapshot from captured immutable state
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        snapshot.appendSections([.main])
+
+        // Prepend header cell when available
+        if capturedHeaderPresent {
+          snapshot.appendItems([.header], toSection: .main)
+        }
+
+        let items = capturedPosts.map { Item.post(account: accountID, feed: feedID, id: $0.id) }
+        snapshot.appendItems(items, toSection: .main)
+
+        guard !Task.isCancelled else { return }
+
+        // Apply snapshot using reload for safety (prevents batch update inconsistencies)
+        if #available(iOS 15.0, *), shouldReloadDataOnce {
+          shouldReloadDataOnce = false
+          await dataSource.applySnapshotUsingReloadData(snapshot)
+        } else if #available(iOS 15.0, *) {
+          // FIXED: Use applySnapshotUsingReloadData for all updates to avoid batch update race conditions
+          await dataSource.applySnapshotUsingReloadData(snapshot)
+        } else {
+          // Fallback for iOS 14 (though minimum is iOS 16)
+          await dataSource.apply(snapshot, animatingDifferences: false)
+        }
+
+        guard !Task.isCancelled else { return }
+
+        controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
         updateBackgroundState()
-        return
       }
 
-      controllerLogger.debug("🔄 Fast update: Creating snapshot")
-
-      var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-      snapshot.appendSections([.main])
-      // Prepend header cell when available
-      if headerView != nil {
-        snapshot.appendItems([.header], toSection: .main)
-      }
-      let accountID = stateManager.appState.currentUserDID ?? "unknown-account"
-      let feedID = stateManager.currentFeedType.identifier
-      let items = stateManager.posts.map { Item.post(account: accountID, feed: feedID, id: $0.id) }
-      snapshot.appendItems(items, toSection: .main)
-
-      if #available(iOS 15.0, *), shouldReloadDataOnce {
-        shouldReloadDataOnce = false
-        await dataSource.applySnapshotUsingReloadData(snapshot)
-      } else {
-        await dataSource.apply(snapshot, animatingDifferences: false)
-      }
-
-      controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
-      updateBackgroundState()
+      await updateTask?.value
     }
 
     @MainActor
