@@ -39,6 +39,9 @@ actor MLSProfileEnricher {
   ///   - conversations: MLS conversations to enrich
   ///   - client: AT Protocol client for API calls
   func enrichConversations(_ conversations: [MLSConversationViewModel], using client: ATProtoClient) async {
+    // Periodically cleanup old shared cache entries
+    cleanupSharedProfileCache()
+    
     // Extract unique DIDs from all conversations
     let allDIDs = extractUniqueDIDs(from: conversations)
 
@@ -104,7 +107,7 @@ actor MLSProfileEnricher {
 
     for conversation in conversations {
       for participant in conversation.participants {
-        uniqueDIDs.insert(participant.id)
+        uniqueDIDs.insert(Self.canonicalDID(participant.id))
       }
     }
 
@@ -153,8 +156,11 @@ actor MLSProfileEnricher {
       // Cache the fetched profiles
       for profile in profiles {
         let profileData = ProfileData(from: profile)
-        profileCache[profileData.did] = profileData
+        profileCache[Self.canonicalDID(profileData.did)] = profileData
         logger.debug("Cached profile for \(profileData.handle)")
+        
+        // Also persist to shared UserDefaults for NSE access
+        persistProfileToSharedStorage(profileData)
       }
 
       logger.info("Successfully cached \(profiles.count) profiles")
@@ -162,6 +168,107 @@ actor MLSProfileEnricher {
     } catch {
       logger.error("Failed to fetch profile batch: \(error.localizedDescription)")
     }
+  }
+  
+  // MARK: - Shared Storage for NSE
+  
+  /// App Group suite name for shared storage
+  private static let appGroupSuite = "group.blue.catbird.shared"
+  
+  /// Maximum number of profiles to keep in shared storage
+  private static let maxSharedProfiles = 500
+  
+  /// Key prefix for profile cache entries
+  private static let profileCacheKeyPrefix = "profile_cache_"
+  
+  /// Cached profile structure for shared storage (Codable for UserDefaults)
+  private struct SharedCachedProfile: Codable {
+    let did: String
+    let handle: String
+    let displayName: String?
+    let avatarURL: String?
+    let cachedAt: Date
+  }
+  
+  /// Persists a profile to shared UserDefaults so the NSE can access it
+  private func persistProfileToSharedStorage(_ profile: ProfileData) {
+    guard let defaults = UserDefaults(suiteName: Self.appGroupSuite) else {
+      return
+    }
+    
+    let cachedProfile = SharedCachedProfile(
+      did: profile.did,
+      handle: profile.handle,
+      displayName: profile.displayName,
+      avatarURL: profile.avatarURL?.absoluteString,
+      cachedAt: Date()
+    )
+    
+    let cacheKey = "\(Self.profileCacheKeyPrefix)\(profile.did.lowercased())"
+    
+    if let data = try? JSONEncoder().encode(cachedProfile) {
+      defaults.set(data, forKey: cacheKey)
+    }
+  }
+  
+  /// Cleans up old profile entries from shared storage
+  /// Call this periodically (e.g., on app launch or when enriching profiles)
+  func cleanupSharedProfileCache() {
+    guard let defaults = UserDefaults(suiteName: Self.appGroupSuite) else {
+      return
+    }
+    
+    // Find all profile cache keys
+    let allKeys = defaults.dictionaryRepresentation().keys
+    let profileKeys = allKeys.filter { $0.hasPrefix(Self.profileCacheKeyPrefix) }
+    
+    guard profileKeys.count > Self.maxSharedProfiles else {
+      logger.debug("Profile cache has \(profileKeys.count) entries, under limit of \(Self.maxSharedProfiles)")
+      return
+    }
+    
+    logger.info("Profile cache has \(profileKeys.count) entries, cleaning up...")
+    
+    // Decode all profiles with their cached timestamps
+    var profilesWithDates: [(key: String, cachedAt: Date)] = []
+    
+    for key in profileKeys {
+      if let data = defaults.data(forKey: key),
+         let profile = try? JSONDecoder().decode(SharedCachedProfile.self, from: data) {
+        profilesWithDates.append((key: key, cachedAt: profile.cachedAt))
+      } else {
+        // Invalid entry - remove it
+        defaults.removeObject(forKey: key)
+      }
+    }
+    
+    // Sort by date (oldest first) and remove excess
+    profilesWithDates.sort { $0.cachedAt < $1.cachedAt }
+    let toRemove = profilesWithDates.count - Self.maxSharedProfiles
+    
+    if toRemove > 0 {
+      for i in 0..<toRemove {
+        defaults.removeObject(forKey: profilesWithDates[i].key)
+      }
+      logger.info("Removed \(toRemove) old profile cache entries")
+    }
+  }
+  
+  /// Clears all profile entries from shared storage
+  func clearSharedProfileCache() {
+    guard let defaults = UserDefaults(suiteName: Self.appGroupSuite) else {
+      return
+    }
+    
+    let allKeys = defaults.dictionaryRepresentation().keys
+    var removedCount = 0
+    
+    for key in allKeys where key.hasPrefix(Self.profileCacheKeyPrefix) {
+      defaults.removeObject(forKey: key)
+      removedCount += 1
+    }
+    
+    logger.info("Cleared \(removedCount) profile cache entries from shared storage")
   }
 }
 

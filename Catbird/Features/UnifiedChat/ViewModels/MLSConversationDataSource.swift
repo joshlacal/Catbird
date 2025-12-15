@@ -111,7 +111,8 @@ import SwiftUI
             continue
           }
 
-          let profile = profileCache[model.senderID]
+          let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
+          let profile = profileCache[canonicalSenderDID]
           let reactions = localReactions[model.messageID] ?? []
 
           let adapter = MLSMessageAdapter(
@@ -228,7 +229,8 @@ import SwiftUI
             continue
           }
 
-          let profile = profileCache[model.senderID]
+          let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
+          let profile = profileCache[canonicalSenderDID]
           let reactions = localReactions[model.messageID] ?? []
 
           let adapter = MLSMessageAdapter(
@@ -264,6 +266,9 @@ import SwiftUI
         // Prepend older messages
         self.messages = adapters + self.messages
         self.hasMoreMessages = olderModels.count >= 50
+
+        // Load profiles for any senders in the newly prepended messages
+        await loadProfilesForMessages(adapters)
 
         logger.info("Loaded \(adapters.count) older MLS messages")
 
@@ -301,7 +306,7 @@ import SwiftUI
         )
 
         // Create adapter for the sent message
-        let profile = profileCache[currentUserDID]
+        let profile = profileCache[MLSProfileEnricher.canonicalDID(currentUserDID)]
         let adapter = MLSMessageAdapter(
           id: messageId,
           convoID: conversationId,
@@ -545,7 +550,8 @@ import SwiftUI
       }
 
       // Collect unique sender DIDs that we don't have profiles for
-      let uniqueDIDs = Set(adapters.map { $0.senderID }).filter { profileCache[$0] == nil }
+      let uniqueDIDs = Set(adapters.map { MLSProfileEnricher.canonicalDID($0.senderID) })
+        .filter { profileCache[$0] == nil }
       guard !uniqueDIDs.isEmpty else { return }
 
       let profiles = await appState.mlsProfileEnricher.ensureProfiles(
@@ -558,7 +564,8 @@ import SwiftUI
 
       // Rebuild messages with updated profiles
       messages = messages.map { adapter in
-        guard let profile = profileCache[adapter.senderID] else { return adapter }
+        let canonicalSenderDID = MLSProfileEnricher.canonicalDID(adapter.senderID)
+        guard let profile = profileCache[canonicalSenderDID] else { return adapter }
         return MLSMessageAdapter(
           id: adapter.id,
           convoID: adapter.mlsConversationID,
