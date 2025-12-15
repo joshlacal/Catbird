@@ -7,154 +7,210 @@ Users experiencing repeated errors:
 Sync failed: SQLite error 7: out of memory - while executing `BEGIN IMMEDIATE TRANSACTION`
 ```
 
+Or after account switching:
+```
+⚠️ Cached database connection unhealthy, reconnecting: SQLite error 7: out of memory - while executing SELECT 1 FROM sqlite_master LIMIT 1
+```
+
 ## Root Cause
 
-**NOT** an actual memory issue. This is SQLite error code 7 (`SQLITE_NOMEM`), which in the context of `BEGIN IMMEDIATE TRANSACTION` indicates a **threading/concurrency conflict** with WAL (Write-Ahead Logging) mode.
+**NOT** an actual memory issue. This is SQLite error code 7 (`SQLITE_NOMEM`), which in the context of SQLCipher indicates:
 
-### Why This Happened
+### Primary Causes
 
-1. **Incorrect Actor Isolation**
-   - `MLSGRDBManager` was marked `@MainActor`
-   - `MLSStorage` was marked `@MainActor`
-   - This forced all database operations onto the main thread
+1. **Account Switching Race Condition** (Most Common)
+   - Database for User A not fully closed before opening for User B
+   - WAL file contains uncommitted data from User A
+   - Encryption codec context conflicts between users
+   - HMAC verification fails due to key mismatch
 
 2. **WAL Mode Conflicts**
    - SQLite WAL mode creates `-wal` and `-shm` (shared memory) files
    - These files require proper thread synchronization
-   - Main thread blocking + WAL checkpoint operations = SQLITE_NOMEM error
+   - Incomplete checkpoints leave WAL in inconsistent state
 
-3. **GRDB Expected Usage**
-   - GRDB `DatabaseQueue.write { }` operations should run on background threads
-   - `@MainActor` prevented proper thread dispatch
-   - WAL transactions failed to acquire locks
+3. **Connection Pool Exhaustion**
+   - Multiple accounts cached = multiple DatabasePools
+   - Each pool has readers + writer = many connections
+   - iOS has limited file descriptors
 
-## The Fix
+## Fixes Implemented (December 2024)
 
-### 1. Removed `@MainActor` from MLSGRDBManager
+### 1. Account Switch Serialization (Critical Fix)
 
-**Before:**
+**Problem:** Fire-and-forget database close during account switch
 ```swift
-@MainActor
-final class MLSGRDBManager {
-    static let shared = MLSGRDBManager()
-    private var databases: [String: DatabaseQueue] = [:]
+// OLD - Race condition!
+Task {
+  await MLSGRDBManager.shared.closeDatabaseAndDrain(for: lruDID, timeout: 3.0)
 }
 ```
 
-**After:**
+**Fix:** Await database close before switching accounts
 ```swift
-final class MLSGRDBManager {
-    static let shared = MLSGRDBManager()
-    private let accessQueue = DispatchQueue(label: "com.catbird.mls.grdb.access")
-    private var databases: [String: DatabaseQueue] = [:]
+// NEW - Properly serialized
+let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
+if !closeSuccess {
+  logger.warning("⚠️ Previous database close timed out")
 }
 ```
 
-Added thread-safe access to the databases dictionary using a serial `DispatchQueue`.
+**Files:**
+- `AppStateManager.swift` - `transitionToAuthenticated()` now closes previous DB before switch
+- `AppStateManager.swift` - `evictLRUIfNeeded()` now async and awaited
 
-### 2. Removed `@MainActor` from MLSStorage
+### 2. Pending Close Operation Tracking
 
-Database operations now properly execute on background threads via GRDB's built-in concurrency handling.
+New tracking in `MLSGRDBManager` prevents opening a database while it's being closed:
 
-### 3. Added Automatic Database Repair
-
-New `repairDatabase()` method that:
-- Closes the corrupted database
-- Deletes `-wal` and `-shm` files
-- Allows SQLite to recreate them cleanly
-
-### 4. Automatic Recovery
-
-`getDatabaseQueue()` now automatically attempts repair if it encounters SQLite errors:
 ```swift
-catch {
-    if errorDescription.contains("out of memory") || errorDescription.contains("SQLITE") {
-        try? repairDatabase(for: userDID)
-        let database = try createDatabase(for: userDID) // Retry
-        return database
+private var pendingCloseOperations: Set<String> = []
+
+// In getDatabasePool():
+if pendingCloseOperations.contains(userDID) {
+  // Wait for close to complete before opening
+}
+```
+
+### 3. Increased SQLite Cache for SQLCipher
+
+**Problem:** 1MB cache too small for SQLCipher encryption overhead
+
+**Fix:**
+```swift
+// OLD
+try db.execute(sql: "PRAGMA cache_size = -1000;")  // 1MB
+
+// NEW
+try db.execute(sql: "PRAGMA cache_size = -2000;")  // 2MB per connection
+```
+
+### 4. More Aggressive WAL Checkpointing
+
+**Problem:** Large WAL files causing memory pressure
+
+**Fix:**
+```swift
+// OLD
+try db.execute(sql: "PRAGMA wal_autocheckpoint = 500;")  // 2MB
+
+// NEW
+try db.execute(sql: "PRAGMA wal_autocheckpoint = 200;")  // 800KB
+```
+
+### 5. Periodic Checkpoint During Polling
+
+Added to `MLSConversationListView`:
+```swift
+if pollCycleCount % 10 == 0 {  // Every 10 poll cycles (~2.5 minutes)
+  try await MLSGRDBManager.shared.checkpointDatabase(for: userDID)
+}
+```
+
+### 6. Transient Error Exclusion
+
+**Problem:** Temporary errors (busy, locked) triggering destructive recovery
+
+**Fix:** New `isTransientError()` check excludes these from recovery:
+```swift
+// These now DON'T trigger database repair:
+- "database is locked"
+- "sqlite_busy" / "sqlite error 5"
+- "sqlite error 6" (SQLITE_LOCKED)
+- "timeout"
+- "cancelled"
+```
+
+### 7. Active User Tracking
+
+Only one database is actively used at a time:
+```swift
+private var activeUserDID: String?
+
+// When switching users, checkpoint the previous database first
+if activeUserDID != userDID {
+  if let previousDB = databases[activeUserDID] {
+    try previousDB.writeWithoutTransaction { db in
+      try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
     }
-    throw error
+  }
+  activeUserDID = userDID
 }
 ```
 
-## How to Recover Manually (If Needed)
+## Configuration (No Changes Needed)
 
-If the error persists after the fix:
+### Info.plist
+No SQLite-specific settings needed. All configuration is via PRAGMA statements.
 
-### Option 1: Delete WAL/SHM Files (Preserves Data)
-```bash
-# Find database directory (usually in app container)
-find ~/Library/Containers -name "mls_messages*.db-wal" -delete
-find ~/Library/Containers -name "mls_messages*.db-shm" -delete
-```
-
-### Option 2: Complete Database Reset (Loses Data)
-```swift
-// Call from debug menu or reset flow
-try MLSGRDBManager.shared.deleteDatabase(for: userDID)
-```
-
-## Testing the Fix
-
-1. **Restart the app** - The fix will apply automatically
-2. **Try syncing** - Database operations should now work
-3. **Check logs** - Look for:
-   ```
-   ⚠️ Database creation failed, attempting repair
-   ✅ Database recovered after repair
-   ```
-
-## Technical Details
-
-### SQLite Error 7 Context
-
-SQLite error 7 (`SQLITE_NOMEM`) doesn't always mean "out of memory." In WAL mode, it can indicate:
-- Lock acquisition failure
-- Shared memory mapping failure
-- Thread synchronization conflict
-- Corrupted WAL checkpoint
-
-### WAL Mode Benefits (Why We Keep It)
-
-Despite this issue, WAL mode provides:
-- Better concurrency (readers don't block writers)
-- Improved performance
-- Atomic commits
-- Better crash recovery
-
-### Thread Safety Implementation
-
-The new implementation uses:
-- `DispatchQueue` for dictionary access synchronization
-- GRDB's native async/await for database operations
-- No `@MainActor` constraints on database layer
-- Proper background thread execution
-
-## Prevention
-
-This fix ensures:
-1. ✅ Database operations run on background threads
-2. ✅ WAL files are properly managed
-3. ✅ Automatic recovery from corruption
-4. ✅ Thread-safe access to shared resources
-5. ✅ Proper GRDB concurrency handling
+### Xcode Build Settings
+No changes needed. SQLCipher configuration is programmatic.
 
 ## Files Modified
 
-- `Catbird/Services/MLS/SQLCipher/Core/MLSGRDBManager.swift`
-  - Removed `@MainActor`
-  - Added `accessQueue` for thread safety
-  - Added `repairDatabase()` method
-  - Added automatic recovery in `getDatabaseQueue()`
+### CatbirdMLSCore/Sources/CatbirdMLSCore/Storage/MLSGRDBManager.swift
+- Added `pendingCloseOperations` tracking
+- Added `activeUserDID` tracking
+- Updated `closeDatabase()` to track pending operations
+- Updated `closeDatabaseAndDrain()` to return success status
+- Added `closeAllExcept(keepUserDID:)` for aggressive cleanup
+- Increased `cache_size` from 1MB to 2MB
+- Reduced `wal_autocheckpoint` from 500 to 200 pages
+- Added `busy_timeout` PRAGMA
+- Enhanced `isRecoverableCodecError()` to exclude transient errors
+- Added `isTransientError()` helper
 
-- `Catbird/Storage/MLSStorage.swift`
-  - Removed `@MainActor`
-  - Database operations now run on proper background threads
+### Catbird/Core/State/AppStateManager.swift
+- `transitionToAuthenticated()` now closes previous DB before switch
+- `evictLRUIfNeeded()` now async and properly awaited
+- `clearInactiveAccounts()` now async and uses `closeAllExcept()`
 
-## Impact
+### Catbird/Features/MLSChat/MLSConversationListView.swift
+- Added periodic WAL checkpoint during polling loop
+- Tracks poll cycle count for checkpoint scheduling
 
-- ✅ No data loss
-- ✅ Existing databases continue to work
-- ✅ Automatic repair for corrupted databases
-- ✅ Better performance (no main thread blocking)
-- ✅ Proper Swift 6 concurrency compliance
+## Testing
+
+1. **Account Switch Test:**
+   - Log in to Account A, open chats
+   - Switch to Account B
+   - Switch back to Account A
+   - Verify no OOM errors in logs
+
+2. **Multi-Account Stress Test:**
+   - Add 3+ accounts
+   - Rapidly switch between them
+   - Verify databases open/close cleanly
+
+3. **Background/Foreground Test:**
+   - Open chats, background app
+   - Wait 30+ seconds
+   - Return to app
+   - Verify database reconnects cleanly
+
+## Monitoring
+
+Watch for these log patterns:
+
+### Good (Expected):
+```
+🔒 Closing previous account's MLS database before switch
+✅ Database closed and drained for user
+📀 getDatabasePool requested for user
+✅ Created new database pool for user
+🔄 Periodic WAL checkpoint (poll cycle 10)
+```
+
+### Warning (Investigate if frequent):
+```
+⏳ Waiting for pending close operation
+⚠️ Previous database close timed out
+⚠️ Periodic checkpoint failed
+```
+
+### Error (Should not occur with fixes):
+```
+🔐 HMAC check failed - WRONG ENCRYPTION KEY
+❌ Database creation failed
+🚨 Performing FULL DATABASE RESET
+```

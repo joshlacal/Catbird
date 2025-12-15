@@ -38,11 +38,15 @@ struct MLSConversationListView: View {
     @State private var pollingTask: Task<Void, Never>?
     @State private var recentMemberChanges: [String: MemberChangeInfo] = [:]
     @State private var pendingChatRequestCount: Int = 0
+    @State private var pollCycleCount: Int = 0  // OOM FIX: Track poll cycles for periodic checkpoint
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationList")
     
     /// Polling interval for conversation list updates (15 seconds)
     private let pollingInterval: TimeInterval = 15
+    
+    /// OOM FIX: Checkpoint WAL every N poll cycles to prevent memory bloat
+    private let checkpointEveryNPolls: Int = 10
     
     enum KeyPackageStatus {
         case unknown
@@ -248,6 +252,17 @@ struct MLSConversationListView: View {
                 if appState.mlsServiceState.status.shouldStopPolling {
                     logger.warning("⛔ Polling paused - MLS service in failed state")
                     continue
+                }
+                
+                // OOM FIX: Increment poll counter and checkpoint periodically
+                pollCycleCount += 1
+                if pollCycleCount % checkpointEveryNPolls == 0 {
+                    logger.debug("🔄 Periodic WAL checkpoint (poll cycle \(pollCycleCount))")
+                    do {
+                        try await MLSGRDBManager.shared.checkpointDatabase(for: appState.userDID)
+                    } catch {
+                        logger.warning("⚠️ Periodic checkpoint failed: \(error.localizedDescription)")
+                    }
                 }
 
                 await refreshChatRequestCount()

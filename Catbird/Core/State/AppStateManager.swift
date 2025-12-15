@@ -148,6 +148,24 @@ final class AppStateManager {
     // Set transition flag to prevent operations during switch
     isTransitioning = true
     defer { isTransitioning = false }
+    
+    // OOM FIX: Close the previous account's database BEFORE switching
+    // This prevents the race condition where two databases are open simultaneously
+    // with potential key mismatch or WAL corruption
+    if let previousUserDID = lifecycle.userDID, previousUserDID != userDID {
+      logger.info("🔒 Closing previous account's MLS database before switch: \(previousUserDID.prefix(20))")
+      
+      // Prepare the previous AppState for storage reset if it exists
+      if let previousAppState = authenticatedStates[previousUserDID] {
+        await previousAppState.prepareMLSStorageReset()
+      }
+      
+      // Ensure the database is fully closed and checkpointed
+      let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
+      if !closeSuccess {
+        logger.warning("⚠️ Previous database close timed out - proceeding anyway")
+      }
+    }
 
     // CRITICAL: Switch AuthManager to the target account FIRST before getting client
     // This ensures we get the correct client for the account we're switching to
@@ -196,7 +214,9 @@ final class AppStateManager {
       authenticatedStates[userDID] = appState
       isCachedAccount = false
       updateAccessOrder(userDID)
-      evictLRUIfNeeded()
+      
+      // OOM FIX: Await eviction to ensure databases are properly closed before proceeding
+      await evictLRUIfNeeded()
       
       // Initialize model context for draft persistence
       if case .ready(let container) = modelContainerState {
@@ -429,7 +449,8 @@ final class AppStateManager {
   }
 
   /// Evict least recently used accounts if over limit
-  private func evictLRUIfNeeded() {
+  /// NOTE: This is now async to properly await database closure
+  private func evictLRUIfNeeded() async {
     guard authenticatedStates.count > maxCachedAccounts else { return }
 
     // Keep the most recent accounts
@@ -453,17 +474,24 @@ final class AppStateManager {
       authenticatedStates.removeValue(forKey: lruDID)
       accessOrder.removeFirst()
 
-      // Close MLS database for evicted account
-      // CRITICAL FIX: Use closeDatabaseAndDrain to prevent WAL corruption
-      Task {
-        await MLSGRDBManager.shared.closeDatabaseAndDrain(for: lruDID, timeout: 3.0)
-      }
+      // OOM FIX: AWAIT database closure to prevent race conditions
+      // Previously this was fire-and-forget which caused OOM errors during account switching
+      await MLSGRDBManager.shared.closeDatabaseAndDrain(for: lruDID, timeout: 3.0)
       logger.debug("Closed MLS database for evicted account: \(lruDID)")
+    }
+  }
+  
+  /// Synchronous wrapper for evictLRUIfNeeded (for use in non-async contexts)
+  /// Schedules the eviction but doesn't wait - use sparingly
+  private func scheduleEvictLRUIfNeeded() {
+    Task {
+      await evictLRUIfNeeded()
     }
   }
 
   /// Manually clear all cached accounts except active
-  func clearInactiveAccounts() {
+  /// NOTE: This is now async to properly await database closure
+  func clearInactiveAccounts() async {
     let activeUserDID = lifecycle.userDID
     let inactiveAccounts = authenticatedStates.keys.filter { $0 != activeUserDID }
 
@@ -475,12 +503,12 @@ final class AppStateManager {
 
       authenticatedStates.removeValue(forKey: did)
       accessOrder.removeAll { $0 == did }
-
-      // Close MLS database for cleared account
-      // CRITICAL FIX: Use closeDatabaseAndDrain to prevent WAL corruption
-      Task {
-        await MLSGRDBManager.shared.closeDatabaseAndDrain(for: did, timeout: 3.0)
-      }
+    }
+    
+    // OOM FIX: Close all inactive databases in one call
+    // This is more efficient and ensures proper serialization
+    if let activeUserDID = activeUserDID {
+      await MLSGRDBManager.shared.closeAllExcept(keepUserDID: activeUserDID)
     }
 
     logger.info("🗑️ Cleared \(inactiveAccounts.count) inactive account(s)")
