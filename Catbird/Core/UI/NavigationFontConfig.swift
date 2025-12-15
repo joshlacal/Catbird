@@ -9,92 +9,155 @@ import SwiftUI
 /// Centralized navigation font configuration to ensure consistency across the app
 enum NavigationFontConfig {
     #if os(iOS)
-    
+
+    // MARK: - Font Cache
+
+    /// Cached title font to avoid expensive Core Text operations
+    private static var cachedTitleFont: UIFont?
+    /// Cached large title font to avoid expensive Core Text operations
+    private static var cachedLargeTitleFont: UIFont?
+
+    /// Cache validation properties
+    private static var lastFontDesign: Font.Design?
+    private static var lastFontSize: CGFloat?
+    private static var lastDynamicTypeEnabled: Bool?
+    private static var lastMaxContentSizeCategory: String?
+
+    /// Invalidate font cache when font settings change
+    static func invalidateCache() {
+        cachedTitleFont = nil
+        cachedLargeTitleFont = nil
+        lastFontDesign = nil
+        lastFontSize = nil
+        lastDynamicTypeEnabled = nil
+        lastMaxContentSizeCategory = nil
+    }
+
+    /// Check if cache is valid for current FontManager settings
+    private static func isCacheValid(for fontManager: FontManager) -> Bool {
+        return lastFontDesign == fontManager.fontDesign &&
+               lastFontSize == fontManager.sizeScale &&
+               lastDynamicTypeEnabled == fontManager.dynamicTypeEnabled &&
+               lastMaxContentSizeCategory == fontManager.maxContentSizeCategory.rawValue
+    }
+
+    /// Update cache validation properties
+    private static func updateCacheValidation(for fontManager: FontManager) {
+        lastFontDesign = fontManager.fontDesign
+        lastFontSize = fontManager.sizeScale
+        lastDynamicTypeEnabled = fontManager.dynamicTypeEnabled
+        lastMaxContentSizeCategory = fontManager.maxContentSizeCategory.rawValue
+    }
+
     /// Creates the custom large title font with Core Text variations and FontManager integration
     static func createLargeTitleFont(fontManager: FontManager) -> UIFont {
+        // Check cache validity first to avoid expensive Core Text operations
+        if isCacheValid(for: fontManager), let cached = cachedLargeTitleFont {
+            return cached
+        }
+
         let baseLargeTitleSize: CGFloat = 28
         let scaledSize = fontManager.scaledSize(baseLargeTitleSize)
-        
+
         // Define the OpenType variation axes as hex integers (4-char codes)
         let wdthAxisID: Int = 0x7764_7468  // 'wdth' in hex
         let wghtAxisID: Int = 0x7767_6874  // 'wght' in hex
         let opszAxisID: Int = 0x6F70_737A  // 'opsz' in hex
-        
+
         // Convert FontManager's font design to numeric weight
         let baseWeight: CGFloat = 700.0 // Bold for large titles
         let adjustedWeight = adjustWeightForFontStyle(baseWeight, fontManager: fontManager)
-        
+
         // Create variations dictionary for large title
         let largeTitleVariations: [Int: Any] = [
             wdthAxisID: 120,  // Width: 120% (expanded)
             wghtAxisID: adjustedWeight,  // Weight: Adjusted based on FontManager
             opszAxisID: Double(scaledSize)  // Optical size matching scaled point size
         ]
-        
+
         // Start with the system font using FontManager's design
         let baseFont = createBaseFontWithDesign(size: scaledSize, design: fontManager.fontDesign)
         let largeTitleFontDesc = baseFont.fontDescriptor
-        
+
         // Apply the variations to the font descriptor
         let largeTitleDescriptor = largeTitleFontDesc.addingAttributes([
             kCTFontVariationAttribute as UIFontDescriptor.AttributeName: largeTitleVariations
         ])
-        
+
         // Create the font with the modified descriptor
         let customUIFont = UIFont(descriptor: largeTitleDescriptor, size: 0)
-        
+
         // Scale for accessibility if FontManager has Dynamic Type enabled
+        let finalFont: UIFont
         if fontManager.dynamicTypeEnabled {
             let metrics = UIFontMetrics(forTextStyle: .largeTitle)
             let maxPointSize = UIFont.preferredFont(
                 forTextStyle: .largeTitle,
                 compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory.uiContentSizeCategory)
             ).pointSize
-            return metrics.scaledFont(for: customUIFont, maximumPointSize: maxPointSize)
+            finalFont = metrics.scaledFont(for: customUIFont, maximumPointSize: maxPointSize)
         } else {
-            return customUIFont
+            finalFont = customUIFont
         }
+
+        // Update cache
+        cachedLargeTitleFont = finalFont
+        updateCacheValidation(for: fontManager)
+
+        return finalFont
     }
     
     /// Creates the custom title font with Core Text variations and FontManager integration
     static func createTitleFont(fontManager: FontManager) -> UIFont {
+        // Check cache validity first to avoid expensive Core Text operations
+        if isCacheValid(for: fontManager), let cached = cachedTitleFont {
+            return cached
+        }
+
         let baseTitleSize: CGFloat = 17
         let scaledSize = fontManager.scaledSize(baseTitleSize)
-        
+
         // Define the OpenType variation axes as hex integers (4-char codes)
         let wdthAxisID: Int = 0x7764_7468  // 'wdth' in hex
         let wghtAxisID: Int = 0x7767_6874  // 'wght' in hex
         let opszAxisID: Int = 0x6F70_737A  // 'opsz' in hex
-        
+
         // Convert FontManager's font design to numeric weight
         let baseWeight: CGFloat = 600.0 // Semibold for titles
         let adjustedWeight = adjustWeightForFontStyle(baseWeight, fontManager: fontManager)
-        
+
         // Create variations dictionary for title
         let titleVariations: [Int: Any] = [
             wdthAxisID: 120,  // Width: 120% (expanded)
             wghtAxisID: adjustedWeight,  // Weight: Adjusted based on FontManager
             opszAxisID: Double(scaledSize)  // Optical size matching scaled point size
         ]
-        
+
         let titleFontDesc = createBaseFontWithDesign(size: scaledSize, design: fontManager.fontDesign).fontDescriptor
         let titleDescriptor = titleFontDesc.addingAttributes([
             kCTFontVariationAttribute as UIFontDescriptor.AttributeName: titleVariations
         ])
-        
+
         let customTitleFont = UIFont(descriptor: titleDescriptor, size: 0)
-        
+
         // Scale for accessibility if FontManager has Dynamic Type enabled
+        let finalFont: UIFont
         if fontManager.dynamicTypeEnabled {
             let metrics = UIFontMetrics(forTextStyle: .headline)
             let maxPointSize = UIFont.preferredFont(
                 forTextStyle: .headline,
                 compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory.uiContentSizeCategory)
             ).pointSize
-            return metrics.scaledFont(for: customTitleFont, maximumPointSize: maxPointSize)
+            finalFont = metrics.scaledFont(for: customTitleFont, maximumPointSize: maxPointSize)
         } else {
-            return customTitleFont
+            finalFont = customTitleFont
         }
+
+        // Update cache
+        cachedTitleFont = finalFont
+        updateCacheValidation(for: fontManager)
+
+        return finalFont
     }
     
     /// Creates the custom large title font with Core Text variations (legacy method for backward compatibility)
@@ -270,23 +333,28 @@ enum NavigationFontConfig {
     static func createLargeTitleFont(fontManager: FontManager) -> NSFont {
         return NSFont.systemFont(ofSize: 28, weight: NSFont.Weight.bold)
     }
-    
+
     static func createTitleFont(fontManager: FontManager) -> NSFont {
         return NSFont.systemFont(ofSize: 17, weight: NSFont.Weight.semibold)
     }
-    
+
     static func createLargeTitleFont() -> NSFont {
         return createLargeTitleFont(fontManager: FontManager())
     }
-    
+
     static func createTitleFont() -> NSFont {
         return createTitleFont(fontManager: FontManager())
     }
-    
+
+    /// No-op on macOS (no font caching needed for navigation bars)
+    static func invalidateCache() {
+        // No-op on macOS
+    }
+
     static func forceApplyToAllNavigationBars(fontManager: FontManager) {
         // No-op on macOS
     }
-    
+
     static func forceApplyToAllNavigationBars() {
         // No-op on macOS
     }
@@ -313,19 +381,22 @@ struct NavigationFontModifier: ViewModifier {
                 }
             }
             .onChange(of: fontManager.fontStyle) {
-                // Reapply fonts when font style changes
+                // Invalidate cache and reapply fonts when font style changes
+                NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
             .onChange(of: fontManager.fontSize) {
-                // Reapply fonts when font size changes
+                // Invalidate cache and reapply fonts when font size changes
+                NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
             .onChange(of: fontManager.dynamicTypeEnabled) {
-                // Reapply fonts when Dynamic Type setting changes
+                // Invalidate cache and reapply fonts when Dynamic Type setting changes
+                NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
@@ -352,19 +423,22 @@ struct DeepNavigationFontModifier: ViewModifier {
                 }
             }
             .onChange(of: fontManager.fontStyle) { _ in
-                // Reapply fonts when font style changes
+                // Invalidate cache and reapply fonts when font style changes
+                NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
             .onChange(of: fontManager.fontSize) { _ in
-                // Reapply fonts when font size changes
+                // Invalidate cache and reapply fonts when font size changes
+                NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
             .onChange(of: fontManager.dynamicTypeEnabled) { _ in
-                // Reapply fonts when Dynamic Type setting changes
+                // Invalidate cache and reapply fonts when Dynamic Type setting changes
+                NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }

@@ -4,6 +4,10 @@
 //
 //  MLS moderation action sheet for members
 //
+//  NOTE: Report and Warning functionality is currently hidden.
+//  Moderation is simplified to admin-only member removal.
+//  The report/warn code is kept for potential future use.
+//
 
 import SwiftUI
 import Petrel
@@ -28,7 +32,6 @@ struct MLSMemberActionsSheet: View {
     @State private var isProcessing = false
     @State private var showingConfirmation = false
     @State private var confirmationAction: MemberAction?
-    @State private var showingReportSheet = false
     @State private var showingError = false
     @State private var errorMessage: String?
 
@@ -40,14 +43,16 @@ struct MLSMemberActionsSheet: View {
         case remove
         case promote
         case demote
-        case report
+        case promoteModerator
+        case demoteModerator
 
         var title: String {
             switch self {
             case .remove: return "Remove Member"
             case .promote: return "Promote to Admin"
             case .demote: return "Demote Admin"
-            case .report: return "Report Member"
+            case .promoteModerator: return "Promote to Moderator"
+            case .demoteModerator: return "Demote Moderator"
             }
         }
 
@@ -56,14 +61,15 @@ struct MLSMemberActionsSheet: View {
             case .remove: return "Are you sure you want to remove this member from the conversation?"
             case .promote: return "This member will gain admin privileges including the ability to remove members and manage settings."
             case .demote: return "This member will lose admin privileges."
-            case .report: return "Report this member for misconduct."
+            case .promoteModerator: return "This member will gain moderator privileges including the ability to warn members and view reports."
+            case .demoteModerator: return "This member will lose moderator privileges."
             }
         }
 
         var isDestructive: Bool {
             switch self {
-            case .remove, .demote: return true
-            case .promote, .report: return false
+            case .remove, .demote, .demoteModerator: return true
+            case .promote, .promoteModerator: return false
             }
         }
     }
@@ -96,6 +102,16 @@ struct MLSMemberActionsSheet: View {
 
     private var canDemote: Bool {
         isCurrentUserAdmin && member.isAdmin && !isSelf && !isCreator
+    }
+
+    // Note: Moderator role is in the local MLSMemberModel but not yet in BlueCatbirdMlsDefs.MemberView
+    // These will be enabled once the server supports the moderator role
+    private var canPromoteModerator: Bool {
+        false // isCurrentUserAdmin && !member.isAdmin && !isModerator && !isSelf
+    }
+
+    private var canDemoteModerator: Bool {
+        false // isCurrentUserAdmin && isModerator && !isSelf
     }
 
     // MARK: - Body
@@ -148,19 +164,8 @@ struct MLSMemberActionsSheet: View {
                     .padding(.vertical, 8)
                 }
 
-                // User actions (always visible)
-                Section {
-                    Button {
-                        showingReportSheet = true
-                    } label: {
-                        Label("Report Member", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                    .disabled(isSelf || isProcessing)
-                }
-
                 // Admin actions (conditionally visible)
-                if isCurrentUserAdmin && (canRemove || canPromote || canDemote) {
+                if isCurrentUserAdmin && (canRemove || canPromote || canDemote || canPromoteModerator || canDemoteModerator) {
                     Section("Admin Actions") {
                         if canPromote {
                             Button {
@@ -178,6 +183,27 @@ struct MLSMemberActionsSheet: View {
                                 showingConfirmation = true
                             } label: {
                                 Label("Demote Admin", systemImage: "arrow.down.circle")
+                                    .foregroundStyle(.orange)
+                            }
+                            .disabled(isProcessing)
+                        }
+
+                        if canPromoteModerator {
+                            Button {
+                                confirmationAction = .promoteModerator
+                                showingConfirmation = true
+                            } label: {
+                                Label("Promote to Moderator", systemImage: "shield.checkered")
+                            }
+                            .disabled(isProcessing)
+                        }
+
+                        if canDemoteModerator {
+                            Button {
+                                confirmationAction = .demoteModerator
+                                showingConfirmation = true
+                            } label: {
+                                Label("Demote Moderator", systemImage: "shield.slash")
                                     .foregroundStyle(.orange)
                             }
                             .disabled(isProcessing)
@@ -225,14 +251,6 @@ struct MLSMemberActionsSheet: View {
             } message: { action in
                 Text(action.confirmationMessage)
             }
-            .sheet(isPresented: $showingReportSheet) {
-                MLSReportMemberSheet(
-                    conversationId: conversationId,
-                    memberDid: member.did.description,
-                    memberDisplayName: memberDisplayName,
-                    conversationManager: conversationManager
-                )
-            }
             .alert("Error", isPresented: $showingError) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -277,9 +295,17 @@ struct MLSMemberActionsSheet: View {
                 logger.info("Successfully demoted admin: \(self.member.did.description)")
                 dismiss()
 
-            case .report:
-                // Handled by report sheet
-                break
+            case .promoteModerator:
+                // Note: Moderator role is not available server-side yet.
+                logger.warning("Moderator promotion not yet implemented server-side")
+                errorMessage = "Moderator role is not yet available."
+                showingError = true
+
+            case .demoteModerator:
+                // Note: Moderator role is not available server-side yet.
+                logger.warning("Moderator demotion not yet implemented server-side")
+                errorMessage = "Moderator role is not yet available."
+                showingError = true
             }
         } catch {
             logger.error("Action failed: \(error.localizedDescription)")

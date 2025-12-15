@@ -24,15 +24,14 @@ struct EnhancedFeedPost: View, Equatable {
   private static let baseUnit: CGFloat = 3
 
   // MARK: - Computed Properties
+
+  /// Post identity computed without JSON decoding by using stored repost metadata
   private var id: String {
-    guard
-      let feedViewPost,
-      case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedViewPost.reason
-    else {
+    guard cachedPost.isRepost, let repostDate = cachedPost.repostIndexedAt else {
       return cachedPost.id
     }
-
-    return "\(cachedPost.id)-repost-\(reasonRepost.indexedAt)"
+    // Use ISO8601 string for consistent ID generation
+    return "\(cachedPost.id)-repost-\(ISO8601DateFormatter().string(from: repostDate))"
   }
 
   private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {

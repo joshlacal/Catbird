@@ -52,11 +52,11 @@ cat AGENTIC_EXECUTION_PLAN.md
   --approval '--allow-all-tools'
 ```
 
-### Option C: Fix Copilot Runner
+### Option C: Use copilot-cli MCP
 
-```bash
-# Debug the hanging CLI issue
-# See COPILOT_RUNNER_TROUBLESHOOTING.md
+```python
+# Spawn agents via MCP server - see AGENTS.md
+copilot_cli:run_agent(prompt="Your task", approval=["--allow-all-tools"])
 ```
 
 ## Key Documents

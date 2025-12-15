@@ -11,7 +11,7 @@ import Petrel
 struct LabelSelectorView: View {
   @Binding var selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>
   @Environment(\.dismiss) private var dismiss
-  @Environment(AppState.self) private var appState
+  @ObservationIgnored @Environment(AppState.self) private var appState
 
   // Define only the allowed self-labels
   private let allowedSelfLabels: [ComAtprotoLabelDefs.LabelValue] = [

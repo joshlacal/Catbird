@@ -1,3 +1,4 @@
+import CatbirdMLSCore
 import SwiftUI
 import OSLog
 import Petrel
@@ -139,44 +140,21 @@ struct MLSGIFView: View {
       return
     }
 
-    // Validate URL with HEAD request
-    Task {
-      do {
-        let (_, response) = try await URLSession.shared.data(from: mp4URL)
+    // Tenor "GIFs" are MP4s; don't hard-fail based on MIME/header quirks.
+    // If the URL is reachable, the player will handle buffering/errors.
+    Task { @MainActor in
+      let uri = URI(uriString: gifEmbed.tenorURL)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200,
-              let mimeType = httpResponse.mimeType,
-              mimeType.hasPrefix("video/") else {
-          loadError = "Invalid video response"
-          isLoading = false
-          logger.error("MP4 URL validation failed: \(mp4URL)")
-          return
-        }
+      videoModel = VideoModel(
+        id: "mls-gif-\(gifEmbed.mp4URL.hashValue)",
+        url: mp4URL,
+        type: .tenorGif(uri),
+        aspectRatio: calculateAspectRatio(width: gifEmbed.width, height: gifEmbed.height),
+        thumbnailURL: gifEmbed.thumbnailURL.flatMap { URL(string: $0) }
+      )
 
-        // Create VideoModel
-        await MainActor.run {
-          // Create URI for tenor GIF (required for VideoModel.VideoType.tenorGif)
-             let uri = URI(uriString: gifEmbed.tenorURL)
-
-          videoModel = VideoModel(
-            id: "mls-gif-\(gifEmbed.mp4URL.hashValue)",
-            url: mp4URL,
-            type: .tenorGif(uri),
-            aspectRatio: calculateAspectRatio(width: gifEmbed.width, height: gifEmbed.height),
-            thumbnailURL: gifEmbed.thumbnailURL.flatMap { URL(string: $0) }
-          )
-
-          isLoading = false
-          logger.info("Created VideoModel for GIF: \(mp4URL)")
-        }
-      } catch {
-        await MainActor.run {
-          loadError = error.localizedDescription
-          isLoading = false
-          logger.error("Failed to validate MP4 URL: \(error.localizedDescription)")
-        }
-      }
+      isLoading = false
+      logger.info("Created VideoModel for GIF: \(mp4URL)")
     }
   }
 

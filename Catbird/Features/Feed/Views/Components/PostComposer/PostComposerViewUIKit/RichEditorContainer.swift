@@ -38,6 +38,7 @@ struct RichEditorContainer: View {
   #else
   var onTextViewCreated: (() -> Void)? = nil
   #endif
+  @State private var editorHeight: CGFloat = 140
 
   var body: some View {
     EnhancedRichTextEditor(
@@ -67,7 +68,15 @@ struct RichEditorContainer: View {
         #else
         _ = onTextViewCreated?()
         #endif
+      },
+      onHeightChange: { newHeight in
+        // Allow height to grow dynamically, with a reasonable minimum
+        let clamped = max(newHeight, 140)
+        if abs(clamped - editorHeight) > 1 {
+          editorHeight = clamped
+        }
       }
     )
+    .frame(minHeight: editorHeight)
   }
 }

@@ -16,7 +16,11 @@ struct PostEmbed: View {
     let embed: AppBskyFeedDefs.PostViewEmbedUnion
     let labels: [ComAtprotoLabelDefs.Label]?
     @Binding var path: NavigationPath
+    @ObservationIgnored
     @Environment(AppState.self) private var appState
+    @Environment(\.appSettings) private var appSettings
+    @Environment(\.adultContentEnabled) private var adultContentEnabled
+    @Environment(\.themeManager) private var themeManager
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.postID) private var postID
     
@@ -144,7 +148,14 @@ struct PostEmbed: View {
                     } else {
                         Text("Unable to load video")
                             .appFont(AppTextRole.caption)
-                            .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                            .foregroundStyle(
+                                Color.adaptiveText(
+                                    appSettings: appSettings,
+                                    themeManager: themeManager ?? appState.themeManager,
+                                    style: .secondary,
+                                    currentScheme: colorScheme
+                                )
+                            )
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
@@ -188,7 +199,14 @@ struct PostEmbed: View {
             } else {
                 Text("Unable to load video")
                     .appFont(AppTextRole.caption)
-                    .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                    .foregroundStyle(
+                        Color.adaptiveText(
+                            appSettings: appSettings,
+                            themeManager: themeManager ?? appState.themeManager,
+                            style: .secondary,
+                            currentScheme: colorScheme
+                        )
+                    )
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
@@ -199,7 +217,7 @@ struct PostEmbed: View {
     /// This method is deprecated - ContentLabelManager now handles all visibility logic
     private func hasAdultContentLabel(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
         // Kept for backward compatibility, but ContentLabelManager should be used instead
-        guard !appState.isAdultContentEnabled else { return false }
+        guard !adultContentEnabled else { return false }
         return labels?.contains { label in
             let lowercasedValue = label.val.lowercased()
             return lowercasedValue == "porn" || lowercasedValue == "nsfw" || lowercasedValue == "nudity"

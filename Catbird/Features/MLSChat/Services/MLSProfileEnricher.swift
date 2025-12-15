@@ -5,16 +5,20 @@ import OSLog
 #if os(iOS)
 
 /// Service for enriching MLS conversation participants with Bluesky profile data
-@Observable
-final class MLSProfileEnricher {
+actor MLSProfileEnricher {
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSProfileEnricher")
 
-  // Cache DID → Profile data
+  // Cache DID → Profile data (keyed by canonical DID without any device fragment)
   private var profileCache: [String: ProfileData] = [:]
+
+  nonisolated static func canonicalDID(_ did: String) -> String {
+    let trimmed = did.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? trimmed
+  }
 
   // MARK: - Profile Data
 
-  struct ProfileData {
+  struct ProfileData: Sendable {
     let did: String
     let handle: String
     let displayName: String?
@@ -56,7 +60,35 @@ final class MLSProfileEnricher {
   /// - Parameter did: The DID to look up
   /// - Returns: Cached profile data if available
   func getCachedProfile(for did: String) -> ProfileData? {
-    profileCache[did]
+    profileCache[Self.canonicalDID(did)]
+  }
+
+  /// Ensure profile data exists for the provided DIDs and return cached entries
+  /// - Parameters:
+  ///   - dids: The unique DIDs to resolve
+  ///   - client: Authenticated AT Protocol client for fetching missing profiles
+  /// - Returns: Mapping of DID → enriched profile info for the requested IDs
+  func ensureProfiles(
+    for dids: [String],
+    using client: ATProtoClient
+  ) async -> [String: ProfileData] {
+    let requestedDIDs = Array(Set(dids))
+    let canonicalByRequested = Dictionary(uniqueKeysWithValues: requestedDIDs.map { ($0, Self.canonicalDID($0)) })
+    let canonicalDIDs = Array(Set(canonicalByRequested.values))
+
+    let uncachedCanonical = canonicalDIDs.filter { profileCache[$0] == nil }
+    if !uncachedCanonical.isEmpty {
+      logger.info("Ensuring profiles for \(uncachedCanonical.count) uncached participants")
+      await fetchProfilesInBatches(uncachedCanonical, using: client)
+    }
+
+    var resolved: [String: ProfileData] = [:]
+    for requested in requestedDIDs {
+      if let canonical = canonicalByRequested[requested], let profile = profileCache[canonical] {
+        resolved[requested] = profile
+      }
+    }
+    return resolved
   }
 
   /// Clear the profile cache
@@ -90,10 +122,18 @@ final class MLSProfileEnricher {
   }
 
   private func fetchProfileBatch(_ dids: [String], using client: ATProtoClient) async {
-    do {
-      // Convert DIDs to ATIdentifiers
-      let actors = try dids.map { try ATIdentifier(string: $0) }
+    let actors = dids.compactMap { did -> ATIdentifier? in
+      do {
+        return try ATIdentifier(string: did)
+      } catch {
+        logger.warning("Skipping invalid DID for profile fetch: \(did)")
+        return nil
+      }
+    }
 
+    guard !actors.isEmpty else { return }
+
+    do {
       // Create request parameters
       let params = AppBskyActorGetProfiles.Parameters(actors: actors)
 

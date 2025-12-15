@@ -7,6 +7,7 @@
 
 import Foundation
 import OSLog
+import CatbirdMLSCore
 
 /// Actor responsible for smart key package monitoring with predictive replenishment
 actor MLSKeyPackageMonitor {
@@ -115,11 +116,7 @@ actor MLSKeyPackageMonitor {
   /// Get optimal batch size based on consumption patterns
   func getOptimalBatchSize(currentInventory: Int) async throws -> Int {
     let rate = try await getConsumptionRate()
-
-    // Target: config.targetInventoryDays days of inventory
     let targetInventory = Int(ceil(rate * Double(config.targetInventoryDays)))
-
-    // Calculate needed packages
     let needed = max(targetInventory - currentInventory, 0)
 
     // Adaptive sizing with bounds
@@ -135,7 +132,7 @@ actor MLSKeyPackageMonitor {
       logger.warning("⚠️ Config recommended \(configBatchSize) packages, capping at API limit of 100")
     }
 
-    logger.info("📦 Calculated optimal batch size: \(batchSize) (rate: \(String(format: "%.2f", rate))/day, target: \(targetInventory))")
+    logger.info("📦 Calculated optimal batch size: \(batchSize) (based on \(String(format: "%.2f", rate)) packages/day consumption)")
 
     return batchSize
   }

@@ -60,11 +60,11 @@ This error means: *"I already used that secret and deleted it for forward secrec
 
 ### What iOS Data Protection Provides
 
-Core Data is configured with `FileProtectionType.complete`:
+Core Data is configured with `FileProtectionType.completeUntilFirstUserAuthentication`:
 
 ```swift
 storeDescription.setOption(
-    FileProtectionType.complete as NSObject,
+    FileProtectionType.completeUntilFirstUserAuthentication as NSObject,
     forKey: NSPersistentStoreFileProtectionKey
 )
 ```
@@ -73,7 +73,7 @@ storeDescription.setOption(
 - ✅ **Hardware encryption**: AES-256 in Secure Enclave
 - ✅ **Key derivation**: Passcode + device UID (cannot extract key)
 - ✅ **File-level encryption**: Each SQLite page encrypted separately
-- ✅ **Requires device unlock**: Data inaccessible until user enters passcode
+- ✅ **Background-safe after first unlock**: Helps avoid DB I/O failures during background/suspend
 - ✅ **No cloud backup**: Explicitly excluded from iCloud/iTunes
 
 ### What MLS Provides

@@ -1,3 +1,4 @@
+import CatbirdMLSCore
 import CryptoKit
 import DeviceCheck
 import Foundation
@@ -6,13 +7,14 @@ import OSLog
 import Petrel
 import SwiftData
 import SwiftUI
-#if os(iOS)
-import UIKit
-#elseif os(macOS)
-import AppKit
-#endif
 import UserNotifications
 import WidgetKit
+
+#if os(iOS)
+  import UIKit
+#elseif os(macOS)
+  import AppKit
+#endif
 
 /// Data structure for sharing notification count with the widget
 struct NotificationWidgetData: Codable {
@@ -56,7 +58,7 @@ final class NotificationManager: NSObject {
     private var attemptsPerOperation: [String: Int] = [:]
     private var lastResetTime: Date = Date()
     private let maxAttempts = 3
-    private let resetInterval: TimeInterval = 300 // 5 minutes
+    private let resetInterval: TimeInterval = 300  // 5 minutes
 
     func canAttempt(for operation: String) -> Bool {
       resetIfNeeded()
@@ -165,7 +167,8 @@ final class NotificationManager: NSObject {
       case .syncActivitySubscriptions:
         return "syncActivitySubscriptions"
       case .updateActivitySubscription(let subjectDid, let includePosts, let includeReplies):
-        return "updateActivitySubscription(\(subjectDid), posts: \(includePosts), replies: \(includeReplies))"
+        return
+          "updateActivitySubscription(\(subjectDid), posts: \(includePosts), replies: \(includeReplies))"
       case .removeActivitySubscription(let subjectDid):
         return "removeActivitySubscription(\(subjectDid))"
       case .unregister(_, let did):
@@ -195,7 +198,7 @@ final class NotificationManager: NSObject {
     case challengeUnavailable
     case invalidServerResponse
     case serverError(String)
-    
+
     var errorDescription: String? {
       switch self {
       case .appStateUnavailable:
@@ -208,9 +211,9 @@ final class NotificationManager: NSObject {
         return "Device token not available"
       case .appAttestUnsupported:
         #if targetEnvironment(simulator)
-        return "Push notifications require a physical device"
+          return "Push notifications require a physical device"
         #else
-        return "Push notification configuration error"
+          return "Push notification configuration error"
         #endif
       case .challengeUnavailable:
         return "Security challenge not available"
@@ -220,14 +223,16 @@ final class NotificationManager: NSObject {
         return message
       }
     }
-    
+
     var recoverySuggestion: String? {
       switch self {
       case .appAttestUnsupported:
         #if targetEnvironment(simulator)
-        return "App Attest security is not available on iOS Simulator. Please test push notifications on a physical iOS or macOS device."
+          return
+            "App Attest security is not available on iOS Simulator. Please test push notifications on a physical iOS or macOS device."
         #else
-        return "The app may be missing required security entitlements. Please try reinstalling the app or contact support if the issue persists."
+          return
+            "The app may be missing required security entitlements. Please try reinstalling the app or contact support if the issue persists."
         #endif
       case .deviceTokenNotAvailable:
         return "Please try disabling and re-enabling notifications."
@@ -429,36 +434,43 @@ final class NotificationManager: NSObject {
       saveChatNotificationPreference()
     }
   }
-  
+
   /// Save chat notification preference for the current account
   private func saveChatNotificationPreference() {
     guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
-          let did = appState?.userDID else {
+      let did = appState?.userDID
+    else {
       return
     }
-    
+
     let key = "\(chatNotificationsDefaultsKeyPrefix)_\(did)"
     defaults.set(chatNotificationsEnabled, forKey: key)
-    notificationLogger.info("Chat notification preference updated for \(did): \(self.chatNotificationsEnabled ? "enabled" : "disabled")")
+    notificationLogger.info(
+      "Chat notification preference updated for \(did): \(self.chatNotificationsEnabled ? "enabled" : "disabled")"
+    )
   }
-  
+
   /// Load chat notification preference for the current account
   private func loadChatNotificationPreference() async {
     guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
-          let client = client,
-          let did = try? await client.getDid() else {
-      notificationLogger.debug("Cannot load chat notification preference - client or DID unavailable")
+      let client = client,
+      let did = try? await client.getDid()
+    else {
+      notificationLogger.debug(
+        "Cannot load chat notification preference - client or DID unavailable")
       return
     }
-    
+
     let key = "\(chatNotificationsDefaultsKeyPrefix)_\(did)"
     if defaults.object(forKey: key) != nil {
       let enabled = defaults.bool(forKey: key)
-      notificationLogger.info("Loaded chat notification preference for \(did): \(enabled ? "enabled" : "disabled")")
+      notificationLogger.info(
+        "Loaded chat notification preference for \(did): \(enabled ? "enabled" : "disabled")")
       chatNotificationsEnabled = enabled
     } else {
       // Default to enabled for accounts that haven't set a preference yet
-      notificationLogger.info("No chat notification preference found for \(did), defaulting to enabled")
+      notificationLogger.info(
+        "No chat notification preference found for \(did), defaulting to enabled")
       chatNotificationsEnabled = true
     }
   }
@@ -487,11 +499,11 @@ final class NotificationManager: NSObject {
   init(
     serviceBaseURL: URL = {
       #if DEBUG
-      // Local dev builds (simulator, device, debug config)
-      return URL(string: "https://dev.notifications.catbird.blue")!
+        // Local dev builds (simulator, device, debug config)
+        return URL(string: "https://dev-notifications.catbird.blue")!
       #else
-      // Release builds (TestFlight + App Store)
-      return URL(string: "https://notifications.catbird.blue")!
+        // Release builds (TestFlight + App Store)
+        return URL(string: "https://notifications.catbird.blue")!
       #endif
     }()
   ) {
@@ -503,24 +515,24 @@ final class NotificationManager: NSObject {
 
     // Initialize widget with a test value to ensure it's populated
     #if DEBUG
-    setupTestWidgetData()
+      setupTestWidgetData()
     #endif
 
     // Register for app lifecycle notifications to handle token registration
     #if os(iOS)
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(appDidBecomeActive),
-      name: UIApplication.didBecomeActiveNotification,
-      object: nil
-    )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(appDidBecomeActive),
+        name: UIApplication.didBecomeActiveNotification,
+        object: nil
+      )
     #elseif os(macOS)
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(appDidBecomeActive),
-      name: NSApplication.didBecomeActiveNotification,
-      object: nil
-    )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(appDidBecomeActive),
+        name: NSApplication.didBecomeActiveNotification,
+        object: nil
+      )
     #endif
   }
 
@@ -549,7 +561,9 @@ final class NotificationManager: NSObject {
     let previousClient = client
     self.client = newClient
 
-    notificationLogger.info("🔄 Client updated: hasNewClient=\(newClient != nil), hasDeviceToken=\(self.deviceToken != nil)")
+    notificationLogger.info(
+      "🔄 Client updated: hasNewClient=\(newClient != nil), hasDeviceToken=\(self.deviceToken != nil)"
+    )
 
     // Clear notification preferences when switching accounts to prevent state leakage
     if newClient != nil && previousClient != nil {
@@ -571,24 +585,12 @@ final class NotificationManager: NSObject {
       // Client was cleared (user logged out), clean up notifications
       await cleanupNotifications(previousClient: previousClient)
     } else if newClient != nil && deviceToken == nil {
-      notificationLogger.info("⚠️ Client available but no device token yet - fetching preferences without registration")
-      // Even without push notifications, we should fetch notification preferences from server
-      await fetchNotificationPreferencesWithoutRegistration()
+      // Client available but no device token - notification preferences are stored locally
+      notificationLogger.info(
+        "⚠️ Client available but no device token yet - local preferences remain active")
     } else {
       notificationLogger.info("ℹ️ No action needed - no client and no token")
     }
-  }
-  
-  /// Fetch notification preferences when push notifications are disabled
-  /// This ensures preferences are loaded even without device token registration
-  private func fetchNotificationPreferencesWithoutRegistration() async {
-    guard client != nil else {
-      notificationLogger.warning("Cannot fetch preferences - no client available")
-      return
-    }
-    
-    notificationLogger.info("📥 Fetching notification preferences without device registration")
-    await fetchNotificationPreferences()
   }
 
   /// Request notification permissions from the user
@@ -612,11 +614,13 @@ final class NotificationManager: NSObject {
         notificationLogger.info("📱 Permission granted, registering for remote notifications...")
         await MainActor.run {
           #if os(iOS)
-          UIApplication.shared.registerForRemoteNotifications()
-          notificationLogger.info("✅ Called UIApplication.shared.registerForRemoteNotifications()")
+            UIApplication.shared.registerForRemoteNotifications()
+            notificationLogger.info(
+              "✅ Called UIApplication.shared.registerForRemoteNotifications()")
           #elseif os(macOS)
-          NSApplication.shared.registerForRemoteNotifications()
-          notificationLogger.info("✅ Called NSApplication.shared.registerForRemoteNotifications()")
+            NSApplication.shared.registerForRemoteNotifications()
+            notificationLogger.info(
+              "✅ Called NSApplication.shared.registerForRemoteNotifications()")
           #endif
         }
 
@@ -634,7 +638,8 @@ final class NotificationManager: NSObject {
         notificationsEnabled = false
       }
     } catch {
-      notificationLogger.error("Error requesting notification permission: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Error requesting notification permission: \(error.localizedDescription)")
       status = .registrationFailed(error)
       notificationsEnabled = false
     }
@@ -666,20 +671,25 @@ final class NotificationManager: NSObject {
       notificationsEnabled = true
 
       // Make sure we're registered for remote notifications
-      notificationLogger.info("📱 Permissions already granted, registering for remote notifications...")
+      notificationLogger.info(
+        "📱 Permissions already granted, registering for remote notifications...")
       await MainActor.run {
         #if os(iOS)
-        UIApplication.shared.registerForRemoteNotifications()
-        notificationLogger.info("✅ Called UIApplication.shared.registerForRemoteNotifications() in checkNotificationStatus")
+          UIApplication.shared.registerForRemoteNotifications()
+          notificationLogger.info(
+            "✅ Called UIApplication.shared.registerForRemoteNotifications() in checkNotificationStatus"
+          )
         #elseif os(macOS)
-        NSApplication.shared.registerForRemoteNotifications()
-        notificationLogger.info("✅ Called NSApplication.shared.registerForRemoteNotifications() in checkNotificationStatus")
+          NSApplication.shared.registerForRemoteNotifications()
+          notificationLogger.info(
+            "✅ Called NSApplication.shared.registerForRemoteNotifications() in checkNotificationStatus"
+          )
         #endif
       }
 
-      // Note: Don't set status = .registered here!
-      // Status should only be .registered after successfully registering with our notification service
-      // The device token callback will trigger the actual service registration
+    // Note: Don't set status = .registered here!
+    // Status should only be .registered after successfully registering with our notification service
+    // The device token callback will trigger the actual service registration
 
     case .denied:
       notificationLogger.info("Notifications permission denied")
@@ -702,28 +712,34 @@ final class NotificationManager: NSObject {
   @MainActor
   func handleDeviceToken(_ deviceToken: Data) async {
     let tokenHex = hexString(from: deviceToken)
-    notificationLogger.info("📱 Processing device token from APNS: \(tokenHex.prefix(16))... (length: \(deviceToken.count))")
+    notificationLogger.info(
+      "📱 Processing device token from APNS: \(tokenHex.prefix(16))... (length: \(deviceToken.count))"
+    )
     self.deviceToken = deviceToken
 
-    if
-      status == .registered,
+    if status == .registered,
       pendingReattestationPrompt == nil,
       let previousToken = lastRegisteredDeviceToken,
       previousToken == deviceToken
     {
-      notificationLogger.info("🔁 Device token already registered; skipping duplicate registration request")
+      notificationLogger.info(
+        "🔁 Device token already registered; skipping duplicate registration request")
       return
     }
 
     // Check if we have a client before attempting registration
     if client == nil {
-      notificationLogger.warning("⚠️ No client available for device token registration - will retry when client is set")
+      notificationLogger.warning(
+        "⚠️ No client available for device token registration - will retry when client is set")
       return
     }
 
     notificationLogger.info("🚀 Starting device token registration with notification service")
     // Register with our notification service
     await registerDeviceToken(deviceToken)
+
+    // Register with MLS service
+    await registerMLSDeviceToken(deviceToken)
   }
 
   /// Update notification preferences
@@ -872,9 +888,11 @@ final class NotificationManager: NSObject {
         let didSource = previousClient ?? client
         if let did = try await didSource?.getDid() {
           await unregisterDeviceToken(deviceToken, did: did)
+          await unregisterMLSDeviceToken(deviceToken)
         }
       } catch {
-        notificationLogger.error("Failed to determine DID during cleanup: \(error.localizedDescription)")
+        notificationLogger.error(
+          "Failed to determine DID during cleanup: \(error.localizedDescription)")
       }
     }
 
@@ -890,29 +908,31 @@ final class NotificationManager: NSObject {
 
     // Clear app badge
     #if os(iOS)
-    if #available(iOS 17.0, *) {
-      UNUserNotificationCenter.current().setBadgeCount(0) { error in
-        if let error = error {
-          self.notificationLogger.error("Failed to clear badge count: \(error.localizedDescription)")
+      if #available(iOS 17.0, *) {
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+          if let error = error {
+            self.notificationLogger.error(
+              "Failed to clear badge count: \(error.localizedDescription)")
+          }
+        }
+      } else {
+        await MainActor.run {
+          UIApplication.shared.applicationIconBadgeNumber = 0
         }
       }
-    } else {
-      await MainActor.run {
-        UIApplication.shared.applicationIconBadgeNumber = 0
-      }
-    }
     #elseif os(macOS)
-    if #available(macOS 14.0, *) {
-      UNUserNotificationCenter.current().setBadgeCount(0) { error in
-        if let error = error {
-          self.notificationLogger.error("Failed to clear badge count: \(error.localizedDescription)")
+      if #available(macOS 14.0, *) {
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+          if let error = error {
+            self.notificationLogger.error(
+              "Failed to clear badge count: \(error.localizedDescription)")
+          }
+        }
+      } else {
+        await MainActor.run {
+          NSApplication.shared.dockTile.badgeLabel = nil
         }
       }
-    } else {
-      await MainActor.run {
-        NSApplication.shared.dockTile.badgeLabel = nil
-      }
-    }
     #endif
 
     // Update widget to clear count
@@ -945,26 +965,29 @@ final class NotificationManager: NSObject {
 
         // Update app badge
         #if os(iOS)
-        if #available(iOS 17.0, *) {
-          UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
-            if let error = error {
-              self.notificationLogger.error("Failed to update badge count: \(error.localizedDescription)")
+          if #available(iOS 17.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
+              if let error = error {
+                self.notificationLogger.error(
+                  "Failed to update badge count: \(error.localizedDescription)")
+              }
             }
+          } else {
+            UIApplication.shared.applicationIconBadgeNumber = self.unreadCount
           }
-        } else {
-          UIApplication.shared.applicationIconBadgeNumber = self.unreadCount
-        }
         #elseif os(macOS)
-        // macOS badge support
-        if #available(macOS 14.0, *) {
-          UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
-            if let error = error {
-              self.notificationLogger.error("Failed to update badge count: \(error.localizedDescription)")
+          // macOS badge support
+          if #available(macOS 14.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(self.unreadCount) { error in
+              if let error = error {
+                self.notificationLogger.error(
+                  "Failed to update badge count: \(error.localizedDescription)")
+              }
             }
+          } else {
+            NSApplication.shared.dockTile.badgeLabel =
+              self.unreadCount > 0 ? "\(self.unreadCount)" : nil
           }
-        } else {
-          NSApplication.shared.dockTile.badgeLabel = self.unreadCount > 0 ? "\(self.unreadCount)" : nil
-        }
         #endif
 
         // Share data with widget
@@ -991,26 +1014,28 @@ final class NotificationManager: NSObject {
 
       // Update app badge
       #if os(iOS)
-      if #available(iOS 17.0, *) {
-        UNUserNotificationCenter.current().setBadgeCount(0) { error in
-          if let error = error {
-            self.notificationLogger.error("Failed to reset badge count: \(error.localizedDescription)")
+        if #available(iOS 17.0, *) {
+          UNUserNotificationCenter.current().setBadgeCount(0) { error in
+            if let error = error {
+              self.notificationLogger.error(
+                "Failed to reset badge count: \(error.localizedDescription)")
+            }
           }
+        } else {
+          UIApplication.shared.applicationIconBadgeNumber = 0
         }
-      } else {
-        UIApplication.shared.applicationIconBadgeNumber = 0
-      }
       #elseif os(macOS)
-      // macOS badge reset
-      if #available(macOS 14.0, *) {
-        UNUserNotificationCenter.current().setBadgeCount(0) { error in
-          if let error = error {
-            self.notificationLogger.error("Failed to reset badge count: \(error.localizedDescription)")
+        // macOS badge reset
+        if #available(macOS 14.0, *) {
+          UNUserNotificationCenter.current().setBadgeCount(0) { error in
+            if let error = error {
+              self.notificationLogger.error(
+                "Failed to reset badge count: \(error.localizedDescription)")
+            }
           }
+        } else {
+          NSApplication.shared.dockTile.badgeLabel = nil
         }
-      } else {
-        NSApplication.shared.dockTile.badgeLabel = nil
-      }
       #endif
 
       // Share data with widget
@@ -1034,7 +1059,8 @@ final class NotificationManager: NSObject {
   func scheduleChatNotification(_ payload: ChatNotificationPayload) async {
     // Check if chat notifications are enabled
     guard chatNotificationsEnabled else {
-      notificationLogger.debug("Chat notifications disabled, skipping notification for message \(payload.messageID)")
+      notificationLogger.debug(
+        "Chat notifications disabled, skipping notification for message \(payload.messageID)")
       return
     }
 
@@ -1059,7 +1085,7 @@ final class NotificationManager: NSObject {
       "type": "chat",
       "conversationID": payload.conversationID,
       "messageID": payload.messageID,
-      "senderHandle": payload.senderHandle
+      "senderHandle": payload.senderHandle,
     ]
 
     // Create unique identifier to prevent duplicates
@@ -1069,14 +1095,17 @@ final class NotificationManager: NSObject {
     let request = UNNotificationRequest(
       identifier: identifier,
       content: content,
-      trigger: nil // Immediate delivery
+      trigger: nil  // Immediate delivery
     )
 
     do {
       try await center.add(request)
-      notificationLogger.info("Scheduled chat notification for message \(payload.messageID) in conversation \(payload.conversationID)")
+      notificationLogger.info(
+        "Scheduled chat notification for message \(payload.messageID) in conversation \(payload.conversationID)"
+      )
     } catch {
-      notificationLogger.error("Failed to schedule chat notification: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Failed to schedule chat notification: \(error.localizedDescription)")
     }
   }
 
@@ -1198,7 +1227,8 @@ final class NotificationManager: NSObject {
         let isKeyMismatch = serverError.lowercased().contains("key mismatch")
 
         if isKeyMismatch {
-          notificationLogger.info("🔑 Relationship sync detected key mismatch - clearing App Attest state")
+          notificationLogger.info(
+            "🔑 Relationship sync detected key mismatch - clearing App Attest state")
           await clearAppAttestState()
         } else if attempt == 0 {
           notificationLogger.info("🔁 Retrying relationship sync with fresh App Attest assertion")
@@ -1256,9 +1286,6 @@ final class NotificationManager: NSObject {
       notificationLogger.warning("Cannot sync - not properly registered")
       return
     }
-
-    // Fetch notification preferences
-    await fetchNotificationPreferences()
 
     // Update preferences on server
     await updateNotificationPreferences()
@@ -1364,23 +1391,26 @@ final class NotificationManager: NSObject {
   ) async throws -> [(uri: String, purpose: String, name: String?)] {
     var allLists: [(uri: String, purpose: String, name: String?)] = []
     var cursor: String?
-    
+
     // Fetch all pages of lists
     repeat {
       let params: Any
       let result: (responseCode: Int, data: Any?)
-      
+
       if type == "block" {
         params = AppBskyGraphGetListBlocks.Parameters(limit: 100, cursor: cursor)
-        result = try await client.app.bsky.graph.getListBlocks(input: params as! AppBskyGraphGetListBlocks.Parameters)
-        
-        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output {
+        result = try await client.app.bsky.graph.getListBlocks(
+          input: params as! AppBskyGraphGetListBlocks.Parameters)
+
+        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output
+        {
           for list in output.lists {
-            allLists.append((
+            allLists.append(
+              (
                 uri: list.uri.uriString(),
-              purpose: list.purpose.rawValue,
-              name: list.name
-            ))
+                purpose: list.purpose.rawValue,
+                name: list.name
+              ))
           }
           cursor = output.cursor
         } else {
@@ -1388,15 +1418,18 @@ final class NotificationManager: NSObject {
         }
       } else if type == "mute" {
         params = AppBskyGraphGetListMutes.Parameters(limit: 100, cursor: cursor)
-        result = try await client.app.bsky.graph.getListMutes(input: params as! AppBskyGraphGetListMutes.Parameters)
-        
-        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output {
+        result = try await client.app.bsky.graph.getListMutes(
+          input: params as! AppBskyGraphGetListMutes.Parameters)
+
+        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output
+        {
           for list in output.lists {
-            allLists.append((
+            allLists.append(
+              (
                 uri: list.uri.uriString(),
-              purpose: list.purpose.rawValue,
-              name: list.name
-            ))
+                purpose: list.purpose.rawValue,
+                name: list.name
+              ))
           }
           cursor = output.cursor
         } else {
@@ -1406,7 +1439,7 @@ final class NotificationManager: NSObject {
         break
       }
     } while cursor != nil
-    
+
     notificationLogger.info("Fetched \(allLists.count) \(type) lists from AT Protocol")
     return allLists
   }
@@ -1544,31 +1577,33 @@ final class NotificationManager: NSObject {
     // Check App Attest support with retry logic for transient issues
     if !DCAppAttestService.shared.isSupported {
       #if targetEnvironment(simulator)
-      // On simulator, don't retry - it will never work
-      notificationLogger.warning("⚠️ App Attest not supported on simulator")
-      throw NotificationServiceError.appAttestUnsupported
-      #else
-      // On physical device, retry up to 3 times in case of transient issues
-      let maxRetries = 3
-      if attempt < maxRetries {
-        let delay = pow(2.0, Double(attempt)) * 0.5 // 0.5s, 1s, 2s
-        notificationLogger.info("⏳ App Attest not supported (attempt \(attempt + 1)/\(maxRetries)), retrying in \(delay)s...")
-        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-        
-        // Retry with incremented attempt counter
-        return try await prepareAppAttestPayload(
-          did: did,
-          deviceToken: deviceToken,
-          forceKeyRotation: forceKeyRotation,
-          forceAttestation: forceAttestation,
-          isNewRegistration: isNewRegistration,
-          attempt: attempt + 1
-        )
-      } else {
-        // Max retries exceeded
-        notificationLogger.warning("⚠️ App Attest not supported after \(maxRetries) attempts")
+        // On simulator, don't retry - it will never work
+        notificationLogger.warning("⚠️ App Attest not supported on simulator")
         throw NotificationServiceError.appAttestUnsupported
-      }
+      #else
+        // On physical device, retry up to 3 times in case of transient issues
+        let maxRetries = 3
+        if attempt < maxRetries {
+          let delay = pow(2.0, Double(attempt)) * 0.5  // 0.5s, 1s, 2s
+          notificationLogger.info(
+            "⏳ App Attest not supported (attempt \(attempt + 1)/\(maxRetries)), retrying in \(delay)s..."
+          )
+          try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+
+          // Retry with incremented attempt counter
+          return try await prepareAppAttestPayload(
+            did: did,
+            deviceToken: deviceToken,
+            forceKeyRotation: forceKeyRotation,
+            forceAttestation: forceAttestation,
+            isNewRegistration: isNewRegistration,
+            attempt: attempt + 1
+          )
+        } else {
+          // Max retries exceeded
+          notificationLogger.warning("⚠️ App Attest not supported after \(maxRetries) attempts")
+          throw NotificationServiceError.appAttestUnsupported
+        }
       #endif
     }
 
@@ -1582,48 +1617,51 @@ final class NotificationManager: NSObject {
     }
 
     #if DEBUG
-    // Comprehensive device and environment debugging
-    #if os(iOS)
-          
-          notificationLogger.info("🔍 DEBUG: iOS Version: \(UIDevice.current.systemVersion)")
-          notificationLogger.info("🔍 DEBUG: Device Model: \(UIDevice.current.model)")
-          notificationLogger.info("🔍 DEBUG: Device Name: \(UIDevice.current.name)")
-#if targetEnvironment(simulator)
+      // Comprehensive device and environment debugging
+      #if os(iOS)
+
+        notificationLogger.info("🔍 DEBUG: iOS Version: \(UIDevice.current.systemVersion)")
+        notificationLogger.info("🔍 DEBUG: Device Model: \(UIDevice.current.model)")
+        notificationLogger.info("🔍 DEBUG: Device Name: \(UIDevice.current.name)")
+        #if targetEnvironment(simulator)
           notificationLogger.info("🔍 DEBUG: Running on Simulator: YES")
-#else
+        #else
           notificationLogger.info("🔍 DEBUG: Running on Physical Device: YES")
 
-#endif
-#endif
-    // Check App Attest support in detail
-    let isSupported = DCAppAttestService.shared.isSupported
-    notificationLogger.info("🔍 DEBUG: DCAppAttestService.isSupported = \(isSupported)")
+        #endif
+      #endif
+      // Check App Attest support in detail
+      let isSupported = DCAppAttestService.shared.isSupported
+      notificationLogger.info("🔍 DEBUG: DCAppAttestService.isSupported = \(isSupported)")
 
-    // Check provisioning profile info
-    if let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision") {
-      notificationLogger.info("🔍 DEBUG: Has embedded.mobileprovision")
-    } else {
-      notificationLogger.info("🔍 DEBUG: No embedded.mobileprovision (likely App Store/TestFlight)")
-    }
+      // Check provisioning profile info
+      if let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision") {
+        notificationLogger.info("🔍 DEBUG: Has embedded.mobileprovision")
+      } else {
+        notificationLogger.info(
+          "🔍 DEBUG: No embedded.mobileprovision (likely App Store/TestFlight)")
+      }
 
-    // Check code signing info
-    if let teamID = Bundle.main.object(forInfoDictionaryKey: "TeamIdentifier") as? String {
-      notificationLogger.info("🔍 DEBUG: Team ID: \(teamID)")
-    }
+      // Check code signing info
+      if let teamID = Bundle.main.object(forInfoDictionaryKey: "TeamIdentifier") as? String {
+        notificationLogger.info("🔍 DEBUG: Team ID: \(teamID)")
+      }
 
-    if !isSupported {
-      notificationLogger.warning("🚧 DEBUG: App Attest not supported, creating mock payload for testing")
-      let mockChallenge = "debug-challenge-\(UUID().uuidString)"
-      let mockClientData = try JSONSerialization.data(withJSONObject: ["challenge": mockChallenge], options: [])
-      // Return a mock payload for testing with the same JSON structure the server expects.
-      return AppAttestRequestPayload(
-        keyID: "debug-key-id-\(UUID().uuidString.prefix(8))",
-        assertion: "debug-assertion-data",
-        clientData: base64Encode(mockClientData),
-        challenge: mockChallenge,
-        attestation: "debug-attestation-data"
-      )
-    }
+      if !isSupported {
+        notificationLogger.warning(
+          "🚧 DEBUG: App Attest not supported, creating mock payload for testing")
+        let mockChallenge = "debug-challenge-\(UUID().uuidString)"
+        let mockClientData = try JSONSerialization.data(
+          withJSONObject: ["challenge": mockChallenge], options: [])
+        // Return a mock payload for testing with the same JSON structure the server expects.
+        return AppAttestRequestPayload(
+          keyID: "debug-key-id-\(UUID().uuidString.prefix(8))",
+          assertion: "debug-assertion-data",
+          clientData: base64Encode(mockClientData),
+          challenge: mockChallenge,
+          attestation: "debug-attestation-data"
+        )
+      }
     #endif
 
     let tokenString = hexString(from: deviceToken)
@@ -1631,19 +1669,22 @@ final class NotificationManager: NSObject {
     let currentInfo = await MainActor.run { appState.appAttestInfo }
 
     // Check if we should force a fresh key due to previous errors
-    let shouldForceRefresh = currentInfo?.keyIdentifier == "62C7ShdKBMnwtz9HdcBWdyYWYobgH9MZhX7+6l7jzs0="
+    let shouldForceRefresh =
+      currentInfo?.keyIdentifier == "62C7ShdKBMnwtz9HdcBWdyYWYobgH9MZhX7+6l7jzs0="
 
     var info = (forceKeyRotation || shouldForceRefresh) ? nil : currentInfo
     // Include attestation whenever we're provisioning a fresh key or this is a new registration.
     // Do NOT include attestation for forceAttestation alone - that just needs a fresh assertion.
-    var shouldIncludeAttestation = forceKeyRotation || info == nil || isNewRegistration || shouldForceRefresh
+    var shouldIncludeAttestation =
+      forceKeyRotation || info == nil || isNewRegistration || shouldForceRefresh
 
     // Note: When forceAttestation=true but forceKeyRotation=false, we keep the existing key
     // and just generate a fresh assertion with a new challenge. App Attest only allows ONE
     // attestation per key (at key generation time), but unlimited assertions.
 
     if shouldForceRefresh {
-      notificationLogger.info("🔄 Forcing fresh App Attest key generation due to potential corruption")
+      notificationLogger.info(
+        "🔄 Forcing fresh App Attest key generation due to potential corruption")
       await clearAppAttestState()
       info = nil
     }
@@ -1677,7 +1718,8 @@ final class NotificationManager: NSObject {
           forceKeyRotation: forceKeyRotation
         )
       } catch {
-        notificationLogger.error("Failed to obtain challenge from server: \(error.localizedDescription)")
+        notificationLogger.error(
+          "Failed to obtain challenge from server: \(error.localizedDescription)")
 
         // If we can't get a challenge from the server, this is now a real error
         // since we're using the proper /challenge endpoint
@@ -1691,9 +1733,9 @@ final class NotificationManager: NSObject {
 
     let clientData = try makeClientDataBytes(for: validChallenge)
     #if DEBUG
-    if let clientDataString = String(data: clientData, encoding: .utf8) {
-      notificationLogger.info("AppAttest clientDataJSON=\(clientDataString)")
-    }
+      if let clientDataString = String(data: clientData, encoding: .utf8) {
+        notificationLogger.info("AppAttest clientDataJSON=\(clientDataString)")
+      }
     #endif
     let clientDataHash = Data(SHA256.hash(data: clientData))
 
@@ -1703,21 +1745,27 @@ final class NotificationManager: NSObject {
         "AppAttest challenge=\(validChallenge.challenge) len=\(clientData.count) expiresIn=\(String(format: "%.1f", secondsUntilExpiry))s"
       )
     } else {
-      notificationLogger.info("AppAttest challenge=\(validChallenge.challenge) len=\(clientData.count)")
+      notificationLogger.info(
+        "AppAttest challenge=\(validChallenge.challenge) len=\(clientData.count)")
     }
 
-    notificationLogger.info("AppAttest clientDataHash(base64url)=\(self.base64Encode(clientDataHash))")
+    notificationLogger.info(
+      "AppAttest clientDataHash(base64url)=\(self.base64Encode(clientDataHash))")
 
     let attestation: String?
     if shouldIncludeAttestation {
-      notificationLogger.info("Generating new App Attest attestation for keyIdentifier: \(keyIdentifier)")
+      notificationLogger.info(
+        "Generating new App Attest attestation for keyIdentifier: \(keyIdentifier)")
       do {
         let attestationData = try await attestKey(keyIdentifier, clientDataHash: clientDataHash)
         attestation = attestationData.base64EncodedString()
-        notificationLogger.info("Successfully generated attestation, length: \(attestation?.count ?? 0)")
+        notificationLogger.info(
+          "Successfully generated attestation, length: \(attestation?.count ?? 0)")
       } catch {
         if shouldRetryAppAttest(for: error), attempt == 0 {
-          notificationLogger.info("💡 App Attest attestation failed due to stale key; clearing cached state and retrying with a new key")
+          notificationLogger.info(
+            "💡 App Attest attestation failed due to stale key; clearing cached state and retrying with a new key"
+          )
           await clearAppAttestState()
           return try await prepareAppAttestPayload(
             did: did,
@@ -1743,7 +1791,8 @@ final class NotificationManager: NSObject {
       )
     } catch {
       if shouldRetryAppAttest(for: error), attempt == 0 {
-        notificationLogger.info("💡 App Attest assertion failed; rotating key and retrying attestation flow")
+        notificationLogger.info(
+          "💡 App Attest assertion failed; rotating key and retrying attestation flow")
         await clearAppAttestState()
         return try await prepareAppAttestPayload(
           did: did,
@@ -1787,7 +1836,8 @@ final class NotificationManager: NSObject {
     forceKeyRotation: Bool = false
   ) async throws {
     guard DCAppAttestService.shared.isSupported else {
-      notificationLogger.warning("⚠️ App Attest not supported on this device; skipping assertion attachment")
+      notificationLogger.warning(
+        "⚠️ App Attest not supported on this device; skipping assertion attachment")
       throw NotificationServiceError.appAttestUnsupported
     }
 
@@ -1814,10 +1864,11 @@ final class NotificationManager: NSObject {
       )
     }
     #if DEBUG
-    notificationLogger.info("AppAttest assertion clientDataJSON=\(clientDataString)")
+      notificationLogger.info("AppAttest assertion clientDataJSON=\(clientDataString)")
     #endif
 
-    notificationLogger.info("AppAttest assertion challenge=\(challenge.challenge) clientDataLen=\(clientData.count)")
+    notificationLogger.info(
+      "AppAttest assertion challenge=\(challenge.challenge) clientDataLen=\(clientData.count)")
 
     var digestInput = clientData
     if let bindBody {
@@ -1832,12 +1883,14 @@ final class NotificationManager: NSObject {
 
     request.addValue(keyIdentifier, forHTTPHeaderField: "X-AppAttest-KeyId")
     request.addValue(challenge.challenge, forHTTPHeaderField: "X-AppAttest-Challenge")
-    request.addValue(assertionData.base64EncodedString(), forHTTPHeaderField: "X-AppAttest-Assertion")
+    request.addValue(
+      assertionData.base64EncodedString(), forHTTPHeaderField: "X-AppAttest-Assertion")
     request.addValue(clientDataString, forHTTPHeaderField: "X-AppAttest-ClientData")
 
     if let bindBody {
       let bodyDigest = Data(SHA256.hash(data: bindBody))
-      request.addValue(bodyDigest.base64EncodedString(), forHTTPHeaderField: "X-AppAttest-BodySHA256")
+      request.addValue(
+        bodyDigest.base64EncodedString(), forHTTPHeaderField: "X-AppAttest-BodySHA256")
     }
 
     if let appState {
@@ -1876,7 +1929,7 @@ final class NotificationManager: NSObject {
 
     var payload: [String: Any] = [
       "did": did,
-      "device_token": token
+      "device_token": token,
     ]
 
     if forceKeyRotation {
@@ -1907,7 +1960,8 @@ final class NotificationManager: NSObject {
       notificationLogger.info("✅ Successfully received challenge from server")
       return challenge
     } catch {
-      notificationLogger.error("❌ Failed to decode challenge from server: \(error.localizedDescription)")
+      notificationLogger.error(
+        "❌ Failed to decode challenge from server: \(error.localizedDescription)")
       if let responseString = String(data: data, encoding: .utf8) {
         notificationLogger.info("📄 Challenge response data: \(responseString)")
       }
@@ -1926,7 +1980,8 @@ final class NotificationManager: NSObject {
       return decoded
     }
 
-    var normalized = value
+    var normalized =
+      value
       .replacingOccurrences(of: "-", with: "+")
       .replacingOccurrences(of: "_", with: "/")
 
@@ -1941,14 +1996,15 @@ final class NotificationManager: NSObject {
   private func makeClientDataBytes(for challenge: AppAttestChallenge) throws -> Data {
     do {
       // Encode the challenge using the WebAuthn-compatible JSON structure expected by the backend.
-      return try JSONSerialization.data(withJSONObject: ["challenge": challenge.challenge], options: [])
+      return try JSONSerialization.data(
+        withJSONObject: ["challenge": challenge.challenge], options: [])
     } catch {
       throw NSError(
         domain: "NotificationManager",
         code: -1,
         userInfo: [
           NSLocalizedDescriptionKey: "Unable to encode App Attest client data JSON",
-          NSUnderlyingErrorKey: error
+          NSUnderlyingErrorKey: error,
         ]
       )
     }
@@ -1985,7 +2041,8 @@ final class NotificationManager: NSObject {
       notificationLogger.info("🔑 Generating new App Attest key...")
       DCAppAttestService.shared.generateKey { keyID, error in
         if let error {
-          self.notificationLogger.error("❌ App Attest generateKey failed: \(error.localizedDescription)")
+          self.notificationLogger.error(
+            "❌ App Attest generateKey failed: \(error.localizedDescription)")
           if let nsError = error as NSError? {
             self.notificationLogger.error("   Domain: \(nsError.domain), Code: \(nsError.code)")
           }
@@ -2004,15 +2061,18 @@ final class NotificationManager: NSObject {
   private func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data {
     try await withCheckedThrowingContinuation { continuation in
       notificationLogger.info("🔐 Attempting to attest key: \(keyID)")
-      DCAppAttestService.shared.attestKey(keyID, clientDataHash: clientDataHash) { attestation, error in
+      DCAppAttestService.shared.attestKey(keyID, clientDataHash: clientDataHash) {
+        attestation, error in
         if let error {
-          self.notificationLogger.error("❌ App Attest attestKey failed: \(error.localizedDescription)")
+          self.notificationLogger.error(
+            "❌ App Attest attestKey failed: \(error.localizedDescription)")
           if let nsError = error as NSError? {
             self.notificationLogger.error("   Domain: \(nsError.domain), Code: \(nsError.code)")
           }
           continuation.resume(throwing: error)
         } else if let attestation {
-          self.notificationLogger.info("✅ App Attest attestation successful, size: \(attestation.count) bytes")
+          self.notificationLogger.info(
+            "✅ App Attest attestation successful, size: \(attestation.count) bytes")
           continuation.resume(returning: attestation)
         } else {
           self.notificationLogger.error("❌ App Attest attestKey returned nil without error")
@@ -2052,8 +2112,7 @@ final class NotificationManager: NSObject {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
 
-    if
-      let rotation = try? decoder.decode(ChallengeRotationResponse.self, from: data),
+    if let rotation = try? decoder.decode(ChallengeRotationResponse.self, from: data),
       let nextChallenge = rotation.nextChallenge
     {
       await MainActor.run {
@@ -2065,8 +2124,8 @@ final class NotificationManager: NSObject {
       return
     }
 
-    if
-      let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+    if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: [])
+      as? [String: Any],
       let rawNext = jsonObject["next_challenge"],
       let rawData = try? JSONSerialization.data(withJSONObject: rawNext, options: [])
     {
@@ -2087,11 +2146,13 @@ final class NotificationManager: NSObject {
     forceKeyRotation: Bool = false,
     forceAttestation: Bool = false
   ) {
-    let message = serverMessage?.isEmpty == false
+    let message =
+      serverMessage?.isEmpty == false
       ? serverMessage!
       : "Push notifications need to re-verify security. Automatically re-attesting..."
 
-    notificationLogger.info("Auto-triggering re-attestation for \(String(describing: operation)): \(message)")
+    notificationLogger.info(
+      "Auto-triggering re-attestation for \(String(describing: operation)): \(message)")
 
     // Automatically perform re-attestation without user prompt
     Task {
@@ -2116,8 +2177,10 @@ final class NotificationManager: NSObject {
 
       // Check circuit breaker before attempting re-attestation
       guard await circuitBreaker.canAttempt(for: operationKey) else {
-        notificationLogger.error("🛑 Circuit breaker triggered for \(operationKey) - too many re-attestation attempts")
-        notificationLogger.error("ℹ️ Please check server-side App Attest validation or try again in 5 minutes")
+        notificationLogger.error(
+          "🛑 Circuit breaker triggered for \(operationKey) - too many re-attestation attempts")
+        notificationLogger.error(
+          "ℹ️ Please check server-side App Attest validation or try again in 5 minutes")
 
         // Only set registrationFailed status for register operations
         if case .register = operation {
@@ -2126,7 +2189,10 @@ final class NotificationManager: NSObject {
               NSError(
                 domain: "NotificationManager",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "App Attest validation failed repeatedly. Please try again later."]
+                userInfo: [
+                  NSLocalizedDescriptionKey:
+                    "App Attest validation failed repeatedly. Please try again later."
+                ]
               )
             )
           }
@@ -2176,7 +2242,8 @@ final class NotificationManager: NSObject {
     }
 
     guard status == .registered else {
-      notificationLogger.debug("Skipping activity subscription fetch - notification service not registered")
+      notificationLogger.debug(
+        "Skipping activity subscription fetch - notification service not registered")
       return nil
     }
 
@@ -2227,13 +2294,15 @@ final class NotificationManager: NSObject {
         if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
           await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
         }
-        notificationLogger.info("Fetched \(payload.subscriptions.count) activity subscriptions from notification server")
+        notificationLogger.info(
+          "Fetched \(payload.subscriptions.count) activity subscriptions from notification server")
         return payload.subscriptions
       case 204:
         if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
           await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
         }
-        notificationLogger.info("Activity subscription fetch succeeded - no subscriptions registered")
+        notificationLogger.info(
+          "Activity subscription fetch succeeded - no subscriptions registered")
         return []
       case 401, 428:
         let message = parseServerErrorMessage(from: data) ?? "App Attest validation failed"
@@ -2241,7 +2310,8 @@ final class NotificationManager: NSObject {
         let isKeyMismatch = message.lowercased().contains("key mismatch")
 
         if isKeyMismatch {
-          notificationLogger.info("🔑 Activity subscription fetch detected key mismatch - clearing App Attest state")
+          notificationLogger.info(
+            "🔑 Activity subscription fetch detected key mismatch - clearing App Attest state")
           await clearAppAttestState()
         }
 
@@ -2258,7 +2328,8 @@ final class NotificationManager: NSObject {
         )
       }
     } catch {
-      notificationLogger.error("Error fetching activity subscriptions: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Error fetching activity subscriptions: \(error.localizedDescription)")
     }
 
     return nil
@@ -2287,7 +2358,8 @@ final class NotificationManager: NSObject {
     }
 
     guard status == .registered else {
-      notificationLogger.debug("Skipping activity subscription sync - notification service not registered")
+      notificationLogger.debug(
+        "Skipping activity subscription sync - notification service not registered")
       return
     }
 
@@ -2335,17 +2407,20 @@ final class NotificationManager: NSObject {
 
       switch httpResponse.statusCode {
       case 200, 201, 204:
-        notificationLogger.info("Synced activity subscription for \(subjectDid) with notification server")
+        notificationLogger.info(
+          "Synced activity subscription for \(subjectDid) with notification server")
         if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
           await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
         }
       case 401, 428:
         let message = parseServerErrorMessage(from: data) ?? "App Attest validation failed"
-        notificationLogger.warning("🔐 Activity subscription sync rejected for \(subjectDid): \(message)")
+        notificationLogger.warning(
+          "🔐 Activity subscription sync rejected for \(subjectDid): \(message)")
         let isKeyMismatch = message.lowercased().contains("key mismatch")
 
         if isKeyMismatch {
-          notificationLogger.info("🔑 Activity subscription sync detected key mismatch - clearing App Attest state")
+          notificationLogger.info(
+            "🔑 Activity subscription sync detected key mismatch - clearing App Attest state")
           await clearAppAttestState()
         }
 
@@ -2366,7 +2441,8 @@ final class NotificationManager: NSObject {
         )
       }
     } catch {
-      notificationLogger.error("Error syncing activity subscription for \(subjectDid): \(error.localizedDescription)")
+      notificationLogger.error(
+        "Error syncing activity subscription for \(subjectDid): \(error.localizedDescription)")
     }
   }
 
@@ -2382,7 +2458,8 @@ final class NotificationManager: NSObject {
     }
 
     guard status == .registered else {
-      notificationLogger.debug("Skipping activity subscription removal - notification service not registered")
+      notificationLogger.debug(
+        "Skipping activity subscription removal - notification service not registered")
       return
     }
 
@@ -2428,17 +2505,20 @@ final class NotificationManager: NSObject {
 
       switch httpResponse.statusCode {
       case 200, 204, 404:
-        notificationLogger.info("Removed activity subscription for \(subjectDid) from notification server")
+        notificationLogger.info(
+          "Removed activity subscription for \(subjectDid) from notification server")
         if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
           await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
         }
       case 401, 428:
         let message = parseServerErrorMessage(from: data) ?? "App Attest validation failed"
-        notificationLogger.warning("🔐 Activity subscription removal rejected for \(subjectDid): \(message)")
+        notificationLogger.warning(
+          "🔐 Activity subscription removal rejected for \(subjectDid): \(message)")
         let isKeyMismatch = message.lowercased().contains("key mismatch")
 
         if isKeyMismatch {
-          notificationLogger.info("🔑 Activity subscription removal detected key mismatch - clearing App Attest state")
+          notificationLogger.info(
+            "🔑 Activity subscription removal detected key mismatch - clearing App Attest state")
           await clearAppAttestState()
         }
 
@@ -2455,7 +2535,8 @@ final class NotificationManager: NSObject {
         )
       }
     } catch {
-      notificationLogger.error("Error removing activity subscription for \(subjectDid): \(error.localizedDescription)")
+      notificationLogger.error(
+        "Error removing activity subscription for \(subjectDid): \(error.localizedDescription)")
     }
   }
 
@@ -2499,10 +2580,12 @@ final class NotificationManager: NSObject {
       request.addValue(attest.challenge, forHTTPHeaderField: "X-AppAttest-Challenge")
       request.addValue(attest.assertion, forHTTPHeaderField: "X-AppAttest-Assertion")
       if let clientDataRaw = base64Decode(attest.clientData),
-         let clientDataString = String(data: clientDataRaw, encoding: .utf8) {
+        let clientDataString = String(data: clientDataRaw, encoding: .utf8)
+      {
         request.addValue(clientDataString, forHTTPHeaderField: "X-AppAttest-ClientData")
       } else {
-        notificationLogger.warning("⚠️ Unable to decode App Attest client data for header (unregister)")
+        notificationLogger.warning(
+          "⚠️ Unable to decode App Attest client data for header (unregister)")
       }
       if let attestation = attest.attestation {
         request.addValue(attestation, forHTTPHeaderField: "X-AppAttest-Attestation")
@@ -2530,7 +2613,8 @@ final class NotificationManager: NSObject {
 
         // If server doesn't know our key, we need full key rotation + attestation
         if isKeyMismatch || requiresReattestation {
-          notificationLogger.info("🔑 Server doesn't recognize key - forcing full key rotation and attestation")
+          notificationLogger.info(
+            "🔑 Server doesn't recognize key - forcing full key rotation and attestation")
           await clearAppAttestState()
         }
 
@@ -2568,13 +2652,14 @@ final class NotificationManager: NSObject {
       Task { await registrationCoordinator.finish() }
     }
 
-    if
-      let prompt = pendingReattestationPrompt,
+    if let prompt = pendingReattestationPrompt,
       !forceKeyRotation,
       let registeredToken = lastRegisteredDeviceToken,
       registeredToken == token
     {
-      notificationLogger.info("⏸️ Registration deferred (awaiting re-attestation resolution for token \(tokenHex.prefix(16)))")
+      notificationLogger.info(
+        "⏸️ Registration deferred (awaiting re-attestation resolution for token \(tokenHex.prefix(16)))"
+      )
       notificationLogger.debug("ℹ️ Pending prompt: \(prompt.message.prefix(60))…")
       return
     }
@@ -2617,13 +2702,15 @@ final class NotificationManager: NSObject {
         appAttestAttestation: attest.attestation
       )
 
-      notificationLogger.info("Registration payload: keyId=\(attest.keyID), hasAttestation=\(attest.attestation != nil), attestationLength=\(attest.attestation?.count ?? 0)")
+      notificationLogger.info(
+        "Registration payload: keyId=\(attest.keyID), hasAttestation=\(attest.attestation != nil), attestationLength=\(attest.attestation?.count ?? 0)"
+      )
 
       #if DEBUG
-      // Log if we're using mock data
-      if attest.keyID.hasPrefix("debug-key-id") {
-        notificationLogger.warning("🚧 DEBUG: Sending mock App Attest payload to server")
-      }
+        // Log if we're using mock data
+        if attest.keyID.hasPrefix("debug-key-id") {
+          notificationLogger.warning("🚧 DEBUG: Sending mock App Attest payload to server")
+        }
       #endif
 
       let encodedBody = try makeJSONEncoder().encode(body)
@@ -2633,10 +2720,12 @@ final class NotificationManager: NSObject {
       request.addValue(attest.challenge, forHTTPHeaderField: "X-AppAttest-Challenge")
       request.addValue(attest.assertion, forHTTPHeaderField: "X-AppAttest-Assertion")
       if let clientDataRaw = base64Decode(attest.clientData),
-         let clientDataString = String(data: clientDataRaw, encoding: .utf8) {
+        let clientDataString = String(data: clientDataRaw, encoding: .utf8)
+      {
         request.addValue(clientDataString, forHTTPHeaderField: "X-AppAttest-ClientData")
       } else {
-        notificationLogger.warning("⚠️ Unable to decode App Attest client data for header (register)")
+        notificationLogger.warning(
+          "⚠️ Unable to decode App Attest client data for header (register)")
       }
       if let attestation = attest.attestation {
         request.addValue(attestation, forHTTPHeaderField: "X-AppAttest-Attestation")
@@ -2656,7 +2745,6 @@ final class NotificationManager: NSObject {
         status = .registered
         lastRegisteredDeviceToken = token
         await applyChallengeRotation(from: data, keyIdentifier: attest.keyID)
-        await fetchNotificationPreferences()
         await syncRelationships()
 
         // Reset circuit breaker on successful registration
@@ -2670,13 +2758,15 @@ final class NotificationManager: NSObject {
         }
       case 401, 428:
         let serverError = parseServerErrorMessage(from: data) ?? "App Attest validation failed"
-        notificationLogger.warning("🔐 Server rejected App Attest (HTTP \(httpResponse.statusCode)): \(serverError)")
+        notificationLogger.warning(
+          "🔐 Server rejected App Attest (HTTP \(httpResponse.statusCode)): \(serverError)")
         let isKeyMismatch = serverError.lowercased().contains("key mismatch")
         let requiresReattestation = serverError.lowercased().contains("requires re-attestation")
 
         // If server doesn't know our key, we need full key rotation + attestation
         if isKeyMismatch || requiresReattestation {
-          notificationLogger.info("🔑 Server doesn't recognize key - forcing full key rotation and attestation")
+          notificationLogger.info(
+            "🔑 Server doesn't recognize key - forcing full key rotation and attestation")
           await clearAppAttestState()
         }
 
@@ -2705,12 +2795,14 @@ final class NotificationManager: NSObject {
         }
 
         // If server requires attestation but we didn't send it, clear state and retry
-        if httpResponse.statusCode == 400 && 
-           (errorMessage.lowercased().contains("attestation") && 
-            errorMessage.lowercased().contains("required")) {
-          notificationLogger.info("🔑 Server requires attestation - clearing cached App Attest state and retrying")
+        if httpResponse.statusCode == 400
+          && (errorMessage.lowercased().contains("attestation")
+            && errorMessage.lowercased().contains("required"))
+        {
+          notificationLogger.info(
+            "🔑 Server requires attestation - clearing cached App Attest state and retrying")
           await clearAppAttestState()
-          
+
           // Trigger retry with fresh attestation
           triggerReattestationPrompt(
             for: .register(deviceToken: token),
@@ -2731,80 +2823,94 @@ final class NotificationManager: NSObject {
     } catch {
       // Check if this is a DeviceCheck/App Attest error
       if let nsError = error as NSError?,
-         nsError.domain == DCError.errorDomain {
+        nsError.domain == DCError.errorDomain
+      {
 
         let dcCode = DCError.Code(rawValue: nsError.code)
 
         switch dcCode {
         case .featureUnsupported:
-          notificationLogger.warning("❌ DeviceCheck/App Attest not supported on this device/simulator (featureUnsupported)")
+          notificationLogger.warning(
+            "❌ DeviceCheck/App Attest not supported on this device/simulator (featureUnsupported)")
           notificationLogger.info("💡 This is expected on iOS Simulator or older devices")
 
           #if DEBUG
-          notificationLogger.info("🧪 DEBUG: App Attest is not available in this environment")
-          notificationLogger.info("🔧 For production, ensure testing on physical devices with App Attest support")
+            notificationLogger.info("🧪 DEBUG: App Attest is not available in this environment")
+            notificationLogger.info(
+              "🔧 For production, ensure testing on physical devices with App Attest support")
 
-          // In debug mode, we could consider implementing a fallback registration
-          // For now, mark as failed but provide clear messaging
-          status = .registrationFailed(NSError(
-            domain: "NotificationManager",
-            code: -1,
-            userInfo: [
-              NSLocalizedDescriptionKey: "App Attest not available (Development/Simulator)",
-              NSLocalizedRecoverySuggestionErrorKey: "Test on a physical device for full App Attest functionality"
-            ]
-          ))
+            // In debug mode, we could consider implementing a fallback registration
+            // For now, mark as failed but provide clear messaging
+            status = .registrationFailed(
+              NSError(
+                domain: "NotificationManager",
+                code: -1,
+                userInfo: [
+                  NSLocalizedDescriptionKey: "App Attest not available (Development/Simulator)",
+                  NSLocalizedRecoverySuggestionErrorKey:
+                    "Test on a physical device for full App Attest functionality",
+                ]
+              ))
           #else
-          // In production, this is a real failure
-          status = .registrationFailed(NSError(
-            domain: "NotificationManager",
-            code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "Device security verification not available"]
-          ))
+            // In production, this is a real failure
+            status = .registrationFailed(
+              NSError(
+                domain: "NotificationManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Device security verification not available"]
+              ))
           #endif
 
         case .invalidKey, .invalidInput:
           let codeDescription = dcCode == .invalidKey ? "invalid key" : "invalid input"
-          notificationLogger.warning("❌ DeviceCheck/App Attest \(codeDescription) (error \(nsError.code))")
-          notificationLogger.info("💡 Stored App Attest state is no longer valid; clearing cached key and retrying")
+          notificationLogger.warning(
+            "❌ DeviceCheck/App Attest \(codeDescription) (error \(nsError.code))")
+          notificationLogger.info(
+            "💡 Stored App Attest state is no longer valid; clearing cached key and retrying")
           notificationLogger.info("🔄 Clearing App Attest state and will retry on next attempt")
 
           await clearAppAttestState()
 
-          status = .registrationFailed(NSError(
-            domain: "NotificationManager",
-            code: -1,
-            userInfo: [
-              NSLocalizedDescriptionKey: "App Attest key invalidated - will regenerate",
-              NSLocalizedRecoverySuggestionErrorKey: "Please try enabling notifications again"
-            ]
-          ))
-
-        case nil:
-          switch nsError.code {
-          case 2, 3:
-            notificationLogger.warning("❌ DeviceCheck/App Attest error \(nsError.code) (interpreted as stale key)")
-            notificationLogger.info("💡 Stored App Attest state is no longer valid; clearing cached key and retrying")
-            notificationLogger.info("🔄 Clearing App Attest state and will retry on next attempt")
-
-            await clearAppAttestState()
-
-            status = .registrationFailed(NSError(
+          status = .registrationFailed(
+            NSError(
               domain: "NotificationManager",
               code: -1,
               userInfo: [
                 NSLocalizedDescriptionKey: "App Attest key invalidated - will regenerate",
-                NSLocalizedRecoverySuggestionErrorKey: "Please try enabling notifications again"
+                NSLocalizedRecoverySuggestionErrorKey: "Please try enabling notifications again",
               ]
             ))
 
+        case nil:
+          switch nsError.code {
+          case 2, 3:
+            notificationLogger.warning(
+              "❌ DeviceCheck/App Attest error \(nsError.code) (interpreted as stale key)")
+            notificationLogger.info(
+              "💡 Stored App Attest state is no longer valid; clearing cached key and retrying")
+            notificationLogger.info("🔄 Clearing App Attest state and will retry on next attempt")
+
+            await clearAppAttestState()
+
+            status = .registrationFailed(
+              NSError(
+                domain: "NotificationManager",
+                code: -1,
+                userInfo: [
+                  NSLocalizedDescriptionKey: "App Attest key invalidated - will regenerate",
+                  NSLocalizedRecoverySuggestionErrorKey: "Please try enabling notifications again",
+                ]
+              ))
+
           default:
-            notificationLogger.error("❌ DeviceCheck/App Attest error \(nsError.code): \(nsError.localizedDescription)")
+            notificationLogger.error(
+              "❌ DeviceCheck/App Attest error \(nsError.code): \(nsError.localizedDescription)")
             status = .registrationFailed(nsError)
           }
 
         default:
-          notificationLogger.error("❌ DeviceCheck/App Attest error \(nsError.code): \(nsError.localizedDescription)")
+          notificationLogger.error(
+            "❌ DeviceCheck/App Attest error \(nsError.code): \(nsError.localizedDescription)")
           status = .registrationFailed(nsError)
         }
       } else {
@@ -2814,127 +2920,67 @@ final class NotificationManager: NSObject {
     }
   }
 
-  /// Fetch notification preferences from the server
-  private func fetchNotificationPreferences(
-    forceKeyRotation: Bool = false,
-    forceAttestation: Bool = false,
-    attempt: Int = 0
-  ) async {
-    guard let client = client else {
-      notificationLogger.warning("Cannot fetch preferences - no client available")
-      return
-    }
+  /// Register device token with MLS server
+  private func registerMLSDeviceToken(_ token: Data) async {
+    #if os(iOS)
+      guard let appState = appState else { return }
+      guard let client = client else { return }
 
-    guard let deviceToken = deviceToken else {
-      notificationLogger.warning("Cannot fetch preferences - missing device token")
-      return
-    }
+      let tokenHex = hexString(from: token)
 
-    do {
-      // Get the user's DID
-      let did = try await client.getDid()
+      do {
+        // Get the user's DID
+        let did = try await client.getDid()
 
-      var request = URLRequest(url: serviceBaseURL.appendingPathComponent("preferences"))
-      request.httpMethod = "POST"
-      request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-      request.addValue("application/json", forHTTPHeaderField: "Accept")
+        // Ensure device is registered with MLS first (Phase 1 & 2)
+        // This creates the device record on the server if it doesn't exist
+        _ = try await MLSClient.shared.ensureDeviceRegistered(userDid: did)
 
-      let payload = PreferencesQueryPayload(
-        did: did,
-        deviceToken: hexString(from: deviceToken)
-      )
-
-      let body = try makeJSONEncoder().encode(payload)
-      request.httpBody = body
-
-      try await attachAppAttestAssertion(
-        to: &request,
-        did: did,
-        deviceToken: deviceToken,
-        bindBody: body,
-        forceKeyRotation: forceKeyRotation
-      )
-
-      // Send request
-      let (data, response) = try await URLSession.shared.data(for: request)
-
-      // Check response
-      guard let httpResponse = response as? HTTPURLResponse else {
-        throw NotificationServiceError.invalidServerResponse
-      }
-
-      switch httpResponse.statusCode {
-      case 200, 201:
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        struct PreferencesEnvelope: Decodable {
-          let preferences: NotificationPreferences?
-          let nextChallenge: AppAttestChallenge?
-
-          enum CodingKeys: String, CodingKey {
-            case preferences
-            case nextChallenge = "next_challenge"
-          }
-        }
-
-        if !data.isEmpty {
-          if let envelope = try? decoder.decode(PreferencesEnvelope.self, from: data) {
-            if let fetched = envelope.preferences {
-              self.preferences = fetched
-            }
-          } else if let decodedPreferences = try? decoder.decode(NotificationPreferences.self, from: data) {
-            self.preferences = decodedPreferences
-          } else if let rawResponse = String(data: data, encoding: .utf8) {
-            notificationLogger.warning("⚠️ Unexpected preferences payload format: \(rawResponse)")
-          }
-        }
-
-        notificationLogger.info("Successfully fetched notification preferences")
-        if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
-          await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
-        }
-      case 204:
-        notificationLogger.info("Preferences fetch succeeded - no custom preferences stored")
-        if let keyIdentifier = await currentAppAttestInfo()?.keyIdentifier {
-          await applyChallengeRotation(from: data, keyIdentifier: keyIdentifier)
-        }
-      case 401, 428:
-        let serverError = parseServerErrorMessage(from: data) ?? "App Attest validation failed"
-        notificationLogger.warning("🔐 Preferences update rejected: \(serverError)")
-        let isKeyMismatch = serverError.lowercased().contains("key mismatch")
-
-        if isKeyMismatch {
-          notificationLogger.info("🔑 Preferences fetch detected key mismatch - clearing App Attest state")
-          await clearAppAttestState()
-        } else if attempt == 0 {
-          notificationLogger.info("🔁 Retrying preferences fetch with fresh App Attest assertion")
-          await fetchNotificationPreferences(
-            forceKeyRotation: forceKeyRotation,
-            forceAttestation: forceAttestation,
-            attempt: attempt + 1
-          )
+        // Get the correct deviceId from the manager (it might differ from IDFV if server assigns it)
+        guard let deviceInfo = await MLSClient.shared.getDeviceInfo(for: did) else {
+          notificationLogger.error("❌ Failed to retrieve device info after registration")
           return
         }
 
-        triggerReattestationPrompt(
-          for: .updatePreferences,
-          serverMessage: serverError,
-          forceKeyRotation: isKeyMismatch,
-          forceAttestation: isKeyMismatch
-        )
-      default:
-        let message = parseServerErrorMessage(from: data) ?? "Invalid response"
-        notificationLogger.error("Failed to fetch notification preferences: HTTP \(httpResponse.statusCode) - \(message)")
-        throw NSError(
-          domain: "NotificationManager", code: httpResponse.statusCode,
-          userInfo: [NSLocalizedDescriptionKey: message])
-      }
+        if let mlsClient = await appState.getMLSAPIClient() {
+          notificationLogger.info("🚀 Registering device token with MLS server")
 
-    } catch {
-      notificationLogger.error("Error fetching notification preferences: \(error.localizedDescription)")
-      // Use default preferences if we can't fetch
-    }
+          let deviceName = UIDevice.current.name
+
+          try await mlsClient.registerDeviceToken(
+            deviceId: deviceInfo.deviceId,
+            pushToken: tokenHex,
+            deviceName: deviceName,
+            platform: "ios"
+          )
+          notificationLogger.info("✅ Successfully registered device token with MLS server")
+        }
+      } catch {
+        notificationLogger.error(
+          "❌ Failed to register device token with MLS server: \(error.localizedDescription)")
+      }
+    #endif
+  }
+
+  /// Unregister device token from MLS server
+  private func unregisterMLSDeviceToken(_ token: Data) async {
+    #if os(iOS)
+      guard let appState = appState else { return }
+
+      // Use device identifier for vendor as deviceId (same as registration)
+      let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
+
+      if let mlsClient = await appState.getMLSAPIClient() {
+        notificationLogger.info("Unregistering device token from MLS server")
+        do {
+          try await mlsClient.unregisterDeviceToken(deviceId: deviceId)
+          notificationLogger.info("✅ Successfully unregistered device token from MLS server")
+        } catch {
+          notificationLogger.error(
+            "❌ Failed to unregister device token from MLS server: \(error.localizedDescription)")
+        }
+      }
+    #endif
   }
 
   /// Update notification preferences on the server
@@ -3015,7 +3061,8 @@ final class NotificationManager: NSObject {
         let isKeyMismatch = serverError.lowercased().contains("key mismatch")
 
         if isKeyMismatch {
-          notificationLogger.info("🔑 Preferences update detected key mismatch - clearing App Attest state")
+          notificationLogger.info(
+            "🔑 Preferences update detected key mismatch - clearing App Attest state")
           await clearAppAttestState()
         } else if attempt == 0 {
           notificationLogger.info("🔁 Retrying preferences update with fresh App Attest assertion")
@@ -3041,7 +3088,8 @@ final class NotificationManager: NSObject {
       }
 
     } catch {
-      notificationLogger.error("Error updating notification preferences: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Error updating notification preferences: \(error.localizedDescription)")
     }
   }
 
@@ -3057,7 +3105,8 @@ final class NotificationManager: NSObject {
 
       // Sync relationships if we haven't in a while
       if let lastSync = lastRelationshipSync,
-         Date().timeIntervalSince(lastSync) > 3600 {  // If it's been over an hour
+        Date().timeIntervalSince(lastSync) > 3600
+      {  // If it's been over an hour
         await syncRelationships()
       }
 
@@ -3102,21 +3151,26 @@ final class NotificationManager: NSObject {
     let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
     if let sharedDefaults = sharedDefaults {
       sharedDefaults.set(data, forKey: "notificationWidgetData")
-      notificationLogger.info("📲 Widget data saved to UserDefaults: count=\(count), lastUpdated=\(Date())")
+      notificationLogger.info(
+        "📲 Widget data saved to UserDefaults: count=\(count), lastUpdated=\(Date())")
     } else {
       notificationLogger.error(
-        "❌ Failed to access shared UserDefaults with suite name 'group.blue.catbird.shared'")
+        "❌ Failed to access shared UserDefaults with suite name 'group.blue.catbird'")
     }
 
     // Trigger widget refresh
     WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdNotificationWidget")
-    notificationLogger.info("🔄 Widget timeline refresh requested for kind: CatbirdNotificationWidget")
+    notificationLogger.info(
+      "🔄 Widget timeline refresh requested for kind: CatbirdNotificationWidget")
   }
 }
 // MARK: - UNUserNotificationCenterDelegate
 
 extension NotificationManager: UNUserNotificationCenterDelegate {
   /// Handle notifications received while app is in the foreground
+  ///
+  /// CRITICAL: When app is in foreground, iOS bypasses the Notification Service Extension.
+  /// We must decrypt MLS messages here to show meaningful notification content.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
@@ -3125,8 +3179,59 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     notificationLogger.info("Received notification while app in foreground")
 
     let userInfo = notification.request.content.userInfo
+    
+    // Skip already-decrypted MLS notifications (prevent infinite loop)
+    if userInfo["_mls_decrypted"] as? Bool == true {
+      notificationLogger.debug("📦 [FG] Already decrypted MLS notification - showing as-is")
+      completionHandler([.banner, .sound])
+      return
+    }
+    
+    // Check if this is an MLS message that needs decryption
+    if let type = userInfo["type"] as? String, type == "mls_message" {
+      notificationLogger.info("🔐 [FG] MLS message detected - attempting foreground decryption")
+      
+      // Extract MLS payload fields
+      let ciphertext = userInfo["ciphertext"] as? String
+      let convoId = userInfo["convo_id"] as? String
+      let messageId = userInfo["message_id"] as? String
+      let recipientDid = userInfo["recipient_did"] as? String
+      let senderDid = userInfo["sender_did"] as? String
+      
+      // Skip self-sent messages (no notification needed)
+      if let sender = senderDid, let recipient = recipientDid,
+         sender.lowercased() == recipient.lowercased() {
+        notificationLogger.info("🔇 [FG] Self-sent message - suppressing notification")
+        completionHandler([])
+        return
+      }
+      
+      // Attempt to decrypt and show notification with decrypted content
+      if let ciphertext = ciphertext,
+         let convoId = convoId,
+         let messageId = messageId,
+         let recipientDid = recipientDid {
+        
+        Task {
+          await decryptAndPresentMLSNotification(
+            ciphertext: ciphertext,
+            convoId: convoId,
+            messageId: messageId,
+            recipientDid: recipientDid,
+            originalNotification: notification,
+            completionHandler: completionHandler
+          )
+        }
+        return
+      } else {
+        notificationLogger.warning("⚠️ [FG] Missing MLS payload fields - showing placeholder")
+      }
+    }
+    
+    // Handle non-MLS notifications (standard Bluesky notifications)
     if let uriString = userInfo["uri"] as? String,
-       let typeString = userInfo["type"] as? String {
+      let typeString = userInfo["type"] as? String
+    {
       Task {
         await prefetchNotificationContent(uri: uriString, type: typeString)
       }
@@ -3134,6 +3239,241 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     // Show notification banner even when app is in foreground
     completionHandler([.banner, .sound])
+  }
+  
+  /// Decrypt MLS message and present notification with decrypted content
+  ///
+  /// Called when an MLS push notification arrives while the app is in foreground.
+  /// Since iOS bypasses the Notification Service Extension in this case, we must
+  /// decrypt the message here to show meaningful notification content.
+  private func decryptAndPresentMLSNotification(
+    ciphertext: String,
+    convoId: String,
+    messageId: String,
+    recipientDid: String,
+    originalNotification: UNNotification,
+    completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) async {
+    notificationLogger.info("🔓 [FG] Starting MLS decryption for message: \(messageId.prefix(16))...")
+    notificationLogger.info("🔓 [FG] Recipient DID: \(recipientDid.prefix(24))...")
+    
+    do {
+      // Check if already cached (decrypted by background polling or sender's cache)
+      if let cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
+        messageID: messageId, userDid: recipientDid
+      ) {
+        notificationLogger.info("📦 [FG] Cache HIT - using cached content")
+        await presentDecryptedNotification(
+          plaintext: cachedPlaintext,
+          originalNotification: originalNotification,
+          completionHandler: completionHandler
+        )
+        return
+      }
+      
+      // Decode ciphertext from base64
+      guard let ciphertextData = Data(base64Encoded: ciphertext) else {
+        notificationLogger.error("❌ [FG] Invalid base64 ciphertext")
+        completionHandler([.banner, .sound])
+        return
+      }
+      
+      // Convert convoId to groupId
+      let groupIdData: Data
+      if let hexData = Data(hexEncoded: convoId) {
+        groupIdData = hexData
+      } else {
+        groupIdData = Data(convoId.utf8)
+      }
+      
+      // CRITICAL: Sync the recipient's group state before decryption
+      // This fetches any pending commits/messages that the recipient's context missed
+      notificationLogger.info("🔄 [FG] Syncing group state for recipient before decryption...")
+      await syncGroupStateForRecipient(convoId: convoId, recipientDid: recipientDid)
+      
+      // Decrypt using shared MLSCoreContext
+      let decryptedText = try await CatbirdMLSCore.MLSCoreContext.shared.decryptAndStore(
+        userDid: recipientDid,
+        groupId: groupIdData,
+        ciphertext: ciphertextData,
+        conversationID: convoId,
+        messageID: messageId
+      )
+      
+      notificationLogger.info("✅ [FG] Decryption SUCCESS - showing decrypted notification")
+      
+      await presentDecryptedNotification(
+        plaintext: decryptedText,
+        originalNotification: originalNotification,
+        completionHandler: completionHandler
+      )
+      
+    } catch {
+      notificationLogger.error("❌ [FG] Decryption FAILED: \(error.localizedDescription)")
+      // Show notification with placeholder text as fallback
+      completionHandler([.banner, .sound])
+    }
+  }
+  
+  /// Sync the group state for a recipient before attempting decryption
+  /// This ensures the recipient's MLS context has all pending commits processed
+  private func syncGroupStateForRecipient(convoId: String, recipientDid: String) async {
+    notificationLogger.info("🔄 [FG] Fetching pending messages for recipient's group sync...")
+    
+    do {
+      // Get or create API client for the recipient
+      let apiClient: MLSAPIClient
+      
+      if let recipientAppState = await getAppStateForUser(recipientDid),
+         let existingClient = await recipientAppState.getMLSAPIClient() {
+        // Use existing API client from cached AppState
+        notificationLogger.info("🔄 [FG] Using existing API client for recipient")
+        apiClient = existingClient
+      } else {
+        // Create a standalone ATProtoClient for the recipient
+        // It will read auth tokens from shared keychain
+        notificationLogger.info("🔄 [FG] Creating standalone API client for recipient...")
+        
+        let standaloneClient = await createStandaloneClientForUser(recipientDid)
+        guard let client = standaloneClient else {
+          notificationLogger.warning("⚠️ [FG] Failed to create standalone client for recipient - skipping group sync")
+          return
+        }
+        
+        // Create MLS API client with the standalone client
+        apiClient = await MLSAPIClient(client: client, environment: .production)
+        notificationLogger.info("🔄 [FG] Created standalone MLS API client for recipient")
+      }
+      
+      // Fetch recent messages to process any commits we missed
+      let result = try await apiClient.getMessages(convoId: convoId, sinceSeq: nil)
+      notificationLogger.info("🔄 [FG] Fetched \(result.messages.count) messages for group sync")
+      
+      // Process ALL messages (commits, proposals, AND application messages) in order
+      // This ensures the ratchet state is properly synchronized
+      let context = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: recipientDid)
+      
+      guard let groupIdData = Data(hexEncoded: convoId) else {
+        notificationLogger.error("❌ [FG] Invalid convoId format for group sync")
+        return
+      }
+      
+      var processedCount = 0
+      for message in result.messages {
+        // ciphertext is already Bytes (Data)
+        let ciphertextData = message.ciphertext.data
+        
+        // Strip padding if present
+        let actualCiphertext = CatbirdMLSCore.MLSPaddingUtility.stripPaddingIfPresent(ciphertextData)
+        
+        do {
+          _ = try context.processMessage(groupId: groupIdData, messageData: actualCiphertext)
+          processedCount += 1
+          notificationLogger.debug("🔄 [FG] Processed message \(message.id.prefix(8)) (type: \(message.messageType ?? "unknown"))")
+        } catch {
+          // Ignore errors - might be already processed, or the target message we want to decrypt
+          notificationLogger.debug("🔄 [FG] Skipping message \(message.id.prefix(8)): \(error.localizedDescription)")
+        }
+      }
+      
+      notificationLogger.info("✅ [FG] Group sync complete - processed \(processedCount)/\(result.messages.count) messages")
+      
+    } catch {
+      notificationLogger.warning("⚠️ [FG] Group sync failed: \(error.localizedDescription)")
+      // Continue anyway - decryption might still work
+    }
+  }
+  
+  /// Create a standalone ATProtoClient for a specific user
+  /// The client will read auth tokens from the shared keychain
+  private func createStandaloneClientForUser(_ userDid: String) async -> ATProtoClient? {
+    notificationLogger.info("🔐 [FG] Creating standalone ATProtoClient for: \(userDid.prefix(24))...")
+    
+    #if targetEnvironment(simulator)
+    let accessGroup: String? = nil
+    #else
+    let accessGroup: String? = "blue.catbird.shared"
+    #endif
+    
+    let oauthConfig = OAuthConfiguration(
+      clientId: "https://catbird.blue/oauth/client-metadata.json",
+      redirectUri: "https://catbird.blue/oauth/callback",
+      scope: "atproto transition:generic transition:chat.bsky"
+    )
+    
+    let client = await ATProtoClient(
+      oauthConfig: oauthConfig,
+      namespace: "blue.catbird",
+      userAgent: "Catbird/1.0",
+      bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
+      bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
+      accessGroup: accessGroup
+    )
+    
+    // Switch to the specific user's account to load their tokens
+    do {
+      try await client.switchToAccount(did: userDid)
+      notificationLogger.info("✅ [FG] Standalone client switched to user: \(userDid.prefix(24))...")
+      return client
+    } catch {
+      notificationLogger.error("❌ [FG] Failed to switch standalone client to user: \(error.localizedDescription)")
+      return nil
+    }
+  }
+  
+  /// Get AppState for a specific user DID (for multi-account support)
+  private func getAppStateForUser(_ userDid: String) async -> AppState? {
+    // First check if current appState matches
+    if let currentAppState = appState,
+       await MainActor.run(body: { currentAppState.userDID }) == userDid {
+      return currentAppState
+    }
+    
+    // Check AppStateManager for other accounts
+    return await MainActor.run {
+      AppStateManager.shared.getState(for: userDid)
+    }
+  }
+  
+  /// Present a notification with decrypted MLS message content
+  @MainActor
+  private func presentDecryptedNotification(
+    plaintext: String,
+    originalNotification: UNNotification,
+    completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    // For foreground notifications, we can't modify the content directly.
+    // Instead, we schedule a new local notification with the decrypted content
+    // and suppress the original push notification.
+    
+    let content = UNMutableNotificationContent()
+    content.title = "New Message"
+    content.body = plaintext
+    content.sound = .default
+    
+    // Copy over metadata but mark as already decrypted to prevent infinite loop
+    var modifiedUserInfo = originalNotification.request.content.userInfo
+    modifiedUserInfo["_mls_decrypted"] = true  // Mark as already processed
+    modifiedUserInfo["type"] = "mls_message_decrypted"  // Change type to prevent re-processing
+    content.userInfo = modifiedUserInfo
+    
+    let request = UNNotificationRequest(
+      identifier: UUID().uuidString,
+      content: content,
+      trigger: nil  // Show immediately
+    )
+    
+    UNUserNotificationCenter.current().add(request) { [weak self] error in
+      if let error = error {
+        self?.notificationLogger.error("❌ [FG] Failed to schedule decrypted notification: \(error.localizedDescription)")
+        // Fall back to showing original notification
+        completionHandler([.banner, .sound])
+      } else {
+        self?.notificationLogger.info("✅ [FG] Decrypted notification scheduled")
+        // Suppress original notification (we're showing the decrypted one)
+        completionHandler([])
+      }
+    }
   }
 
   /// Handle user interaction with the notification
@@ -3213,7 +3553,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
 
     } catch {
-      notificationLogger.error("Error prefetching notification content: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Error prefetching notification content: \(error.localizedDescription)")
     }
   }
 
@@ -3234,18 +3575,20 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     )
 
     // Create cached post with special feedType for notification prefetch
-    guard let cachedPost = CachedFeedViewPost(
-      from: feedViewPost,
-      cursor: nil,
-      feedType: "notification-prefetch",
-      feedOrder: nil
-    ) else {
+    guard
+      let cachedPost = CachedFeedViewPost(
+        from: feedViewPost,
+        cursor: nil,
+        feedType: "notification-prefetch",
+        feedOrder: nil
+      )
+    else {
       notificationLogger.warning("Failed to create CachedFeedViewPost from prefetched post")
       return
     }
 
     await MainActor.run {
-      // Check if post already exists to avoid duplicates
+      // Upsert: update existing post or insert new one to avoid constraint violations
       let postId = cachedPost.id
       let descriptor = FetchDescriptor<CachedFeedViewPost>(
         predicate: #Predicate<CachedFeedViewPost> { post in
@@ -3255,15 +3598,20 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       do {
         let existing = try modelContext.fetch(descriptor)
+        let savedPost = modelContext.upsert(
+          cachedPost,
+          existingModel: existing.first,
+          update: { existingPost, newPost in existingPost.update(from: newPost) }
+        )
+        try modelContext.save()
         if existing.isEmpty {
-          modelContext.insert(cachedPost)
-          try? modelContext.save()
           notificationLogger.info("✅ Saved prefetched post to cache: \(postView.uri.uriString())")
         } else {
-          notificationLogger.debug("Post already cached, skipping: \(postView.uri.uriString())")
+          notificationLogger.debug("Updated cached post: \(postView.uri.uriString())")
         }
       } catch {
-        notificationLogger.error("Failed to save prefetched post to cache: \(error.localizedDescription)")
+        notificationLogger.error(
+          "Failed to save prefetched post to cache: \(error.localizedDescription)")
       }
     }
   }
@@ -3362,7 +3710,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         notificationLogger.info("Successfully navigated to destination from notification")
       }
     } catch {
-      notificationLogger.error("Failed to create navigation destination: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Failed to create navigation destination: \(error.localizedDescription)")
     }
   }
 
@@ -3378,7 +3727,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     await MainActor.run {
       // Navigate to the chat tab (index 4) and open the conversation
-      appState.navigationManager.updateCurrentTab(4) // Switch to chat tab
+      appState.navigationManager.updateCurrentTab(4)  // Switch to chat tab
 
       // Navigate to the specific conversation
       let destination = NavigationDestination.conversation(conversationID)
@@ -3390,7 +3739,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   /// Create a NavigationDestination from notification data
   private func createNavigationDestination(from uriString: String, type: String) throws
-    -> NavigationDestination {
+    -> NavigationDestination
+  {
     // For URI-based notifications, convert to ATProtocolURI
     if type.lowercased() != "follow" {
       guard let uri = try? ATProtocolURI(uriString: uriString) else {
@@ -3405,7 +3755,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         return .post(uri)
 
       default:
-        notificationLogger.warning("Unknown notification type with URI: \(type), using default post navigation")
+        notificationLogger.warning(
+          "Unknown notification type with URI: \(type), using default post navigation")
         return .post(uri)
       }
     } else {  // Handle follow notifications
@@ -3439,8 +3790,8 @@ struct NotificationPreferences: Codable, Equatable {
   var follows: Bool = true
   var reposts: Bool = true
   var quotes: Bool = true
-  var likeViaRepost: Bool = true   // maps to via_likes
-  var repostViaRepost: Bool = true // maps to via_reposts
+  var likeViaRepost: Bool = true  // maps to via_likes
+  var repostViaRepost: Bool = true  // maps to via_reposts
   // New key expected by server for preferences payloads
   var activitySubscriptions: Bool = true
 
@@ -3466,7 +3817,7 @@ struct NotificationPreferences: Codable, Equatable {
       "quotes": quotes,
       "likeViaRepost": likeViaRepost,
       "repostViaRepost": repostViaRepost,
-      "activitySubscriptions": activitySubscriptions
+      "activitySubscriptions": activitySubscriptions,
     ]
   }
 }

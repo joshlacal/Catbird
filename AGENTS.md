@@ -470,158 +470,119 @@ swiftlint
 find Catbird/ -name "*.swift" | head -10 | xargs -I {} swift -frontend -parse {}
 ```
 
-## Headless Task Automation (Copilot CLI)
+## Headless Task Automation (copilot-cli MCP)
 
-Run multiple development tasks in parallel or sequence without manual interaction using the GitHub Copilot CLI task runners.
+Spawn and manage multiple Copilot CLI agent instances via the **copilot-cli** MCP server for parallel or sequential task execution.
 
 ### Quick Start Examples
 
-**Single Task Execution:**
-```bash
-# Syntax check with specific approval
-./copilot-runner.sh single "syntax-check" \
-  "Check all Swift files for syntax errors" \
-  "--allow-tool 'shell(swift)'"
+**Spawn a single agent:**
+```python
+# Run a syntax check task
+copilot_cli:run_agent(
+    prompt="Check all Swift files for syntax errors",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-tool", "Bash(swift)"]
+)
 ```
 
-**Parallel Task Execution (runs simultaneously):**
-```bash
-# Build for both platforms at once
-./copilot-runner.sh parallel \
-  "build-ios|Build for iOS simulator|--allow-all-tools" \
-  "build-macos|Build for macOS|--allow-all-tools" \
-  "lint|Run SwiftLint|--allow-tool 'shell(swiftlint)'"
+**Spawn multiple agents in parallel:**
+```python
+# Build for both platforms simultaneously
+copilot_cli:run_agent(
+    prompt="Build Catbird for iOS simulator",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-all-tools"]
+)
+
+copilot_cli:run_agent(
+    prompt="Build Catbird for macOS",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-all-tools"]
+)
+
+copilot_cli:run_agent(
+    prompt="Run SwiftLint on the codebase",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-tool", "Bash(swiftlint)"]
+)
 ```
 
-**Sequential Task Execution (runs in order):**
-```bash
-# CI/CD pipeline - stop on failure
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow ci-pipeline \
-  --sequential \
-  --stop-on-failure
+**Check agent status:**
+```python
+# List all running agents
+copilot_cli:list_agents()
+
+# Get specific agent output
+copilot_cli:get_agent_output(agentId="agent-uuid")
+
+# Stop a running agent
+copilot_cli:stop_agent(agentId="agent-uuid")
 ```
 
-**Workflow Execution from Config:**
-```bash
-# Pre-commit checks
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow pre-commit
+### Available Operations
 
-# Full multi-platform build
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow full-build
-```
-
-### Available Tools
-
-- **`copilot-runner.sh`** - Bash version (simple, portable, no dependencies)
-- **`copilot-runner.py`** - Python version (advanced features, JSON/YAML support)
-- **`copilot-tasks.example.json`** - Example task definitions with workflows
+| Operation | Description |
+|-----------|-------------|
+| `run_agent()` | Spawn a new Copilot CLI agent with a prompt |
+| `list_agents()` | List all active agent instances |
+| `get_agent_output()` | Get stdout/stderr from an agent |
+| `stop_agent()` | Terminate a running agent |
 
 ### Key Features
 
-- **Parallel execution**: Run independent tasks simultaneously for faster completion
-- **Sequential execution**: Chain dependent operations in order
-- **Headless operation**: Auto-approval with configurable security controls
-- **Task definitions**: Reusable JSON/YAML task configurations
-- **Result logging**: All outputs saved to `copilot-results/` with timestamps
-- **Workflow support**: Pre-defined task sequences (pre-commit, ci-pipeline, full-build)
-- **Security controls**: Granular approval flags for safe automation
+- **Parallel execution**: Spawn multiple agents simultaneously for independent tasks
+- **Managed lifecycle**: Track, monitor, and stop agents as needed
+- **Output capture**: Retrieve agent output for verification
+- **Security controls**: Granular approval flags per agent
+- **Working directory**: Each agent can operate in a specific directory
 
 ### Security & Approval Flags
 
-Control what Copilot can do without manual approval:
+Control what each agent can do:
 
-```bash
+```python
 # Safe: Only allow specific commands
---allow-tool 'shell(swift)'        # Allow Swift compiler only
---allow-tool 'shell(git status)'   # Allow read-only git
---deny-tool 'shell(rm)'            # Block dangerous commands
+approval=["--allow-tool", "Bash(swift)"]        # Allow Swift compiler only
+approval=["--allow-tool", "Bash(git status)"]   # Allow read-only git
+approval=["--deny-tool", "Bash(rm)"]            # Block dangerous commands
 
 # Moderate: Allow builds but deny destructive operations
---allow-tool 'shell(xcodebuild)' --deny-tool 'shell(rm)' --deny-tool 'write'
+approval=["--allow-tool", "Bash(xcodebuild)", "--deny-tool", "Bash(rm)"]
 
 # Full automation (⚠️ use in containers/VMs only)
---allow-all-tools
+approval=["--allow-all-tools"]
 ```
 
 ### Common Development Workflows
 
 **Pre-commit Validation:**
-```bash
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --tasks swift-syntax-check swiftlint git-status \
-  --sequential
+```python
+# Spawn agents for pre-commit checks
+copilot_cli:run_agent(
+    prompt="Check Swift syntax in all files",
+    approval=["--allow-tool", "Bash(swift)"]
+)
+copilot_cli:run_agent(
+    prompt="Run SwiftLint and report issues",
+    approval=["--allow-tool", "Bash(swiftlint)"]
+)
 ```
 
 **Multi-platform CI Build:**
-```bash
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow ci-pipeline \
-  --stop-on-failure \
-  --results-dir ./ci-results
+```python
+# Parallel builds for CI
+copilot_cli:run_agent(prompt="Build iOS target for simulator", approval=["--allow-all-tools"])
+copilot_cli:run_agent(prompt="Build macOS target", approval=["--allow-all-tools"])
+copilot_cli:run_agent(prompt="Run all unit tests", approval=["--allow-all-tools"])
 ```
 
 **Parallel Quality Checks:**
-```bash
-./copilot-runner.sh parallel \
-  "swiftlint|Run SwiftLint|--allow-tool 'shell(swiftlint)'" \
-  "todos|Check for TODOs|--allow-tool 'shell(rg)'" \
-  "prints|Find print statements|--allow-tool 'shell(rg)'"
-```
-
-### Integration Examples
-
-**Makefile Integration:**
-```makefile
-.PHONY: copilot-check
-copilot-check:
-	./copilot-runner.py from-file copilot-tasks.json --workflow pre-commit
-
-.PHONY: copilot-build-all
-copilot-build-all:
-	./copilot-runner.py from-file copilot-tasks.json --workflow full-build
-```
-
-**Git Pre-commit Hook:**
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
-./copilot-runner.sh sequential \
-  "syntax|Check Swift syntax|--allow-tool 'shell(swift)'" \
-  "lint|Run SwiftLint|--allow-tool 'shell(swiftlint)'" \
-  || exit 1
-```
-
-**GitHub Actions:**
-```yaml
-- name: Run Copilot CI Tasks
-  run: |
-    ./copilot-runner.py from-file copilot-tasks.json \
-      --workflow ci-pipeline \
-      --sequential \
-      --stop-on-failure
-```
-
-### Output & Results
-
-All task execution generates timestamped log files:
-- `copilot-results/run_TIMESTAMP.log` - Main execution log
-- `copilot-results/task_TASKNAME_TIMESTAMP.log` - Individual task logs
-
-Exit codes:
-- `0` - All tasks succeeded
-- `1` - One or more tasks failed
-
-### Full Documentation
-
-See **`COPILOT_RUNNER_README.md`** for:
-- Complete task definition format (JSON/YAML)
-- Advanced features and options
-- Security best practices
-- Troubleshooting guide
-- More integration examples
+```python
+# Run multiple quality checks simultaneously
+copilot_cli:run_agent(prompt="Run SwiftLint", approval=["--allow-tool", "Bash(swiftlint)"])
+copilot_cli:run_agent(prompt="Find TODO comments in code", approval=["--allow-tool", "Bash(rg)"])
+copilot_cli:run_agent(prompt="Find print statements", approval=["--allow-tool", "Bash(rg)"])
 
 ## MCP Development Workflows
 

@@ -8,6 +8,7 @@
 
 import Foundation
 import Security
+import OSLog
 
 /// Errors that can occur during Keychain operations
 enum MLSKeychainError: Error {
@@ -35,6 +36,7 @@ enum MLSKeychainError: Error {
 
 /// Secure storage manager for MLS signature keys
 class MLSKeychain {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "blue.catbird", category: "MLSKeychain")
     
     // MARK: - Keychain Storage
     
@@ -74,17 +76,47 @@ class MLSKeychain {
                 query[kSecAttrIsPermanent as String] = true
             } else {
                 // Fallback to regular Keychain
-                print("⚠️ Secure Enclave not available, using regular Keychain")
+                logger.warning("Secure Enclave not available; using regular Keychain")
             }
         }
         
         let status = SecItemAdd(query as CFDictionary, nil)
-        
+
+        if status == errSecDuplicateItem {
+            // Existing item is blocking add; attempt update, then delete+add as fallback
+            let updateQuery: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: tag
+            ]
+
+            let updateAttributes: [String: Any] = [
+                kSecValueData as String: key,
+                kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            ]
+
+            let updateStatus = SecItemUpdate(updateQuery as CFDictionary, updateAttributes as CFDictionary)
+            if updateStatus == errSecSuccess {
+                logger.info("Updated existing MLS signature key after duplicate detection")
+                return
+            }
+
+            logger.warning("Failed to update duplicate MLS signature key (status: \(updateStatus)); retrying delete+add")
+            SecItemDelete(updateQuery as CFDictionary)
+            let retryStatus = SecItemAdd(query as CFDictionary, nil)
+
+            guard retryStatus == errSecSuccess else {
+                throw MLSKeychainError.storeFailed(retryStatus)
+            }
+
+            logger.info("Rewrote MLS signature key after clearing duplicate")
+            return
+        }
+
         if status != errSecSuccess {
             throw MLSKeychainError.storeFailed(status)
         }
         
-        print("✅ Stored MLS signature key for identity: \(identity)")
+        logger.info("Stored MLS signature key for identity: \(identity, privacy: .private)")
     }
     
     /// Retrieve a signature key from the Keychain
@@ -143,7 +175,7 @@ class MLSKeychain {
             throw MLSKeychainError.deleteFailed(status)
         }
         
-        print("✅ Deleted all MLS keys from Keychain")
+        logger.info("Deleted all MLS keys from Keychain")
     }
     
     // MARK: - Secure Enclave Detection
@@ -246,7 +278,7 @@ class MLSKeychain {
 extension MLSKeychain {
     /// Test Keychain operations (development only)
     static func runTests() {
-        print("🔐 Testing MLSKeychain...")
+        logger.info("Testing MLSKeychain...")
         
         let testIdentity = "did:plc:test123"
         let testKey = Data(repeating: 0xAB, count: 32)
@@ -254,36 +286,36 @@ extension MLSKeychain {
         do {
             // Test store
             try storeSignatureKey(testKey, forIdentity: testIdentity)
-            print("✅ Store test passed")
+            logger.info("Store test passed")
             
             // Test retrieve
             let retrieved = try retrieveSignatureKey(forIdentity: testIdentity)
             assert(retrieved == testKey, "Retrieved key doesn't match")
-            print("✅ Retrieve test passed")
+            logger.info("Retrieve test passed")
             
             // Test delete
             try deleteSignatureKey(forIdentity: testIdentity)
-            print("✅ Delete test passed")
+            logger.info("Delete test passed")
             
             // Verify deletion
             do {
                 _ = try retrieveSignatureKey(forIdentity: testIdentity)
-                print("❌ Delete verification failed - key still exists")
+                logger.error("Delete verification failed; key still exists")
             } catch {
-                print("✅ Delete verification passed")
+                logger.info("Delete verification passed")
             }
             
             // Test Secure Enclave availability
             if isSecureEnclaveAvailable() {
-                print("✅ Secure Enclave available")
+                logger.info("Secure Enclave available")
             } else {
-                print("⚠️ Secure Enclave not available")
+                logger.warning("Secure Enclave not available")
             }
             
-            print("✅ All MLSKeychain tests passed")
+            logger.info("All MLSKeychain tests passed")
             
         } catch {
-            print("❌ Test failed: \(error)")
+            logger.error("Test failed: \(String(describing: error), privacy: .public)")
         }
     }
 }

@@ -175,12 +175,26 @@ extension PostComposerViewModel {
         let mockPost = AppBskyFeedPost(text: postText, entities: nil, facets: facets, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date()))
         let styledAttributedText = mockPost.facetsAsAttributedString
         
+        // Convert to mutable attributed string to add overflow highlighting
+        let mutableAttrString = NSMutableAttributedString(attributedString: NSAttributedString(styledAttributedText))
+        
+        // Apply red background to characters beyond 300-char limit
+        if postText.count > 300 {
+            let overflowRange = NSRange(location: 300, length: postText.count - 300)
+            #if os(iOS)
+            mutableAttrString.addAttribute(.backgroundColor, value: UIColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
+            #else
+            mutableAttrString.addAttribute(.backgroundColor, value: NSColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
+            #endif
+            logger.info("PostComposerTextProcessing: Applied red background to overflow text - range: \(overflowRange)")
+        }
+        
         // Update both AttributedString (iOS 26+) and NSAttributedString (legacy)
         if #available(iOS 26.0, macOS 15.0, *) {
-            attributedPostText = styledAttributedText
-            richAttributedText = NSAttributedString(styledAttributedText)
+            attributedPostText = AttributedString(mutableAttrString)
+            richAttributedText = mutableAttrString
         } else {
-            richAttributedText = NSAttributedString(styledAttributedText)
+            richAttributedText = mutableAttrString
         }
     }
     

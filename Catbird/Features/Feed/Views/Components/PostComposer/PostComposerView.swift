@@ -1466,7 +1466,7 @@ struct SheetsModifier: ViewModifier {
                     message: Text(alertItem.message),
                     dismissButton: .default(Text("OK")))
             }
-            .emojiPicker(isPresented: $showingEmojiPicker) { emoji in
+            .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
                 viewModel.insertEmoji(emoji)
             }
             .sheet(isPresented: $showingLinkCreation, onDismiss: {

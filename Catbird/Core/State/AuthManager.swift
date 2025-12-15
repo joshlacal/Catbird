@@ -332,15 +332,32 @@ final class AuthenticationManager: AuthProgressDelegate {
     if client == nil {
       logger.info("ATTEMPTING to create ATProtoClient...")
       updateState(.authenticating(progress: .initializingClient))
-      logger.debug(">>> Calling await ATProtoClient(...)")
+      logger.debug(">>> Calling await ATProtoClient(...) off main actor")
 
-      client = await ATProtoClient(
-        oauthConfig: oauthConfig,
-        namespace: "blue.catbird",
-        userAgent: "Catbird/1.0",
-        bskyAppViewDID: customAppViewDID,
-        bskyChatDID: customChatDID
-      )
+      #if targetEnvironment(simulator) || DEBUG
+      let accessGroup: String? = nil
+      #else
+      let accessGroup: String? = "blue.catbird.shared"
+      #endif
+
+      // Create client off main actor to avoid blocking UI (50-80ms operation)
+      let oauthCfg = self.oauthConfig
+      let appViewDID = self.customAppViewDID
+      let chatDID = self.customChatDID
+
+      let newClient = await Task.detached(priority: .userInitiated) {
+        await ATProtoClient(
+          oauthConfig: oauthCfg,
+          namespace: "blue.catbird",
+          userAgent: "Catbird/1.0",
+          bskyAppViewDID: appViewDID,
+          bskyChatDID: chatDID,
+          accessGroup: accessGroup
+        )
+      }.value
+
+      // Update state on main actor
+      client = newClient
       await client?.applicationDidBecomeActive()
 
       if client == nil {
@@ -403,16 +420,21 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     if hasValidSession {
       do {
-        let did = try await client.getDid()
-        self.handle = try await client.getHandle()
-        logger.info("User is authenticated with DID: \(String(describing: did))")
+        // Parallelize independent async calls for faster authentication
+        async let didTask = client.getDid()
+        async let handleTask = client.getHandle()
+
+        let (userDid, userHandle) = try await (didTask, handleTask)
+
+        self.handle = userHandle
+        logger.info("User is authenticated with DID: \(String(describing: userDid))")
 
         if let handle = self.handle {
-          storeHandle(handle, for: did)
+          storeHandle(handle, for: userDid)
         }
 
         await MainActor.run {
-          updateState(.authenticated(userDID: did))
+          updateState(.authenticated(userDID: userDid))
           logger.info("Auth state updated to authenticated via proper channels")
           logger.info("Current state after update: \(String(describing: self.state))")
         }
@@ -527,12 +549,25 @@ final class AuthenticationManager: AuthProgressDelegate {
   private func markCurrentAccountExpiredForReauth(client: ATProtoClient, reason: String?) async {
     // Do not clobber if already set via auto-logout log bridge
     guard expiredAccountInfo == nil else { return }
+
     let did = (try? await client.getDid()) ?? ""
-    if !did.isEmpty {
-      let storedHandle = getStoredHandle(for: did)
-      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
-      logger.warning("Session expired for DID=\(did); reason=\(reason ?? "unknown"). Prompting re-auth.")
+    guard !did.isEmpty else {
+      // Prefer the currently-active lifecycle DID if Petrel can no longer resolve identity.
+      if let activeDID = AppStateManager.shared.lifecycle.userDID, !activeDID.isEmpty {
+        let storedHandle = getStoredHandle(for: activeDID)
+        expiredAccountInfo = AccountInfo(did: activeDID, handle: storedHandle, isActive: false)
+        logger.warning("Session expired for DID=\(activeDID); reason=\(reason ?? "unknown"). Prompting re-auth (lifecycle fallback).")
+        return
+      }
+
+      // Fallback: try to infer a plausible account from locally-stored accounts/handles.
+      await prepareExpiredAccountInfoForReauth(using: client)
+      return
     }
+
+    let storedHandle = getStoredHandle(for: did)
+    expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+    logger.warning("Session expired for DID=\(did); reason=\(reason ?? "unknown"). Prompting re-auth.")
   }
 
   /// Start the OAuth authentication flow with improved error handling
@@ -548,12 +583,20 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     if client == nil {
       logger.info("Client not found, initializing for login")
+      
+      #if targetEnvironment(simulator) || DEBUG
+      let accessGroup: String? = nil
+      #else
+      let accessGroup: String? = "blue.catbird.shared"
+      #endif
+
       client = await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
-        bskyChatDID: customChatDID
+        bskyChatDID: customChatDID,
+        accessGroup: accessGroup
       )
       await client?.applicationDidBecomeActive()
       await client?.setAuthProgressDelegate(self)
@@ -743,8 +786,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
     }
 
-    // Clear active account from AppStateManager
-    await AppStateManager.shared.logout()
+    // Note: AppStateManager calls this method, so we don't call back to avoid infinite loop
 
     if let client = client {
       do {
@@ -790,6 +832,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     let did: String
     let handle: String?
     var isActive: Bool = false
+    var cachedHandle: String?
+    var cachedDisplayName: String?
+    var cachedAvatarURL: URL?
 
     var id: String { did }
 
@@ -862,7 +907,44 @@ final class AuthenticationManager: AuthProgressDelegate {
     logger.info("Updating account order with \(orderedDIDs.count) accounts")
     saveAccountOrder(orderedDIDs)
   }
-  
+
+  /// Cache profile data for an account to avoid showing DID during switches
+  @MainActor
+  func cacheProfileData(for did: String, handle: String?, displayName: String?, avatarURL: URL?) {
+    let key = "cached_profile_\(did)"
+    let profileData: [String: String?] = [
+      "handle": handle,
+      "displayName": displayName,
+      "avatarURL": avatarURL?.absoluteString
+    ]
+
+    if let data = try? JSONEncoder().encode(profileData) {
+      UserDefaults.standard.set(data, forKey: key)
+      logger.debug("Cached profile data for DID: \(did)")
+    }
+  }
+
+  /// Get cached profile data for an account
+  nonisolated func getCachedProfileData(for did: String) -> (handle: String?, displayName: String?, avatarURL: URL?)? {
+    let key = "cached_profile_\(did)"
+    guard let data = UserDefaults.standard.data(forKey: key),
+          let profileData = try? JSONDecoder().decode([String: String?].self, from: data) else {
+      return nil
+    }
+
+    let avatarURL: URL? = if let urlString = profileData["avatarURL"] as? String {
+      URL(string: urlString)
+    } else {
+      nil
+    }
+
+    return (
+      handle: profileData["handle"] as? String,
+      displayName: profileData["displayName"] as? String,
+      avatarURL: avatarURL
+    )
+  }
+
   /// Remove an account completely (including stored handle)
   @MainActor
   func removeAccount(did: String) async {
@@ -917,22 +999,30 @@ final class AuthenticationManager: AuthProgressDelegate {
         handle = getStoredHandle(for: account.did)
       }
 
+      let cachedProfile = getCachedProfileData(for: account.did)
       accountInfos.append(
         AccountInfo(
           did: account.did,
           handle: handle,
-          isActive: account.did == currentDID
+          isActive: account.did == currentDID,
+          cachedHandle: cachedProfile?.handle,
+          cachedDisplayName: cachedProfile?.displayName,
+          cachedAvatarURL: cachedProfile?.avatarURL
         )
       )
     }
 
     let storedHandles = getStoredHandles()
     for (storedDID, storedHandle) in storedHandles where !accountInfos.contains(where: { $0.did == storedDID }) {
+      let cachedProfile = getCachedProfileData(for: storedDID)
       accountInfos.append(
         AccountInfo(
           did: storedDID,
           handle: storedHandle,
-          isActive: storedDID == currentDID
+          isActive: storedDID == currentDID,
+          cachedHandle: cachedProfile?.handle,
+          cachedDisplayName: cachedProfile?.displayName,
+          cachedAvatarURL: cachedProfile?.avatarURL
         )
       )
     }
@@ -973,12 +1063,20 @@ final class AuthenticationManager: AuthProgressDelegate {
     guard client == nil else { return }
 
     logger.info("Recreating ATProtoClient for account operations")
+    
+    #if targetEnvironment(simulator) || DEBUG
+    let accessGroup: String? = nil
+    #else
+    let accessGroup: String? = "blue.catbird.shared"
+    #endif
+
     client = await ATProtoClient(
       oauthConfig: oauthConfig,
       namespace: "blue.catbird",
       userAgent: "Catbird/1.0",
       bskyAppViewDID: customAppViewDID,
-      bskyChatDID: customChatDID
+      bskyChatDID: customChatDID,
+      accessGroup: accessGroup
     )
 
     await client?.applicationDidBecomeActive()
@@ -997,10 +1095,14 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
 
     let infos = storedHandles.map { did, handle in
-      AccountInfo(
+      let cachedProfile = getCachedProfileData(for: did)
+      return AccountInfo(
         did: did,
         handle: handle,
-        isActive: did == activeDID
+        isActive: did == activeDID,
+        cachedHandle: cachedProfile?.handle,
+        cachedDisplayName: cachedProfile?.displayName,
+        cachedAvatarURL: cachedProfile?.avatarURL
       )
     }
 
@@ -1083,13 +1185,18 @@ final class AuthenticationManager: AuthProgressDelegate {
       logger.error("❌ [AUTHMAN-SWITCH] Error switching accounts: \(error.localizedDescription)")
       logger.error("❌ [AUTHMAN-SWITCH] Error type: \(String(describing: type(of: error)))")
       
-      // Clear expired account info when switch fails
-      // This prevents automatic re-authentication of the wrong account
-      logger.debug("🔄 [AUTHMAN-SWITCH] Clearing expiredAccountInfo")
-      expiredAccountInfo = nil
+      // Reset switching flag since we failed
+      isSwitchingAccount = false
       
-      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .error")
-      updateState(.error(message: "Failed to switch accounts: \(error.localizedDescription)"))
+      // Set expired account info so LoginView/AccountSwitcherView can trigger re-authentication
+      // This allows automatic re-auth flow when switching to an account with expired tokens
+      let storedHandle = getStoredHandle(for: did)
+      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+      logger.info("🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(did) handle=\(storedHandle ?? "nil") to enable re-authentication")
+      
+      // Set state to unauthenticated so the auth UI can handle re-auth
+      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .unauthenticated for re-auth flow")
+      updateState(.unauthenticated)
       throw error
     }
 

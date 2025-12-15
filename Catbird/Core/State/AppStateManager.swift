@@ -1,6 +1,17 @@
+import CatbirdMLSCore
 import Foundation
 import OSLog
+import SwiftData
 import SwiftUI
+
+// MARK: - ModelContainer State
+// Moved here from CatbirdApp.swift so it can be stored in AppStateManager
+// and persist across App struct recreations
+enum ModelContainerState {
+  case loading
+  case ready(ModelContainer)
+  case failed(Error)
+}
 
 /// Lightweight Sendable wrapper so we can hand AppState instances to async tasks safely
 private struct CachedAppStateContext: @unchecked Sendable {
@@ -27,9 +38,16 @@ final class AppStateManager {
   /// Current application lifecycle state
   private(set) var lifecycle: AppLifecycle = .launching
 
+  /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
+  @ObservationIgnored
+  private var authStateObservationTask: Task<Void, Never>? = nil
+
   /// Pool of authenticated AppState instances, keyed by user DID
   /// NO GUEST STATES - only authenticated accounts are cached
   private var authenticatedStates: [String: AppState] = [:]
+  
+  /// Users currently undergoing MLS storage maintenance (prevents DB access)
+  private var storageMaintenanceUsers: Set<String> = []
 
   /// Pending composer draft to be reopened after account switch
   var pendingComposerDraft: PostComposerDraft?
@@ -43,6 +61,23 @@ final class AppStateManager {
   /// Flag indicating whether an account transition is currently in progress
   /// Used to prevent operations during the transition window
   private(set) var isTransitioning: Bool = false
+
+  // MARK: - App Initialization State
+  // These flags are stored here (instead of @State in CatbirdApp) because @State in App structs
+  // does not persist reliably across background/foreground cycles - iOS can recreate the App struct
+  // and reset all @State to initial values, causing full re-initialization on every foreground return.
+  
+  /// ModelContainer state for SwiftData
+  var modelContainerState: ModelContainerState = .loading
+  
+  /// Tracks if the app has been initialized (prevents duplicate initialization)
+  var didInitialize: Bool = false
+  
+  /// Tracks if handleSceneAppear has been called (prevents duplicate scene setup)
+  var hasHandledSceneAppear: Bool = false
+  
+  /// Tracks if state restoration has been performed
+  var hasRestoredState: Bool = false
 
   // MARK: - Initialization
 
@@ -64,6 +99,41 @@ final class AppStateManager {
     } else {
       logger.info("ℹ️ No authenticated session - transitioning to unauthenticated")
       lifecycle = .unauthenticated
+    }
+
+    startAuthStateObservationIfNeeded()
+  }
+
+  private func startAuthStateObservationIfNeeded() {
+    guard authStateObservationTask == nil else { return }
+
+    authStateObservationTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+
+      for await state in self.authManager.stateChanges {
+        switch state {
+        case .authenticated(let userDID):
+          guard self.lifecycle.userDID != userDID else { continue }
+          self.logger.info("🔔 Auth became authenticated for: \(userDID) - transitioning")
+          await self.transitionToAuthenticated(userDID: userDID)
+
+        case .unauthenticated:
+          guard self.lifecycle != .unauthenticated else { continue }
+          self.logger.info("🔔 Auth became unauthenticated - transitioning")
+          if #available(iOS 17.0, macOS 14.0, *) {
+            withAnimation(.snappy(duration: 0.32, extraBounce: 0.0)) {
+              self.lifecycle = .unauthenticated
+            }
+          } else {
+            withAnimation(.easeInOut(duration: 0.25)) {
+              self.lifecycle = .unauthenticated
+            }
+          }
+
+        default:
+          continue
+        }
+      }
     }
   }
 
@@ -107,9 +177,17 @@ final class AppStateManager {
       appState = existing
       isCachedAccount = true
       updateAccessOrder(userDID)
+      
+      // Ensure model context is set (might not be if AppState was created before container was ready)
+      if case .ready(let container) = modelContainerState {
+        appState.composerDraftManager.setModelContext(container.mainContext)
+        appState.notificationManager.setModelContext(container.mainContext)
+      }
 
-      // Optimistically mark the state as transitioning so the UI can react immediately
-      appState.isTransitioningAccounts = true
+      // Only show transition overlay for actual account switches, not initial launch
+      if case .authenticated = lifecycle {
+        appState.isTransitioningAccounts = true
+      }
 
     } else {
       // Create new AppState with authenticated client for THIS account
@@ -119,18 +197,26 @@ final class AppStateManager {
       isCachedAccount = false
       updateAccessOrder(userDID)
       evictLRUIfNeeded()
-
-      // Initialize the new AppState before presenting it
-      logger.info("🔄 Initializing new AppState")
-      await appState.initialize()
-      logger.info("✅ New AppState initialized")
+      
+      // Initialize model context for draft persistence
+      if case .ready(let container) = modelContainerState {
+        appState.composerDraftManager.setModelContext(container.mainContext)
+        appState.notificationManager.setModelContext(container.mainContext)
+      }
+      
+      // Only show transition overlay for actual account switches, not initial launch
+      if case .authenticated = lifecycle {
+        appState.isTransitioningAccounts = true
+      }
     }
 
     // Transfer pending draft if present
     if let draft = pendingComposerDraft {
       logger.info("📝 Transferring composer draft to new account")
       appState.composerDraftManager.currentDraft = draft
-      pendingComposerDraft = nil
+      // NOTE: Don't clear pendingComposerDraft here - let ContentView.onChange consume it
+      // This ensures the onChange fires reliably and reopens the composer
+      logger.debug("📝 pendingComposerDraft kept set for ContentView.onChange detection")
     }
 
     // Update lifecycle state with a gentle animation so the UI swaps immediately
@@ -146,6 +232,35 @@ final class AppStateManager {
       }
     }
 
+    if !isCachedAccount {
+      // Initialize the new AppState in the background to unblock UI swap
+      logger.info("🔄 Initializing new AppState asynchronously")
+      let initLogger = logger
+      Task(priority: .userInitiated) { [weak appState] in
+        guard let appState else { return }
+
+        // Safety timeout - clear transition state after 15 seconds max
+        // Prevents overlay from getting stuck if initialization hangs
+        let timeoutTask = Task {
+          try? await Task.sleep(for: .seconds(15))
+          await MainActor.run {
+            if appState.isTransitioningAccounts {
+              initLogger.warning("⚠️ Account transition timed out after 15s - clearing overlay")
+              appState.isTransitioningAccounts = false
+            }
+          }
+        }
+
+        await appState.initialize()
+        timeoutTask.cancel()  // Cancel timeout if init succeeds normally
+
+        await MainActor.run {
+          appState.isTransitioningAccounts = false
+        }
+        initLogger.info("✅ New AppState initialized")
+      }
+    }
+
     // Kick off the heavy refresh work for cached states in the background
     if isCachedAccount {
       logger.info("✨ Refreshing cached AppState after immediate switch")
@@ -153,8 +268,29 @@ final class AppStateManager {
       let targetAccountDID = userDID
       let transitionLogger = logger
 
+      // Safety timeout for cached account refresh - prevents loading overlay from getting stuck
+      let timeoutTask = Task {
+        try? await Task.sleep(for: .seconds(15))
+        await MainActor.run {
+          if appState.isTransitioningAccounts {
+            transitionLogger.warning("⚠️ Cached account refresh timed out after 15s - clearing overlay")
+            appState.isTransitioningAccounts = false
+          }
+        }
+      }
+
       Task(priority: .userInitiated) {
         await refreshContext.appState.refreshAfterAccountSwitch()
+        timeoutTask.cancel()  // Cancel timeout if refresh succeeds normally
+        
+        // CRITICAL FIX: Ensure isTransitioningAccounts is cleared after refresh completes
+        // Previously this was only done for new accounts, not cached ones
+        await MainActor.run {
+          if appState.isTransitioningAccounts {
+            appState.isTransitioningAccounts = false
+            transitionLogger.info("✅ Cleared transition state after cached account refresh")
+          }
+        }
         transitionLogger.info("✅ Cached AppState refresh finished for: \(targetAccountDID)")
       }
     }
@@ -184,15 +320,34 @@ final class AppStateManager {
   func switchAccount(to userDID: String, withDraft draft: PostComposerDraft? = nil) async {
     logger.info("🔄 Switching to account: \(userDID)")
 
-    // Save MLS state for the current user before switching
+    // Set transition flag to prevent operations during switch
+    isTransitioning = true
+    
+    // CRITICAL FIX: Properly shutdown MLS resources for the OLD account BEFORE switching
+    // This prevents:
+    // 1. SQLite database exhaustion from unclosed connections
+    // 2. Race conditions where old managers continue polling with wrong account
+    // 3. Account mismatch errors in MLS sync operations
+    // 4. HMAC check failures from using wrong encryption key
     if let oldUserDID = lifecycle.userDID, oldUserDID != userDID {
-      logger.info("MLS: Saving storage for previous user \(oldUserDID)")
-      do {
-        try await MLSClient.shared.saveStorage(for: oldUserDID)
-        logger.info("✅ MLS: Saved storage for previous user \(oldUserDID)")
-      } catch {
-        logger.error("⚠️ MLS: Failed to save storage for previous user: \(error.localizedDescription)")
-      }
+      logger.info("MLS: 🛑 Preparing to shutdown MLS for previous user \(oldUserDID)")
+      
+      #if os(iOS)
+        // Mark old user as under storage maintenance to block any new DB access
+        beginStorageMaintenance(for: oldUserDID)
+        
+        // Get the old AppState and properly shutdown its MLS resources
+        if let oldState = authenticatedStates[oldUserDID] {
+          logger.info("MLS: Initiating graceful shutdown for previous account")
+          await oldState.prepareMLSStorageReset()
+          logger.info("MLS: ✅ Previous account MLS shutdown complete")
+        }
+        
+        // Clear maintenance flag after shutdown is complete
+        endStorageMaintenance(for: oldUserDID)
+      #endif
+      
+      logger.info("MLS: SQLite storage for previous user \(oldUserDID) is automatically persisted")
     }
 
     // Store draft for transfer
@@ -201,17 +356,25 @@ final class AppStateManager {
       logger.info("📝 Stored composer draft for transfer - Text length: \(draft.postText.count)")
     }
 
+    // Clear transition flag BEFORE calling transitionToAuthenticated 
+    // (which sets it again and manages its own lifecycle)
+    isTransitioning = false
+    
     // Transition to the authenticated account
     await transitionToAuthenticated(userDID: userDID)
   }
 
   /// Remove a specific account's state from cache
   /// - Parameter userDID: The DID of the account to remove
-  func removeAccount(_ userDID: String) {
+  func removeAccount(_ userDID: String) async {
     logger.info("🗑️ Removing account state: \(userDID)")
 
-    // Cleanup tasks before removing
+    // CRITICAL FIX: Properly cleanup MLS resources before removing
     if let appState = authenticatedStates[userDID] {
+      #if os(iOS)
+        // Use async shutdown to properly close database connections
+        await appState.prepareMLSStorageReset()
+      #endif
       appState.cleanup()
     }
 
@@ -231,6 +394,30 @@ final class AppStateManager {
   /// - Returns: True if state exists in memory
   func hasState(for userDID: String) -> Bool {
     return authenticatedStates[userDID] != nil
+  }
+
+  // MARK: - MLS Storage Maintenance
+
+  func beginStorageMaintenance(for userDID: String) {
+    storageMaintenanceUsers.insert(userDID)
+  }
+
+  func endStorageMaintenance(for userDID: String) {
+    storageMaintenanceUsers.remove(userDID)
+  }
+
+  func isUserUnderStorageMaintenance(_ userDID: String) -> Bool {
+    storageMaintenanceUsers.contains(userDID)
+  }
+
+  func prepareMLSStorageReset(for userDID: String) async {
+    logger.info("MLS: Preparing AppState for storage reset: \(userDID)")
+    guard let state = authenticatedStates[userDID] else {
+      logger.info("MLS: No cached AppState for \(userDID) - nothing to reset")
+      return
+    }
+
+    await state.prepareMLSStorageReset()
   }
 
   // MARK: - Memory Management
@@ -267,7 +454,10 @@ final class AppStateManager {
       accessOrder.removeFirst()
 
       // Close MLS database for evicted account
-      MLSGRDBManager.shared.closeDatabase(for: lruDID)
+      // CRITICAL FIX: Use closeDatabaseAndDrain to prevent WAL corruption
+      Task {
+        await MLSGRDBManager.shared.closeDatabaseAndDrain(for: lruDID, timeout: 3.0)
+      }
       logger.debug("Closed MLS database for evicted account: \(lruDID)")
     }
   }
@@ -287,7 +477,10 @@ final class AppStateManager {
       accessOrder.removeAll { $0 == did }
 
       // Close MLS database for cleared account
-      MLSGRDBManager.shared.closeDatabase(for: did)
+      // CRITICAL FIX: Use closeDatabaseAndDrain to prevent WAL corruption
+      Task {
+        await MLSGRDBManager.shared.closeDatabaseAndDrain(for: did, timeout: 3.0)
+      }
     }
 
     logger.info("🗑️ Cleared \(inactiveAccounts.count) inactive account(s)")

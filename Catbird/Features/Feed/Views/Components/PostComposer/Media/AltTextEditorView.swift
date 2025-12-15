@@ -164,7 +164,7 @@ struct AltTextEditorView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+    @ObservationIgnored @Previewable @ObservationIgnored @Environment(AppState.self) var appState
     AltTextEditorView(
         altText: "A sample alt text",
         image: Image(systemName: "photo"),

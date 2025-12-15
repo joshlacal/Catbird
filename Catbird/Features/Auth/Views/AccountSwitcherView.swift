@@ -49,9 +49,16 @@ struct AccountSwitcherView: View {
     init(from accountInfo: AuthenticationManager.AccountInfo, profile: AppBskyActorDefs.ProfileViewDetailed?) {
       self.id = accountInfo.did
       self.did = accountInfo.did
-      self.handle = profile?.handle.description ?? accountInfo.handle ?? "Unknown"
+      // Use fallback chain: profile -> cached data -> stored handle -> "Loading..."
+      // Never show raw DID directly
+      self.handle = profile?.handle.description
+        ?? accountInfo.cachedHandle
+        ?? accountInfo.handle
+        ?? "Loading..."
       self.displayName = profile?.displayName
+        ?? accountInfo.cachedDisplayName
       self.avatar = profile?.finalAvatarURL()
+        ?? accountInfo.cachedAvatarURL
       self.isActive = accountInfo.isActive
     }
   }
@@ -113,6 +120,7 @@ struct AccountSwitcherView: View {
       }
       .sheet(isPresented: $isAddingAccount) {
         LoginView(isAddingNewAccount: true)
+              .environment(appStateManager)
       }
       .alert(
         "Remove Account",
@@ -435,7 +443,17 @@ struct AccountSwitcherView: View {
               let matchingProfile = profilesData.profiles.first {
                 $0.did.description == accountInfo.did
               }
-              
+
+              // Cache the profile data for future use
+              if let profile = matchingProfile {
+                appStateManager.authentication.cacheProfileData(
+                  for: accountInfo.did,
+                  handle: profile.handle.description,
+                  displayName: profile.displayName,
+                  avatarURL: profile.finalAvatarURL()
+                )
+              }
+
               return AccountViewModel(from: accountInfo, profile: matchingProfile)
             }
           } else {
@@ -532,9 +550,17 @@ struct AccountSwitcherView: View {
       } else {
         // Account is already authenticated, just refresh and dismiss
         logger.info("✅ [SWITCH] Account is authenticated, refreshing account list")
-        await loadAccounts()
+        Task {
+          await loadAccounts()
+        }
 
-        logger.debug("🔄 [SWITCH] Dismissing switcher immediately after successful switch")
+        logger.debug("🔄 [SWITCH] Dismissing switcher after successful switch")
+        // If we transferred a draft, wait a moment before dismissing to ensure
+        // the pendingComposerDraft is picked up by ContentView.onChange
+        if draftToTransfer != nil {
+          logger.debug("🔄 [SWITCH] Draft transferred - delaying dismiss for ContentView to detect")
+          try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+        }
         dismiss()
       }
     }
@@ -768,6 +794,10 @@ struct AccountSwitcherView: View {
       logger.info("🔄 [REAUTH] Processing callback with authManager.handleCallback()")
       try await appStateManager.authentication.handleCallback(callbackURL)
       logger.info("✅ [REAUTH] Callback processed successfully")
+      
+      // Clear any previous cancelled/error state since we succeeded
+      authenticationCancelled = false
+      error = nil
 
       // Refresh account list
       logger.debug("🔄 [REAUTH] Refreshing account list")

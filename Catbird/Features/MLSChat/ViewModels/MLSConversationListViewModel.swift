@@ -11,6 +11,7 @@ import Observation
 import OSLog
 import Combine
 import GRDB
+import CatbirdMLSCore
 
 /// ViewModel for managing the list of MLS conversations
 @Observable
@@ -63,9 +64,14 @@ final class MLSConversationListViewModel {
 
     // MARK: - Dependencies
 
-    private let database: DatabaseQueue
+    private let database: MLSDatabase
     private let apiClient: MLSAPIClient
+    private weak var conversationManager: MLSConversationManager?
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationListViewModel")
+
+    // MARK: - Observer
+
+    private var stateObserver: MLSStateObserver?
 
     // MARK: - Combine
 
@@ -85,10 +91,23 @@ final class MLSConversationListViewModel {
 
     // MARK: - Initialization
 
-    init(database: DatabaseQueue, apiClient: MLSAPIClient) {
+    init(database: MLSDatabase, apiClient: MLSAPIClient, conversationManager: MLSConversationManager? = nil) {
         self.database = database
         self.apiClient = apiClient
+        self.conversationManager = conversationManager
         logger.debug("MLSConversationListViewModel initialized")
+
+        // Set up observer if conversation manager is provided
+        if conversationManager != nil {
+            setupObserver()
+        }
+    }
+
+    deinit {
+        // Remove observer on deallocation
+        if let observer = stateObserver, let manager = conversationManager {
+            manager.removeObserver(observer)
+        }
     }
 
     // MARK: - Public Methods
@@ -102,10 +121,12 @@ final class MLSConversationListViewModel {
         error = nil
 
         do {
-            let result = try await apiClient.getConversations(
-                limit: 50,
-                cursor: nil
-            )
+            let result = try await Task.detached(priority: .userInitiated) { [apiClient] in
+                try await apiClient.getConversations(
+                    limit: 50,
+                    cursor: nil
+                )
+            }.value
 
             conversations = result.convos
             cursor = result.cursor
@@ -130,10 +151,12 @@ final class MLSConversationListViewModel {
         isLoading = true
 
         do {
-            let result = try await apiClient.getConversations(
-                limit: 50,
-                cursor: cursor
-            )
+            let result = try await Task.detached(priority: .userInitiated) { [apiClient, cursor] in
+                try await apiClient.getConversations(
+                    limit: 50,
+                    cursor: cursor
+                )
+            }.value
 
             conversations.append(contentsOf: result.convos)
             self.cursor = result.cursor
@@ -199,5 +222,65 @@ final class MLSConversationListViewModel {
     @MainActor
     func clearError() {
         error = nil
+    }
+
+    // MARK: - Observer Setup
+
+    private func setupObserver() {
+        stateObserver = MLSStateObserver { [weak self] event in
+            Task { @MainActor in
+                guard let self = self else { return }
+                await self.handleStateEvent(event)
+            }
+        }
+
+        if let observer = stateObserver {
+            conversationManager?.addObserver(observer)
+            logger.debug("Registered MLS state observer")
+        }
+    }
+
+    @MainActor
+    private func handleStateEvent(_ event: MLSStateEvent) async {
+        switch event {
+        case .membershipChanged(let convoId, let did, let action):
+            logger.debug("Membership changed in \(convoId): \(did) - \(action.rawValue)")
+            // Refresh the specific conversation to update member list
+            await refreshSpecificConversation(convoId)
+
+        case .epochUpdated(let convoId, let epoch):
+            logger.debug("Epoch updated for \(convoId): \(epoch)")
+            // Optionally refresh conversation to show updated state
+            await refreshSpecificConversation(convoId)
+
+        case .conversationCreated(let convo):
+            // Add new conversation to the list
+            addConversation(convo)
+
+        case .conversationJoined(let convo):
+            // Add joined conversation to the list
+            addConversation(convo)
+
+        default:
+            // Ignore other events
+            break
+        }
+    }
+
+    @MainActor
+    private func refreshSpecificConversation(_ convoId: String) async {
+        // Refresh a specific conversation from the server
+        do {
+            let result = try await Task.detached(priority: .userInitiated) { [apiClient] in
+                try await apiClient.getConversations(limit: 100, cursor: nil)
+            }.value
+
+            if let updatedConvo = result.convos.first(where: { $0.groupId == convoId }) {
+                updateConversation(updatedConvo)
+                logger.debug("Refreshed conversation \(convoId) after state change")
+            }
+        } catch {
+            logger.error("Failed to refresh conversation \(convoId): \(error.localizedDescription)")
+        }
     }
 }

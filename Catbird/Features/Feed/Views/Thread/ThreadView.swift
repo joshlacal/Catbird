@@ -35,7 +35,7 @@ private struct UIKitThreadViewWrapper: View {
     var body: some View {
         ThreadViewControllerRepresentable(postURI: postURI, path: $path)
           .ignoresSafeArea()
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
     }
 }
 #endif

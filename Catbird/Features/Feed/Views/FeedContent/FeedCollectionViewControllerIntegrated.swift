@@ -55,6 +55,8 @@ import os
     /// AppState observation for account switch boundaries
     var appStateObserver: UIKitStateObserver<AppState>?
     var feedbackObserver: UIKitStateObserver<FeedFeedbackManager>?
+    /// Observer for tab tap to scroll to top
+    var tabTapObserver: UIKitStateObserver<AppState>?
 
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -79,7 +81,7 @@ import os
 
     /// Apply a full reload on the next snapshot (set when feed switches)
     private var shouldReloadDataOnce = false
-
+    
     // MARK: - Initialization
 
     init(
@@ -189,13 +191,41 @@ import os
           // Trigger a one-time hard reload when the transition completes
           if previous && !now {
             self.shouldReloadDataOnce = true
-            await self.performUpdate()
+            // If posts are empty (likely because load was skipped during transition), load them now
+            if self.stateManager.posts.isEmpty {
+              self.controllerLogger.debug("🔄 Account transition complete, loading initial data")
+              await self.loadInitialData()
+            } else {
+              await self.performUpdate()
+            }
           }
           previous = now
         }
       }
       appStateObserver?.startObserving()
     }
+    
+    // Observe tab tap to scroll to top and refresh
+    private func setupTabTapObserver() {
+      tabTapObserver = UIKitStateObserver(observing: stateManager.appState) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          
+          // Check if home tab (0) was tapped again
+          if let tappedTab = self.stateManager.appState.tabTappedAgain, tappedTab == 0 {
+            self.controllerLogger.debug("🏠 Home tab tapped again - scrolling to top and refreshing")
+            
+            // Clear the signal immediately to prevent re-triggering
+            self.stateManager.appState.tabTappedAgain = nil
+            
+            // Scroll to top and refresh
+            self.scrollToTopAndRefresh()
+          }
+        }
+      }
+      tabTapObserver?.startObserving()
+    }
+    
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
@@ -213,6 +243,7 @@ import os
       setupThemeObserver()
       setupFeedbackObserver()
       setupAccountSwitchObserver()
+      setupTabTapObserver()
       updateBackgroundState()
     }
 
@@ -221,6 +252,7 @@ import os
 
       // Update theme colors when view appears to catch any missed theme changes
       updateThemeColors()
+      stateManager.appState.urlHandler.registerTopViewController(self)
 
       Task { @MainActor in
         if stateManager.posts.isEmpty {
@@ -245,6 +277,7 @@ import os
       themeObserver?.stopObserving()
       feedbackObserver?.stopObserving()
       appStateObserver?.stopObserving()
+      tabTapObserver?.stopObserving()
       loadMoreTask?.cancel()
       updateTask?.cancel()
 
@@ -431,7 +464,7 @@ import os
             navigationPath: self.navigationPath,
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier
           )
-          .environment(appState)
+          .applyAppStateEnvironment(appState)
           .environment(\.fontManager, appState.fontManager)
           .id(hostingIdentity)
           .padding(0)
@@ -631,17 +664,75 @@ import os
     // MARK: - Observers
 
     private func setupObservers() {
-      stateObserver = UIKitStateObserver(observing: stateManager) { [weak self] _ in
-        Task { @MainActor [weak self] in
-          await self?.performUpdate()
-        }
-      }
+      stateObserver = UIKitStateObserver.observeFeedStateManager(
+        stateManager,
+        onPostsChanged: { [weak self] _ in
+          Task { @MainActor in
+            await self?.performUpdate()
+          }
+        },
+        onLoadingStateChanged: { [weak self] _ in
+          self?.updateBackgroundState()
+        },
+        onScrollAnchorChanged: { _ in }
+      )
       stateObserver?.startObserving()
     }
 
     private func setupScrollToTopCallback() {
-      // Note: scrollToTop functionality will be handled differently
-      // as setScrollToTopCallback was part of scroll preservation system
+      // Register the callback so FeedStateManager can trigger scroll-to-top
+      stateManager.scrollToTopCallback = { [weak self] in
+        self?.scrollToTopAnimated()
+      }
+    }
+
+    /// Scrolls to the absolute top of the collection view (animated)
+    private func scrollToTopAnimated() {
+      guard let collectionView = collectionView else { return }
+      
+      // Scroll to the very top, respecting adjusted content insets (for large title nav bar)
+      let minOffsetY = -collectionView.adjustedContentInset.top
+      let minOffsetX = -collectionView.adjustedContentInset.left
+      
+      controllerLogger.debug("🔝 Scrolling to top (animated)")
+      collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: true)
+    }
+    
+    /// Scrolls to top and refreshes to get the latest posts
+    /// This is the behavior when the user taps the home tab while already on the home tab
+    func scrollToTopAndRefresh() {
+      guard let collectionView = collectionView else { return }
+      
+      // Only refresh when we're truly already at the top.
+      let topOffset = -collectionView.adjustedContentInset.top
+      let isAtTop = collectionView.contentOffset.y <= topOffset + 1.0
+      
+      controllerLogger.debug("🔝 Home tab tapped - isAtTop: \(isAtTop), currentOffset: \(collectionView.contentOffset.y), topOffset: \(topOffset)")
+      
+      if isAtTop {
+        // Already at top - refresh to get new posts
+        controllerLogger.debug("🔝 Already at top - refreshing feed")
+        Task { @MainActor in
+          await stateManager.refreshUserInitiated()
+        }
+      } else {
+        // Not at top - just scroll to top (no refresh)
+        controllerLogger.debug("🔝 Not at top - scrolling to top")
+        scrollToTopAnimated()
+      }
+    }
+    
+    /// Scrolls to the absolute top of the content (no animation, no protection)
+    private func scrollToAbsoluteTop() {
+      guard let collectionView = collectionView else { return }
+      
+      // Force layout to ensure contentSize is accurate
+      collectionView.layoutIfNeeded()
+      
+      let minOffsetY = -collectionView.adjustedContentInset.top
+      let minOffsetX = -collectionView.adjustedContentInset.left
+        controllerLogger.debug("🔝 Scrolling to absolute top: (\(minOffsetX), \(minOffsetY)), contentSize: \(collectionView.contentSize.debugDescription)")
+      collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: false)
     }
 
     private func scrollToTop() {
@@ -763,6 +854,7 @@ import os
       themeObserver?.stopObserving()
       feedbackObserver?.stopObserving()
       appStateObserver?.stopObserving()
+      tabTapObserver?.stopObserving()
 
       // Update the state manager
       stateManager = newStateManager
@@ -773,6 +865,7 @@ import os
       setupThemeObserver()
       setupFeedbackObserver()
       setupAccountSwitchObserver()
+      setupTabTapObserver()
 
       // Load fresh data for new feed
       Task { @MainActor in
@@ -822,6 +915,17 @@ import os
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       onScrollOffsetChanged?(scrollView.contentOffset.y)
+
+      let contentHeight = scrollView.contentSize.height
+      guard contentHeight > .zero else { return }
+      let viewportHeight = scrollView.bounds.height
+      let preloadThreshold = contentHeight - viewportHeight * 1.5
+      if scrollView.contentOffset.y > preloadThreshold {
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          await self.stateManager.loadMore()
+        }
+      }
     }
   }
 

@@ -297,7 +297,12 @@ final class SmartFeedRefreshCoordinator {
       let updatedPosts = feedModel.applyFilters(withSettings: appState.feedFilterSettings)
 
       // Save to persistent storage
-      await persistentManager.saveFeedData(updatedPosts, for: feedIdentifier)
+      let currentCursor = await feedModel.currentCursor()
+      await persistentManager.saveFeedData(
+        updatedPosts,
+        for: feedIdentifier,
+        cursor: currentCursor
+      )
       
       // Update continuity info
       continuityManager.updateContinuityInfo(for: feedIdentifier, posts: updatedPosts, hasNewContent: true)

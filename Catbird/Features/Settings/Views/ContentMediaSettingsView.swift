@@ -412,6 +412,6 @@ struct ContentMediaSettingsView: View {
     @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         ContentMediaSettingsView()
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
     }
 }

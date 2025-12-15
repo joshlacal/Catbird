@@ -11,6 +11,7 @@ import Observation
 import OSLog
 import Combine
 import GRDB
+import CatbirdMLSCore
 
 /// Conversation initialization state
 enum ConversationState: Sendable, Equatable {
@@ -41,7 +42,14 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
     var displayMessages: [DisplayMessage] {
       let optimistic = optimisticMessages.map { DisplayMessage.optimistic($0) }
       let confirmed = messages.map { DisplayMessage.confirmed($0) }
-      return (optimistic + confirmed).sorted { $0.timestamp < $1.timestamp }
+      // Sort by (epoch, sequenceNumber) for correct MLS message ordering
+      // Prevents messages from appearing out of order during epoch transitions
+      return (optimistic + confirmed).sorted {
+        if $0.epoch != $1.epoch {
+          return $0.epoch < $1.epoch
+        }
+        return $0.sequenceNumber < $1.sequenceNumber
+      }
     }
 
     /// Loading states
@@ -70,7 +78,7 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
 
     // MARK: - Dependencies
 
-    private let database: DatabaseQueue
+    private let database: MLSDatabase
     let apiClient: MLSAPIClient // Internal for admin dashboard access
     let conversationManager: MLSConversationManager // Internal for admin features access
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetailViewModel")
@@ -102,7 +110,7 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
 
     init(
         conversationId: String,
-        database: DatabaseQueue,
+        database: MLSDatabase,
         apiClient: MLSAPIClient,
         conversationManager: MLSConversationManager
     ) {
@@ -129,24 +137,58 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
             group.addTask { await self.loadMessages() }
         }
 
+        // Mark all messages as read when conversation is opened
+        await markMessagesAsRead()
+
         isLoadingConversation = false
+    }
+
+    /// Mark all messages in this conversation as read
+    @MainActor
+    func markMessagesAsRead() async {
+        guard let currentUserDID = conversationManager.currentUserDID else { return }
+        do {
+            let count = try await MLSStorageHelpers.markAllMessagesAsRead(
+                in: database,
+                conversationID: conversationId,
+                currentUserDID: currentUserDID
+            )
+            if count > 0 {
+                logger.debug("Marked \(count) messages as read in conversation \(self.conversationId)")
+            }
+        } catch {
+            logger.error("Failed to mark messages as read: \(error.localizedDescription)")
+        }
     }
 
     /// Load conversation details
     @MainActor
     private func loadConversationDetails() async {
         do {
-            // Get conversations and find the matching one
-            let result = try await apiClient.getConversations(limit: 100)
-            if let convo = result.convos.first(where: { $0.groupId == conversationId }) {
-                conversation = convo
-                conversationSubject.send(convo)
-                logger.debug("Loaded conversation details: \(self.conversationId)")
-
-                // Mark as active once loaded (older conversations are already initialized)
+            // First try to get conversation from manager cache (most efficient)
+            if let cachedConvo = conversationManager.conversations[conversationId] {
+                conversation = cachedConvo
+                conversationSubject.send(cachedConvo)
+                logger.debug("🔍 [MEMBER_MGMT] Loaded conversation details from cache: \(self.conversationId), members count: \(cachedConvo.members.count)")
                 conversationState = .active
             } else {
-                throw MLSError.conversationNotFound
+                // Fallback: sync with server and retry
+                logger.debug("Conversation not in cache, syncing with server...")
+
+                // Move database operations off main thread to prevent priority inversion
+                let manager = conversationManager
+                try await Task.detached(priority: .userInitiated) {
+                    try await manager.syncWithServer()
+                }.value
+
+                if let syncedConvo = conversationManager.conversations[conversationId] {
+                    conversation = syncedConvo
+                    conversationSubject.send(syncedConvo)
+                    logger.debug("🔍 [MEMBER_MGMT] Loaded conversation details after sync: \(self.conversationId), members count: \(syncedConvo.members.count)")
+                    conversationState = .active
+                } else {
+                    throw MLSError.conversationNotFound
+                }
             }
         } catch {
             self.error = error
@@ -270,13 +312,22 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         logger.debug("sendMessage start: len=\(plaintext.count), embed=\(embed != nil ? "yes" : "no")")
 
         do {
-            // Use MLSConversationManager for proper encryption
-            let (messageId, _) = try await conversationManager.sendMessage(
-                convoId: conversationId,
-                plaintext: plaintext,
-                embed: embed
-            )
+            // CRITICAL: Move FFI work OFF main thread to prevent UI blocking
+            // Capture values for detached task
+            let convoId = conversationId
+            let manager = conversationManager
 
+            // Run encryption and send OFF main thread
+            let messageId = try await Task.detached(priority: .userInitiated) {
+                let (msgId, _, _, _) = try await manager.sendMessage(
+                    convoId: convoId,
+                    plaintext: plaintext,
+                    embed: embed
+                )
+                return msgId
+            }.value
+
+            // Back on @MainActor for UI updates
             // Remove optimistic message
             optimisticMessages.removeAll { $0.id == optimisticMessage.id }
 
@@ -317,7 +368,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         error = nil
 
         do {
-            _ = try await apiClient.leaveConversation(convoId: conversationId)
+            // Use the conversation manager to properly clean up MLS group and database
+            try await conversationManager.leaveConversation(convoId: conversationId)
             logger.debug("Left conversation \(self.conversationId)")
         } catch {
             self.error = error
@@ -376,12 +428,22 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         logger.debug("Retrying message: len=\(message.text.count)")
 
         do {
-            let (messageId, _) = try await conversationManager.sendMessage(
-                convoId: conversationId,
-                plaintext: message.text,
-                embed: message.embed
-            )
+            // CRITICAL: Move FFI work OFF main thread to prevent UI blocking
+            // Capture values for detached task
+            let convoId = conversationId
+            let manager = conversationManager
 
+            // Run encryption and send OFF main thread
+            let messageId = try await Task.detached(priority: .userInitiated) {
+                let (msgId, _, _, _) = try await manager.sendMessage(
+                    convoId: convoId,
+                    plaintext: message.text,
+                    embed: message.embed
+                )
+                return msgId
+            }.value
+
+            // Back on @MainActor for UI updates
             // Remove optimistic message on success
             optimisticMessages.removeAll { $0.id == optimisticId }
 

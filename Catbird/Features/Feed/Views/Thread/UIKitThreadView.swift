@@ -2590,7 +2590,7 @@ struct ParentPostView: View {
         reason: .notFound,
         path: $path
       )
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
 
     case .appBskyUnspeccedDefsThreadItemBlocked:
       Text("Blocked post")
@@ -2698,7 +2698,7 @@ struct ReplyView: View {
                 reason: .notFound,
                 path: $path
               )
-              .environment(appState)
+              .applyAppStateEnvironment(appState)
               
               // Offer a way to jump into the missing leg of the chain
               Button(action: { path.append(NavigationDestination.post(nestedWrapper.uri)) }) {
@@ -2734,7 +2734,7 @@ struct ReplyView: View {
         reason: .notFound,
         path: $path
       )
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
 
     case .appBskyUnspeccedDefsThreadItemBlocked:
       Text("Blocked reply")

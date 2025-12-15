@@ -31,6 +31,7 @@ struct FeedsStartPage: View {
   @State private var isSearchBarVisible = false
   @State private var isLoaded = false
   @State private var isInitialized = false
+  @State private var currentUserDID: String?  // Track current account for change detection
   @State private var showAddFeedSheet = false
   @State private var newFeedURI = ""
   @State private var pinNewFeed = false
@@ -847,7 +848,9 @@ struct FeedsStartPage: View {
       showErrorAlert: $showErrorAlert,
       errorAlertMessage: $errorAlertMessage,
       onAppear: handleOnAppear,
-      onDisappear: handleOnDisappear
+      onDisappear: handleOnDisappear,
+      onAccountSwitch: handleAccountSwitch,
+      currentUserDID: currentUserDID
     )
     
   }
@@ -881,8 +884,8 @@ struct FeedsStartPage: View {
       }
     }
     .frame(maxWidth: drawerWidth)
-    .overlay(alignment: .topTrailing) {
-      // Overlays
+    .overlay {
+      // Full-screen loading/initialization overlays
       loadingOverlay()
       initializationOverlay()
     }
@@ -899,24 +902,50 @@ struct FeedsStartPage: View {
   
   private func handleOnAppear() {
     Task {
+      // Track current user for account switch detection
+      currentUserDID = appState.userDID
+
       await viewModel.initializeWithModelContext(modelContext)
       await updateFilteredFeeds()
       isInitialized = true
-      
+
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
         isLoaded = true
       }
-      
+
       if appState.isAuthenticated {
         await loadUserProfile()
       }
-      
+
       if stateInvalidationSubscriber == nil {
         stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
           viewModel: viewModel,
           updateFilteredFeeds: updateFilteredFeeds
         )
         appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
+      }
+    }
+  }
+
+  private func handleAccountSwitch() {
+    // Reset state when account changes
+    isInitialized = false
+    isLoaded = false
+    profile = nil
+    currentUserDID = appState.userDID
+
+    // Re-run initialization for the new account
+    Task {
+      await viewModel.initializeWithModelContext(modelContext)
+      await updateFilteredFeeds()
+      isInitialized = true
+
+      withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
+        isLoaded = true
+      }
+
+      if appState.isAuthenticated {
+        await loadUserProfile()
       }
     }
   }
@@ -1132,26 +1161,26 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func loadingOverlay() -> some View {
     if viewModel.isLoading {
-      VStack {
-        Spacer()
-        ProgressView("Loading feeds...")
-        Spacer()
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.systemBackground.opacity(0.9))
+      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+        .ignoresSafeArea()
+        .overlay {
+          ProgressView("Loading feeds...")
+        }
+        .contentShape(Rectangle())
+        .allowsHitTesting(true)
     }
   }
 
   @ViewBuilder
   private func initializationOverlay() -> some View {
     if !isInitialized {
-      VStack {
-        Spacer()
-        ProgressView("Loading your feeds...")
-        Spacer()
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.systemBackground.opacity(0.9))
+      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+        .ignoresSafeArea()
+        .overlay {
+          ProgressView("Loading your feeds...")
+        }
+        .contentShape(Rectangle())
+        .allowsHitTesting(true)
     }
   }
   
@@ -1271,7 +1300,9 @@ extension View {
         showErrorAlert: Binding<Bool>,
         errorAlertMessage: Binding<String>,
         onAppear: @escaping () -> Void,
-        onDisappear: @escaping () -> Void
+        onDisappear: @escaping () -> Void,
+        onAccountSwitch: @escaping () -> Void,
+        currentUserDID: String?
     ) -> some View {
         self
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
@@ -1281,7 +1312,9 @@ extension View {
                 showErrorAlert: showErrorAlert,
                 errorAlertMessage: errorAlertMessage,
                 onAppear: onAppear,
-                onDisappear: onDisappear
+                onDisappear: onDisappear,
+                onAccountSwitch: onAccountSwitch,
+                currentUserDID: currentUserDID
             )
             .configuredSheets(
                 showAddFeedSheet: showAddFeedSheet,
@@ -1304,13 +1337,21 @@ private extension View {
         showErrorAlert: Binding<Bool>,
         errorAlertMessage: Binding<String>,
         onAppear: @escaping () -> Void,
-        onDisappear: @escaping () -> Void
+        onDisappear: @escaping () -> Void,
+        onAccountSwitch: @escaping () -> Void,
+        currentUserDID: String?
     ) -> some View {
         // Remove global SwiftUI .toolbar usage to keep actions confined to the drawer.
         // Lifecycle and alerts remain here; UI buttons are rendered inside the drawer view itself.
         self
             .onAppear(perform: onAppear)
             .onDisappear(perform: onDisappear)
+            .onChange(of: appState.userDID) { oldDID, newDID in
+                // Detect account switch - only trigger if we had a previous DID and it changed
+                if let currentDID = currentUserDID, currentDID != newDID {
+                    onAccountSwitch()
+                }
+            }
             .alert("Error", isPresented: showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {

@@ -183,7 +183,7 @@ struct MediaGalleryView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+    @ObservationIgnored @Previewable @ObservationIgnored @Environment(AppState.self) var appState
     MediaGalleryView(
         mediaItems: .constant([
             {

@@ -22,6 +22,9 @@ extension PostComposerViewUIKit {
                 // Use UIKit avatar view for consistency
                 Button(action: {
                   pcThreadLogger.info("PostComposerThread: Avatar tapped in thread entry - opening account switcher")
+                  if hasContent(vm: vm) {
+                    appState.composerDraftManager.storeDraft(from: vm)
+                  }
                   showingAccountSwitcher = true
                 }) {
                   #if os(iOS)
@@ -115,19 +118,19 @@ extension PostComposerViewUIKit {
   
   @ViewBuilder
   private func activeThreadEntry(vm: PostComposerViewModel) -> some View {
-    RichEditorContainer(
-      attributedText: Binding(
-        get: { vm.richAttributedText },
-        set: { vm.richAttributedText = $0 }
-      ),
-      linkFacets: $linkFacets,
-      pendingSelectionRange: $pendingSelectionRange,
-      placeholder: "What's on your mind?",
-      onImagePasted: { image in
-        #if os(iOS)
-        Task {
-          await vm.handleMediaPaste([NSItemProvider(object: image)])
-        }
+      RichEditorContainer(
+        attributedText: Binding(
+          get: { vm.richAttributedText },
+          set: { vm.richAttributedText = $0 }
+        ),
+        linkFacets: $linkFacets,
+        pendingSelectionRange: $pendingSelectionRange,
+        placeholder: "What's on your mind?",
+        onImagePasted: { image in
+          #if os(iOS)
+          Task {
+            await vm.handleMediaPaste([NSItemProvider(object: image)])
+          }
         #endif
       },
       onGenmojiDetected: { emojis in 
@@ -333,9 +336,11 @@ extension PostComposerViewUIKit {
   
   @ViewBuilder
   private func activeEntryMetadataSection(vm: PostComposerViewModel) -> some View {
-    VStack(spacing: 8) {
-      // Compact inline outline hashtags
-      if !vm.outlineTags.isEmpty {
+    // Outline hashtags, languages, and character counter in horizontal layout
+    HStack(alignment: .top, spacing: 12) {
+      // Leading: hashtags and languages stacked vertically
+      VStack(alignment: .leading, spacing: 4) {
+        // Compact inline outline hashtags - always show with add button
         HStack(spacing: 8) {
           Image(systemName: "number")
             .font(.system(size: 12))
@@ -359,52 +364,71 @@ extension PostComposerViewUIKit {
                 .foregroundColor(.secondary)
                 .cornerRadius(6)
               }
+              
+              if vm.outlineTags.count < 10 {
+                Button(action: { 
+                  pcThreadLogger.info("PostComposerThread: Add tag button tapped in active entry")
+                }) {
+                  Image(systemName: "plus.circle")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                }
+              }
             }
+            .padding(.horizontal, 1)
           }
         }
-        .padding(.horizontal, 16)
         .padding(.vertical, 4)
-      }
-      
-      // Compact inline language chips
-      if !vm.selectedLanguages.isEmpty {
-        HStack(spacing: 8) {
-          Image(systemName: "globe")
-            .font(.system(size: 12))
-            .foregroundColor(.secondary)
-          
-          ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-              ForEach(vm.selectedLanguages, id: \.self) { lang in
-                HStack(spacing: 4) {
-                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
-                    .font(.system(size: 11, weight: .medium))
-                  Button(action: { vm.toggleLanguage(lang) }) {
-                    Image(systemName: "xmark.circle.fill")
-                      .font(.system(size: 10))
-                      .foregroundColor(.secondary)
+        
+        // Compact inline language chips
+        if !vm.selectedLanguages.isEmpty {
+          HStack(spacing: 8) {
+            Image(systemName: "globe")
+              .font(.system(size: 12))
+              .foregroundColor(.secondary)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+              HStack(spacing: 6) {
+                ForEach(vm.selectedLanguages, id: \.self) { lang in
+                  HStack(spacing: 4) {
+                    Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                      .font(.system(size: 11, weight: .medium))
+                    Button(action: { vm.toggleLanguage(lang) }) {
+                      Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    }
                   }
+                  .padding(.horizontal, 8)
+                  .padding(.vertical, 4)
+                  .background(Color.secondary.opacity(0.1))
+                  .foregroundColor(.secondary)
+                  .cornerRadius(6)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.1))
-                .foregroundColor(.secondary)
-                .cornerRadius(6)
               }
             }
           }
+          .padding(.vertical, 4)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
       }
+      .layoutPriority(-1)  // Lower priority so character counter gets space
+      
+      Spacer(minLength: 8)
+      
+      // Trailing: character counter
+      CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
+        .layoutPriority(1)  // Higher priority to ensure visibility
     }
+    .padding(.horizontal, 16)
   }
   
   @ViewBuilder
   private func inactiveEntryMetadataSection(entry: ThreadEntry, vm: PostComposerViewModel) -> some View {
-    VStack(spacing: 8) {
-      // Compact inline outline hashtags
-      if !entry.outlineTags.isEmpty {
+    // Horizontal layout matching activeEntryMetadataSection
+    HStack(alignment: .top, spacing: 12) {
+      // Leading: hashtags and languages stacked vertically
+      VStack(alignment: .leading, spacing: 4) {
+        // Compact inline outline hashtags - always show
         HStack(spacing: 8) {
           Image(systemName: "number")
             .font(.system(size: 12))
@@ -421,37 +445,50 @@ extension PostComposerViewUIKit {
                   .foregroundColor(.secondary)
                   .cornerRadius(6)
               }
+              
+              if entry.outlineTags.isEmpty {
+                Text("No tags")
+                  .font(.system(size: 11))
+                  .foregroundColor(.secondary.opacity(0.6))
+              }
             }
+            .padding(.horizontal, 1)
           }
         }
-        .padding(.horizontal, 16)
         .padding(.vertical, 4)
-      }
-      
-      // Compact inline language chips
-      if !entry.selectedLanguages.isEmpty {
-        HStack(spacing: 8) {
-          Image(systemName: "globe")
-            .font(.system(size: 12))
-            .foregroundColor(.secondary)
-          
-          ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-              ForEach(entry.selectedLanguages, id: \.self) { lang in
-                Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
-                  .font(.system(size: 11, weight: .medium))
-                  .padding(.horizontal, 8)
-                  .padding(.vertical, 4)
-                  .background(Color.secondary.opacity(0.1))
-                  .foregroundColor(.secondary)
-                  .cornerRadius(6)
+        
+        // Compact inline language chips
+        if !entry.selectedLanguages.isEmpty {
+          HStack(spacing: 8) {
+            Image(systemName: "globe")
+              .font(.system(size: 12))
+              .foregroundColor(.secondary)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+              HStack(spacing: 6) {
+                ForEach(entry.selectedLanguages, id: \.self) { lang in
+                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1))
+                    .foregroundColor(.secondary)
+                    .cornerRadius(6)
+                }
               }
             }
           }
+          .padding(.vertical, 4)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
       }
+      .layoutPriority(-1)  // Lower priority so character counter gets space
+      
+      Spacer(minLength: 8)
+      
+      // Trailing: character counter for this entry
+      CharacterLimitIndicatorWrapper(currentCount: entry.text.count)
+        .layoutPriority(1)  // Higher priority to ensure visibility
     }
+    .padding(.horizontal, 16)
   }
 }

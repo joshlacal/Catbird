@@ -9,6 +9,7 @@ import Security
 import SwiftData
 import SwiftUI
 import TipKit
+import CatbirdMLSCore
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -24,12 +25,14 @@ import FoundationModels
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
+// NOTE: ModelContainerState enum moved to AppStateManager.swift to persist across App struct recreations
+
 @main
 struct CatbirdApp: App {
   #if os(iOS)
   // MARK: - App Delegate for UIKit callbacks
-  private class AppDelegate: NSObject, UIApplicationDelegate {
-    var appState: AppState?
+    class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    // Note: Access AppState via AppStateManager.shared.activeState instead of storing it
 
     func application(
       _ application: UIApplication,
@@ -37,7 +40,10 @@ struct CatbirdApp: App {
     ) -> Bool {
         // Initialize Sentry through SentryService for proper configuration
         SentryService.start()
-        
+
+        // Set notification center delegate for handling MLS notifications
+        UNUserNotificationCenter.current().delegate = self
+
       // BGTask registration moved to CatbirdApp.init() to ensure it happens before SwiftUI rendering
       
       // FaultOrdering debugging and setup for physical devices
@@ -93,8 +99,9 @@ struct CatbirdApp: App {
       }
       
       // Request widget updates at app launch
-      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-          guard let self = self, let _ = self.appState else { return }
+      Task { @MainActor in
+        try? await Task.sleep(for: .seconds(1))
+        guard AppStateManager.shared.lifecycle.appState != nil else { return }
         // Force widget to refresh
         WidgetCenter.shared.reloadAllTimelines()
         logger.info("🔄 Requested widget refresh at app launch")
@@ -108,6 +115,7 @@ struct CatbirdApp: App {
         BGTaskSchedulerManager.schedule()
         ChatBackgroundRefreshManager.schedule()
         BackgroundCacheRefreshManager.schedule()
+        MLSBackgroundRefreshManager.scheduleInitialRefresh()
       }
       
       return true
@@ -151,13 +159,13 @@ struct CatbirdApp: App {
       logger.info("📱 Received device token from APNS, length: \(deviceToken.count) bytes")
 
       // Forward the device token to our notification manager
-      guard let appState = self.appState else {
-        logger.error("❌ Cannot handle device token - appState is nil")
+      guard let activeState = AppStateManager.shared.lifecycle.appState else {
+        logger.error("❌ Cannot handle device token - no active AppState")
         return
       }
 
       Task {
-        await appState.notificationManager.handleDeviceToken(deviceToken)
+        await activeState.notificationManager.handleDeviceToken(deviceToken)
       }
     }
 
@@ -167,7 +175,54 @@ struct CatbirdApp: App {
       let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
       logger.error("Failed to register for remote notifications: \(error.localizedDescription)")
     }
+
+    func application(
+      _ application: UIApplication,
+      didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+      let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
+      logger.info("Received remote notification")
+
+      // Check if this is an MLS notification
+      if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
+        logger.info("Processing MLS key package low inventory notification")
+
+        Task { @MainActor in
+          guard let activeState = AppStateManager.shared.lifecycle.appState else {
+            logger.warning("AppState not available for MLS notification handling")
+            completionHandler(.noData)
+            return
+          }
+          await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: activeState)
+          completionHandler(.newData)
+        }
+      } else if let convoId = userInfo["convoId"] as? String ?? userInfo["conversationId"] as? String {
+        logger.info("Processing MLS chat notification for conversation: \(convoId)")
+        
+        // Trigger a sync for this conversation if possible
+        Task { @MainActor in
+            guard let activeState = AppStateManager.shared.lifecycle.appState else {
+                completionHandler(.noData)
+                return
+            }
+            
+            // If we have a conversation manager, trigger a sync/catchup
+            if let manager = await activeState.getMLSConversationManager() {
+                logger.info("Triggering catchup for conversation \(convoId)")
+                await manager.triggerCatchup(for: convoId)
+                completionHandler(.newData)
+            } else {
+                completionHandler(.noData)
+            }
+        }
+      } else {
+        logger.debug("Not an MLS notification, ignoring. Keys: \(userInfo.keys.map { String(describing: $0) }.joined(separator: ", "))")
+        completionHandler(.noData)
+      }
+    }
   }
+
   #endif
   
   // MARK: - State
@@ -180,17 +235,19 @@ struct CatbirdApp: App {
     appStateManager.lifecycle.appState
   }
   
-  @State private var didInitialize = false
+  // NOTE: didInitialize, hasHandledSceneAppear, hasRestoredState, and modelContainerState
+  // have been moved to AppStateManager.shared to persist across App struct recreations.
+  // Using @State in App structs is unreliable - iOS can recreate the struct on background/foreground
+  // transitions and reset all @State to initial values.
+  
+  // These biometric-related states stay as @State since they intentionally reset on app relaunch
+  // (security feature: require re-authentication after 5 minutes in background)
   @State private var isAuthenticatedWithBiometric = false
   @State private var showBiometricPrompt = false
   @State private var hasBiometricCheck = false
   
   // MARK: - State Restoration
-  @State internal var hasRestoredState = false
   @State private var restorationIdentifier = "CatbirdMainApp"
-
-  // MARK: - SwiftData
-  let modelContainer: ModelContainer
 
   @Environment(\.modelContext) private var modelContext
   @Environment(\.scenePhase) private var scenePhase
@@ -209,14 +266,7 @@ struct CatbirdApp: App {
     // Bridge Petrel auth incidents to UI to prevent silent auto-switching UX
     PetrelAuthUIBridge.enable()
 
-    // Register BGTask IMMEDIATELY - must be before any SwiftUI rendering
-    #if os(iOS)
-    if #available(iOS 13.0, *) {
-      BGTaskSchedulerManager.registerIfNeeded()
-      ChatBackgroundRefreshManager.registerIfNeeded()
-      BackgroundCacheRefreshManager.registerIfNeeded()
-    }
-    #endif
+    // BGTask registration deferred to background task to speed up launch
 
     // Fast path for FaultOrdering tests - skip expensive initialization
     let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
@@ -240,83 +290,7 @@ struct CatbirdApp: App {
     logger.debug("✅ Skipping audio session configuration at launch to preserve music")
     #endif
 
-    // Initialize model container with error recovery (simplified for FaultOrdering)
-    do {
-      guard let appDocumentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-        throw NSError(domain: "CatbirdApp", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to access documents directory"])
-      }
-      let storeURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
-      
-      if isFaultOrderingMode {
-        // Minimal model container for FaultOrdering - only essential models
-        self.modelContainer = try ModelContainer(
-          for: Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration(cloudKitDatabase: .none)
-        )
-        logger.debug("✅ Minimal model container initialized for FaultOrdering")
-      } else {
-        // Full model container for normal use
-        self.modelContainer = try ModelContainer(
-          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration(cloudKitDatabase: .none)
-        )
-        logger.debug("✅ Model container initialized successfully")
-      }
-    } catch {
-      logger.error("❌ Could not initialize ModelContainer: \(error)")
-      
-      if isFaultOrderingMode {
-        // For FaultOrdering, use in-memory store if file fails
-        self.modelContainer = try! ModelContainer(
-          for: Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-        )
-        logger.debug("✅ In-memory model container created for FaultOrdering")
-      } else {
-        // Try to recover by deleting corrupted database
-        let fileManager = FileManager.default
-        guard let appDocumentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
-          // Fallback to in-memory storage if documents directory is inaccessible
-          logger.warning("⚠️ Documents directory inaccessible, using in-memory storage")
-          self.modelContainer = try! ModelContainer(
-            for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-          )
-          return
-        }
-        
-        let dbURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
-        
-        if fileManager.fileExists(atPath: dbURL.path) {
-          do {
-            try fileManager.removeItem(at: dbURL)
-            logger.info("🔄 Removed corrupted database, attempting recreate")
-            
-            // Retry initialization
-            self.modelContainer = try ModelContainer(
-              for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-              configurations: ModelConfiguration(cloudKitDatabase: .none)
-            )
-            logger.debug("✅ Model container recreated successfully after recovery")
-          } catch {
-            logger.error("❌ Failed to recover database: \(error)")
-            // Fallback to in-memory storage instead of crashing
-            logger.warning("⚠️ Using in-memory storage as final fallback")
-            self.modelContainer = try! ModelContainer(
-              for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-              configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-            )
-          }
-        } else {
-          // Fallback to in-memory storage instead of crashing
-          logger.warning("⚠️ Using in-memory storage as fallback")
-          self.modelContainer = try! ModelContainer(
-            for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-            configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
-          )
-        }
-      }
-    }
+    // ModelContainer initialization deferred to async task to avoid blocking main thread
 
     // Initialize debug tools in development builds (skip for FaultOrdering)
     #if DEBUG
@@ -330,6 +304,133 @@ struct CatbirdApp: App {
       Task(priority: .background) {
         await TopicSummaryService.shared.prepareModelWarmupIfNeeded()
       }
+    }
+    #endif
+  }
+
+  // MARK: - ModelContainer Async Initialization
+
+  @MainActor
+  private func initializeModelContainer() async {
+    logger.info("📦 Starting async ModelContainer initialization")
+
+    let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1" ||
+                              ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1" ||
+                              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    do {
+      guard let appDocumentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+        throw NSError(domain: "CatbirdApp", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to access documents directory"])
+      }
+
+      // Ensure app group container directories exist before SwiftData initialization
+      // SwiftData may try to use the app group container for storage
+      if let appGroupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared") {
+        let applicationSupportDir = appGroupContainer.appendingPathComponent("Library/Application Support", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: applicationSupportDir.path) {
+          do {
+            try FileManager.default.createDirectory(at: applicationSupportDir, withIntermediateDirectories: true)
+            logger.debug("✅ Created app group Application Support directory")
+          } catch {
+            logger.warning("⚠️ Failed to create app group Application Support directory: \(error.localizedDescription)")
+          }
+        }
+      }
+
+      let container: ModelContainer
+
+      if isFaultOrderingMode {
+        // Minimal model container for FaultOrdering - only essential models
+        container = try ModelContainer(
+          for: Preferences.self, AppSettingsModel.self, DraftPost.self,
+          configurations: ModelConfiguration(cloudKitDatabase: .none)
+        )
+        logger.debug("✅ Minimal model container initialized for FaultOrdering")
+      } else {
+        // Full model container for normal use
+        container = try ModelContainer(
+          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+          configurations: ModelConfiguration(cloudKitDatabase: .none)
+        )
+        logger.debug("✅ Model container initialized successfully")
+      }
+
+      appStateManager.modelContainerState = .ready(container)
+
+    } catch {
+      logger.error("❌ Could not initialize ModelContainer: \(error)")
+
+      // Try to recover
+      do {
+        let container = try await recoverModelContainer(isFaultOrderingMode: isFaultOrderingMode, error: error)
+        appStateManager.modelContainerState = .ready(container)
+      } catch {
+        logger.error("❌ Failed to recover ModelContainer: \(error)")
+        appStateManager.modelContainerState = .failed(error)
+      }
+    }
+  }
+
+  @MainActor
+  private func recoverModelContainer(isFaultOrderingMode: Bool, error: Error) async throws -> ModelContainer {
+    if isFaultOrderingMode {
+      // For FaultOrdering, use in-memory store if file fails
+      let container = try ModelContainer(
+        for: Preferences.self, AppSettingsModel.self, DraftPost.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+      )
+      logger.debug("✅ In-memory model container created for FaultOrdering")
+      return container
+    } else {
+      // Try to recover by deleting corrupted database
+      let fileManager = FileManager.default
+      guard let appDocumentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+        // Fallback to in-memory storage if documents directory is inaccessible
+        logger.warning("⚠️ Documents directory inaccessible, using in-memory storage")
+        let container = try ModelContainer(
+          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+          configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        return container
+      }
+
+      let dbURL = appDocumentsURL.appendingPathComponent("Catbird.sqlite")
+
+      if fileManager.fileExists(atPath: dbURL.path) {
+        try fileManager.removeItem(at: dbURL)
+        logger.info("🔄 Removed corrupted database, attempting recreate")
+
+        // Retry initialization
+        let container = try ModelContainer(
+          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+          configurations: ModelConfiguration(cloudKitDatabase: .none)
+        )
+        logger.debug("✅ Model container recreated successfully after recovery")
+        return container
+      } else {
+        // Fallback to in-memory storage
+        logger.warning("⚠️ Using in-memory storage as fallback")
+        let container = try ModelContainer(
+          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+          configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
+        )
+        return container
+      }
+    }
+  }
+
+  // MARK: - Background Task Registration
+
+  @MainActor
+  private func registerBackgroundTasks() async {
+    #if os(iOS)
+    if #available(iOS 13.0, *) {
+      logger.debug("📋 Registering background tasks")
+      BGTaskSchedulerManager.registerIfNeeded()
+      ChatBackgroundRefreshManager.registerIfNeeded()
+      BackgroundCacheRefreshManager.registerIfNeeded()
+      MLSBackgroundRefreshManager.registerIfNeeded()
+      logger.debug("✅ Background tasks registered")
     }
     #endif
   }
@@ -356,10 +457,10 @@ struct CatbirdApp: App {
 
   /// Pre-load cached feed data for instant display at startup
   @MainActor
-  private func preloadCachedFeedData() async {
+  private func preloadCachedFeedData(container: ModelContainer) async {
     logger.debug("📦 Pre-loading cached feed data for instant startup")
 
-    let modelContext = modelContainer.mainContext
+    let modelContext = container.mainContext
 
     // Query recent cached posts for the main timeline
     let sortDescriptors = [SortDescriptor<CachedFeedViewPost>(\.createdAt, order: .reverse)]
@@ -398,19 +499,40 @@ struct CatbirdApp: App {
   // MARK: - Body
   var body: some Scene {
     WindowGroup {
-      sceneRoot()
-      .onAppear {
-        handleSceneAppear()
-      }
-      .environment(appStateManager)
-      .modelContainer(modelContainer)
-      // Monitor scene phase for feed state persistence
-      .onChange(of: scenePhase) { oldPhase, newPhase in
-        handleScenePhaseChange(from: oldPhase, to: newPhase)
-      }
-      .modifier(BiometricAuthModifier(performCheck: performInitialBiometricCheck))
-      .task {
-        await initializeApplicationIfNeeded()
+      Group {
+        switch appStateManager.modelContainerState {
+        case .loading:
+          LoadingView()
+            .task {
+              await initializeModelContainer()
+            }
+
+        case .ready(let container):
+          sceneRoot()
+            .onAppear {
+              handleSceneAppear(container: container)
+            }
+            .environment(appStateManager)
+            .modelContainer(container)
+            // Monitor scene phase for feed state persistence
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+              handleScenePhaseChange(from: oldPhase, to: newPhase)
+            }
+            .modifier(BiometricAuthModifier(performCheck: performInitialBiometricCheck))
+            .task(priority: .high) {
+              await initializeApplicationIfNeeded()
+            }
+            .task(priority: .background) {
+              await registerBackgroundTasks()
+            }
+
+        case .failed(let error):
+          ErrorRecoveryView(error: error, retry: {
+            Task {
+              await initializeModelContainer()
+            }
+          })
+        }
       }
       .onOpenURL { url in
           logger.info("Received URL: \(url.absoluteString)")
@@ -475,7 +597,7 @@ private extension CatbirdApp {
         if shouldShowContentForAuthenticatedState {
           ContentView()
             .id(appState.userDID)
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
         } else {
           LoadingView()  // For biometric check
         }
@@ -497,9 +619,16 @@ private extension CatbirdApp {
     }
   }
 
-  func handleSceneAppear() {
+  func handleSceneAppear(container: ModelContainer) {
+    // Guard to prevent multiple calls
+    guard !appStateManager.hasHandledSceneAppear else {
+      logger.debug("⏭️ Skipping handleSceneAppear - already handled")
+      return
+    }
+    appStateManager.hasHandledSceneAppear = true
+    logger.debug("✅ handleSceneAppear called for first time")
+
 #if os(iOS)
-    appDelegate.appState = appState
     if let appState,
        let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
        let window = windowScene.windows.first,
@@ -522,19 +651,19 @@ private extension CatbirdApp {
     setupBackgroundNotification()
 #endif
 
-    PersistentFeedStateManager.initialize(with: modelContainer)
+    PersistentFeedStateManager.initialize(with: container)
 
     Task { @MainActor in
       if let appState = self.appState {
-        appState.composerDraftManager.setModelContext(self.modelContainer.mainContext)
-        appState.notificationManager.setModelContext(self.modelContainer.mainContext)
+        appState.composerDraftManager.setModelContext(container.mainContext)
+        appState.notificationManager.setModelContext(container.mainContext)
       }
       FeedStateStore.shared.setModelContext(modelContext)
-      await preloadCachedFeedData()
+      await preloadCachedFeedData(container: container)
     }
 
     if #available(iOS 26.0, macOS 26.0, *) {
-      let store = AppModelStore(modelContainer: modelContainer)
+      let store = AppModelStore(modelContainer: container)
       Task { @MainActor in
         self.appState?.setModelStore(store)
       }
@@ -545,9 +674,18 @@ private extension CatbirdApp {
     }
   }
 
-  func handleScenePhaseChange(from _: ScenePhase, to newPhase: ScenePhase) {
+  func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
     Task { @MainActor in
       await FeedStateStore.shared.handleScenePhaseChange(newPhase)
+
+#if os(iOS)
+      // Flush as early as possible (active → inactive) while file access is still valid.
+      if oldPhase == .active, newPhase == .inactive {
+        if let appState = appStateManager.lifecycle.appState {
+          await appState.flushMLSStorageForSuspension()
+        }
+      }
+#endif
 
       if newPhase == .background {
         saveApplicationState()
@@ -555,6 +693,7 @@ private extension CatbirdApp {
         if #available(iOS 13.0, *) {
           ChatBackgroundRefreshManager.schedule()
           BackgroundCacheRefreshManager.schedule()
+          MLSBackgroundRefreshManager.scheduleInitialRefresh()
         }
 #endif
       }
@@ -564,12 +703,12 @@ private extension CatbirdApp {
   func initializeApplicationIfNeeded() async {
     logger.info("📍 initializeApplicationIfNeeded called")
     let shouldInitialize = await MainActor.run { () -> Bool in
-      guard !didInitialize else {
+      guard !appStateManager.didInitialize else {
         logger.debug("⚠️ Skipping duplicate initialization - already initialized")
         return false
       }
 
-      didInitialize = true
+      appStateManager.didInitialize = true
       logger.info("🎯 Starting first-time app initialization (didInitialize set to true)")
       return true
     }
@@ -625,26 +764,7 @@ private extension CatbirdApp {
         }
       }
 
-      Task(priority: .background) {
-        let retentionDays = appState.appSettings.mlsMessageRetentionDays
-        await MLSEpochKeyRetentionManager.shared.updatePolicyFromSettings(retentionDays: retentionDays)
-        await MLSEpochKeyRetentionManager.shared.startAutomaticCleanup()
-        logger.info("🔐 Started MLS epoch key retention cleanup (\(retentionDays) days retention)")
-      }
-
-      // Trigger smart key package refresh on app launch
-      Task(priority: .background) {
-        do {
-          if let manager = await appState.getMLSConversationManager() {
-            try await manager.smartRefreshKeyPackages()
-            logger.info("📦 Completed app launch key package refresh check")
-          } else {
-            logger.debug("ℹ️ MLS conversation manager not available, skipping key package refresh")
-          }
-        } catch {
-          logger.warning("⚠️ App launch key package refresh failed: \(error.localizedDescription)")
-        }
-      }
+      // MLS initialization removed - will be lazily initialized when user opens chat
     }
 
     await performInitialBiometricCheck()
@@ -737,6 +857,40 @@ private extension CatbirdApp {
         Text("Loading...")
           .font(.headline)
           .foregroundColor(.secondary)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.systemBackground)
+    }
+  }
+
+  struct ErrorRecoveryView: View {
+    let error: Error
+    let retry: () -> Void
+
+    var body: some View {
+      VStack(spacing: 20) {
+        Image(systemName: "exclamationmark.triangle")
+          .font(.system(size: 60))
+          .foregroundColor(.red)
+
+        Text("Database Error")
+          .font(.title)
+          .fontWeight(.bold)
+
+        Text(error.localizedDescription)
+          .font(.body)
+          .foregroundColor(.secondary)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal)
+
+        Button(action: retry) {
+          Text("Try Again")
+            .font(.headline)
+            .foregroundColor(.white)
+            .padding()
+            .background(Color.blue)
+            .cornerRadius(10)
+        }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.systemBackground)
@@ -935,3 +1089,61 @@ private struct BiometricAuthModifier: ViewModifier {
     #endif
   }
 }
+
+#if os(iOS)
+// MARK: - UNUserNotificationCenterDelegate
+extension CatbirdApp.AppDelegate {
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
+    let userInfo = response.notification.request.content.userInfo
+
+    logger.info("User tapped notification")
+
+    // Handle MLS notifications
+    if let type = userInfo["type"] as? String {
+      if type == "keyPackageLowInventory" {
+        Task { @MainActor in
+          guard let appState = AppStateManager.shared.lifecycle.appState else {
+            logger.warning("AppState not available for MLS notification handling")
+            completionHandler()
+            return
+          }
+          await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+          completionHandler()
+        }
+        return
+      }
+    }
+
+    completionHandler()
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    // For MLS notifications, don't show banner/alert (they're silent background notifications)
+    let userInfo = notification.request.content.userInfo
+    if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
+      // Silent notification - process in background
+      Task { @MainActor in
+        guard let appState = AppStateManager.shared.lifecycle.appState else {
+          let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
+          logger.warning("AppState not available for MLS notification handling")
+          return
+        }
+        await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+      }
+      completionHandler([]) // No presentation
+    } else {
+      // Show other notifications normally
+      completionHandler([.banner, .sound, .badge])
+    }
+  }
+}
+#endif 

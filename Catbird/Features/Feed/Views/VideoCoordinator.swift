@@ -25,7 +25,6 @@ final class VideoCoordinator {
   private var loopingWrappers: [String: LoopingPlayerWrapper] = [:]
   private var statusObservers: [String: Task<Void, Never>] = [:]
 
-
   private let logger = Logger(subsystem: "blue.catbird", category: "VideoCoordinator")
 
   // App settings for autoplay preference
@@ -96,7 +95,13 @@ final class VideoCoordinator {
     if model.type.isGif {
       logger.debug("🎬 Configuring GIF player for \(model.id)")
       // For GIFs, try to use looping wrapper for smooth playback
-      if loopingWrappers[model.id] == nil {
+      /*
+       * DISABLED for performance/architecture reasons:
+       * LoopingPlayerWrapper creates a new AVQueuePlayer, but the View holds the original AVPlayer.
+       * This causes the view to show a static/stale player while the wrapper plays in background.
+       * Falling back to manual looping (configureGifPlayer) works on the same instance and is now optimized.
+       */
+      if false && loopingWrappers[model.id] == nil {
         // Give the player a moment to load if needed, then try wrapper
         let wrapperTask = Task { @MainActor in
           // Small delay to ensure player item is ready
@@ -126,6 +131,10 @@ final class VideoCoordinator {
         statusObservers["\(model.id)-wrapper"] = wrapperTask
 
         // Initially use the original player with manual looping
+        activeVideos[model.id] = (model, player, lastPosition)
+        configureGifPlayer(player, for: model.id)
+      } else {
+        // Wrapper path is intentionally disabled; always configure manual looping on the same AVPlayer instance.
         activeVideos[model.id] = (model, player, lastPosition)
         configureGifPlayer(player, for: model.id)
       }
@@ -297,7 +306,10 @@ final class VideoCoordinator {
 
       // Check if this GIF should still be playing
       if let (model, _, _) = self.activeVideos[modelId], model.isPlaying {
-        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { finished in
+        // Use default tolerance for faster seeking (performance over frame accuracy)
+        player.seek(
+          to: .zero, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity
+        ) { finished in
           if finished {
             player.safePlay()
             self.logger.debug("✅ GIF looped successfully: \(modelId)")
@@ -422,7 +434,6 @@ final class VideoCoordinator {
       player.volume = 0
     }
 
-
     // Clean up looping wrappers
     loopingWrappers.removeValue(forKey: modelId)
 
@@ -460,81 +471,79 @@ final class VideoCoordinator {
     updatePlaybackStates()
   }
 
-
-
   // MARK: - Background Handling
 
   /// Set up notifications for app state changes
   private func setupBackgroundHandling() {
     #if os(iOS)
-    NotificationCenter.default.addObserver(
-      forName: UIApplication.willResignActiveNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.handleBackgroundTransition()
-        self?.savePlaybackPositions()  // Save positions when going to background
+      NotificationCenter.default.addObserver(
+        forName: UIApplication.willResignActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          self?.handleBackgroundTransition()
+          self?.savePlaybackPositions()  // Save positions when going to background
+        }
       }
-    }
 
-    NotificationCenter.default.addObserver(
-      forName: UIApplication.didBecomeActiveNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        // Don't configure audio session at all when app becomes active
-        // This preserves music playback
-        self?.updatePlaybackStates()
+      NotificationCenter.default.addObserver(
+        forName: UIApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          // Don't configure audio session at all when app becomes active
+          // This preserves music playback
+          self?.updatePlaybackStates()
+        }
       }
-    }
     #elseif os(macOS)
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.willResignActiveNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.handleBackgroundTransition()
-        self?.savePlaybackPositions()  // Save positions when going to background
+      NotificationCenter.default.addObserver(
+        forName: NSApplication.willResignActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          self?.handleBackgroundTransition()
+          self?.savePlaybackPositions()  // Save positions when going to background
+        }
       }
-    }
 
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.didBecomeActiveNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        // Don't configure audio session at all when app becomes active
-        // This preserves music playback
-        self?.updatePlaybackStates()
+      NotificationCenter.default.addObserver(
+        forName: NSApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          // Don't configure audio session at all when app becomes active
+          // This preserves music playback
+          self?.updatePlaybackStates()
+        }
       }
-    }
     #endif
 
     // Optionally handle app termination
     #if os(iOS)
-    NotificationCenter.default.addObserver(
-      forName: UIApplication.willTerminateNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.savePlaybackPositions()
+      NotificationCenter.default.addObserver(
+        forName: UIApplication.willTerminateNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          self?.savePlaybackPositions()
+        }
       }
-    }
     #elseif os(macOS)
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.willTerminateNotification,
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor [weak self] in
-        self?.savePlaybackPositions()
+      NotificationCenter.default.addObserver(
+        forName: NSApplication.willTerminateNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          self?.savePlaybackPositions()
+        }
       }
-    }
     #endif
   }
 
@@ -618,11 +627,4 @@ final class VideoCoordinator {
     }
   }
 
-  
-
-
-
-
-
 }
-

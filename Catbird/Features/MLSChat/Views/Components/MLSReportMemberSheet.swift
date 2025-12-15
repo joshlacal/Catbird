@@ -4,6 +4,7 @@
 //
 //  Report form for MLS conversation members
 //
+//  NOTE: Deprecated/hidden while MLS moderation relies on direct removals.
 
 import SwiftUI
 import Petrel

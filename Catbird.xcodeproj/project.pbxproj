@@ -11,7 +11,10 @@
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 211DC2F72EA803CB00608AF4 /* Petrel */; };
-		2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */ = {isa = PBXBuildFile; productRef = 2121B3F42DF5201E003871F1 /* ExyteChat */; };
+		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		212D4B5F2ED221A30036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B5E2ED221A30036E016 /* CatbirdMLSCore */; };
+		212D4B662ED265F80036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B652ED265F80036E016 /* CatbirdMLSCore */; };
+		212D4B682ED266870036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B672ED266870036E016 /* CatbirdMLSCore */; };
 		212E943A2D61003F00D3E1DD /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94392D61003F00D3E1DD /* Petrel */; };
 		212E94692D6183D600D3E1DD /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94682D6183D600D3E1DD /* Nuke */; };
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
@@ -20,7 +23,7 @@
 		215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */ = {isa = PBXBuildFile; productRef = 215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */; };
 		217ECDA92EB4268100BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; productRef = 217ECDA82EB4268100BD113B /* Mantis */; };
 		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
-		21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 21993DFF2DCE71E600E13661 /* MCEmojiPicker */; };
+		219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */ = {isa = PBXBuildFile; productRef = 219DA5B82EED838E00F717FA /* EmojiKit */; };
 		219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58022EBC27F500C8D6F2 /* Security.framework */; };
 		219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58042EBC27FF00C8D6F2 /* Foundation.framework */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
@@ -35,8 +38,7 @@
 		21EBFE032EB53AB300E707B6 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21EBFE022EB53AB300E707B6 /* Petrel */; };
 		21EBFE062EB53CD500E707B6 /* FaultOrdering in Frameworks */ = {isa = PBXBuildFile; productRef = 21EBFE052EB53CD500E707B6 /* FaultOrdering */; };
 		21EBFE082EB53CD500E707B6 /* FaultOrderingTests in Frameworks */ = {isa = PBXBuildFile; productRef = 21EBFE072EB53CD500E707B6 /* FaultOrderingTests */; };
-		21F61F9E2EBCB549002D7D99 /* MLSFFIFramework.xcframework in Embed Frameworks (2 items) */ = {isa = PBXBuildFile; fileRef = 21FFA22D2EB8FC60009825BD /* MLSFFIFramework.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		21FFA22E2EB8FC60009825BD /* MLSFFIFramework.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21FFA22D2EB8FC60009825BD /* MLSFFIFramework.xcframework */; };
+		21EC5C2B2ED2801F00D1F361 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21EC5C2A2ED2801F00D1F361 /* Petrel */; };
 		21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 21FFA23A2EBB8450009825BD /* SQLCipher */; };
 /* End PBXBuildFile section */
 
@@ -47,6 +49,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 21196F572DC25F5B00662CC3;
 			remoteInfo = CatbirdNotificationWidgetExtension;
+		};
+		212D4B442ED1FE740036E016 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 212E93F52D60132700D3E1DD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 212D4B3E2ED1FE730036E016;
+			remoteInfo = NotificationServiceExtension;
 		};
 		212E94122D60132A00D3E1DD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -85,6 +94,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -95,7 +105,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				21F61F9E2EBCB549002D7D99 /* MLSFFIFramework.xcframework in Embed Frameworks (2 items) */,
 				21EB07292EB6037600E707B6 /* FaultOrdering in Embed Frameworks (2 items) */,
 			);
 			name = "Embed Frameworks (2 items)";
@@ -114,9 +123,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		159CD1D3229655039BA3518A /* MLSError.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MLSError.swift; path = Catbird/Services/MLS/MLSError.swift; sourceTree = "<group>"; };
 		21196F102DC1115900662CC3 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		21196F122DC1115900662CC3 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		219E58022EBC27F500C8D6F2 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
 		219E58042EBC27FF00C8D6F2 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -128,10 +137,33 @@
 		21EBFE0D2EB53D9300E707B6 /* CatbirdTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CatbirdTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		21EBFE0E2EB53D9300E707B6 /* CatbirdUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CatbirdUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		21F071992E0CF6CF003BE8C2 /* Linkmap.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = Linkmap.txt; sourceTree = "<group>"; };
-		21FFA22D2EB8FC60009825BD /* MLSFFIFramework.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = MLSFFIFramework.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		212D4B4A2ED1FE740036E016 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
+		};
+		212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Services/MLS/CursorStore.swift,
+				"Services/MLS/Extensions/Data+Hex.swift",
+				Services/MLS/MLSKeychain.swift,
+				Services/MLS/MLSKeyPackageCache.swift,
+				Services/MLS/MLSKeyPackageMonitor.swift,
+				Services/MLS/MLSMessagePadding.swift,
+				Services/MLS/MLSMessageValidator.swift,
+				Services/MLS/MLSSyncValidator.swift,
+				Services/MLS/MLSWelcomeCoordinator.swift,
+				Services/MLS/Models/KeyPackageBatchResult.swift,
+				"Services/MLS/Models/KeyPackageStats+Extensions.swift",
+			);
+			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
+		};
 		21B987882E65BD3800686783 /* Exceptions for "SharedDraftImporter" folder in "SharedDraftImporter" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -150,7 +182,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/Info.plist,
-				Assets.xcassets,
 				Services/MLS/IMPLEMENTATION_COMPLETE.md,
 			);
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
@@ -173,10 +204,19 @@
 			path = CatbirdNotificationWidget;
 			sourceTree = "<group>";
 		};
+		212D4B402ED1FE740036E016 /* NotificationServiceExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				212D4B4A2ED1FE740036E016 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */,
+			);
+			path = NotificationServiceExtension;
+			sourceTree = "<group>";
+		};
 		212E93FF2D60132700D3E1DD /* Catbird */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				21DDCCF92DD2AD59004947CD /* Exceptions for "Catbird" folder in "Catbird" target */,
+				212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */,
 			);
 			path = Catbird;
 			sourceTree = "<group>";
@@ -219,26 +259,35 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		212D4B3C2ED1FE730036E016 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21EC5C2B2ED2801F00D1F361 /* Petrel in Frameworks */,
+				212D4B682ED266870036E016 /* CatbirdMLSCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		212E93FA2D60132700D3E1DD /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */,
 				212E943A2D61003F00D3E1DD /* Petrel in Frameworks */,
-				21993E002DCE71E600E13661 /* MCEmojiPicker in Frameworks */,
-				21FFA22E2EB8FC60009825BD /* MLSFFIFramework.xcframework in Frameworks */,
 				21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */,
 				212E94692D6183D600D3E1DD /* Nuke in Frameworks */,
 				219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */,
 				21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */,
-				2121B3F52DF5201E003871F1 /* ExyteChat in Frameworks */,
 				21EBFDFE2EB53A8100E707B6 /* FaultOrdering in Frameworks */,
 				211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */,
 				212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */,
+				212D4B5F2ED221A30036E016 /* CatbirdMLSCore in Frameworks */,
+				212D4B662ED265F80036E016 /* CatbirdMLSCore in Frameworks */,
 				21094CF42EBD09010084BFBD /* GRDB in Frameworks */,
 				21EBFE032EB53AB300E707B6 /* Petrel in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
 				215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */,
+				219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */,
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
 				219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */,
 				217ECDA92EB4268100BD113B /* Mantis in Frameworks */,
@@ -293,14 +342,15 @@
 				21196F5B2DC25F5B00662CC3 /* CatbirdNotificationWidget */,
 				21DDE5F12DF4EDAF009E9825 /* CatbirdFeedWidget */,
 				21B9877B2E65BD3800686783 /* SharedDraftImporter */,
+				212D4B402ED1FE740036E016 /* NotificationServiceExtension */,
 				21E108282D70BE6F0030A71C /* Frameworks */,
-				159CD1D3229655039BA3518A /* MLSError.swift */,
 				21EBFE092EB53D9300E707B6 /* Catbird.app */,
 				21EBFE0A2EB53D9300E707B6 /* CatbirdNotificationWidgetExtension.appex */,
 				21EBFE0B2EB53D9300E707B6 /* CatbirdFeedWidgetExtension.appex */,
 				21EBFE0C2EB53D9300E707B6 /* SharedDraftImporter.appex */,
 				21EBFE0D2EB53D9300E707B6 /* CatbirdTests.xctest */,
 				21EBFE0E2EB53D9300E707B6 /* CatbirdUITests.xctest */,
+				212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */,
 			);
 			sourceTree = "<group>";
 		};
@@ -309,7 +359,6 @@
 			children = (
 				219E58042EBC27FF00C8D6F2 /* Foundation.framework */,
 				219E58022EBC27F500C8D6F2 /* Security.framework */,
-				21FFA22D2EB8FC60009825BD /* MLSFFIFramework.xcframework */,
 				21196F102DC1115900662CC3 /* WidgetKit.framework */,
 				21196F122DC1115900662CC3 /* SwiftUI.framework */,
 			);
@@ -339,6 +388,30 @@
 			productReference = 21EBFE0A2EB53D9300E707B6 /* CatbirdNotificationWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 212D4B472ED1FE740036E016 /* Build configuration list for PBXNativeTarget "NotificationServiceExtension" */;
+			buildPhases = (
+				212D4B3B2ED1FE730036E016 /* Sources */,
+				212D4B3C2ED1FE730036E016 /* Frameworks */,
+				212D4B3D2ED1FE730036E016 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				212D4B402ED1FE740036E016 /* NotificationServiceExtension */,
+			);
+			name = NotificationServiceExtension;
+			packageProductDependencies = (
+				212D4B672ED266870036E016 /* CatbirdMLSCore */,
+				21EC5C2A2ED2801F00D1F361 /* Petrel */,
+			);
+			productName = NotificationServiceExtension;
+			productReference = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		212E93FC2D60132700D3E1DD /* Catbird */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 212E94242D60132A00D3E1DD /* Build configuration list for PBXNativeTarget "Catbird" */;
@@ -357,6 +430,7 @@
 				21196F6A2DC25F6000662CC3 /* PBXTargetDependency */,
 				21DDE5FD2DF4EDB5009E9825 /* PBXTargetDependency */,
 				21B987832E65BD3800686783 /* PBXTargetDependency */,
+				212D4B452ED1FE740036E016 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				212E93FF2D60132700D3E1DD /* Catbird */,
@@ -370,8 +444,6 @@
 				218B7A8B2D70B1AE0053987F /* LazyPager */,
 				21E108292D70BE6F0030A71C /* OrderedCollections */,
 				21A87CAC2D94390D0062F8E9 /* Petrel */,
-				21993DFF2DCE71E600E13661 /* MCEmojiPicker */,
-				2121B3F42DF5201E003871F1 /* ExyteChat */,
 				215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */,
 				211DC2F72EA803CB00608AF4 /* Petrel */,
 				217ECDA82EB4268100BD113B /* Mantis */,
@@ -379,6 +451,9 @@
 				21EBFE022EB53AB300E707B6 /* Petrel */,
 				21FFA23A2EBB8450009825BD /* SQLCipher */,
 				21094CF32EBD09010084BFBD /* GRDB */,
+				212D4B5E2ED221A30036E016 /* CatbirdMLSCore */,
+				212D4B652ED265F80036E016 /* CatbirdMLSCore */,
+				219DA5B82EED838E00F717FA /* EmojiKit */,
 			);
 			productName = Catbird;
 			productReference = 21EBFE092EB53D9300E707B6 /* Catbird.app */;
@@ -478,11 +553,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2600;
+				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
 					21196F572DC25F5B00662CC3 = {
 						CreatedOnToolsVersion = 16.3;
+					};
+					212D4B3E2ED1FE730036E016 = {
+						CreatedOnToolsVersion = 26.1;
 					};
 					212E93FC2D60132700D3E1DD = {
 						CreatedOnToolsVersion = 16.2;
@@ -516,14 +594,14 @@
 				212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */,
 				2194B3C42D70AA13004268BE /* XCRemoteSwiftPackageReference "swift-collections" */,
 				218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */,
-				21993DFE2DCE71E600E13661 /* XCRemoteSwiftPackageReference "MCEmojiPicker" */,
-				2121B3F32DF5201E003871F1 /* XCRemoteSwiftPackageReference "Chat" */,
 				215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				217ECDA72EB4268100BD113B /* XCRemoteSwiftPackageReference "Mantis" */,
 				21EBFE012EB53AB300E707B6 /* XCLocalSwiftPackageReference "../Petrel" */,
 				21EBFE042EB53CD500E707B6 /* XCRemoteSwiftPackageReference "FaultOrdering" */,
 				21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */,
 				21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				212D4B642ED265F80036E016 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */,
+				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 212E93F42D60132700D3E1DD;
@@ -536,12 +614,20 @@
 				21196F572DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension */,
 				21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */,
 				21B987792E65BD3800686783 /* SharedDraftImporter */,
+				212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		21196F562DC25F5B00662CC3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		212D4B3D2ED1FE730036E016 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -633,6 +719,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		212D4B3B2ED1FE730036E016 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		212E93F92D60132700D3E1DD /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -675,6 +768,12 @@
 			isa = PBXTargetDependency;
 			target = 21196F572DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension */;
 			targetProxy = 21196F692DC25F6000662CC3 /* PBXContainerItemProxy */;
+		};
+		212D4B452ED1FE740036E016 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
+			targetProxy = 212D4B442ED1FE740036E016 /* PBXContainerItemProxy */;
 		};
 		212E94132D60132A00D3E1DD /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -771,6 +870,80 @@
 			};
 			name = Release;
 		};
+		212D4B482ED1FE740036E016 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.NotificationServiceExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		212D4B492ED1FE740036E016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.NotificationServiceExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		212E94252D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -804,10 +977,7 @@
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks/MLSFFIFramework.xcframework/ios-arm64/MLSFFI.framework/Headers",
-				);
+				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Catbird/App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -852,7 +1022,6 @@
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Catbird/MLSFFI-Bridging.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
@@ -891,10 +1060,7 @@
 					"$(inherited)",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/Frameworks/MLSFFIFramework.xcframework/ios-arm64/MLSFFI.framework/Headers",
-				);
+				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Catbird/App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -939,7 +1105,6 @@
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Catbird/MLSFFI-Bridging.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
@@ -1310,6 +1475,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		212D4B472ED1FE740036E016 /* Build configuration list for PBXNativeTarget "NotificationServiceExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				212D4B482ED1FE740036E016 /* Debug */,
+				212D4B492ED1FE740036E016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		212E93F82D60132700D3E1DD /* Build configuration list for PBXProject "Catbird" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1367,6 +1541,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		212D4B642ED265F80036E016 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../CatbirdMLSCore;
+		};
 		21EBFE012EB53AB300E707B6 /* XCLocalSwiftPackageReference "../Petrel" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Petrel;
@@ -1380,14 +1558,6 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 7.8.0;
-			};
-		};
-		2121B3F32DF5201E003871F1 /* XCRemoteSwiftPackageReference "Chat" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/exyte/Chat.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.6.3;
 			};
 		};
 		212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */ = {
@@ -1430,12 +1600,12 @@
 				minimumVersion = 1.1.4;
 			};
 		};
-		21993DFE2DCE71E600E13661 /* XCRemoteSwiftPackageReference "MCEmojiPicker" */ = {
+		219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/izyumkin/MCEmojiPicker";
+			repositoryURL = "https://github.com/danielsaidi/EmojiKit.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.2.3;
+				minimumVersion = 2.2.1;
 			};
 		};
 		21EBFE042EB53CD500E707B6 /* XCRemoteSwiftPackageReference "FaultOrdering" */ = {
@@ -1466,10 +1636,20 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = Petrel;
 		};
-		2121B3F42DF5201E003871F1 /* ExyteChat */ = {
+		212D4B5E2ED221A30036E016 /* CatbirdMLSCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2121B3F32DF5201E003871F1 /* XCRemoteSwiftPackageReference "Chat" */;
-			productName = ExyteChat;
+			package = 212D4B642ED265F80036E016 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */;
+			productName = CatbirdMLSCore;
+		};
+		212D4B652ED265F80036E016 /* CatbirdMLSCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 212D4B642ED265F80036E016 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */;
+			productName = CatbirdMLSCore;
+		};
+		212D4B672ED266870036E016 /* CatbirdMLSCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 212D4B642ED265F80036E016 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */;
+			productName = CatbirdMLSCore;
 		};
 		212E94392D61003F00D3E1DD /* Petrel */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1505,10 +1685,10 @@
 			package = 218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */;
 			productName = LazyPager;
 		};
-		21993DFF2DCE71E600E13661 /* MCEmojiPicker */ = {
+		219DA5B82EED838E00F717FA /* EmojiKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 21993DFE2DCE71E600E13661 /* XCRemoteSwiftPackageReference "MCEmojiPicker" */;
-			productName = MCEmojiPicker;
+			package = 219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */;
+			productName = EmojiKit;
 		};
 		21A87CAC2D94390D0062F8E9 /* Petrel */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1540,6 +1720,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 21EBFE042EB53CD500E707B6 /* XCRemoteSwiftPackageReference "FaultOrdering" */;
 			productName = FaultOrderingTests;
+		};
+		21EC5C2A2ED2801F00D1F361 /* Petrel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21EBFE012EB53AB300E707B6 /* XCLocalSwiftPackageReference "../Petrel" */;
+			productName = Petrel;
 		};
 		21FFA23A2EBB8450009825BD /* SQLCipher */ = {
 			isa = XCSwiftPackageProductDependency;

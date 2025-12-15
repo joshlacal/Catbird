@@ -131,13 +131,13 @@ do {
 
 ## Logging
 
-Uses OSLog with subsystem `com.catbird.mls`:
+Uses OSLog with subsystem `blue.catbird.mls`:
 - `MLSStorage` category for Core Data operations
 - `MLSKeychainManager` category for Keychain operations
 
 Enable debug logging:
 ```bash
-log stream --predicate 'subsystem == "com.catbird.mls"' --level debug
+log stream --predicate 'subsystem == "blue.catbird.mls"' --level debug
 ```
 
 ## Contributing

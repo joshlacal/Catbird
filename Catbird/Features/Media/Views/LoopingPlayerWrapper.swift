@@ -65,7 +65,7 @@ final class LoopingPlayerWrapper {
         
         // Seek to current position if needed
         if currentTime.seconds > 0 {
-            queuePlayer.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            queuePlayer.seek(to: currentTime, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity)
         }
         
         // If the original was playing, start playing

@@ -389,14 +389,9 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         }
         
         // Post notification for any components that need manual updates
-        if Thread.isMainThread {
+        Task { @MainActor in
             NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
-            logger.debug("Posted FontChanged notification synchronously")
-        } else {
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
-                self.logger.debug("Posted FontChanged notification asynchronously")
-            }
+            self.logger.debug("Posted FontChanged notification")
         }
     }
     
@@ -487,7 +482,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         
         // Apply this trait collection to all windows in the app
         // This ensures that UIFont.preferredFont calls will use the limited size
-        DispatchQueue.main.async {
+        Task { @MainActor in
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 for window in windowScene.windows {
                     // Override the trait collection for this window
@@ -515,7 +510,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// Remove content size category override to restore normal Dynamic Type behavior (iOS only)
     #if os(iOS)
     private func removeContentSizeCategoryOverride() {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 for window in windowScene.windows {
                     // Restore original trait collection if we stored one

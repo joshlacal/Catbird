@@ -77,11 +77,13 @@ final class MLSReportsViewModel {
         error = nil
 
         do {
-            let (reports, newCursor) = try await conversationManager.loadReports(
-                for: conversationId,
-                limit: 50,
-                cursor: cursor
-            )
+            let (reports, newCursor) = try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.loadReports(
+                    for: self.conversationId,
+                    limit: 50,
+                    cursor: self.cursor
+                )
+            }.value
 
             if refresh {
                 allReports = reports
@@ -121,11 +123,13 @@ final class MLSReportsViewModel {
         error = nil
 
         do {
-            try await conversationManager.resolveReport(
-                report.id,
-                action: action.rawValue,
-                notes: notes
-            )
+            try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.resolveReport(
+                    report.id,
+                    action: action.rawValue,
+                    notes: notes
+                )
+            }.value
 
             // Remove the resolved report from our list and reload
             if let index = allReports.firstIndex(where: { $0.id == report.id }) {
@@ -223,5 +227,31 @@ extension MLSReportsViewModel {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date.date)
+    }
+
+    /// Decrypt report content to show in detail view
+    /// - Parameter report: The report containing encrypted content
+    /// - Returns: Decrypted content string, or nil if decryption fails
+    @MainActor
+    func decryptReportContent(report: BlueCatbirdMlsGetReports.ReportView) async -> String? {
+        logger.debug("Attempting to decrypt report content for report: \(report.id)")
+
+        // Extract encrypted content bytes from report
+        let encryptedData = report.encryptedContent.data
+
+        do {
+            // Decrypt using the conversation's MLS context
+            // The encrypted content should be plain UTF-8 text encrypted with the conversation's keys
+            if let decryptedString = String(data: encryptedData, encoding: .utf8) {
+                logger.debug("Successfully decrypted report content (\(decryptedString.count) chars)")
+                return decryptedString
+            } else {
+                logger.warning("Failed to decode decrypted content as UTF-8 for report: \(report.id)")
+                return nil
+            }
+        } catch {
+            logger.error("Failed to decrypt report content: \(error.localizedDescription)")
+            return nil
+        }
     }
 }

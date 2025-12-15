@@ -28,6 +28,8 @@ struct MLSMemberManagementView: View {
     @State private var memberRoles: [String: MemberRole] = [:]
     @State private var showingMemberActions = false
     @State private var selectedMemberForActions: BlueCatbirdMlsDefs.MemberView?
+    @State private var enrichedProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
+    @State private var showMemberHistory = false
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSMemberManagement")
     
@@ -47,28 +49,68 @@ struct MLSMemberManagementView: View {
         }
         .alert("Error", isPresented: $showingError) {
             Button("OK", role: .cancel) {}
+
+            // Show retry button if MLS service failed and retries available
+            if case .failed = appState.mlsServiceState.status,
+               appState.mlsServiceState.retryCount < appState.mlsServiceState.maxRetries {
+                Button("Retry") {
+                    Task {
+                        await appState.retryMLSInitialization()
+                        // Try to initialize view again after retry
+                        await initializeViewModel()
+                    }
+                }
+            }
         } message: {
             errorAlertMessage
         }
         .sheet(item: $selectedMemberForActions) { member in
             memberActionsSheet(for: member)
         }
+        .sheet(isPresented: $showMemberHistory) {
+            NavigationStack {
+                if let database = appState.mlsDatabase {
+                    MLSMemberHistoryView(conversationID: conversationId, currentUserDID: appState.userDID, database: database)
+                }
+            }
+        }
         .task {
             await initializeViewModel()
-            loadMemberRoles()
+            logger.info("👥 MLSMemberManagementView task start for convo \(conversationId)")
+            if let viewModel = viewModel {
+                await viewModel.loadMembers()
+                if viewModel.members.isEmpty {
+                    logger.warning("⚠️ No members from server/cache, attempting local fallback")
+                    await viewModel.loadMembersFromLocal()
+                }
+                conversation = viewModel.conversation?.toViewModel()
+                updateMemberRoles(from: viewModel.members)
+                
+                // Enrich member profiles with handle/display name/avatar
+                await enrichMemberProfiles(viewModel.members)
+            } else {
+                updateMemberRoles(from: nil)
+            }
+        }
+        .onChange(of: viewModel?.members.count ?? 0) { _, _ in
+            if let viewModel = viewModel {
+                conversation = viewModel.conversation?.toViewModel()
+                updateMemberRoles(from: viewModel.members)
+                
+                // Re-enrich profiles when members change
+                Task {
+                    await enrichMemberProfiles(viewModel.members)
+                }
+            }
         }
     }
-
     // MARK: - View Components
 
     @ViewBuilder
     private var memberListContent: some View {
         List {
             currentMembersSection
-
-            if isAdmin {
-                addMembersSection
-            }
+            addMembersSection
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Group Members")
@@ -121,25 +163,39 @@ struct MLSMemberManagementView: View {
             member: member,
             currentUserDid: appState.userDID,
             isCurrentUserAdmin: isAdmin,
-            isCurrentUserCreator: false, // TODO: Get from conversation
+            isCurrentUserCreator: appState.userDID == conversationCreatorDID,
             appState: appState
         )
     }
 
+    @MainActor
     private func initializeViewModel() async {
         if viewModel == nil {
             guard let database = appState.mlsDatabase,
-                  let apiClient = await appState.getMLSAPIClient() else {
+                  let apiClient = await appState.getMLSAPIClient(),
+                  let conversationManager = await appState.getMLSConversationManager() else {
                 logger.error("Cannot initialize view: dependencies not available")
-                errorMessage = "MLS service not available. Please restart the app."
+
+                // Check MLS service state and provide appropriate error message
+                switch appState.mlsServiceState.status {
+                case .failed(let message):
+                    errorMessage = message
+                case .notStarted, .initializing:
+                    errorMessage = "MLS service is still initializing. Please wait..."
+                default:
+                    errorMessage = "MLS service not available"
+                }
+
                 showingError = true
                 return
             }
 
             viewModel = MLSMemberManagementViewModel(
                 conversationId: conversationId,
+                currentUserDid: appState.userDID,
                 database: database,
-                apiClient: apiClient
+                apiClient: apiClient,
+                conversationManager: conversationManager
             )
         }
     }
@@ -150,15 +206,17 @@ struct MLSMemberManagementView: View {
     private var currentMembersSection: some View {
         Section {
             if let viewModel = viewModel {
-                ForEach(viewModel.members, id: \.did) { member in
+                ForEach(viewModel.groupedMembers) { groupedMember in
                     MemberRowEnhanced(
-                        member: member,
-                        isCurrentUser: member.did.description == appState.userDID,
-                        isCreator: false // TODO: Get from conversation
+                        member: groupedMember.primaryDevice ?? groupedMember.devices[0],
+                        isCurrentUser: groupedMember.userDid == appState.userDID,
+                        isCreator: groupedMember.isCreator,
+                        enrichedProfile: enrichedProfiles[groupedMember.userDid],
+                        deviceCount: groupedMember.deviceCount
                     )
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        selectedMemberForActions = member
+                        selectedMemberForActions = groupedMember.primaryDevice ?? groupedMember.devices[0]
                     }
                     .accessibilityHint("Double tap to view member actions")
                 }
@@ -180,9 +238,21 @@ struct MLSMemberManagementView: View {
             }
         } header: {
             HStack {
-                Text("Members (\(conversation?.participants.count ?? 0))")
+                Text("Members (\(viewModel?.groupedMembers.count ?? conversation?.participants.count ?? 0))")
                     .designCaption()
                 Spacer()
+
+                // History button
+                Button(action: { showMemberHistory = true }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 12))
+                        Text("History")
+                            .designCaption()
+                    }
+                    .foregroundColor(.blue)
+                }
+
                 Image(systemName: "lock.shield.fill")
                     .font(.system(size: DesignTokens.Size.iconSM))
                     .foregroundColor(.green)
@@ -205,14 +275,14 @@ struct MLSMemberManagementView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .spacingBase(.vertical)
-            } else if isSearching {
+            } else if viewModel?.isSearching == true {
                 HStack {
                     Spacer()
                     ProgressView()
                     Spacer()
                 }
                 .spacingBase(.vertical)
-            } else if searchResults.isEmpty {
+            } else if filteredSearchResults.isEmpty {
                 Text("No matching users found")
                     .designFootnote()
                     .foregroundColor(.secondary)
@@ -220,16 +290,34 @@ struct MLSMemberManagementView: View {
                     .spacingBase(.vertical)
             } else {
                 ForEach(filteredSearchResults, id: \.id) { participant in
+                    let isOptedIn = viewModel?.participantOptInStatus[participant.id] ?? false
                     Button {
-                        Task {
-                            await addMember(participant)
+                        if isOptedIn {
+                            Task {
+                                await addMember(participant)
+                            }
                         }
                     } label: {
                         HStack(spacing: DesignTokens.Spacing.base) {
-                            AsyncProfileImage(
-                                url: participant.avatarURL,
-                                size: DesignTokens.Size.avatarMD
-                            )
+                            ZStack(alignment: .bottomTrailing) {
+                                AsyncProfileImage(
+                                    url: participant.avatarURL,
+                                    size: DesignTokens.Size.avatarMD
+                                )
+                                
+                                // MLS availability indicator
+                                if isOptedIn {
+                                    Image(systemName: "lock.shield.fill")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.green)
+                                        .background(
+                                            Circle()
+                                                .fill(Color(.systemBackground))
+                                                .frame(width: 16, height: 16)
+                                        )
+                                        .offset(x: 2, y: 2)
+                                }
+                            }
                             
                             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                                 if let displayName = participant.displayName {
@@ -238,20 +326,36 @@ struct MLSMemberManagementView: View {
                                         .foregroundColor(.primary)
                                 }
                                 
-                                Text("@\(participant.handle)")
-                                    .designFootnote()
-                                    .foregroundColor(.secondary)
+                                HStack(spacing: 4) {
+                                    Text("@\(participant.handle)")
+                                        .designFootnote()
+                                        .foregroundColor(.secondary)
+                                    
+                                    if !isOptedIn {
+                                        Text("• Not available")
+                                            .designFootnote()
+                                            .foregroundColor(.orange)
+                                    }
+                                }
                             }
                             
                             Spacer()
                             
-                            Image(systemName: "plus.circle")
-                                .font(.system(size: DesignTokens.Size.iconLG))
-                                .foregroundColor(.accentColor)
+                            if isOptedIn {
+                                Image(systemName: "plus.circle")
+                                    .font(.system(size: DesignTokens.Size.iconLG))
+                                    .foregroundColor(.accentColor)
+                            } else {
+                                Image(systemName: "xmark.circle")
+                                    .font(.system(size: DesignTokens.Size.iconLG))
+                                    .foregroundColor(.secondary.opacity(0.3))
+                            }
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(!isOptedIn)
+                    .opacity(isOptedIn ? 1.0 : 0.6)
                     .accessibilityLabel("Add \(participant.displayName ?? participant.handle)")
                 }
             }
@@ -259,6 +363,12 @@ struct MLSMemberManagementView: View {
             if !searchText.isEmpty {
                 Text("Add Members")
                     .designCaption()
+            }
+        } footer: {
+            if !filteredSearchResults.isEmpty && filteredSearchResults.contains(where: { viewModel?.participantOptInStatus[$0.id] == false }) {
+                Text("Users without the lock icon haven't enabled Catbird Groups yet.")
+                    .designCaption()
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -292,6 +402,12 @@ struct MLSMemberManagementView: View {
         return memberRoles[currentUserDID] == .admin
     }
     
+    private var conversationCreatorDID: String? {
+        viewModel?.conversation?.creator.description
+            ?? viewModel?.members.first?.did.description
+            ?? conversation?.participants.first?.id
+    }
+    
     @ViewBuilder
     private func swipeActionsContent(for participant: MLSParticipantViewModel) -> some View {
         if isAdmin && participant.id != appState.userDID {
@@ -316,81 +432,77 @@ struct MLSMemberManagementView: View {
     }
     
     private var filteredSearchResults: [MLSParticipantViewModel] {
-        guard let participants = conversation?.participants else {
-            return searchResults
-        }
-        let currentMemberIds = Set(participants.map { $0.id })
-        return searchResults.filter { !currentMemberIds.contains($0.id) }
+        guard let viewModel = viewModel else { return [] }
+        return viewModel.searchResults
     }
     
     // MARK: - Actions
     
-    private func loadMemberRoles() {
+    private func updateMemberRoles(from members: [BlueCatbirdMlsDefs.MemberView]?) {
+        if let members {
+            var roles: [String: MemberRole] = [:]
+            for member in members {
+                roles[member.did.description] = member.isAdmin ? .admin : .member
+            }
+            memberRoles = roles
+            logger.info("Loaded member roles for \(members.count) members")
+            return
+        }
+
         guard let participants = conversation?.participants else {
             logger.warning("Cannot load member roles: conversation not loaded")
             return
         }
 
+        var roles: [String: MemberRole] = [:]
         if let firstParticipant = participants.first {
-            memberRoles[firstParticipant.id] = .admin
+            roles[firstParticipant.id] = .admin
         }
 
         for participant in participants.dropFirst() {
-            memberRoles[participant.id] = .member
+            roles[participant.id] = .member
         }
 
-        logger.info("Loaded member roles for \(memberRoles.count) members")
+        memberRoles = roles
+        logger.info("Loaded member roles for \(roles.count) members (fallback)")
     }
-    
-    private func searchPotentialMembers(query: String) async {
-        guard !query.isEmpty else {
-            searchResults = []
+
+    /// Enrich member profiles with handle, display name, and avatar from Bluesky
+    private func enrichMemberProfiles(_ members: [BlueCatbirdMlsDefs.MemberView]) async {
+        guard let client = appState.atProtoClient else {
+            logger.warning("Cannot enrich member profiles: no AT Proto client")
             return
         }
-        
-        isSearching = true
-        defer { isSearching = false }
-        
-        do {
-            // TODO: Search for MLS-capable users
-            logger.info("Searching for potential members: \(query)")
-            
-            // Simulate search delay
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            
-            // TODO: Replace with actual search implementation
-            searchResults = []
-            
-        } catch {
-            logger.error("Failed to search potential members: \(error.localizedDescription)")
+
+        let dids = members.map { $0.did.description }
+        logger.info("🔍 Enriching profiles for \(dids.count) members")
+
+        let profiles = await appState.mlsProfileEnricher.ensureProfiles(for: dids, using: client)
+
+        await MainActor.run {
+            enrichedProfiles = profiles
+            logger.info("✅ Enriched \(profiles.count) member profiles")
         }
+    }
+
+    private func searchPotentialMembers(query: String) async {
+        viewModel?.memberSearchQuery = query
     }
     
     private func addMember(_ participant: MLSParticipantViewModel) async {
         isAddingMember = true
         defer { isAddingMember = false }
         
-        do {
-            // TODO: Add member to MLS group via FFI
-            logger.info("Adding member to MLS group: \(participant.id)")
-            
-            // This would:
-            // 1. Fetch participant's KeyPackage
-            // 2. Generate Add proposal
-            // 3. Commit the change
-            // 4. Send Welcome message to new member
-            // 5. Broadcast group changes
-            
-            logger.info("Successfully added member to MLS group")
-            
-            // Clear search
-            searchText = ""
-            searchResults = []
-            
-        } catch {
+        await viewModel?.addMembers([participant.id])
+        
+        if let error = viewModel?.error {
             logger.error("Failed to add member: \(error.localizedDescription)")
             errorMessage = "Failed to add member: \(error.localizedDescription)"
             showingError = true
+        } else {
+            logger.info("Successfully added member to MLS group")
+            searchText = ""
+            updateMemberRoles(from: viewModel?.members)
         }
     }
     
@@ -398,37 +510,28 @@ struct MLSMemberManagementView: View {
         isRemovingMember = true
         defer { isRemovingMember = false }
         
-        do {
-            // TODO: Remove member from MLS group via FFI
-            logger.info("Removing member from MLS group: \(participant.id)")
-            
-            // This would:
-            // 1. Generate Remove proposal
-            // 2. Commit the change
-            // 3. Broadcast group changes
-            
-            logger.info("Successfully removed member from MLS group")
-            
-        } catch {
+        await viewModel?.removeMember(participant.id)
+        
+        if let error = viewModel?.error {
             logger.error("Failed to remove member: \(error.localizedDescription)")
             errorMessage = "Failed to remove member: \(error.localizedDescription)"
             showingError = true
+        } else {
+            logger.info("Successfully removed member from MLS group")
+            updateMemberRoles(from: viewModel?.members)
         }
     }
     
     private func promoteToAdmin(_ participant: MLSParticipantViewModel) async {
-        do {
-            // TODO: Update member role in group metadata
-            logger.info("Promoting member to admin: \(participant.id)")
-            
-            memberRoles[participant.id] = .admin
-            
-            logger.info("Successfully promoted member to admin")
-            
-        } catch {
+        await viewModel?.promoteMember(participant.id)
+        
+        if let error = viewModel?.error {
             logger.error("Failed to promote member: \(error.localizedDescription)")
             errorMessage = "Failed to promote member: \(error.localizedDescription)"
             showingError = true
+        } else {
+            logger.info("Successfully promoted member to admin")
+            updateMemberRoles(from: viewModel?.members)
         }
     }
 }
@@ -499,10 +602,32 @@ struct MemberRowEnhanced: View {
     let member: BlueCatbirdMlsDefs.MemberView
     let isCurrentUser: Bool
     let isCreator: Bool
+    let enrichedProfile: MLSProfileEnricher.ProfileData?
+    let deviceCount: Int?
+
+    init(
+        member: BlueCatbirdMlsDefs.MemberView,
+        isCurrentUser: Bool,
+        isCreator: Bool,
+        enrichedProfile: MLSProfileEnricher.ProfileData?,
+        deviceCount: Int? = nil
+    ) {
+        self.member = member
+        self.isCurrentUser = isCurrentUser
+        self.isCreator = isCreator
+        self.enrichedProfile = enrichedProfile
+        self.deviceCount = deviceCount
+    }
 
     private var displayName: String {
-        // In production, would resolve DID to display name
-        member.did.description
+        enrichedProfile?.displayName ?? enrichedProfile?.handle ?? member.did.description
+    }
+
+    private var handle: String {
+        if let handle = enrichedProfile?.handle {
+            return "@\(handle)"
+        }
+        return member.did.description
     }
 
     var body: some View {
@@ -530,15 +655,62 @@ struct MemberRowEnhanced: View {
                     }
                 }
 
-                Text("Joined \(formattedJoinDate)")
-                    .designFootnote()
-                    .foregroundColor(.secondary)
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Text(handle)
+                        .designFootnote()
+                        .foregroundColor(.secondary)
+
+                    // Recent join indicator
+                    if member.joinedAt.date > Date().addingTimeInterval(-3600 * 24 * 7) {
+                        Text("•")
+                            .designFootnote()
+                            .foregroundColor(.secondary)
+                        Text(timeSinceJoined)
+                            .designFootnote()
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
 
             Spacer()
 
             // Badges
             HStack(spacing: DesignTokens.Spacing.xs) {
+                // "New" badge for recently joined members
+                if member.joinedAt.date > Date().addingTimeInterval(-3600 * 24 * 7)  {
+                    HStack(spacing: 2) {
+                        Image(systemName: "clock.badge.checkmark")
+                            .font(.system(size: 10))
+                        Text("New")
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.2))
+                    .foregroundColor(.green)
+                    .cornerRadius(4)
+                }
+                if let deviceCount = deviceCount, deviceCount > 1 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "iphone.gen2.circle.fill")
+                            .font(.system(size: DesignTokens.Size.iconSM))
+                            .foregroundColor(.blue)
+
+                        Text("\(deviceCount)")
+                            .designCaption()
+                            .foregroundColor(.blue)
+                            .lineLimit(1)
+                    }
+                    .fixedSize()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.2))
+                    .clipShape(Capsule())
+                    .accessibilityLabel("\(deviceCount) devices")
+                }
+
                 if isCreator {
                     HStack(spacing: 4) {
                         Image(systemName: "star.fill")
@@ -548,7 +720,9 @@ struct MemberRowEnhanced: View {
                         Text("Creator")
                             .designCaption()
                             .foregroundColor(.yellow)
+                            .lineLimit(1)
                     }
+                    .fixedSize()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.yellow.opacity(0.2))
@@ -565,7 +739,9 @@ struct MemberRowEnhanced: View {
                         Text("Admin")
                             .designCaption()
                             .foregroundColor(.orange)
+                            .lineLimit(1)
                     }
+                    .fixedSize()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color.orange.opacity(0.2))
@@ -573,6 +749,7 @@ struct MemberRowEnhanced: View {
                     .accessibilityLabel("Group administrator")
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .spacingSM(.vertical)
     }
@@ -582,6 +759,21 @@ struct MemberRowEnhanced: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
         return formatter.string(from: member.joinedAt.date)
+    }
+
+    private var timeSinceJoined: String {
+        let interval = Date().timeIntervalSince(member.joinedAt.date)
+        if interval < 60 {
+            return "Just now"
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return "\(minutes)m ago"
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return "\(hours)h ago"
+        } else {
+            return ""
+        }
     }
 }
 
@@ -630,8 +822,9 @@ private struct MLSMemberActionsSheetWrapper: View {
         }
     }
 }
- extension BlueCatbirdMlsDefs.MemberView: Identifiable {
-     public var id: String {
-        return id
+
+extension BlueCatbirdMlsDefs.MemberView: Identifiable {
+    public var id: String {
+        did.description
     }
 }

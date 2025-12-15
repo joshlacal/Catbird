@@ -357,6 +357,9 @@ struct LoginView: View {
                 isLoggingIn = false
                 loginProgress = .idle
                 showTimeoutCountdown = false
+                // Clear any cancelled state from previous attempts - we succeeded
+                authenticationCancelled = false
+                error = nil
                 // Cancel authentication task on success
                 authenticationTask?.cancel()
                 authenticationTask = nil
@@ -391,6 +394,8 @@ struct LoginView: View {
                 authenticationTask = nil
             }
             showTimeoutCountdown = false
+            // Reset the re-authentication flag so it can trigger again if the user returns to this view
+            hasStartedReAuthentication = false
         }
         .onTapGesture(count: 5) {
             // Hidden gesture: tap 5 times to enable debug mode
@@ -412,6 +417,25 @@ struct LoginView: View {
                !appStateManager.authentication.state.isAuthenticating {
                 logger.info("Expired account detected, automatically starting re-authentication")
                 hasStartedReAuthentication = true
+                await startReAuthenticationForExpiredAccount(expiredAccount)
+            }
+        }
+        .onChange(of: appStateManager.authentication.expiredAccountInfo?.did) { oldValue, newValue in
+            // React to expiredAccountInfo changes - trigger re-authentication when it's newly set
+            // This handles the case where the user is logged out due to session expiry while using the app
+            guard let newDID = newValue,
+                  oldValue == nil, // Only trigger when newly set (nil -> value)
+                  let expiredAccount = appStateManager.authentication.expiredAccountInfo,
+                  !hasStartedReAuthentication,
+                  !isLoggingIn,
+                  !isAddingNewAccount,
+                  !appStateManager.authentication.state.isAuthenticating else {
+                return
+            }
+            
+            logger.info("Expired account info changed (DID: \(newDID)), automatically starting re-authentication")
+            hasStartedReAuthentication = true
+            Task {
                 await startReAuthenticationForExpiredAccount(expiredAccount)
             }
         }
@@ -896,10 +920,10 @@ struct LoginView: View {
     private func startTimeoutCountdown() {
         showTimeoutCountdown = true
         timeoutCountdown = 60
-        
+
         // Create a countdown timer
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] timer in
-            
+
             DispatchQueue.main.async {
                 if self.timeoutCountdown > 0 && self.isLoggingIn {
                     self.timeoutCountdown -= 1
@@ -1434,7 +1458,7 @@ struct LoginView: View {
     // Preview provider for LoginView
     
     LoginView()
-        .environment(appState)
+        .applyAppStateEnvironment(appState)
 }
 
 // MARK: - View Modifiers

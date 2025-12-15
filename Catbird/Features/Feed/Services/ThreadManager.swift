@@ -289,7 +289,7 @@ final class ThreadManager: StateInvalidationSubscriber {
       }
 
       await MainActor.run {
-        // Check if post already exists to avoid duplicates
+        // Upsert: update existing post or insert new one to avoid constraint violations
         let postId = cachedPost.id
         let descriptor = FetchDescriptor<CachedFeedViewPost>(
           predicate: #Predicate<CachedFeedViewPost> { post in
@@ -299,10 +299,12 @@ final class ThreadManager: StateInvalidationSubscriber {
 
         do {
           let existing = try modelContext.fetch(descriptor)
-          if existing.isEmpty {
-            modelContext.insert(cachedPost)
-            savedCount += 1
-          }
+          _ = modelContext.upsert(
+            cachedPost,
+            existingModel: existing.first,
+            update: { existingPost, newPost in existingPost.update(from: newPost) }
+          )
+          savedCount += 1
         } catch {
           logger.error("Failed to check/save thread post to cache: \(error.localizedDescription)")
         }

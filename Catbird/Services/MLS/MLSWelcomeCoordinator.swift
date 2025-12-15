@@ -7,6 +7,7 @@
 
 import Foundation
 import OSLog
+import CatbirdMLSCore
 
 /// Actor that coordinates Welcome message processing to prevent concurrent processing
 /// of the same conversation, which would cause OpenMLS key package consumption errors.

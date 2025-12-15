@@ -374,6 +374,6 @@ struct BirthDateSettingsView: View {
     @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         BirthDateSettingsView()
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
     }
 }

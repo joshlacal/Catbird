@@ -38,9 +38,17 @@ struct OpenSourceLicensesView: View {
             )
 
             LicenseRow(
+              name: "GRDB",
+              author: "groue",
+              version: "7.8.0",
+              url: "https://github.com/groue/GRDB.swift.git",
+              license: "MIT"
+            )
+            
+            LicenseRow(
               name: "Mantis",
               author: "guoyingtao",
-              version: "2.24.0",
+              version: "1.7.5",
               url: "https://github.com/guoyingtao/Mantis",
               license: "MIT"
             )
@@ -62,11 +70,35 @@ struct OpenSourceLicensesView: View {
             )
             
             LicenseRow(
+              name: "OpenMLS",
+              author: "OpenMLS",
+              version: "0.6.0",
+              url: "https://github.com/openmls/openmls",
+              license: "MIT"
+            )
+            
+            LicenseRow(
               name: "Petrel",
               author: "joshlacal",
               version: "1.0.0",
               url: "https://github.com/joshlacal/Petrel",
               license: "MIT"
+            )
+            
+            LicenseRow(
+              name: "Sentry",
+              author: "getsentry",
+              version: "8.56.1",
+              url: "https://github.com/getsentry/sentry-cocoa",
+              license: "MIT"
+            )
+            
+            LicenseRow(
+              name: "SQLCipher",
+              author: "ZETETIC LLC",
+              version: "4.11.0",
+              url: "https://github.com/sqlcipher/SQLCipher.swift.git",
+              license: "Community Edition"
             )
             
             LicenseRow(

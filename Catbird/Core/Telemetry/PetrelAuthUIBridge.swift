@@ -1,64 +1,50 @@
 import Foundation
-import Petrel
 import OSLog
+import Petrel
 
-/// Bridges Petrel auth incidents into Catbird UI state so auto-logout is visible and consistent.
+/// Bridges Petrel auth events into Catbird UI state so auto-logout is visible and consistent.
 enum PetrelAuthUIBridge {
     private static let logger = Logger(subsystem: "blue.catbird", category: "AuthUIBridge")
 
     static func enable() {
-        PetrelLog.addObserver { event in
-            guard event.category == .authentication else { return }
-
-            // Only react to warnings/errors to minimize noise
-            let isWarnOrError: Bool = (event.level == .warning || event.level == .error)
-            if !isWarnOrError { return }
-
-            // Parse AUTH_LOGOUT did=.. reason=..
-            if event.message.hasPrefix("AUTH_LOGOUT ") {
-                let (did, reason) = parseLogout(event.message)
+        // Use new typed auth event system - no string parsing needed
+        PetrelAuthEvents.addObserver { event in
+            switch event {
+            case let .autoLogoutTriggered(did, reason):
                 Task { @MainActor in
-                    logger.error("UI handling auto logout did=\(did ?? "nil") reason=\(reason ?? "nil")")
+                    logger.error("UI handling auto logout did=\(did) reason=\(reason)")
                     await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
                 }
-                return
-            }
 
-            // Parse structured incidents
-            if event.message.hasPrefix("AUTH_INCIDENT ") {
-                if let dict = parseIncident(event.message) {
-                    let type = dict["type"] as? String
-                    if type == "AutoLogoutTriggered" {
-                        let did = dict["did"] as? String
-                        let reason = dict["reason"] as? String
-                        Task { @MainActor in
-                            logger.error("UI handling AutoLogoutTriggered did=\(did ?? "nil") reason=\(reason ?? "nil")")
-                            await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
-                        }
-                    }
+            case let .logoutStarted(did, reason):
+                Task { @MainActor in
+                    logger.info("Logout started did=\(did) reason=\(reason ?? "nil")")
+                    await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: reason)
                 }
-                return
+
+            case let .logoutNoAutoSwitch(did):
+                Task { @MainActor in
+                    logger.warning("No account to switch to after logout did=\(did)")
+                    // User needs to log in - UI should show login screen
+                    await AppStateManager.shared.authentication.handleAutoLogoutFromPetrel(did: did, reason: "no_accounts_available")
+                }
+
+            case let .refreshTokenInvalid(did, statusCode, error):
+                Task { @MainActor in
+                    logger.error("Refresh token invalid did=\(did) status=\(statusCode) error=\(error)")
+                    // Token is invalid, session will be terminated
+                }
+
+            case let .sessionMissing(did, context):
+                Task { @MainActor in
+                    logger.warning("Session missing did=\(did) context=\(context)")
+                }
+
+            default:
+                // Other auth events are informational, no UI action needed
+                break
             }
         }
-    }
-
-    private static func parseLogout(_ message: String) -> (String?, String?) {
-        // AUTH_LOGOUT did=... reason=...
-        var did: String? = nil
-        var reason: String? = nil
-        let parts = message.split(separator: " ")
-        for p in parts {
-            if p.hasPrefix("did=") { did = String(p.dropFirst(4)) }
-            if p.hasPrefix("reason=") { reason = String(p.dropFirst(7)) }
-        }
-        return (did, reason)
-    }
-
-    private static func parseIncident(_ message: String) -> [String: Any]? {
-        let jsonPart = String(message.dropFirst("AUTH_INCIDENT ".count))
-        guard let data = jsonPart.data(using: .utf8) else { return nil }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj
     }
 }
 

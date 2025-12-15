@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 import LocalAuthentication
 import OSLog
+import CatbirdMLSCore
 
 // MARK: - Protocols
 
@@ -94,7 +95,7 @@ struct PrivacySecuritySettingsView: View {
             // Section("App Passwords") {
             //     NavigationLink {
             //         AppPasswordsView()
-            //             .environment(appState)
+            //             .applyAppStateEnvironment(appState)
             //     } label: {
             //         HStack {
             //             VStack(alignment: .leading, spacing: 4) {
@@ -1143,6 +1144,6 @@ struct AppPassword: Identifiable {
     @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         PrivacySecuritySettingsView()
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
     }
 }

@@ -1088,6 +1088,19 @@ extension PostComposerViewModel {
             logger.debug("PostComposer: No manual link facets to add")
         }
         
+        // Filter out phantom mentions (length <= 1) which can cause issues
+        enhancedFacets = enhancedFacets.filter { facet in
+            let length = facet.index.byteEnd - facet.index.byteStart
+            if length <= 1 {
+                // Check if it's a mention
+                if case .appBskyRichtextFacetMention = facet.features.first {
+                    logger.warning("PostComposer: Filtering out phantom mention facet of length \(length) at \(facet.index.byteStart)")
+                    return false
+                }
+            }
+            return true
+        }
+        
         logger.debug("PostComposer: Final facets count: \(enhancedFacets.count)")
         return enhancedFacets
     }

@@ -332,14 +332,19 @@ extension PlatformApplication {
   #endif
   
   #if os(macOS)
+  private static var batteryMonitoringTimer: Timer?
+
   /// Setup macOS battery monitoring (should be called during app initialization)
   public static func setupMacOSBatteryMonitoring() {
+    // Invalidate any existing timer
+    batteryMonitoringTimer?.invalidate()
+
     // Create a timer to periodically check battery status on macOS
-    Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
+    batteryMonitoringTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
       checkAndNotifyBatteryChanges()
     }
   }
-  
+
   private static var lastBatteryLevel: Float = -1
   private static var lastBatteryState: PlatformDeviceInfo.BatteryState = .unknown
   

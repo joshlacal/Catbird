@@ -494,6 +494,6 @@ private struct LinkPreviewView: View {
     @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         AccessibilitySettingsView()
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
     }
 }

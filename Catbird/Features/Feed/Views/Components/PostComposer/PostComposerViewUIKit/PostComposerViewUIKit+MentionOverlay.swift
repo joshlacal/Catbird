@@ -52,7 +52,7 @@ extension PostComposerViewUIKit {
         },
         enableGlass: false
       )
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
       .frame(width: overlayWidth)
     )
     ComposerMentionOverlayHost.shared.show(content: content,

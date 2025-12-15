@@ -185,7 +185,7 @@ import FaultOrderingTests
 import XCTest
 import OSLog
 
-let logger = Logger(subsystem: "com.catbird.uitests", category: "FaultOrdering")
+let logger = Logger(subsystem: "blue.catbird.uitests", category: "FaultOrdering")
 
 final class CatbirdUITests: XCTestCase {
     

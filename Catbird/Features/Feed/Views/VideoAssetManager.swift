@@ -106,7 +106,7 @@ final class VideoAssetManager {
 
           // CRITICAL: These options prevent excessive resource usage for network assets
           let options: [String: Any] = [
-            AVURLAssetPreferPreciseDurationAndTimingKey: true,
+            AVURLAssetPreferPreciseDurationAndTimingKey: false, // Changed to false for performance
             AVURLAssetAllowsCellularAccessKey: true,
             AVURLAssetAllowsConstrainedNetworkAccessKey: true,
             AVURLAssetAllowsExpensiveNetworkAccessKey: true,
@@ -247,7 +247,7 @@ final class VideoAssetManager {
 
     // For GIFs, use optimized loading options for MP4 looping
     let options: [String: Any] = [
-      AVURLAssetPreferPreciseDurationAndTimingKey: true,
+      AVURLAssetPreferPreciseDurationAndTimingKey: false, // Changed to false for performance
       AVURLAssetAllowsCellularAccessKey: true,
       AVURLAssetAllowsConstrainedNetworkAccessKey: true,
       AVURLAssetAllowsExpensiveNetworkAccessKey: true,

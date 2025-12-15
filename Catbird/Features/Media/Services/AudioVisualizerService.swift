@@ -55,7 +55,7 @@ final class AudioVisualizerService {
   }
   
   // Video generation queue for proper threading
-  private let videoQueue = DispatchQueue(label: "com.catbird.video-generation", qos: .userInitiated)
+  private let videoQueue = DispatchQueue(label: "blue.catbird.video-generation", qos: .userInitiated)
   
   // Frame generation state
   private var frameGenerationContinuation: CheckedContinuation<Void, Error>?

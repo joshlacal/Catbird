@@ -100,7 +100,7 @@ final class FeedStateStore: StateInvalidationSubscriber {
 
     // Attempt to restore persisted data
     Task {
-      await restorePersistedData(for: stateManager, feedIdentifier: feedType.identifier)
+      await restorePersistedData(for: stateManager, feedIdentifier: cacheKey)
     }
 
     return stateManager
@@ -108,12 +108,12 @@ final class FeedStateStore: StateInvalidationSubscriber {
   
   private func restorePersistedData(for stateManager: FeedStateManager, feedIdentifier: String) async {
     // Try to load persisted feed data
-    if let cachedPosts = await PersistentFeedStateManager.shared.loadFeedData(for: feedIdentifier),
-       !cachedPosts.isEmpty {
-      logger.debug("Restored \(cachedPosts.count) cached posts for \(feedIdentifier)")
+    if let bundle = await PersistentFeedStateManager.shared.loadFeedBundle(for: feedIdentifier),
+       !bundle.posts.isEmpty {
+      logger.debug("Restored \(bundle.posts.count) cached posts for \(feedIdentifier)")
 
       // Update the state manager's posts directly
-      await stateManager.restorePersistedPosts(cachedPosts)
+      await stateManager.restorePersistedPosts(bundle.posts, cursor: bundle.cursor)
 
     }
   }
@@ -367,6 +367,7 @@ extension FeedStateStore {
     case .accountSwitched:
       logger.debug("🔄 Account switched - clearing all feed state managers")
       clearAllStateManagers()
+      await PersistentFeedStateManager.shared.clearAll()
       
     default:
       // Other events are handled by individual FeedStateManagers

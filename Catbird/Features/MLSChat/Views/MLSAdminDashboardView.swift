@@ -27,6 +27,8 @@ struct MLSAdminDashboardView: View {
     @State private var showingReportsView = false
     @State private var showingError = false
     @State private var errorMessage: String?
+    @State private var isAuthorized = false
+    @State private var isCheckingAccess = true
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSAdminDashboard")
 
@@ -34,7 +36,11 @@ struct MLSAdminDashboardView: View {
 
     var body: some View {
         Group {
-            if let viewModel = viewModel {
+            if isCheckingAccess {
+                ProgressView("Checking admin access…")
+            } else if !isAuthorized {
+                unauthorizedView
+            } else if let viewModel = viewModel {
                 dashboardContent(viewModel: viewModel)
             } else {
                 ProgressView("Loading Dashboard...")
@@ -50,6 +56,13 @@ struct MLSAdminDashboardView: View {
             }
         }
         .task {
+            if isCheckingAccess {
+                isAuthorized = await conversationManager.isCurrentUserAdmin(of: conversationId)
+                isCheckingAccess = false
+            }
+
+            guard isAuthorized else { return }
+
             if viewModel == nil {
                 viewModel = MLSAdminDashboardViewModel(
                     conversationId: conversationId,
@@ -77,6 +90,19 @@ struct MLSAdminDashboardView: View {
                 Text(errorMessage)
             }
         }
+    }
+
+    private var unauthorizedView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "lock.shield")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("Admin dashboard is restricted to conversation admins.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
     }
 
     // MARK: - Dashboard Content

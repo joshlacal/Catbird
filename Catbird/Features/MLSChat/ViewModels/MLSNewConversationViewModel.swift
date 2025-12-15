@@ -11,6 +11,7 @@ import Observation
 import OSLog
 import Combine
 import GRDB
+import CatbirdMLSCore
 
 /// ViewModel for creating a new MLS conversation
 @Observable
@@ -66,7 +67,7 @@ final class MLSNewConversationViewModel {
 
     // MARK: - Dependencies
 
-    private let database: DatabaseQueue
+    private let database: MLSDatabase
     private let conversationManager: MLSConversationManager
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSNewConversationViewModel")
 
@@ -88,7 +89,7 @@ final class MLSNewConversationViewModel {
 
     // MARK: - Initialization
 
-    init(database: DatabaseQueue, conversationManager: MLSConversationManager) {
+    init(database: MLSDatabase, conversationManager: MLSConversationManager) {
         self.database = database
         self.conversationManager = conversationManager
         logger.debug("MLSNewConversationViewModel initialized")
@@ -101,6 +102,14 @@ final class MLSNewConversationViewModel {
     func createConversation() async {
         guard isValid, !isCreating else {
             logger.warning("⚠️ createConversation called but validation failed - isValid: \(self.isValid), isCreating: \(self.isCreating)")
+            
+            // Provide user feedback about validation failure
+            let validationErrors = validate()
+            if !validationErrors.isEmpty {
+                let errorMessage = validationErrors.joined(separator: "\n")
+                self.error = NSError(domain: "MLSNewConversation", code: 400, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                errorSubject.send(self.error!)
+            }
             return
         }
 
@@ -114,7 +123,9 @@ final class MLSNewConversationViewModel {
 
         // Pre-invitation check: Ensure we have sufficient key packages
         do {
-            try await conversationManager.smartRefreshKeyPackages()
+            try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.smartRefreshKeyPackages()
+            }.value
             logger.info("📦 Pre-invitation key package check complete")
         } catch {
             logger.warning("⚠️ Pre-invitation key package check failed: \(error.localizedDescription)")
@@ -136,11 +147,13 @@ final class MLSNewConversationViewModel {
             // Use MLSConversationManager to create the group properly
             // This will create the MLS group locally, generate the real group ID,
             // and register it with the server
-            let convoView = try await conversationManager.createGroup(
-                initialMembers: memberDids.isEmpty ? nil : memberDids,
-                name: trimmedName,
-                description: trimmedDesc.isEmpty ? nil : trimmedDesc
-            )
+            let convoView = try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.createGroup(
+                    initialMembers: memberDids.isEmpty ? nil : memberDids,
+                    name: trimmedName,
+                    description: trimmedDesc.isEmpty ? nil : trimmedDesc
+                )
+            }.value
 
             logger.info("✅ [MLSNewConversationViewModel.createConversation] SUCCESS - convoId: \(convoView.groupId)")
 

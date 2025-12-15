@@ -339,7 +339,7 @@ struct EnhancedTagChip: View {
 
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+    @ObservationIgnored @Previewable @ObservationIgnored @Environment(AppState.self) var appState
   @Previewable @State var tags: [String] = ["swift", "ios", "development", "mobile", "app"]
   
   return VStack(spacing: 20) {

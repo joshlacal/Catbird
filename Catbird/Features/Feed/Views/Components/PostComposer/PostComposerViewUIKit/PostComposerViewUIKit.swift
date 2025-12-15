@@ -222,7 +222,7 @@ struct PostComposerViewUIKit: View {
 
           // Drafts button next to X on leading side
           ToolbarItem(placement: .cancellationAction) {
-            if appState.composerDraftManager.hasDraftsForCurrentAccount {
+            if !appState.composerDraftManager.savedDrafts.isEmpty {
               Button(action: { showingDrafts = true }) {
                 Image(systemName: "doc.text")
               }
@@ -273,6 +273,8 @@ struct PostComposerViewUIKit: View {
             }
           }
         }
+        // Force toolbar re-render when drafts count changes
+        .id("toolbar-\(appState.composerDraftManager.savedDrafts.count)")
     }
     #else
     mainContent(vm: vm)
@@ -315,6 +317,9 @@ struct PostComposerViewUIKit: View {
       // Tappable avatar that opens account switcher
       Button(action: {
         pcUIKitLogger.info("PostComposerViewUIKit: Avatar tapped - opening account switcher")
+        if hasContent(vm: vm) {
+          appState.composerDraftManager.storeDraft(from: vm)
+        }
         showingAccountSwitcher = true
       }) {
         #if os(iOS)
@@ -328,7 +333,6 @@ struct PostComposerViewUIKit: View {
         .contentShape(Circle())
         .clipShape(Circle())
         .clipped()
-        .allowsHitTesting(false)
         #else
         if let profile = appState.currentUserProfile, let avatarURL = profile.avatar {
           AsyncImage(url: URL(string: avatarURL.description)) { image in
@@ -444,7 +448,7 @@ struct PostComposerViewUIKit: View {
           #endif
         }
       )
-      .frame(minHeight: 120)
+      .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
     }
     .padding(.horizontal, 16)
     .onAppear {

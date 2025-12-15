@@ -25,13 +25,8 @@ extension MLSConversationManager {
       messageData: ciphertext
     )
 
-    // CRITICAL FIX: Persist MLS state after decryption (receiver ratchet advanced)
-    do {
-      try await mlsClient.saveStorage(for: userDid)
-      logger.debug("✅ Persisted MLS state after message decryption")
-    } catch {
-      logger.error("⚠️ Failed to persist MLS state after decryption: \(error.localizedDescription)")
-    }
+    // MLS state is automatically persisted to SQLite - no manual save needed
+    logger.debug("✅ MLS state automatically persisted after message decryption")
 
     // Extract plaintext and sender from processed content
     switch processedContent {
@@ -49,22 +44,6 @@ extension MLSConversationManager {
     }
   }
 
-  /// Extract DID from MLS credential data
-  private func extractDIDFromCredential(_ credential: CredentialData) throws -> String {
-    // The identity field contains the DID as UTF-8 bytes
-    guard let didString = String(data: credential.identity, encoding: .utf8) else {
-      logger.error("❌ Failed to decode credential identity as UTF-8")
-      throw MLSConversationError.invalidCredential
-    }
-
-    // Validate it's a proper DID format
-    guard didString.starts(with: "did:") else {
-      logger.error("❌ Invalid DID format in credential: \(didString)")
-      throw MLSConversationError.invalidCredential
-    }
-
-    return didString
-  }
 }
 
 #endif

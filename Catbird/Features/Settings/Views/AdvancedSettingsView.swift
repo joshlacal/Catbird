@@ -374,6 +374,6 @@ struct AdvancedSettingsView: View {
     @Previewable @Environment(AppState.self) var appState
   NavigationStack {
     AdvancedSettingsView()
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
   }
 }

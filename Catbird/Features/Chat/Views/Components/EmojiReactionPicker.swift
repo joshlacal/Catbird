@@ -1,95 +1,80 @@
-import SwiftUI
-
-struct EmojiReactionPicker: View {
-  @Binding var isPresented: Bool
-  let onEmojiSelected: (String) -> Void
-  
-  private let commonEmojis = ["👍", "❤️", "😂", "😮", "😢", "😡", "🎉", "🔥"]
-  private let emojiCategories: [EmojiCategory] = [
-    .init(name: "Smileys", emojis: ["😀", "😃", "😄", "😁", "😊", "😍", "🥰", "😘", "😗", "☺️", "😚", "😙", "🥲", "😋", "😛", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫", "🤔", "🤐", "🤨", "😐", "😑", "😶", "😏", "😒", "🙄", "😬", "🤥", "😔", "😪", "🤤", "😴", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "🥵", "🥶"]),
-    .init(name: "Hearts", emojis: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝"]),
-    .init(name: "Gestures", emojis: ["👍", "👎", "👌", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👋", "🤚", "🖐", "✋", "🖖", "👏", "🙌", "🤲", "🤝", "🙏"]),
-    .init(name: "Objects", emojis: ["🎉", "🎊", "🔥", "💯", "⚡", "💥", "💨", "💫", "⭐", "🌟", "✨", "💎", "🏆", "🥇", "🥈", "🥉"])
-  ]
-  
-  @State private var selectedCategory = 0
-  
-  var body: some View {
-    VStack(spacing: 0) {
-      // Quick reactions bar - responsive layout
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 12) {
-          ForEach(commonEmojis, id: \.self) { emoji in
-            Button(action: {
-              onEmojiSelected(emoji)
-              isPresented = false
-            }) {
-              Text(emoji)
-                .font(.title2)
-                .frame(width: 44, height: 44)
-                .background(Color.gray.opacity(0.1))
-                .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .padding(.horizontal, 16)
-      }
-      .padding(.vertical, 12)
-      
-      Divider()
-      
-      // Category picker
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 20) {
-          ForEach(Array(emojiCategories.enumerated()), id: \.offset) { index, category in
-            Button(action: {
-              selectedCategory = index
-            }) {
-              Text(category.name)
-                .font(.caption)
-                .fontWeight(selectedCategory == index ? .semibold : .regular)
-                .foregroundColor(selectedCategory == index ? .accentColor : .secondary)
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .padding(.horizontal, 16)
-      }
-      .padding(.vertical, 8)
-      
-      // Emoji grid - responsive columns based on available width
-      GeometryReader { geometry in
-        ScrollView {
-          LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: max(6, min(10, Int(geometry.size.width / 45)))), spacing: 4) {
-            ForEach(emojiCategories[selectedCategory].emojis, id: \.self) { emoji in
-              Button(action: {
-                onEmojiSelected(emoji)
-                isPresented = false
-              }) {
-                Text(emoji)
-                  .font(.title3)
-                  .frame(width: 36, height: 36)
-              }
-              .buttonStyle(.plain)
-            }
-          }
-          .padding(.horizontal, 16)
-        }
-      }
-      .frame(height: 200)
-    }
-    .background(Color.systemBackground)
-    .clipShape(RoundedRectangle(cornerRadius: 16))
-    .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
-  }
-}
-
-struct EmojiReactionPicker_Previews: PreviewProvider {
-  static var previews: some View {
-    EmojiReactionPicker(isPresented: .constant(true)) { emoji in
-      logger.debug("Selected: \(emoji)")
-    }
-    .padding()
-  }
-}
+//import SwiftUI
+//import MCEmojiPicker
+//
+///// A reaction picker that combines quick reaction buttons with the MCEmojiPicker library
+///// for full emoji selection with macOS-style popover UI.
+//struct EmojiReactionPicker: View {
+//  @Binding var isPresented: Bool
+//  let onEmojiSelected: (String) -> Void
+//  
+//  /// Common quick-access reaction emojis
+//  private let commonEmojis = ["👍", "❤️", "😂", "😮", "😢", "😡", "🎉", "🔥"]
+//  
+//  /// State for the full emoji picker
+//  @State private var showFullPicker = false
+//  @State private var selectedEmoji = ""
+//  
+//  var body: some View {
+//    VStack(spacing: 0) {
+//      // Quick reactions bar
+//      ScrollView(.horizontal, showsIndicators: false) {
+//        HStack(spacing: 12) {
+//          ForEach(commonEmojis, id: \.self) { emoji in
+//            Button(action: {
+//              onEmojiSelected(emoji)
+//              isPresented = false
+//            }) {
+//              Text(emoji)
+//                .font(.title2)
+//                .frame(width: 44, height: 44)
+//                .background(Color.gray.opacity(0.1))
+//                .clipShape(Circle())
+//            }
+//            .buttonStyle(.plain)
+//          }
+//          
+//          // "More" button to open full MCEmojiPicker
+//          Button(action: {
+//            showFullPicker = true
+//          }) {
+//            Image(systemName: "face.smiling")
+//              .font(.title2)
+//              .frame(width: 44, height: 44)
+//              .background(Color.accentColor.opacity(0.15))
+//              .foregroundColor(.accentColor)
+//              .clipShape(Circle())
+//          }
+//          .buttonStyle(.plain)
+//          // Use MCEmojiPicker's SwiftUI modifier
+//          .emojiPicker(
+//            isPresented: $showFullPicker,
+//            selectedEmoji: $selectedEmoji,
+//            arrowDirection: .up,
+//            isDismissAfterChoosing: true,
+//            selectedEmojiCategoryTintColor: .systemBlue
+//          )
+//        }
+//        .padding(.horizontal, 16)
+//      }
+//      .padding(.vertical, 12)
+//    }
+//    .background(Color.systemBackground)
+//    .clipShape(RoundedRectangle(cornerRadius: 16))
+//    .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
+//    .onChange(of: selectedEmoji) { _, newEmoji in
+//      if !newEmoji.isEmpty {
+//        onEmojiSelected(newEmoji)
+//        isPresented = false
+//        // Reset for next use
+//        selectedEmoji = ""
+//      }
+//    }
+//  }
+//}
+//
+//#Preview {
+//  EmojiReactionPicker(isPresented: .constant(true)) { emoji in
+//    _ = emoji
+//  }
+//  .padding()
+//}

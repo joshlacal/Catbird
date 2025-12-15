@@ -214,5 +214,5 @@ extension View {
 #Preview {
     @Previewable @Environment(AppState.self) var appState
     SearchLoadingSkeletonView()
-        .environment(appState)
+        .applyAppStateEnvironment(appState)
 }

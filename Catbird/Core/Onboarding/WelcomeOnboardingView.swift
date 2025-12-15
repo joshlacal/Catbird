@@ -205,5 +205,5 @@ private struct PlatformPresentationModifier: ViewModifier {
 #Preview {
     @Previewable @Environment(AppState.self) var appState
   WelcomeOnboardingView()
-    .environment(appState)
+    .applyAppStateEnvironment(appState)
 }

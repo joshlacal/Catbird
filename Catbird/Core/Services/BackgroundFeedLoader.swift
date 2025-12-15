@@ -31,6 +31,10 @@ final class BackgroundFeedLoader: ObservableObject {
   private var pendingContentByFeed: [String: PendingContent] = [:]
   private var backgroundLoadTasks: [String: Task<Void, Never>] = [:]
   private let appState: AppState
+  private func scopedId(for fetchType: FetchType) -> String {
+    let account = appState.userDID ?? "unknown-account"
+    return "\(account)-\(fetchType.identifier)"
+  }
   
   // MARK: - Published Properties
   
@@ -51,7 +55,7 @@ final class BackgroundFeedLoader: ObservableObject {
     currentPosts: [CachedFeedViewPost],
     forceRefresh: Bool = false
   ) {
-    let feedId = fetchType.identifier
+    let feedId = scopedId(for: fetchType)
     
     // Cancel existing background load for this feed
     backgroundLoadTasks[feedId]?.cancel()
@@ -76,7 +80,7 @@ final class BackgroundFeedLoader: ObservableObject {
   
   /// Get pending content for a feed
   func getPendingContent(for fetchType: FetchType) -> PendingContent? {
-    let feedId = fetchType.identifier
+    let feedId = scopedId(for: fetchType)
     let pending = pendingContentByFeed[feedId]
     
     // Remove stale content
@@ -90,7 +94,7 @@ final class BackgroundFeedLoader: ObservableObject {
   
   /// Apply pending content and clear it
   func applyPendingContent(for fetchType: FetchType) -> [CachedFeedViewPost]? {
-    let feedId = fetchType.identifier
+    let feedId = scopedId(for: fetchType)
     guard let pending = pendingContentByFeed[feedId], !pending.isStale else {
       clearPendingContent(for: fetchType)
       return nil
@@ -105,7 +109,7 @@ final class BackgroundFeedLoader: ObservableObject {
   
   /// Get count of pending new posts
   func getPendingPostCount(for fetchType: FetchType) -> Int {
-    pendingPostCounts[fetchType.identifier] ?? 0
+    pendingPostCounts[scopedId(for: fetchType)] ?? 0
   }
   
   /// Check if there is pending content available
@@ -115,7 +119,7 @@ final class BackgroundFeedLoader: ObservableObject {
   
   /// Clear pending content for a feed
   func clearPendingContent(for fetchType: FetchType) {
-    let feedId = fetchType.identifier
+    let feedId = scopedId(for: fetchType)
     pendingContentByFeed.removeValue(forKey: feedId)
     pendingPostCounts.removeValue(forKey: feedId)
     logger.debug("Cleared pending content for \(feedId)")
@@ -123,7 +127,7 @@ final class BackgroundFeedLoader: ObservableObject {
   
   /// Cancel background loading for a feed
   func cancelBackgroundLoad(for fetchType: FetchType) {
-    let feedId = fetchType.identifier
+    let feedId = scopedId(for: fetchType)
     backgroundLoadTasks[feedId]?.cancel()
     backgroundLoadTasks[feedId] = nil
     isBackgroundLoading[feedId] = false
@@ -174,7 +178,7 @@ final class BackgroundFeedLoader: ObservableObject {
     currentPosts: [CachedFeedViewPost],
     forceRefresh: Bool
   ) async {
-    let feedId = fetchType.identifier
+    let feedId = scopedId(for: fetchType)
     
       logger.debug("Starting background load for \(feedId)")
       

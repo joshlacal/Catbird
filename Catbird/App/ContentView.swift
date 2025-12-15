@@ -1,9 +1,6 @@
 import OSLog
 import Petrel
 import SwiftUI
-#if os(iOS)
-import ExyteChat
-#endif
 
 struct ContentView: View {
   @Environment(AppState.self) private var appState
@@ -26,9 +23,10 @@ struct ContentView: View {
 
       if case .authenticated(let activeState) = currentLifecycle,
          activeState.isTransitioningAccounts {
-        AccountSwitchOverlayView(label: accountSwitchLabel(for: activeState))
+        ContentViewLoadingView(message: accountSwitchMessage(for: activeState))
           .transition(.opacity)
           .zIndex(1)
+          .ignoresSafeArea()
       }
     }
     .modifier(ContentViewModifiers(
@@ -57,7 +55,7 @@ private extension ContentView {
         selectedTab: $selectedTab,
         lastTappedTab: $lastTappedTab
       )
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
       .environment(appStateManager)
   }
 
@@ -83,81 +81,37 @@ private extension ContentView {
 }
 
 private extension ContentView {
-  func accountSwitchLabel(for appState: AppState) -> AccountSwitchOverlayLabel {
+  func accountSwitchMessage(for appState: AppState) -> String {
+    if let label = accountSwitchLabel(for: appState) {
+      return "Switching to \(label)"
+    }
+    return "Switching accounts"
+  }
+
+  func accountSwitchLabel(for appState: AppState) -> String? {
+    // First check if we have a loaded profile
     if let profile = appState.currentUserProfile {
-        let handle = profile.handle.description
+      let handle = profile.handle.description
       if let displayName = profile.displayName, !displayName.isEmpty {
-        return AccountSwitchOverlayLabel(title: displayName, subtitle: "@\(handle)")
+        return displayName
       } else {
-        return AccountSwitchOverlayLabel(title: "@\(handle)", subtitle: nil)
+        return "@\(handle)"
       }
     }
 
-    if let account = appStateManager.authentication.availableAccounts.first(where: { $0.did == appState.userDID }),
-       let handle = account.handle, !handle.isEmpty {
-      return AccountSwitchOverlayLabel(title: "@\(handle)", subtitle: nil)
-    }
-
-    return AccountSwitchOverlayLabel(title: appState.userDID, subtitle: nil)
-  }
-}
-
-private struct AccountSwitchOverlayLabel {
-  let title: String
-  let subtitle: String?
-}
-
-private struct AccountSwitchOverlayView: View {
-  let label: AccountSwitchOverlayLabel
-
-  var body: some View {
-    ZStack {
-      Color.black.opacity(0.18)
-        .ignoresSafeArea()
-
-      overlayCard
-    }
-    .allowsHitTesting(true)
-    .accessibilityElement(children: .contain)
-    .accessibilityLabel("Switching accounts")
-  }
-
-  @ViewBuilder
-  private var overlayCard: some View {
-    let card = VStack(spacing: 14) {
-      ProgressView()
-        .controlSize(.large)
-
-      VStack(spacing: 4) {
-        Text("Switching Accounts")
-          .appFont(AppTextRole.subheadline)
-          .foregroundStyle(.secondary)
-          .textCase(.uppercase)
-
-        Text(label.title)
-          .appFont(AppTextRole.title2)
-
-        if let subtitle = label.subtitle {
-          Text(subtitle)
-            .appFont(AppTextRole.callout)
-            .foregroundStyle(.secondary)
-        }
+    // Fall back to cached account info from authentication manager
+    if let account = appStateManager.authentication.availableAccounts.first(where: { $0.did == appState.userDID }) {
+      // Prefer cached display name, then cached handle, then credential handle
+      if let displayName = account.cachedDisplayName, !displayName.isEmpty {
+        return displayName
+      } else if let handle = account.cachedHandle, !handle.isEmpty {
+        return "@\(handle)"
+      } else if let handle = account.handle, !handle.isEmpty {
+        return "@\(handle)"
       }
-      .multilineTextAlignment(.center)
     }
-    .padding(.vertical, 24)
-    .padding(.horizontal, 28)
-    .frame(maxWidth: 360)
 
-    if #available(iOS 26.0, macOS 15.0, *) {
-      card
-        .glassEffect(.regular.tint(.blue).interactive(), in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 32)
-    } else {
-      card
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .padding(.horizontal, 32)
-    }
+    return nil
   }
 }
 
@@ -165,13 +119,19 @@ private struct AccountSwitchOverlayView: View {
 
 struct ContentViewLoadingView: View {
   let message: String
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(AppState.self) private var appState
 
   init(message: String) {
     self.message = message
   }
 
   var body: some View {
-    VStack(spacing: 24) {
+    ZStack {
+      // Full-screen themed background - no gaps
+        Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+        .ignoresSafeArea()
+
       VStack(spacing: 20) {
         ProgressView()
           .scaleEffect(1.5)
@@ -183,9 +143,8 @@ struct ContentViewLoadingView: View {
           .textScale(.secondary)
       }
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(.background)
-    .padding()
+    .contentShape(Rectangle())
+    .allowsHitTesting(true)
   }
 }
 
@@ -213,7 +172,6 @@ struct MainContentView: View {
   @State private var isRootView = true
   @State private var selectedFeed: FetchType = .timeline
   @State private var currentFeedName: String = ""
-  @State private var notificationBadgeCount: Int = 0
 
   // Add state for showing post composer
   @State private var showingPostComposer = false
@@ -223,6 +181,8 @@ struct MainContentView: View {
   @State private var showingOnboarding = false
   @State private var hasRestoredState = false
   @State private var isRestoringFeed = false // Prevent saving during account switch
+  // Snapshot the draft at presentation time so autosave mutations don't recreate the sheet content
+  @State private var composerInitialDraft: PostComposerDraft?
   // Namespace for iOS 26 matched transitions
   @Namespace private var composeTransitionNamespace
 
@@ -368,7 +328,7 @@ struct MainContentView: View {
                   )
                   .id(appState.userDID)
                 }
-                .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
+                .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
 
                 // Profile Tab - Hidden on iPhone to save space
                 if !PlatformDeviceInfo.isPhone {
@@ -402,7 +362,7 @@ struct MainContentView: View {
                   )
                   .id(appState.userDID)
                 }
-                .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
+                .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
                 #endif
               }
               
@@ -472,7 +432,7 @@ struct MainContentView: View {
                 )
                 .id(appState.userDID)
               }
-              .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
+              .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
 
               // Profile Tab - Hidden on iPhone to save space
               if !PlatformDeviceInfo.isPhone {
@@ -506,7 +466,7 @@ struct MainContentView: View {
                 )
                 .id(appState.userDID)
               }
-              .badge(appState.chatUnreadCount > 0 ? appState.chatUnreadCount : 0)
+              .badge(appState.totalMessagesUnreadCount > 0 ? appState.totalMessagesUnreadCount : 0)
               #endif
             }
             
@@ -581,20 +541,6 @@ struct MainContentView: View {
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
-        // Initialize from notification manager
-        notificationBadgeCount = appState.notificationManager.unreadCount
-
-        // Set up notification observer
-        NotificationCenter.default.addObserver(
-          forName: NSNotification.Name("UnreadNotificationCountChanged"),
-          object: nil,
-          queue: .main
-        ) { notification in
-          if let count = notification.userInfo?["count"] as? Int {
-            notificationBadgeCount = count
-          }
-        }
-        
         // Restore UI state
         Task {
           await restoreUIState()
@@ -619,7 +565,7 @@ struct MainContentView: View {
       }
       .sheet(isPresented: $showingPostComposer) {
         Group {
-          if let draft = appState.composerDraftManager.currentDraft {
+          if let draft = composerInitialDraft {
             PostComposerViewUIKit(
               restoringFromDraft: draft,
               appState: appState
@@ -630,7 +576,7 @@ struct MainContentView: View {
             )
           }
         }
-        .environment(appState)
+        .applyAppStateEnvironment(appState)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
@@ -641,17 +587,20 @@ struct MainContentView: View {
       }
       .sheet(isPresented: $showingNewMessageSheet) {
         NewMessageView()
-          .environment(appState)
+          .applyAppStateEnvironment(appState)
           .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
           .presentationDragIndicator(.visible)
           .presentationBackground(.thinMaterial)
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
-          .environment(appState)
+          .applyAppStateEnvironment(appState)
       }
       .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
         showingOnboarding = newValue
+      }
+      .onChange(of: showingPostComposer) { _, isPresented in
+        composerInitialDraft = isPresented ? appState.composerDraftManager.currentDraft : nil
       }
       .onChange(of: showingOnboarding) { _, newValue in
         if !newValue && appState.onboardingManager.showWelcomeSheet {
@@ -663,7 +612,7 @@ struct MainContentView: View {
       .onChange(of: appState.userDID) { oldDID, newDID in
         // Account switched - restore last feed for this account
         guard oldDID != newDID else { return }
-        logger.debug("🔄 Account switched from \(oldDID ?? "nil") to \(newDID ?? "nil") - restoring last feed")
+        logger.debug("🔄 Account switched from \(oldDID) to \(newDID) - restoring last feed")
         
         // Set flag to prevent saving during restoration
         isRestoringFeed = true
@@ -780,7 +729,7 @@ struct MainContentView: View {
           )
           .id(appState.userDID)
         }
-        .badge(notificationBadgeCount > 0 ? notificationBadgeCount : 0)
+        .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
 
         // Profile Tab - Hidden on iPhone to save space
         if !PlatformDeviceInfo.isPhone {
@@ -807,20 +756,6 @@ struct MainContentView: View {
       }
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
-        
-        // Initialize from notification manager
-        notificationBadgeCount = appState.notificationManager.unreadCount
-
-        // Set up notification observer
-        NotificationCenter.default.addObserver(
-          forName: NSNotification.Name("UnreadNotificationCountChanged"),
-          object: nil,
-          queue: .main
-        ) { notification in
-          if let count = notification.userInfo?["count"] as? Int {
-            notificationBadgeCount = count
-          }
-        }
         
         // Note: Theme change updates are now handled by @Observable system in AppState
         // No need for NotificationCenter observers that conflict with SwiftUI observation
@@ -853,10 +788,19 @@ struct MainContentView: View {
         }
       }
       .sheet(isPresented: $showingPostComposer) {
-        PostComposerViewUIKit(
-          appState: appState
-        )
-        .environment(appState)
+        Group {
+          if let draft = composerInitialDraft {
+            PostComposerViewUIKit(
+              restoringFromDraft: draft,
+              appState: appState
+            )
+          } else {
+            PostComposerViewUIKit(
+              appState: appState
+            )
+          }
+        }
+        .applyAppStateEnvironment(appState)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
@@ -865,9 +809,12 @@ struct MainContentView: View {
           namespace: composeTransitionNamespace
         )
       }
+      .onChange(of: showingPostComposer) { _, isPresented in
+        composerInitialDraft = isPresented ? appState.composerDraftManager.currentDraft : nil
+      }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
-          .environment(appState)
+          .applyAppStateEnvironment(appState)
       }
       .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
         showingOnboarding = newValue
@@ -882,7 +829,7 @@ struct MainContentView: View {
       .onChange(of: appState.userDID) { oldDID, newDID in
         // Account switched - restore last feed for this account (macOS version)
         guard oldDID != newDID else { return }
-        logger.debug("🔄 Account switched from \(oldDID ?? "nil") to \(newDID ?? "nil") - restoring last feed")
+        logger.debug("🔄 Account switched from \(oldDID) to \(newDID) - restoring last feed")
         
         // Set flag to prevent saving during restoration
         isRestoringFeed = true
@@ -1016,13 +963,28 @@ private struct ContentViewModifiers: ViewModifier {
           }
         }
       }
-      .onChange(of: appStateManager.pendingComposerDraft) { _, _ in
-        if appStateManager.pendingComposerDraft != nil {
-          logger.debug("[ContentView] Pending composer draft detected - reopening composer")
-          showingComposerFromAccountSwitch = true
+      .onChange(of: appStateManager.pendingComposerDraft) { _, newValue in
+        if let draft = newValue {
+          logger.info("[ContentView] Pending composer draft detected after account switch - will reopen composer")
+          logger.debug("[ContentView] Draft preview: text length \(draft.postText.count), media items \(draft.mediaItems.count)")
+
           Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 100_000_000)
+            // Wait for transition overlay to clear (typically ~500ms)
+            try? await Task.sleep(nanoseconds: 600_000_000)  // 600ms
+
+            // Verify draft hasn't been manually cleared
+            guard appStateManager.pendingComposerDraft != nil else {
+              logger.debug("[ContentView] pendingComposerDraft was cleared before reopen - skipping")
+              return
+            }
+
+            logger.info("[ContentView] Reopening composer with transferred draft")
+            showingComposerFromAccountSwitch = true
+
+            // Clear after presenting
+            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms buffer
             appStateManager.clearPendingComposerDraft()
+            logger.debug("[ContentView] Cleared pendingComposerDraft after reopen")
           }
         }
       }

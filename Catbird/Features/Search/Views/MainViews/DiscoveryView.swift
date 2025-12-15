@@ -13,6 +13,7 @@ struct DiscoveryView: View {
     var viewModel: RefinedSearchViewModel
     @Binding var path: NavigationPath
     @Binding var showAllTrendingTopics: Bool
+    @Binding var showAllSavedSearches: Bool
     @Binding var showSuggestedProfiles: Bool
     @Binding var showAddFeedSheet: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -35,7 +36,7 @@ struct DiscoveryView: View {
                             viewModel.deleteSavedSearch(savedSearch.id)
                         },
                         onShowAll: {
-                            // TODO: Show all saved searches sheet
+                            showAllSavedSearches = true
                         }
                     )
                 }

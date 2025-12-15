@@ -99,7 +99,8 @@ struct ToastView: View {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
               dragOffset = -300  // Dismiss to the left
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            Task { @MainActor in
+              try? await Task.sleep(for: .milliseconds(300))
               onDismiss()
             }
           } else {

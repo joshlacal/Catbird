@@ -63,18 +63,10 @@ struct PostParser {
         if hashtag.count > 1 {  // Ensure it's not just a lone "#"
           hashtags.append(String(hashtag.dropFirst()))
 
-          let startOffset = utf8View.distance(
-            from: utf8View.startIndex,
-            to: utf8View.index(
-              utf8View.startIndex,
-              offsetBy: content.distance(from: content.startIndex, to: hashtagStart)))
-          let endOffset = utf8View.distance(
-            from: utf8View.startIndex,
-            to: utf8View.index(
-              utf8View.startIndex,
-              offsetBy: content.distance(from: content.startIndex, to: currentIndex)))
+          let utf8Start = content[..<hashtagStart].utf8.count
+          let utf8End = utf8Start + content[hashtagStart..<currentIndex].utf8.count
 
-          let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: startOffset, byteEnd: endOffset)
+          let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: utf8Start, byteEnd: utf8End)
           let tagFeature = AppBskyRichtextFacet.Tag(tag: String(hashtag.dropFirst()))
           let facet = AppBskyRichtextFacet(
             index: byteSlice, features: [.appBskyRichtextFacetTag(tagFeature)])
@@ -106,18 +98,10 @@ struct PostParser {
         let mention = String(content[mentionStart..<currentIndex])
         if mention.count > 1 {  // Ensure it's not just a lone "@"
           let handle = String(mention.dropFirst())
-          let startOffset = utf8View.distance(
-            from: utf8View.startIndex,
-            to: utf8View.index(
-              utf8View.startIndex,
-              offsetBy: content.distance(from: content.startIndex, to: mentionStart)))
-          let endOffset = utf8View.distance(
-            from: utf8View.startIndex,
-            to: utf8View.index(
-              utf8View.startIndex,
-              offsetBy: content.distance(from: content.startIndex, to: currentIndex)))
+          let utf8Start = content[..<mentionStart].utf8.count
+          let utf8End = utf8Start + content[mentionStart..<currentIndex].utf8.count
 
-          let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: startOffset, byteEnd: endOffset)
+          let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: utf8Start, byteEnd: utf8End)
 
           if let profile = resolvedProfiles[handle] {
             let mentionFeature = AppBskyRichtextFacet.Mention(did: profile.did)
@@ -156,8 +140,8 @@ struct PostParser {
 
         let byteSlice = AppBskyRichtextFacet.ByteSlice(byteStart: utf8Start, byteEnd: utf8End)
         // Create link facet only for well-formed URLs with a non-empty scheme
-        if let url = URL(string: matchUrl), let scheme = url.scheme, !scheme.isEmpty,
-           let safeURI = try? URI(uriString: matchUrl) {
+        if let url = URL(string: matchUrl), let scheme = url.scheme, !scheme.isEmpty {
+        let safeURI = URI(uriString: matchUrl) 
           let linkFeature = AppBskyRichtextFacet.Link(uri: safeURI)
           let facet = AppBskyRichtextFacet(
             index: byteSlice, features: [.appBskyRichtextFacetLink(linkFeature)])

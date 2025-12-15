@@ -86,7 +86,10 @@ final class MLSAdminDashboardViewModel {
         isLoadingStats = true
 
         do {
-            adminStats = try await apiClient.getAdminStats(convoId: conversationId)
+            let stats = try await Task.detached(priority: .userInitiated) {
+                try await self.apiClient.getAdminStats(convoId: self.conversationId)
+            }.value
+            adminStats = stats
             logger.debug("Loaded admin stats for conversation: \(self.conversationId)")
         } catch {
             self.error = error
@@ -104,7 +107,10 @@ final class MLSAdminDashboardViewModel {
         isLoadingKeyPackages = true
 
         do {
-            keyPackageStats = try await apiClient.getKeyPackageStats()
+            let stats = try await Task.detached(priority: .userInitiated) {
+                try await self.apiClient.getKeyPackageStats()
+            }.value
+            keyPackageStats = stats
             logger.debug("Loaded key package stats for conversation: \(self.conversationId)")
         } catch {
             self.error = error
@@ -123,11 +129,13 @@ final class MLSAdminDashboardViewModel {
 
         do {
             // Load first page of reports to get count
-            let (reports, _) = try await conversationManager.loadReports(
-                for: conversationId,
-                limit: 50,
-                cursor: nil as String?
-            )
+            let (reports, _) = try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.loadReports(
+                    for: self.conversationId,
+                    limit: 50,
+                    cursor: nil as String?
+                )
+            }.value
 
             pendingReportsCount = reports.filter { $0.status == "pending" }.count
             logger.debug("Loaded \(self.pendingReportsCount) pending reports")

@@ -15,8 +15,8 @@ extension CatbirdApp {
   
   @MainActor
   func restoreApplicationState() async {
-    guard !hasRestoredState else { return }
-    hasRestoredState = true
+    guard !appStateManager.hasRestoredState else { return }
+    appStateManager.hasRestoredState = true
     
     logger.info("🔄 Starting application state restoration")
     

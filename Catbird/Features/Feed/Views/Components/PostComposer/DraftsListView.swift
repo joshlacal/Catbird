@@ -153,7 +153,7 @@ private struct DraftRow: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+    @ObservationIgnored @Previewable @ObservationIgnored @Environment(AppState.self) var appState
   if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
     DraftsListView(appState: appState)
   }

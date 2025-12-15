@@ -256,6 +256,7 @@ enum BackgroundCacheRefreshManager {
             feedOrder: nil
           ) {
             await MainActor.run {
+              // Upsert: update existing post or insert new one to avoid constraint violations
               let postId = cachedPost.id
               let descriptor = FetchDescriptor<CachedFeedViewPost>(
                 predicate: #Predicate<CachedFeedViewPost> { post in
@@ -265,10 +266,12 @@ enum BackgroundCacheRefreshManager {
 
               do {
                 let existing = try modelContext.fetch(descriptor)
-                if existing.isEmpty {
-                  modelContext.insert(cachedPost)
-                  savedCount += 1
-                }
+                _ = modelContext.upsert(
+                  cachedPost,
+                  existingModel: existing.first,
+                  update: { existingPost, newPost in existingPost.update(from: newPost) }
+                )
+                savedCount += 1
               } catch {
                 logger.error("Failed to check/save feed post: \(error.localizedDescription)")
               }

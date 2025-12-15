@@ -196,8 +196,16 @@ struct ContentLabelView: View {
     }
 }
 
+struct ContentLabels {
+    // Content-warning labels that should influence visibility (blur/hide)
+     static let adultContentLabels: Set<String> = ["nsfw", "porn", "sexual"]
+     static let warningContentLabels: Set<String> = ["nudity", "gore", "violence", "graphic", "graphic-media", "corpse", "self-harm", "suggestive"]
+     static let contentWarningLabels: Set<String> = adultContentLabels.union(warningContentLabels)
+}
+
 /// A view that handles display decisions for labeled content
 struct ContentLabelManager<Content: View>: View {
+
     let labels: [ComAtprotoLabelDefs.Label]?
     // Optional: additional self-applied label values (e.g., from record selfLabels)
     // Used only for visibility decisions; not displayed as badges.
@@ -225,14 +233,17 @@ struct ContentLabelManager<Content: View>: View {
         guard let labels = labels, !labels.isEmpty else { return .show }
 
         // Check for the most restrictive content type first
-        let labelValues = labels.map { $0.val.lowercased() }
+        let labelValues = labels.map { $0.val.lowercased() }.filter { ContentLabels.contentWarningLabels.contains($0) }
+
+        // Ignore labels that are not content warnings
+        guard !labelValues.isEmpty else { return .show }
 
         // Check for sensitive content labels - be conservative and hide adult content initially
-        if labelValues.contains(where: { ["nsfw", "porn", "sexual"].contains($0) }) {
+        if labelValues.contains(where: { ContentLabels.adultContentLabels.contains($0) }) {
             return .hide // Conservative default - will be updated by async task if user has adult content enabled
         }
 
-        if labelValues.contains(where: { ["nudity", "gore", "violence", "graphic", "suggestive"].contains($0) }) {
+        if labelValues.contains(where: { ContentLabels.warningContentLabels.contains($0) }) {
             return .warn
         }
 
@@ -244,11 +255,14 @@ struct ContentLabelManager<Content: View>: View {
         guard let labels = labels, !labels.isEmpty else { return .show }
 
         // Check for the most restrictive content type first
-        let labelValues = labels.map { $0.val.lowercased() }
+        let labelValues = labels.map { $0.val.lowercased() }.filter { ContentLabels.contentWarningLabels.contains($0) }
+
+        // No warning-eligible labels present
+        guard !labelValues.isEmpty else { return .show }
 
         // Check for sensitive content labels and return appropriate visibility
         // This is the basic sync version - for full preference checking, use getEffectiveContentVisibility
-        if labelValues.contains(where: { ["nsfw", "porn", "nudity", "sexual", "gore", "violence", "graphic", "suggestive"].contains($0) }) {
+        if labelValues.contains(where: { ContentLabels.contentWarningLabels.contains($0) }) {
             return .warn
         }
 
@@ -517,11 +531,19 @@ struct ContentLabelManager<Content: View>: View {
     }
     
     private func getEffectiveContentVisibility(for labels: [ComAtprotoLabelDefs.Label], selfLabelValues: [String]) async -> ContentVisibility {
+        let visibleLabels = labels.filter { ContentLabels.contentWarningLabels.contains($0.val.lowercased()) }
+        let visibleSelfLabels = selfLabelValues.filter { ContentLabels.contentWarningLabels.contains($0.lowercased()) }
+
+        // If no warning-eligible labels exist, show content normally
+        if visibleLabels.isEmpty && visibleSelfLabels.isEmpty {
+            return .show
+        }
+
         // Check each label and find the most restrictive setting
         var mostRestrictive: ContentVisibility = .show
-        
+
         // Evaluate canonical labels
-        for label in labels {
+        for label in visibleLabels {
             let visibility = await getVisibilityForLabel(label)
             switch (mostRestrictive, visibility) {
             case (_, .hide):
@@ -532,9 +554,9 @@ struct ContentLabelManager<Content: View>: View {
                 break
             }
         }
-        
+
         // Evaluate self-applied label values (no src)
-        for value in selfLabelValues {
+        for value in visibleSelfLabels {
             let visibility = await getVisibilityForLabelValue(value)
             switch (mostRestrictive, visibility) {
             case (_, .hide):
@@ -548,14 +570,21 @@ struct ContentLabelManager<Content: View>: View {
         
         return mostRestrictive
     }
-    
+
     private func getVisibilityForLabel(_ label: ComAtprotoLabelDefs.Label) async -> ContentVisibility {
+        let normalizedValue = label.val.lowercased()
+
+        // Skip labels that are not content warnings
+        guard ContentLabels.contentWarningLabels.contains(normalizedValue) else {
+            return .show
+        }
+
         do {
             let preferences = try await appState.preferencesManager.getPreferences()
-            
+
             // Map label values to preference keys
             let preferenceKey: String
-            switch label.val.lowercased() {
+            switch normalizedValue {
             case "nsfw", "porn", "sexual":
                 preferenceKey = "nsfw"
             case "nudity":
@@ -590,11 +619,18 @@ struct ContentLabelManager<Content: View>: View {
     }
 
     private func getVisibilityForLabelValue(_ value: String) async -> ContentVisibility {
+        let normalizedValue = value.lowercased()
+
+        // Skip labels that are not content warnings
+        guard ContentLabels.contentWarningLabels.contains(normalizedValue) else {
+            return .show
+        }
+
         do {
             let preferences = try await appState.preferencesManager.getPreferences()
             // Map value to preference key
             let preferenceKey: String
-            switch value.lowercased() {
+            switch normalizedValue {
             case "nsfw", "porn", "sexual":
                 preferenceKey = "nsfw"
             case "nudity":

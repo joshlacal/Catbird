@@ -1,33 +1,6 @@
 {
-  "originHash" : "f0cc321dfbdae550f516467c74a543fa4b1915fafee10c7aad35bb867987345a",
+  "originHash" : "d890bf3d4ff29e85a910cd96b94bd853a9af03c8996a122fe6999f0b07e231c3",
   "pins" : [
-    {
-      "identity" : "activityindicatorview",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/ActivityIndicatorView",
-      "state" : {
-        "revision" : "36140867802ae4a1d2b11490bcbbefe058001d14",
-        "version" : "1.2.1"
-      }
-    },
-    {
-      "identity" : "anchoredpopup",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/AnchoredPopup.git",
-      "state" : {
-        "revision" : "d7478c34e761725ff06ad74e44e675d0d56a4150",
-        "version" : "1.0.7"
-      }
-    },
-    {
-      "identity" : "chat",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/Chat.git",
-      "state" : {
-        "revision" : "f5d93619556fbb988985c3a5fe2444ce96190f39",
-        "version" : "2.7.4"
-      }
-    },
     {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",
@@ -35,6 +8,15 @@
       "state" : {
         "revision" : "e45a26384239e028ec87fbcc788f513b67e10d8f",
         "version" : "1.9.0"
+      }
+    },
+    {
+      "identity" : "emojikit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/danielsaidi/EmojiKit.git",
+      "state" : {
+        "revision" : "ae11c0c8dde81aace2ed4f1521fee510832897a4",
+        "version" : "2.2.1"
       }
     },
     {
@@ -56,21 +38,12 @@
       }
     },
     {
-      "identity" : "giphy-ios-sdk",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Giphy/giphy-ios-sdk",
-      "state" : {
-        "revision" : "37f5b1ff6cf8bc4a78c0bc5eb1b814381bac9580",
-        "version" : "2.2.16"
-      }
-    },
-    {
       "identity" : "grdb.swift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/groue/GRDB.swift",
+      "location" : "https://github.com/groue/GRDB.swift.git",
       "state" : {
-        "revision" : "18497b68fdbb3a09528d260a0a0e1e7e61c8c53d",
-        "version" : "7.8.0"
+        "revision" : "aa0079aeb82a4bf00324561a40bffe68c6fe1c26",
+        "version" : "7.9.0"
       }
     },
     {
@@ -78,17 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/beatt83/jose-swift.git",
       "state" : {
-        "revision" : "8d087c7d8333310449aff4c9eb2431fbb4f1eb9f",
-        "version" : "6.0.0"
-      }
-    },
-    {
-      "identity" : "kingfisher",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/onevcat/Kingfisher",
-      "state" : {
-        "revision" : "4d75de347da985a70c63af4d799ed482021f6733",
-        "version" : "8.6.1"
+        "revision" : "f25da1bf75b9a2b803bb7c40bdd6ace85f4df3ce",
+        "version" : "6.0.1"
       }
     },
     {
@@ -101,39 +65,12 @@
       }
     },
     {
-      "identity" : "libwebp-xcode",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/SDWebImage/libwebp-Xcode",
-      "state" : {
-        "revision" : "0d60654eeefd5d7d2bef3835804892c40225e8b2",
-        "version" : "1.5.0"
-      }
-    },
-    {
       "identity" : "mantis",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/guoyingtao/Mantis",
       "state" : {
         "revision" : "d6880eb97267248f89e6cef2dd52785d50627639",
         "version" : "1.9.0"
-      }
-    },
-    {
-      "identity" : "mcemojipicker",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/izyumkin/MCEmojiPicker",
-      "state" : {
-        "revision" : "e5b3ed359b04370287366a7c15ffa7013cdd4eec",
-        "version" : "1.2.5"
-      }
-    },
-    {
-      "identity" : "mediapicker",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/MediaPicker.git",
-      "state" : {
-        "revision" : "fd71c0b560aa79eee1b87f73ce93fac5576a01df",
-        "version" : "3.2.4"
       }
     },
     {
@@ -159,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/getsentry/sentry-cocoa",
       "state" : {
-        "revision" : "e1e94efb9d5a688af85c607ae34a8b56961ca118",
-        "version" : "8.57.1"
+        "revision" : "8627bbc0e663238d516b541d8fc7edd62a627fde",
+        "version" : "8.57.3"
       }
     },
     {
@@ -177,8 +114,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sqlcipher/SQLCipher.swift.git",
       "state" : {
-        "revision" : "247b042574b4838c7eefdb95d6a250a843dcf1ad",
-        "version" : "4.11.0"
+        "revision" : "e9b087660d4c4b246731bec340cf56c2c0a41dbe",
+        "version" : "4.12.0"
       }
     },
     {
@@ -186,8 +123,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "40d25bbb2fc5b557a9aa8512210bded327c0f60d",
-        "version" : "1.5.0"
+        "revision" : "810496cf121e525d660cd0ea89a758740476b85f",
+        "version" : "1.5.1"
       }
     },
     {
@@ -195,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-async-dns-resolver",
       "state" : {
-        "revision" : "08c07ff31a745ee5e522ac10132fb4949834d925",
-        "version" : "0.4.0"
+        "revision" : "2836c57c4c7c784569331cc35a4fe18941f6c796",
+        "version" : "0.5.0"
       }
     },
     {
@@ -204,8 +141,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "c399f90e7bbe8874f6cbfda1d5f9023d1f5ce122",
-        "version" : "1.15.1"
+        "revision" : "133a347911b6ad0fc8fe3bf46ca90c66cff97130",
+        "version" : "1.17.0"
       }
     },
     {
@@ -231,8 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "ce592ae52f982c847a4efc0dd881cc9eb32d29f2",
-        "version" : "1.6.4"
+        "revision" : "bc386b95f2a16ccd0150a8235e7c69eab2b866ca",
+        "version" : "1.8.0"
       }
     },
     {
@@ -240,8 +177,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/valpackett/SwiftCBOR.git",
       "state" : {
-        "revision" : "04ccff117f6549121d5721ec84fdf0162122b90e",
-        "version" : "0.5.0"
+        "revision" : "fd929a6d8f7651ce0f63fc99397fd5762358cc29",
+        "version" : "0.6.0"
       }
     },
     {

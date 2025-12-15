@@ -721,20 +721,10 @@ var id: String {
   }
 
   /// Prefetch the avatar image for better performance
+  /// Note: Relies on Nuke's built-in timeout handling rather than creating separate timeout tasks
   private func prefetchAvatar() async {
-    // Use postState.isAvatarLoaded and check before prefetching
     guard let finalAvatarURL = getFinalAvatarURL(), !postState.isAvatarLoaded else { return }
-    let manager = ImageLoadingManager.shared
-    await manager.startPrefetching(urls: [finalAvatarURL])
-
-    // Cancel prefetching if avatar doesn't load after a delay
-    Task {
-      try await Task.sleep(for: .seconds(5))
-      // Check isAvatarLoaded again before stopping
-      if !postState.isAvatarLoaded {
-        await manager.stopPrefetching(urls: [finalAvatarURL])
-      }
-    }
+    await ImageLoadingManager.shared.startPrefetching(urls: [finalAvatarURL])
   }
 
   /// Check if a post has adult content labels

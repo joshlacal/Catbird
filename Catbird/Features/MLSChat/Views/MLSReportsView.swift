@@ -4,6 +4,7 @@
 //
 //  Admin interface for reviewing and resolving member reports
 //
+//  NOTE: Deprecated/hidden while MLS moderation relies on direct removals.
 
 import SwiftUI
 import Petrel
@@ -27,6 +28,8 @@ struct MLSReportsView: View {
     @State private var showingResolutionSheet = false
     @State private var showingError = false
     @State private var errorMessage: String?
+    @State private var isAuthorized = false
+    @State private var isCheckingAccess = true
 
     // Wrapper to make ReportView Identifiable for sheet presentation
     private struct IdentifiableReport: Identifiable {
@@ -45,7 +48,11 @@ struct MLSReportsView: View {
 
     var body: some View {
         Group {
-            if let viewModel = viewModel {
+            if isCheckingAccess {
+                ProgressView("Checking admin access…")
+            } else if !isAuthorized {
+                unauthorizedView
+            } else if let viewModel = viewModel {
                 reportsList(viewModel: viewModel)
             } else {
                 ProgressView("Loading...")
@@ -61,6 +68,13 @@ struct MLSReportsView: View {
             }
         }
         .task {
+            if isCheckingAccess {
+                isAuthorized = await conversationManager.isCurrentUserAdmin(of: conversationId)
+                isCheckingAccess = false
+            }
+
+            guard isAuthorized else { return }
+
             if viewModel == nil {
                 viewModel = MLSReportsViewModel(
                     conversationId: conversationId,
@@ -88,6 +102,19 @@ struct MLSReportsView: View {
                 Text(errorMessage)
             }
         }
+    }
+
+    private var unauthorizedView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "lock.shield")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+            Text("Reports are only available to conversation admins.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
     }
 
     // MARK: - Reports List
@@ -212,6 +239,9 @@ private struct ReportRow: View {
     let viewModel: MLSReportsViewModel
     var isResolved: Bool = false
 
+    @State private var decryptedContent: String?
+    @State private var isDecrypting = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header with reporter and reported member
@@ -268,14 +298,48 @@ private struct ReportRow: View {
             .foregroundStyle(isResolved ? .green : .orange)
             .clipShape(Capsule())
 
-            // Encrypted content indicator
-            HStack {
-                Image(systemName: "lock.fill")
-                    .font(.caption2)
-                Text("Content encrypted - decrypt to view details")
-                    .font(.caption2)
+            // Content preview section
+            if let content = decryptedContent {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Report Details:")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+
+                    Text(content)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+                }
+                .padding(8)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else if isDecrypting {
+                HStack {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("Decrypting content...")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+            } else {
+                Button {
+                    Task {
+                        isDecrypting = true
+                        decryptedContent = await viewModel.decryptReportContent(report: report)
+                        isDecrypting = false
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2)
+                        Text("Tap to decrypt content")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
             }
-            .foregroundStyle(.secondary)
         }
         .padding(.vertical, 8)
     }
@@ -297,6 +361,8 @@ private struct ReportResolutionSheet: View {
     @State private var showingConfirmation = false
     @State private var showingError = false
     @State private var errorMessage: String?
+    @State private var decryptedContent: String?
+    @State private var isDecrypting = false
 
     private let logger = Logger(subsystem: "blue.catbird", category: "ReportResolution")
 
@@ -311,6 +377,28 @@ private struct ReportResolutionSheet: View {
                     LabeledContent("Reported", value: viewModel.getDisplayName(for: report.reportedDid))
                     LabeledContent("Created", value: viewModel.getAbsoluteDate(for: report.createdAt))
                     LabeledContent("Status", value: report.status.capitalized)
+                }
+
+                // Decrypted content section
+                Section("Report Content") {
+                    if let content = decryptedContent {
+                        Text(content)
+                            .font(.body)
+                            .textSelection(.enabled)
+                    } else if isDecrypting {
+                        HStack {
+                            ProgressView()
+                            Text("Decrypting...")
+                        }
+                    } else {
+                        Button("Decrypt Content") {
+                            Task {
+                                isDecrypting = true
+                                decryptedContent = await viewModel.decryptReportContent(report: report)
+                                isDecrypting = false
+                            }
+                        }
+                    }
                 }
 
                 // Action selection (only for pending reports)

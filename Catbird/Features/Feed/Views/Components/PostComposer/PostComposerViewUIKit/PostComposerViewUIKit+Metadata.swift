@@ -42,11 +42,22 @@ extension PostComposerViewUIKit {
         }
       }
 
-      // Compact inline outline hashtags
-      compactOutlineTagsView(vm: vm)
-      
-      // Compact inline language chips (always visible)
-      compactLanguageChipsView(vm: vm)
+      // Outline hashtags, languages, and character counter in horizontal layout
+      HStack(alignment: .top, spacing: 12) {
+        // Leading: hashtags and languages stacked vertically
+        VStack(alignment: .leading, spacing: 4) {
+          compactOutlineTagsView(vm: vm)
+          compactLanguageChipsView(vm: vm)
+        }
+        .layoutPriority(-1)  // Lower priority so character counter gets space
+        
+        Spacer(minLength: 8)
+        
+        // Trailing: character counter
+        CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
+          .layoutPriority(1)  // Higher priority to ensure visibility
+          .zIndex(1)
+      }
     }
     .padding(.horizontal, 16)
     .onAppear {

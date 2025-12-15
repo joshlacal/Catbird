@@ -226,9 +226,56 @@ struct SettingsView: View {
             }
           }
 
+          if #available(iOS 18.0, macOS 13.0, *) {
+            NavigationLink(destination: DeviceManagementView()) {
+              Label {
+                Text("Devices")
+              } icon: {
+                Image(systemName: "iphone.and.ipad")
+                    .foregroundStyle(.blue)
+              }
+            }
+          }
+
           #if DEBUG
           VersionRow()
           #endif
+        }
+        
+        Section("Experimental") {
+          Toggle(isOn: Binding(
+            get: { 
+              return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+            },
+            set: { newValue in
+              if newValue {
+                // CRITICAL FIX: Initialize MLS (device registration + key packages) and call optIn
+                // This ensures other users can find and add this user to conversations
+                Task {
+                  await optInToMLS()
+                }
+              } else {
+                ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
+                // Opt out from MLS server
+                Task {
+                  await optOutFromMLS()
+                }
+              }
+            }
+          )) {
+            Label {
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Catbird Groups")
+                Text("E2E encrypted group chat")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "lock.shield")
+                .foregroundStyle(.orange)
+            }
+          }
+          .tint(.orange)
         }
 
         Section {
@@ -317,6 +364,44 @@ struct SettingsView: View {
   private func updateAvailableAccountsCount() async {
     await MainActor.run {
       availableAccounts = AppStateManager.shared.authentication.availableAccounts.count
+    }
+  }
+  
+  // MARK: - MLS Opt-In/Out
+  
+  /// Opt in to MLS on the server and initialize device/key packages
+  /// CRITICAL: Must initialize MLS before optIn to ensure key packages are uploaded
+  private func optInToMLS() async {
+    let userDID = appState.userDID
+    
+    do {
+      // Initialize MLS first (device registration + key packages)
+      try await appState.initializeMLS()
+      
+      // Then call optIn to mark user as available
+      guard let apiClient = await appState.getMLSAPIClient() else {
+        return
+      }
+      _ = try await apiClient.optIn()
+      
+      // Save local setting only after successful server opt-in
+      ExperimentalSettings.shared.enableMLSChat(for: userDID)
+    } catch {
+      // Failed to opt in - don't save local setting
+      // User will need to try again
+    }
+  }
+  
+  /// Opt out from MLS on the server when user disables the feature
+  private func optOutFromMLS() async {
+    guard let apiClient = await appState.getMLSAPIClient() else {
+      return
+    }
+    
+    do {
+      _ = try await apiClient.optOut()
+    } catch {
+      // Silently fail - the local toggle is already off
     }
   }
   
@@ -516,5 +601,5 @@ extension Bundle {
     @Previewable @Environment(AppState.self) var appState
 
   SettingsView()
-    .environment(appState)
+    .applyAppStateEnvironment(appState)
 }

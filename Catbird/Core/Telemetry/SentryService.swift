@@ -31,6 +31,10 @@ enum SentryService {
 
             options.enableAppHangTracking = true
 
+            // Disable launch profiling - it initializes too early during +load
+            // and can cause crashes in SentryFileManager during dyld initialization
+            options.enableAppLaunchProfiling = false
+
             let bundle = Bundle.main
             let version = (bundle.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
             let build = (bundle.infoDictionary?["CFBundleVersion"] as? String) ?? ""

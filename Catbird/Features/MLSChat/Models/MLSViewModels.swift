@@ -94,7 +94,7 @@ struct MLSMemberViewModel: Identifiable {
 // MARK: - Server Model to ViewModel Conversion
 
 extension BlueCatbirdMlsDefs.ConvoView {
-  func toViewModel() -> MLSConversationViewModel {
+  func toViewModel(unreadCount: Int = 0) -> MLSConversationViewModel {
     // Split complex map to prevent type checker explosion
     let participants: [MLSParticipantViewModel] = members.map { member in
       let didStr = member.did.description
@@ -117,7 +117,7 @@ extension BlueCatbirdMlsDefs.ConvoView {
       participants: participants,
       lastMessagePreview: nil,
       lastMessageTimestamp: lastMessageDate,
-      unreadCount: 0,
+      unreadCount: unreadCount,
       isGroupChat: members.count > 2,
       groupId: groupId
     )

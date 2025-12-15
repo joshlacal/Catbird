@@ -12,7 +12,7 @@ import SwiftUI
 #if os(iOS)
 
 import NukeUI
-import ExyteChat
+// Chat system using unified components
 
 //// MARK: - Profile Protocol
 //protocol ProfileProtocol {
@@ -41,9 +41,11 @@ struct NewMessageView: View {
   @State private var isLoadingFollows = false
   @State private var searchError: String?
   @State private var isStartingConversation = false
+  @State private var searchTask: Task<Void, Never>?
   @FocusState private var isSearchFieldFocused: Bool
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NewMessageView")
+  private let searchDebounceInterval: Duration = .milliseconds(300)
 
   var body: some View {
     NavigationStack {
@@ -78,7 +80,7 @@ struct NewMessageView: View {
   @ViewBuilder
   private var searchBar: some View {
     SearchBarView(searchText: $searchText, placeholder: "Search for people") {
-      // TODO: Implement search functionality
+      // Search is triggered automatically via onChange of searchText
     }
     .padding(.horizontal)
     .padding(.top)
@@ -194,8 +196,16 @@ struct NewMessageView: View {
   }
 
   private func handleSearchTextChange(_ newValue: String) {
+    searchTask?.cancel()
     if !newValue.isEmpty && newValue.count >= 2 {
-      performSearch(searchText: newValue)
+      searchTask = Task {
+        do {
+          try await Task.sleep(for: searchDebounceInterval)
+          performSearch(searchText: newValue)
+        } catch {
+          // Task cancelled - ignore
+        }
+      }
     } else {
       searchResults = []
     }

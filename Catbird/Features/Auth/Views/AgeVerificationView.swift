@@ -301,6 +301,6 @@ extension View {
     @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         AgeVerificationView()
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
     }
 }

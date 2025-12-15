@@ -638,13 +638,16 @@ import AppKit
   /// Computes a unique feed key for this profile tab for SwiftData persistence
   func profileFeedKey(for tab: ProfileTab) -> String {
     let base = "author:\(userDID)"
+    let baseKey: String
     switch tab {
-    case .posts: return base + ":posts"
-    case .replies: return base + ":replies"
-    case .media: return base + ":media"
-    case .likes: return base + ":likes"
-    default: return base + ":other"
+    case .posts: baseKey = base + ":posts"
+    case .replies: baseKey = base + ":replies"
+    case .media: baseKey = base + ":media"
+    case .likes: baseKey = base + ":likes"
+    default: baseKey = base + ":other"
     }
+    let account = currentUserDID ?? "unknown-account"
+    return "\(account)-\(baseKey)"
   }
 
   /// Creates CachedFeedViewPost entries for the current tab and saves them via PersistentFeedStateManager

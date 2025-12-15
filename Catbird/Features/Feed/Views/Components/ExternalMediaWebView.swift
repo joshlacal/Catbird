@@ -230,9 +230,9 @@ struct EmbeddedMediaWebView: View {
     private var embedURL: URL {
         switch embedType {
         case .youtube(let videoId):
-            return URL(string: "https://www.youtube.com/embed/\(videoId)?autoplay=0&modestbranding=1&rel=0")!
+            return URL(string: "https://youtube.catbird.blue?v=\(videoId)&autoplay=0&playsinline=1")!
         case .youtubeShorts(let videoId):
-            return URL(string: "https://www.youtube.com/embed/\(videoId)?autoplay=0&modestbranding=1&rel=0")!
+            return URL(string: "https://youtube.catbird.blue?v=\(videoId)&autoplay=0&playsinline=1")!
         case .vimeo(let videoId):
             return URL(string: "https://player.vimeo.com/video/\(videoId)")!
         case .twitch(let channelOrVideo):

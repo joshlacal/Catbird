@@ -1,5 +1,4 @@
 #if os(iOS)
-import ExyteChat
 import UIKit
 #endif
 import Foundation
@@ -7,12 +6,7 @@ import OSLog
 import Petrel
 import SwiftUI
 
-/// Data structure for post embeds in chat messages
-struct PostEmbedData: Codable {
-  let postView: AppBskyFeedDefs.PostView
-  let authorHandle: String
-  let displayText: String
-}
+// PostEmbedData is now defined in UnifiedChat/Models/UnifiedEmbed.swift
 
 #if os(iOS)
 /// Manages chat operations for the Bluesky chat feature
@@ -25,7 +19,6 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // Conversations and messages
   var conversations: [ChatBskyConvoDefs.ConvoView] = []
-  private(set) var messagesMap: [String: [Message]] = [:]
   // Store original message views for reactions and other advanced features
   private(set) var originalMessagesMap: [String: [String: ChatBskyConvoDefs.MessageView]] = [:]  // [convoId: [messageId: MessageView]]
   private(set) var loadingConversations: Bool = false
@@ -35,6 +28,9 @@ final class ChatManager: StateInvalidationSubscriber {
   // Search-related state
   private(set) var filteredConversations: [ChatBskyConvoDefs.ConvoView] = []
   private(set) var filteredProfiles: [ChatBskyActorDefs.ProfileViewBasic] = []
+  private let actorSearchDebounceNanoseconds: UInt64 = 250_000_000
+  @ObservationIgnored private var actorSearchTask: Task<Void, Never>?
+  @ObservationIgnored private var pendingActorSearchQuery: String = ""
   
   // Message requests state
   private(set) var messageRequests: [ChatBskyConvoDefs.ConvoView] = []
@@ -42,10 +38,6 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // Profile caching
   private var profileCache: [String: AppBskyActorDefs.ProfileViewDetailed] = [:]
-  
-  // Message delivery tracking
-  private var pendingMessages: [String: PendingMessage] = [:]  // [tempId: PendingMessage]
-  private var messageDeliveryStatus: [String: MessageDeliveryStatus] = [:]  // [messageId: status]
 
   // Pagination control
   var conversationsCursor: String?
@@ -56,11 +48,11 @@ final class ChatManager: StateInvalidationSubscriber {
   private var messagePollingTasks: [String: Task<Void, Never>] = [:]
   private var isAppActive = true
   
-  // Polling intervals (in seconds) - optimized for better real-time experience
-  private let activeConversationPollInterval: TimeInterval = 1.5  // 1.5 seconds when viewing a conversation (faster)
-  private let activeListPollInterval: TimeInterval = 10.0  // 10 seconds when viewing conversation list (faster)
-  private let backgroundPollInterval: TimeInterval = 60.0  // 1 minute when backgrounded (more responsive)
-  private let inactivePollInterval: TimeInterval = 180.0  // 3 minutes when inactive (reduced)
+  // Polling intervals (in seconds) - balanced for responsiveness and performance
+  private let activeConversationPollInterval: TimeInterval = 5.0  // 5 seconds when viewing a conversation
+  private let activeListPollInterval: TimeInterval = 30.0  // 30 seconds when viewing conversation list
+  private let backgroundPollInterval: TimeInterval = 120.0  // 2 minutes when backgrounded
+  private let inactivePollInterval: TimeInterval = 180.0  // 3 minutes when inactive
   
   // Callback for when unread count changes
   var onUnreadCountChanged: (() -> Void)?
@@ -240,7 +232,6 @@ final class ChatManager: StateInvalidationSubscriber {
   private func clearChatData() {
     stopAllPolling()
     conversations = []
-    messagesMap = [:]
     originalMessagesMap = [:]
     conversationsCursor = nil
     messagesCursors = [:]
@@ -251,6 +242,9 @@ final class ChatManager: StateInvalidationSubscriber {
     profileCache = [:]
     filteredConversations = []
     filteredProfiles = []
+    actorSearchTask?.cancel()
+    actorSearchTask = nil
+    pendingActorSearchQuery = ""
     messageRequests = []
     acceptedConversations = []
     logger.debug("Chat data cleared")
@@ -352,7 +346,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return
     }
     
-    // Batch fetch all conversation member profiles for caching (replaces TODO)
+    // Batch fetch all conversation member profiles for caching
     await prefetchConversationProfiles()
 
     for conversation in conversations {
@@ -538,19 +532,17 @@ final class ChatManager: StateInvalidationSubscriber {
         return
       }
 
-      // Convert messages sequentially since we need to use async functions
-      var chatMessages: [Message] = []
+      // Convert messages to original format for storage
       var originalMessages: [String: ChatBskyConvoDefs.MessageView] = [:]
+      var messageCount = 0
       for messageUnion in messagesData.messages {
         switch messageUnion {
         case .chatBskyConvoDefsMessageView(let messageView):
-          // Ensure we have a client session to determine 'isCurrentUser'
-          let message = await createChatMessage(from: messageView)
-          chatMessages.append(message)
           originalMessages[messageView.id] = messageView
+          messageCount += 1
         case .chatBskyConvoDefsDeletedMessageView:
-          // Represent deleted messages differently if needed, or filter out
-          continue  // Skip deleted messages for now
+          // Skip deleted messages
+          continue
         case .unexpected(let data):
           logger.warning(
             "Unexpected message type encountered in \(convoId): \(String(describing: data))")
@@ -558,34 +550,22 @@ final class ChatManager: StateInvalidationSubscriber {
         }
       }
 
-      // Update state
+      // Update state with original messages only
       if refresh {
-        messagesMap[convoId] = chatMessages.reversed()  // Reverse to show newest at bottom
         originalMessagesMap[convoId] = originalMessages
-      } else if var existing = messagesMap[convoId] {
-        // Avoid duplicates when loading older messages
-        let existingIDs = Set(existing.map { $0.id })
-        let newMessages = chatMessages.filter { !existingIDs.contains($0.id) }
-        existing.insert(contentsOf: newMessages.reversed(), at: 0)  // Insert older messages at the beginning
-        messagesMap[convoId] = existing
-
-        if var existingOriginals = originalMessagesMap[convoId] {
-          for (id, messageView) in originalMessages {
-            existingOriginals[id] = messageView
-          }
-          originalMessagesMap[convoId] = existingOriginals
-        } else {
-          originalMessagesMap[convoId] = originalMessages
+      } else if var existingOriginals = originalMessagesMap[convoId] {
+        for (id, messageView) in originalMessages {
+          existingOriginals[id] = messageView
         }
+        originalMessagesMap[convoId] = existingOriginals
       } else {
-        messagesMap[convoId] = chatMessages.reversed()  // Reverse initial load
         originalMessagesMap[convoId] = originalMessages
       }
 
       messagesCursors[convoId] = messagesData.cursor
 
       logger.debug(
-        "Loaded \(chatMessages.count) messages for conversation \(convoId). New cursor: \(messagesData.cursor ?? "nil")"
+        "Loaded \(messageCount) messages for conversation \(convoId). New cursor: \(messagesData.cursor ?? "nil")"
       )
 
       // Mark conversation as read only after successfully loading messages
@@ -624,7 +604,6 @@ final class ChatManager: StateInvalidationSubscriber {
       // Remove conversation from local state
       if let index = conversations.firstIndex(where: { $0.id == convoId }) {
         conversations.remove(at: index)
-        messagesMap[convoId] = nil  // Clear messages for this convo
         originalMessagesMap[convoId] = nil  // Clear original messages for this convo
         logger.debug("Left conversation \(convoId) successfully.")
       }
@@ -761,6 +740,11 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 
+  /// Check if more messages are available for pagination
+  func hasMoreMessages(for convoId: String) -> Bool {
+    return messagesCursors[convoId] != nil
+  }
+
   @MainActor
   func checkConversationAvailability(members: [String]) async -> (canChat: Bool, existingConvo: ChatBskyConvoDefs.ConvoView?) {
     guard let client = client else {
@@ -818,8 +802,8 @@ final class ChatManager: StateInvalidationSubscriber {
       return false
     }
 
-    // Note: ExyteChat handles optimistic UI updates, so we don't create them here
-    // This prevents message duplication where both ExyteChat and ChatManager create optimistic messages
+    // Note: The UI handles optimistic updates, so we don't create them here
+    // This prevents message duplication
 
     do {
       // Build mention facets for @handles in chat (skip if text is empty)
@@ -844,17 +828,7 @@ final class ChatManager: StateInvalidationSubscriber {
         return false
       }
 
-      // Add the real message to our local state (ExyteChat handles optimistic UI)
-      let realMessage = await createChatMessage(from: messageView)
-      
-      if var existing = messagesMap[convoId] {
-        existing.append(realMessage)
-        messagesMap[convoId] = existing
-      } else {
-        messagesMap[convoId] = [realMessage]
-      }
-
-      // Store original message view for reactions and other features
+      // Add the real message to our local state
       if var existingOriginals = originalMessagesMap[convoId] {
         existingOriginals[messageView.id] = messageView
         originalMessagesMap[convoId] = existingOriginals
@@ -1007,17 +981,8 @@ final class ChatManager: StateInvalidationSubscriber {
       // Update local state for successful messages
       var results: [String?] = []
       for (index, messageResult) in batchResponse.items.enumerated() {
-        // Access the MessageView directly since BatchItem contains the MessageView
-        let newMessage = await createChatMessage(from: messageResult)
         let convoId = items[index].convoId
         
-        if var existing = messagesMap[convoId] {
-          existing.append(newMessage)
-          messagesMap[convoId] = existing
-        } else {
-          messagesMap[convoId] = [newMessage]
-        }
-
         if var existingOriginals = originalMessagesMap[convoId] {
           existingOriginals[messageResult.id] = messageResult
           originalMessagesMap[convoId] = existingOriginals
@@ -1056,11 +1021,6 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       // Remove message from local state
-      if var messages = messagesMap[convoId] {
-        messages.removeAll { $0.id == messageId }
-        messagesMap[convoId] = messages
-      }
-
       if var originalMessages = originalMessagesMap[convoId] {
         originalMessages.removeValue(forKey: messageId)
         originalMessagesMap[convoId] = originalMessages
@@ -1235,18 +1195,23 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // MARK: - Search Methods
 
-  /// Search for conversations and profiles based on a search term
+  /// Search for conversations locally and fetch remote actor suggestions for starting new chats
   @MainActor
   func searchLocal(searchTerm: String, currentUserDID: String?) {
-    logger.debug("Performing local search for: \(searchTerm)")
+    logger.debug("Performing chat search for: \(searchTerm)")
 
-    guard !searchTerm.isEmpty else {
+    actorSearchTask?.cancel()
+
+    let trimmedTerm = searchTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedTerm.isEmpty else {
       filteredConversations = []
       filteredProfiles = []
+      pendingActorSearchQuery = ""
+      actorSearchTask = nil
       return
     }
 
-    let searchText = searchTerm.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalizedSearch = trimmedTerm.lowercased()
 
     // Filter conversations based on three criteria:
     // 1. Member names/handles
@@ -1257,8 +1222,8 @@ final class ChatManager: StateInvalidationSubscriber {
         // 1. Check if any member matches (except current user)
         let otherMembers = convo.members.filter { $0.did.didString() != did }
         let memberMatches = otherMembers.contains { member in
-          let nameMatch = member.displayName?.lowercased().contains(searchText) ?? false
-          let handleMatch = member.handle.description.lowercased().contains(searchText)
+          let nameMatch = member.displayName?.lowercased().contains(normalizedSearch) ?? false
+          let handleMatch = member.handle.description.lowercased().contains(normalizedSearch)
           return nameMatch || handleMatch
         }
 
@@ -1270,7 +1235,7 @@ final class ChatManager: StateInvalidationSubscriber {
         if let lastMessage = convo.lastMessage {
           switch lastMessage {
           case .chatBskyConvoDefsMessageView(let messageView):
-            if messageView.text.lowercased().contains(searchText) {
+            if messageView.text.lowercased().contains(normalizedSearch) {
               return true
             }
           default:
@@ -1279,9 +1244,9 @@ final class ChatManager: StateInvalidationSubscriber {
         }
 
         // 3. Check message content in the loaded messages for this conversation
-        if let convoMessages = messagesMap[convo.id] {
-          for message in convoMessages {
-            if message.text.lowercased().contains(searchText) {
+        if let convoMessages = originalMessagesMap[convo.id] {
+          for messageView in convoMessages.values {
+            if messageView.text.lowercased().contains(normalizedSearch) {
               return true
             }
           }
@@ -1293,29 +1258,83 @@ final class ChatManager: StateInvalidationSubscriber {
       filteredConversations = []
     }
 
-    // Create a list of unique chat participants for contacts search
-    let allChatParticipants = Set(conversations.flatMap { convo in
-      convo.members.map { $0 }
-    })
+    // Reset profiles while we fetch remote suggestions
+    filteredProfiles = []
+    pendingActorSearchQuery = trimmedTerm
 
-    // Filter profiles by search text
-    filteredProfiles = Array(allChatParticipants)
-      .filter { profile in
-        // Don't include current user
-        guard profile.did.didString() != currentUserDID else { return false }
+    guard trimmedTerm.count >= 2 else {
+      return
+    }
 
-        let nameMatch = profile.displayName?.lowercased().contains(searchText) ?? false
-        let handleMatch = profile.handle.description.lowercased().contains(searchText)
-        return nameMatch || handleMatch
+    let query = trimmedTerm
+    let debounceDelay = actorSearchDebounceNanoseconds
+    actorSearchTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: debounceDelay)
+      guard !Task.isCancelled else { return }
+      await self?.performRemoteActorSearch(query: query, currentUserDID: currentUserDID)
+    }
+
+      logger.debug("Chat search matched \(self.filteredConversations.count) conversations locally; awaiting remote contacts")
+  }
+
+  private func performRemoteActorSearch(query: String, currentUserDID: String?) async {
+    guard let client else {
+      await MainActor.run { [self, query] in
+        if self.pendingActorSearchQuery == query {
+          self.filteredProfiles = []
+        }
       }
-      // Sort alphabetically by display name or handle
-      .sorted { profile1, profile2 in
-        let name1 = profile1.displayName?.lowercased() ?? profile1.handle.description.lowercased()
-        let name2 = profile2.displayName?.lowercased() ?? profile2.handle.description.lowercased()
-        return name1 < name2
+      return
+    }
+
+    do {
+      let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 25)
+      let (responseCode, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+
+      guard (200..<300).contains(responseCode) else {
+        logger.error("Typeahead search failed with HTTP \(responseCode)")
+        await MainActor.run { [query] in
+          if self.pendingActorSearchQuery == query {
+            self.filteredProfiles = []
+          }
+        }
+        return
       }
 
-      logger.debug("Local search found \(self.filteredConversations.count) conversations and \(self.filteredProfiles.count) profiles")
+      guard !Task.isCancelled else { return }
+
+      let remoteProfiles = response?.actors ?? []
+      let filteredResults = remoteProfiles.filter { profile in
+        profile.did.didString() != currentUserDID
+      }
+
+      await MainActor.run { [self, query, filteredResults] in
+        guard self.pendingActorSearchQuery == query else { return }
+          self.filteredProfiles = filteredResults.map { profile in
+              ChatBskyActorDefs.ProfileViewBasic(
+                    did: profile.did,
+                    handle: profile.handle,
+                    displayName: profile.displayName,
+                    avatar: profile.avatar,
+                    associated: profile.associated,
+                    viewer: profile.viewer,
+                    labels: profile.labels,
+                    chatDisabled: profile.associated?.chat?.allowIncoming == "none"
+                        || (profile.associated?.chat?.allowIncoming == "following" && profile.viewer?.followedBy == nil),
+                    verification: profile.verification
+                )
+          }
+        self.logger.debug("Typeahead search returned \(filteredResults.count) contacts for query: \(query)")
+      }
+    } catch {
+      guard !(error is CancellationError) else { return }
+      logger.error("Typeahead search error: \(error.localizedDescription)")
+      await MainActor.run { [self, query] in
+        if self.pendingActorSearchQuery == query {
+          self.filteredProfiles = []
+        }
+      }
+    }
   }
 
   // MARK: - Helper Methods
@@ -1422,152 +1441,20 @@ final class ChatManager: StateInvalidationSubscriber {
     await batchFetchProfiles(dids: Array(allDIDs))
   }
 
-  /// Creates an optimistic message for immediate UI feedback
-  private func createOptimisticMessage(tempId: String, text: String, convoId: String) async -> Message {
-    let currentUserID = try? await client?.getDid()
-    
-    return Message(
-      id: tempId,  // Use temporary ID
-      user: User(
-        id: currentUserID ?? "current-user",
-        name: "You",
-        avatarURL: nil,  // Could load current user's avatar if available
-        isCurrentUser: true
-      ),
-      status: .sending,  // Show as sending
-      createdAt: Date(),
-      text: text,
-      attachments: []
-    )
-  }
+  // MARK: - Message Conversion (Legacy ExyteChat methods removed)
+  // Message creation is now handled by BlueskyMessageAdapter in UnifiedChat/Models/
 
-  /// Creates a `Message` object suitable for ExyteChat from a Bluesky `MessageView`.
-  private func createChatMessage(from messageView: ChatBskyConvoDefs.MessageView) async -> Message {
-    // Ensure client and session DID are available to determine 'isCurrentUser'
-    let currentUserID = try? await client?.getDid()
-    let isCurrentUser = messageView.sender.did.didString() == currentUserID
-
-    // Fetch profile details (name, avatar) asynchronously or use cached data
-    let senderProfile = await getProfile(for: messageView.sender.did.didString())
-    let userName = senderProfile?.displayName ?? "@\(messageView.sender.did.didString())"
-    let avatarURL = senderProfile?.finalAvatarURL()
-
-    // Convert timestamp
-    let createdAtDate = messageView.sentAt.date  // Assuming this is already a Date object
-
-    // Process facets (mentions, links, etc.)
-    var processedText = messageView.text
-    var attachments: [Attachment] = []
-    
-    // Process facets (mentions, links, etc.)
-//    if let facets = messageView.facets {
-//      for facet in facets {
-//        // Handle different facet types
-//        for feature in facet.features {
-//          switch feature {
-//          case .appBskyRichtextFacetMention(let mention):
-//            // For mentions, we might want to highlight them or make them tappable
-//            // For now, just ensure the text is preserved correctly
-//            logger.debug("Message contains mention: \(mention.did)")
-//            
-//          case .appBskyRichtextFacetLink(let link):
-//            // For links, add them as text attachments or inline
-//            logger.debug("Message contains link: \(link.uri)")
-//            
-//            // Add link as attachment if ExyteChat supports link previews
-////              if let url = URL(string: link.uri.uriString()) {
-////                  attachments.append(Attachment(id: url.absoluteString, url: <#URL#>, type: .))
-////            }
-//            
-//          case .unexpected(let data):
-//            logger.debug("Unexpected facet type: \(String(describing: data))")
-//          case .appBskyRichtextFacetTag(_):
-//              <#code#>
-//          }
-//        }
-//      }
-//    }
-//    
-//    // Process embeds (images, posts, records, etc.)
-    if let embedUnion = messageView.embed {
-      switch embedUnion {
-      case .appBskyEmbedRecordView(let recordView):
-        logger.debug("Message contains record embed: \(String(describing: recordView))")
-        // Handle the specific record type within the recordView.record
-        switch recordView.record {
-        case .appBskyEmbedRecordViewRecord(let recordViewRecord):
-          // Create a rich post embed attachment for display in chat
-          let postAuthorHandle = recordViewRecord.author.handle.description
-          
-          // Access the record value to get the text
-          let recordValue = recordViewRecord.value
-          if case .knownType = recordValue {
-            // Extract text from the record - this will need adjustment based on actual structure
-            let postTextSnippet = "Post from @\(postAuthorHandle)" // Simplified for now
-            let postDisplayText = postTextSnippet
-            
-            // Don't create attachments for post embeds - they're handled by RecordEmbedView
-            // The embed is already passed to MessageBubble separately
-          }
-
-        case .appBskyGraphDefsListView(let listView):
-          logger.debug("Embed is a list view: \(listView.name)")
-          processedText += "\n\n📝 Shared List: \(listView.name)"
-          
-        case .appBskyLabelerDefsLabelerView(let labelerView):
-          logger.debug("Embed is a labeler view: \(labelerView.creator.handle)")
-          processedText += "\n\n🏷️ Shared Labeler: @\(labelerView.creator.handle)"
-          
-        case .appBskyGraphDefsStarterPackViewBasic(let starterPackView):
-          logger.debug("Embed is a starter pack")
-          processedText += "\n\n🎁 Shared Starter Pack"
-          
-        case .unexpected(let data):
-          logger.warning("Unexpected record type in embed: \(String(describing: data))")
-          
-        default:
-          logger.warning("Unhandled record type in embed: \(String(describing: recordView.record))")
-        }
-        
-      case .unexpected(let data):
-        logger.debug("Unexpected embed type: \(String(describing: data))")
-
-      }
-    }
-    return Message(
-      id: messageView.id,  // Use the message ID from Bluesky
-      user: User(
-        id: messageView.sender.did.didString(),  // Use sender's DID
-        name: userName,
-        avatarURL: avatarURL,
-        isCurrentUser: isCurrentUser
-      ),
-      status: .sent,  // Assuming sent, could be updated based on API response or logic
-      createdAt: createdAtDate, text: processedText,
-      attachments: attachments
-    )
-  }
-
-  /// Updates a specific message within the `messagesMap` based on an updated `MessageView`.
+  /// Updates a specific message within the originalMessagesMap based on an updated MessageView.
   @MainActor
   private func updateMessageInLocalState(_ updatedMessageView: ChatBskyConvoDefs.MessageView) async {
-    // Find the conversation containing this message
-    // This might be inefficient if there are many conversations.
-    // Consider passing convoId if available from the calling context (e.g., reaction response).
-    for (convoId, messages) in messagesMap {
-      if let index = messages.firstIndex(where: { $0.id == updatedMessageView.id }) {
+    // Find the conversation containing this message and update the original message view
+    for (convoId, messages) in originalMessagesMap {
+      if messages[updatedMessageView.id] != nil {
         var updatedMessages = messages
-        // Recreate the ExyteChat Message object with updated data
-        updatedMessages[index] = await createChatMessage(from: updatedMessageView)
-        messagesMap[convoId] = updatedMessages
-
-        if var existingOriginals = originalMessagesMap[convoId] {
-          existingOriginals[updatedMessageView.id] = updatedMessageView
-          originalMessagesMap[convoId] = existingOriginals
-        }
+        updatedMessages[updatedMessageView.id] = updatedMessageView
+        originalMessagesMap[convoId] = updatedMessages
 
         logger.debug("Updated message \(updatedMessageView.id) in local state for convo \(convoId)")
-        // Found and updated, no need to continue loop
         return
       }
     }
@@ -1662,7 +1549,6 @@ final class ChatManager: StateInvalidationSubscriber {
 
       // Clear all local chat data after successful deletion
       conversations = []
-      messagesMap = [:]
       originalMessagesMap = [:]
       conversationsCursor = nil
       messagesCursors = [:]

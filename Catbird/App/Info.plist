@@ -7,6 +7,7 @@
 		<string>blue.catbird.posting.retry</string>
 		<string>blue.catbird.chat.refresh</string>
 		<string>blue.catbird.cache.refresh</string>
+		<string>blue.catbird.key-package-refresh</string>
 	</array>
 	<key>DCAppAttestService</key>
 	<dict>
@@ -45,6 +46,8 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>SentryLaunchProfilingEnabled</key>
+	<false/>
 	<key>UIObservationTrackingEnabled</key>
 	<true/>
 	<key>com.apple.developer.associated-domains</key>

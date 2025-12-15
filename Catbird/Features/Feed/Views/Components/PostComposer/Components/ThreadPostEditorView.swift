@@ -16,7 +16,7 @@ struct ThreadPostEditorView: View {
   @Bindable var viewModel: PostComposerViewModel
   let onTap: () -> Void
   let onDelete: () -> Void
-  @Environment(AppState.self) private var appState
+  @ObservationIgnored @Environment(AppState.self) private var appState
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {

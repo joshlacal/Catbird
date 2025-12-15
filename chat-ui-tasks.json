@@ -1,0 +1,114 @@
+{
+  "$schema": "copilot-cli-tasks.json",
+  "version": "1.0",
+  "name": "Chat UI Overhaul",
+  "description": "Replace ExyteChat with custom UICollectionView-based unified chat UI using copilot-cli MCP subagents",
+  
+  "tasks": {
+    "chat-t1-protocols-models": {
+      "description": "Track 1: Create unified chat protocols and model files (Foundation)",
+      "agent": "swift_expert",
+      "allowWrite": true,
+      "prompt": "Create the unified chat protocol and model files in Catbird. Follow the design in CHAT_UI_IMPLEMENTATION_PLAN.md.\n\nCreate these files (create directories first):\n\n1. Catbird/Features/UnifiedChat/Protocols/UnifiedChatMessage.swift - Protocol with: id, text, senderID, senderDisplayName, senderAvatarURL, sentAt, isFromCurrentUser, reactions, embed, sendState. Add MessageSendState enum (sending, sent, failed).\n\n2. Catbird/Features/UnifiedChat/Protocols/UnifiedChatDataSource.swift - Protocol with: messages array, draftText, isLoading, error, hasMoreMessages, message(for:), loadMessages(), loadMoreMessages(), sendMessage(text:), toggleReaction(messageID:emoji:), deleteMessage(messageID:)\n\n3. Catbird/Features/UnifiedChat/Protocols/UnifiedChatReactionHandler.swift - Protocol for reaction handling with toggleReaction, addReaction, removeReaction methods\n\n4. Catbird/Features/UnifiedChat/Models/UnifiedReaction.swift - Struct with: id (computed), messageID, emoji, senderDID, isFromCurrentUser. Conform to Identifiable, Hashable.\n\n5. Catbird/Features/UnifiedChat/Models/UnifiedEmbed.swift - Enum with cases: blueskyRecord(AppBskyEmbedRecord.ViewRecordUnion), mlsRecord(uri: String, cid: String), mlsLink(url: URL, title: String?, description: String?, thumbUrl: URL?), mlsGIF(url: URL, stillUrl: URL?), mlsPost(uri: String, cid: String)\n\n6. Catbird/Features/UnifiedChat/Models/BlueskyMessageAdapter.swift - Struct that adapts ChatBskyConvoDefs.MessageView to UnifiedChatMessage protocol. Import Petrel.\n\n7. Catbird/Features/UnifiedChat/Models/MLSMessageAdapter.swift - Struct that adapts MLS messages (BlueCatbirdMlsDefs.MessageView) to UnifiedChatMessage protocol. Import Petrel and CatbirdMLSCore.\n\nUse Swift 6 strict concurrency, @Observable where needed, proper imports (Foundation, SwiftUI, Petrel). Reference existing code patterns in Features/Chat and Features/MLSChat.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": []
+    },
+    
+    "chat-t2a-bubble-reactions": {
+      "description": "Track 2A: Create UnifiedMessageBubble and UnifiedMessageReactions UI components",
+      "agent": "swift_expert",
+      "allowWrite": true,
+      "prompt": "Create UnifiedMessageBubble and UnifiedMessageReactions SwiftUI components based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\n1. Catbird/Features/UnifiedChat/Views/Components/UnifiedMessageBubble.swift:\n- Generic over Message: UnifiedChatMessage\n- Use @Environment(AppState.self) for theming\n- Liquid Glass bubble background (iOS 26+) with .glassEffect() modifier, fallback to RoundedRectangle fill for older versions\n- Left/right alignment based on message.isFromCurrentUser using HStack with Spacer\n- For incoming messages: show sender avatar (LazyImage from NukeUI), display name above bubble\n- Embed rendering: if let embed = message.embed { UnifiedEmbedView(embed: embed) }\n- Send state indicators: switch on message.sendState - .sending shows pulsing clock, .sent shows checkmark, .failed shows red exclamation with retry\n- Long press gesture for context menu\n- Reference existing Catbird/Features/Chat/Views/Components/MessageBubble.swift for styling patterns\n- Use existing AdaptiveGlassEffect.swift utilities from Core/UI/\n\n2. Catbird/Features/UnifiedChat/Views/Components/UnifiedMessageReactions.swift:\n- Takes reactions: [UnifiedReaction] and onReactionTapped: (String) -> Void\n- Group reactions by emoji, count occurrences\n- Display as horizontal HStack of reaction pills\n- Each pill shows emoji + count (if > 1)\n- Highlight with accent color border if current user has reacted\n- Tap pill to toggle reaction (calls onReactionTapped with emoji)\n- Animation on toggle: .animation(.easeInOut(duration: 0.2), value: reactions)\n- Reference Catbird/Features/Chat/Views/Components/MessageReactionsView.swift\n\nUse Swift 6, @Environment(AppState.self), proper imports (SwiftUI, NukeUI).",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t1-protocols-models"]
+    },
+    
+    "chat-t2b-input-embeds": {
+      "description": "Track 2B: Create UnifiedInputBar and UnifiedEmbedView UI components",
+      "agent": "swift_expert",
+      "allowWrite": true,
+      "prompt": "Create UnifiedInputBar and UnifiedEmbedView SwiftUI components based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\n1. Catbird/Features/UnifiedChat/Views/Components/UnifiedInputBar.swift:\n- @Binding var text: String\n- var onSend: (String) -> Void\n- var attachedEmbed: UnifiedEmbed? = nil\n- var onClearEmbed: (() -> Void)? = nil\n- Floating pill design: HStack with rounded Capsule background\n- Liquid Glass: if #available(iOS 26.0, *) { .glassEffect(.regular, in: Capsule()) } else { Capsule().fill(Material.regularMaterial) }\n- TextField(\"Message\", text: $text, axis: .vertical) with .lineLimit(1...5)\n- Send button: Image(systemName: \"arrow.up.circle.fill\") disabled when text is empty/whitespace\n- On send: trim text, call onSend, clear text\n- If attachedEmbed != nil, show small preview above text field with X dismiss button\n- Reference Catbird/Features/MLSChat/Views/Components/MLSMessageComposerView.swift for patterns\n\n2. Catbird/Features/UnifiedChat/Views/Components/UnifiedEmbedView.swift:\n- Takes embed: UnifiedEmbed and @Binding navigationPath: NavigationPath\n- Switch on embed enum:\n  - .blueskyRecord(let record): Use existing RecordEmbedView pattern from Features/Feed/Views/Components/RecordEmbedView.swift\n  - .mlsRecord: Show quote post card with AT URI\n  - .mlsLink: Show link card with title, description, thumbnail (LinkCard style)\n  - .mlsGIF: Show GIF image with NukeUI LazyImage\n  - .mlsPost: Show embedded post preview\n- Tap navigation: onTapGesture { navigate to appropriate destination }\n- Reference Catbird/Features/Feed/Views/Components/PostEmbed.swift and Catbird/Features/MLSChat/Views/Components/MLSEmbedView.swift\n\nUse Swift 6, @Environment(AppState.self), proper imports.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t1-protocols-models"]
+    },
+    
+    "chat-t4a-bluesky-datasource": {
+      "description": "Track 4A: Create BlueskyConversationDataSource wrapping ChatManager",
+      "agent": "catbird_ios_expert",
+      "allowWrite": true,
+      "prompt": "Create BlueskyConversationDataSource based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\nCatbird/Features/UnifiedChat/ViewModels/BlueskyConversationDataSource.swift:\n- @Observable final class BlueskyConversationDataSource\n- Conforms to UnifiedChatDataSource protocol (from UnifiedChatDataSource.swift)\n- Properties:\n  - private let chatManager: ChatManager\n  - private let convoID: String\n  - private let currentUserDID: String\n  - var messages: [BlueskyMessageAdapter] = []\n  - var draftText: String = \"\"\n  - private(set) var isLoading: Bool = false\n  - var error: Error?\n  - var hasMoreMessages: Bool = true\n\n- Init: init(chatManager: ChatManager, convoID: String, currentUserDID: String)\n\n- Implement protocol methods:\n  - func message(for id: String) -> BlueskyMessageAdapter? - lookup in messages array\n  - func loadMessages() async - call chatManager.loadMessages(convoId:refresh:true), convert to BlueskyMessageAdapter\n  - func loadMoreMessages() async - pagination with cursor, append older messages\n  - func sendMessage(text: String) async - call chatManager.sendMessage(convoId:text:embed:nil)\n  - func toggleReaction(messageID: String, emoji: String) - call chatManager.toggleReaction(convoId:messageId:emoji:)\n  - func deleteMessage(messageID: String) async - if supported\n\n- Observe ChatManager: Use withObservationTracking or similar to react to chatManager.messagesMap changes and update local messages array\n\n- Conversion: Create BlueskyMessageAdapter instances from ChatBskyConvoDefs.MessageView using currentUserDID for isFromCurrentUser\n\nReference Catbird/Features/Chat/Services/ChatManager.swift for API. Use Swift 6, async/await, @MainActor where needed.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t1-protocols-models"]
+    },
+    
+    "chat-t4b-mls-datasource": {
+      "description": "Track 4B: Create MLSConversationDataSource wrapping MLS services",
+      "agent": "catbird_ios_expert",
+      "allowWrite": true,
+      "prompt": "Create MLSConversationDataSource based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\nCatbird/Features/UnifiedChat/ViewModels/MLSConversationDataSource.swift:\n- @Observable final class MLSConversationDataSource\n- Conforms to UnifiedChatDataSource protocol\n- Properties:\n  - private let conversationManager: MLSConversationManager\n  - private let apiClient: MLSAPIClient\n  - private let convoID: String\n  - private let currentUserDID: String\n  - var messages: [MLSMessageAdapter] = []\n  - var draftText: String = \"\"\n  - private(set) var isLoading: Bool = false\n  - var error: Error?\n  - var hasMoreMessages: Bool = true\n  - private var messageReactionsMap: [String: [MLSMessageReaction]] = [:]\n\n- Init: init(conversationManager: MLSConversationManager, apiClient: MLSAPIClient, convoID: String, currentUserDID: String)\n\n- Implement protocol methods:\n  - func message(for id: String) -> MLSMessageAdapter?\n  - func loadMessages() async - call apiClient.getMessages(), decrypt with conversationManager, convert to MLSMessageAdapter\n  - func loadMoreMessages() async - epoch-based pagination\n  - func sendMessage(text: String) async - use conversationManager to encrypt and send via apiClient.sendMessage()\n  - func toggleReaction(messageID: String, emoji: String) - check current reactions, call addReaction or removeReaction on apiClient\n  - func deleteMessage(messageID: String) async\n\n- Handle MLS specifics:\n  - Message ordering by (epoch, sequenceNumber)\n  - Decryption state handling\n  - Profile enrichment for sender display names\n\n- Conversion: Create MLSMessageAdapter from BlueCatbirdMlsDefs.MessageView with reactions from messageReactionsMap\n\nReference Catbird/Features/MLSChat/ViewModels/MLSConversationDetailViewModel.swift and Catbird/Services/MLS/MLSConversationManager.swift. Use Swift 6, async/await.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t1-protocols-models"]
+    },
+    
+    "chat-t3a-collectionview": {
+      "description": "Track 3A: Create ChatCollectionViewController and ChatCollectionViewBridge",
+      "agent": "swift_expert",
+      "allowWrite": true,
+      "prompt": "Create ChatCollectionViewController and ChatCollectionViewBridge based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\n1. Catbird/Features/UnifiedChat/Views/iOS/ChatCollectionViewController.swift:\n- #if os(iOS)\n- @available(iOS 16.0, *)\n- final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIViewController, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching\n\n- Types:\n  - enum Section: Int, CaseIterable { case messages }\n  - enum Item: Hashable { case message(id: String), dateSeparator(Date), systemMessage(String) }\n\n- Properties:\n  - private var collectionView: UICollectionView!\n  - private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!\n  - let chatDataSource: DataSource\n  - let navigationPath: Binding<NavigationPath>\n  - weak var appState: AppState?\n\n- Layout: createLayout() -> UICollectionViewCompositionalLayout\n  - Use UICollectionLayoutListConfiguration(appearance: .plain)\n  - Or manual: NSCollectionLayoutSize with .fractionalWidth(1.0), .estimated(80)\n  - interGroupSpacing: 4, contentInsets for padding\n\n- DataSource setup: setupDataSource()\n  - UICollectionView.CellRegistration<UICollectionViewListCell, String> for messages\n  - Use UIHostingConfiguration { UnifiedMessageBubble(message: message, ...) }.margins(.all, 0)\n  - Clear background configuration\n\n- Snapshot updates: @MainActor func updateMessages(_ messages: [any UnifiedChatMessage]) async\n  - Group by date for separators\n  - dataSource.apply(snapshot, animatingDifferences: true)\n\n- Scroll: scrollToBottom(animated:), preserve scroll position on prepend\n\n- inputAccessoryView override for keyboard handling\n\nReference Catbird/Features/Feed/Views/FeedContent/FeedCollectionViewControllerIntegrated.swift heavily.\n\n2. Catbird/Features/UnifiedChat/Views/iOS/ChatCollectionViewBridge.swift:\n- struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewControllerRepresentable\n- @Environment(AppState.self) var appState\n- @Binding var navigationPath: NavigationPath\n- let dataSource: DataSource\n- makeUIViewController: create ChatCollectionViewController\n- updateUIViewController: trigger data refresh\n\n#endif for iOS only. Use Swift 6, @MainActor.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t2a-bubble-reactions", "chat-t2b-input-embeds"]
+    },
+    
+    "chat-t3b-input-macos": {
+      "description": "Track 3B: Create ChatInputAccessoryView (iOS) and ChatListView (macOS)",
+      "agent": "swiftui_architect",
+      "allowWrite": true,
+      "prompt": "Create ChatInputAccessoryView and ChatListView based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\n1. Catbird/Features/UnifiedChat/Views/iOS/ChatInputAccessoryView.swift:\n- #if os(iOS)\n- final class ChatInputAccessoryView: UIView\n- Hosts UnifiedInputBar via UIHostingController\n- Properties:\n  - private var hostingController: UIHostingController<UnifiedInputBar>?\n  - @Binding var text: String\n  - var onSend: (String) -> Void\n\n- Override intrinsicContentSize: return hostingController's view sizeThatFits\n- Override layoutSubviews: layout hosting view to fill bounds\n\n- init(text: Binding<String>, onSend: @escaping (String) -> Void, appState: AppState)\n  - Create UnifiedInputBar view\n  - Embed in UIHostingController\n  - Add as subview\n  - Set autoresizingMask\n\n- Handle safe area: respect keyboard safe area insets\n#endif\n\n2. Catbird/Features/UnifiedChat/Views/macOS/ChatListView.swift:\n- #if os(macOS)\n- struct ChatListView<DataSource: UnifiedChatDataSource>: View\n- @Environment(AppState.self) private var appState\n- @Bindable var dataSource: DataSource\n- @Binding var navigationPath: NavigationPath\n- @State private var scrollProxy: ScrollViewProxy?\n\n- body:\n  ScrollViewReader { proxy in\n    List {\n      ForEach(dataSource.messages, id: \\.id) { message in\n        UnifiedMessageBubble(\n          message: message,\n          navigationPath: $navigationPath,\n          onReactionTapped: { emoji in dataSource.toggleReaction(messageID: message.id, emoji: emoji) },\n          onLongPress: { }\n        )\n        .id(message.id)\n        .listRowSeparator(.hidden)\n        .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))\n      }\n    }\n    .listStyle(.plain)\n    .onAppear { scrollProxy = proxy }\n    .onChange(of: dataSource.messages.count) { _, _ in\n      if let last = dataSource.messages.last {\n        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }\n      }\n    }\n  }\n  .safeAreaInset(edge: .bottom) {\n    UnifiedInputBar(\n      text: $dataSource.draftText,\n      onSend: { text in Task { await dataSource.sendMessage(text: text) } }\n    )\n    .padding()\n  }\n\n#endif\n\nUse Swift 6, proper platform conditionals.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t2a-bubble-reactions", "chat-t2b-input-embeds"]
+    },
+    
+    "chat-t5-integration": {
+      "description": "Track 5: Integration and feature flag setup",
+      "agent": "catbird_ios_expert",
+      "allowWrite": true,
+      "prompt": "Integrate the new unified chat UI with feature flag based on CHAT_UI_IMPLEMENTATION_PLAN.md.\n\n1. Add feature flag to Catbird/Features/Settings/Models/AppSettingsModel.swift:\n- Add property: @AppStorage(\"useUnifiedChatUI\") var useUnifiedChatUI: Bool = false\n- This should be in the AppSettingsModel class/struct\n\n2. Update Catbird/Features/Chat/Views/ConversationView.swift:\n- At the top of the body property, add conditional:\n  if #available(iOS 16.0, *), appState.appSettings.useUnifiedChatUI {\n    #if os(iOS)\n    ChatCollectionViewBridge(\n      dataSource: BlueskyConversationDataSource(chatManager: chatManager, convoID: convoId, currentUserDID: currentUserDID),\n      navigationPath: $navigationPath\n    )\n    #else\n    ChatListView(dataSource: blueskyDataSource, navigationPath: $navigationPath)\n    #endif\n  } else {\n    // existing ExyteChat implementation stays here\n  }\n- You'll need to create the BlueskyConversationDataSource instance\n- Add necessary imports for UnifiedChat types\n\n3. Update Catbird/Features/MLSChat/MLSConversationDetailView.swift:\n- Similar conditional pattern for MLS chat\n- Use MLSConversationDataSource instead\n- Keep existing ExyteChat implementation as fallback\n\n4. DO NOT remove any existing code - just wrap with conditionals\n5. Make minimal changes to preserve existing functionality\n\nAfter making changes, run swift syntax check on modified files to verify no errors.",
+      "workingDirectory": "/Users/joshlacalamito/Developer/Catbird+Petrel/Catbird",
+      "dependencies": ["chat-t3a-collectionview", "chat-t3b-input-macos", "chat-t4a-bluesky-datasource", "chat-t4b-mls-datasource"]
+    }
+  },
+  
+  "execution_plan": {
+    "description": "Copilot-CLI MCP subagent execution order",
+    "phases": [
+      {
+        "phase": 1,
+        "name": "Foundation",
+        "tasks": ["chat-t1-protocols-models"],
+        "parallel": false,
+        "estimated_time": "15-20 minutes"
+      },
+      {
+        "phase": 2,
+        "name": "UI + DataSources",
+        "tasks": ["chat-t2a-bubble-reactions", "chat-t2b-input-embeds", "chat-t4a-bluesky-datasource", "chat-t4b-mls-datasource"],
+        "parallel": true,
+        "estimated_time": "20-30 minutes"
+      },
+      {
+        "phase": 3,
+        "name": "CollectionView & Platform",
+        "tasks": ["chat-t3a-collectionview", "chat-t3b-input-macos"],
+        "parallel": true,
+        "estimated_time": "25-35 minutes"
+      },
+      {
+        "phase": 4,
+        "name": "Integration",
+        "tasks": ["chat-t5-integration"],
+        "parallel": false,
+        "estimated_time": "10-15 minutes"
+      }
+    ]
+  }
+}

@@ -11,6 +11,7 @@ import Observation
 import OSLog
 import Combine
 import GRDB
+import CatbirdMLSCore
 
 /// ViewModel for managing members in an MLS conversation
 @Observable
@@ -20,9 +21,36 @@ final class MLSMemberManagementViewModel {
     /// Current conversation
     private(set) var conversation: BlueCatbirdMlsDefs.ConvoView?
 
-    /// Members in the conversation
-    var members: [BlueCatbirdMlsDefs.MemberView] {
-        conversation?.members ?? []
+    /// Members in the conversation (server or local)
+    private(set) var members: [BlueCatbirdMlsDefs.MemberView] = []
+
+    /// Grouped members by user DID (combines multiple devices per user)
+    /// Sorted by join date (oldest first) with stable secondary sort by userDid
+    var groupedMembers: [MLSGroupedMember] {
+        // Group members by userDid (MLS tracks devices but UI should show users)
+        let grouped = Dictionary(grouping: members) { member in
+            member.userDid.description
+        }
+
+        return grouped.map { userDid, devices in
+            MLSGroupedMember(
+                userDid: userDid,
+                devices: devices,
+                isAdmin: devices.contains { $0.isAdmin },
+                isCreator: devices.contains { member in
+                    guard let conversation = conversation else { return false }
+                    return member.did.description == conversation.creator.description
+                },
+                firstJoinedAt: devices.compactMap { $0.joinedAt.date }.min() ?? Date()
+            )
+        }.sorted { lhs, rhs in
+            // Primary sort: by join date (oldest first)
+            // Secondary sort: by userDid for stability when dates are equal
+            if lhs.firstJoinedAt == rhs.firstJoinedAt {
+                return lhs.userDid < rhs.userDid
+            }
+            return lhs.firstJoinedAt < rhs.firstJoinedAt
+        }
     }
 
     /// Loading states
@@ -35,29 +63,46 @@ final class MLSMemberManagementViewModel {
 
     /// Conversation ID
     let conversationId: String
+    /// Current user DID (used for local DB lookups)
+    private let currentUserDid: String
 
-    /// Members to add
+    /// Members to add (DIDs)
     private(set) var pendingMembers: [String] = []
 
     /// Search query for finding new members
     var memberSearchQuery = "" {
         didSet {
             if memberSearchQuery != oldValue {
-                Task { await searchMembers() }
+                searchTask?.cancel()
+                searchTask = Task { @MainActor in
+                    do {
+                        try await Task.sleep(for: .milliseconds(300))
+                        await searchMembers()
+                    } catch {
+                        // Task cancelled - ignore
+                    }
+                }
             }
         }
     }
 
     /// Search results
-    private(set) var searchResults: [String] = []
+    private(set) var searchResults: [MLSParticipantViewModel] = []
+    
+    /// MLS opt-in status for search results (DID -> isOptedIn)
+    private(set) var participantOptInStatus: [String: Bool] = [:]
 
     /// Whether search is in progress
     private(set) var isSearching = false
 
+    /// Debounce task for search
+    private var searchTask: Task<Void, Never>?
+
     // MARK: - Dependencies
 
-    private let database: DatabaseQueue
+    private let database: MLSDatabase
     private let apiClient: MLSAPIClient
+    private let conversationManager: MLSConversationManager
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSMemberManagementViewModel")
 
     // MARK: - Combine
@@ -84,10 +129,18 @@ final class MLSMemberManagementViewModel {
 
     // MARK: - Initialization
 
-    init(conversationId: String, database: DatabaseQueue, apiClient: MLSAPIClient) {
+    init(
+        conversationId: String,
+        currentUserDid: String,
+        database: MLSDatabase,
+        apiClient: MLSAPIClient,
+        conversationManager: MLSConversationManager
+    ) {
         self.conversationId = conversationId
+        self.currentUserDid = currentUserDid
         self.database = database
         self.apiClient = apiClient
+        self.conversationManager = conversationManager
         logger.debug("MLSMemberManagementViewModel initialized for conversation: \(conversationId)")
     }
 
@@ -102,23 +155,86 @@ final class MLSMemberManagementViewModel {
         error = nil
 
         do {
-            // Get conversations and find the matching one
-            let result = try await apiClient.getConversations(limit: 100)
-            if let convo = result.convos.first(where: { $0.groupId == conversationId }) {
-                conversation = convo
-                conversationUpdatedSubject.send(convo)
-                membersUpdatedSubject.send(convo.members)
-                logger.debug("Loaded \(convo.members.count) members")
+            // First try to get conversation from manager cache (most efficient)
+            if let cachedConvo = conversationManager.conversations[conversationId] {
+                conversation = cachedConvo
+                members = cachedConvo.members
+                conversationUpdatedSubject.send(cachedConvo)
+                membersUpdatedSubject.send(cachedConvo.members)
+                logger.info("👥 Loaded \(cachedConvo.members.count) members from cache")
             } else {
-                throw MLSError.conversationNotFound
+                // Fallback: sync with server and retry
+                logger.info("👥 Conversation not in cache, syncing with server for members...")
+                try await Task.detached(priority: .userInitiated) {
+                    try await self.conversationManager.syncWithServer()
+                }.value
+
+                if let syncedConvo = conversationManager.conversations[conversationId] {
+                    conversation = syncedConvo
+                    members = syncedConvo.members
+                    conversationUpdatedSubject.send(syncedConvo)
+                    membersUpdatedSubject.send(syncedConvo.members)
+                    logger.info("✅ Loaded \(syncedConvo.members.count) members after sync")
+                } else {
+                    throw MLSError.conversationNotFound
+                }
             }
         } catch {
             self.error = error
             errorSubject.send(error)
-            logger.error("Failed to load members: \(error.localizedDescription)")
+            logger.error("❌ Failed to load members: \(error.localizedDescription)")
         }
 
         isLoadingMembers = false
+    }
+
+    /// Load members from local storage (in-memory cache already handled; this hits encrypted DB)
+    @MainActor
+    func loadMembersFromLocal() async {
+        guard !isLoadingMembers else { return }
+        isLoadingMembers = true
+        defer { isLoadingMembers = false }
+
+        do {
+            logger.info("💾 Loading members from encrypted DB for convo \(self.conversationId)")
+            // Use MLSStorage helper method (avoids direct db.read on main thread)
+            let localMembers = try await Task.detached(priority: .userInitiated) {
+                try await MLSStorage.shared.fetchMembers(
+                    conversationID: self.conversationId,
+                    currentUserDID: self.currentUserDid,
+                    database: self.database
+                )
+            }.value
+
+            let converted = localMembers.compactMap { model -> BlueCatbirdMlsDefs.MemberView? in
+                do {
+                    let did = try DID(didString: model.did)
+                    let userDid = try DID(didString: model.currentUserDID)
+                    return BlueCatbirdMlsDefs.MemberView(
+                        did: did,
+                        userDid: userDid,
+                        deviceId: nil,
+                        deviceName: nil,
+                        joinedAt: ATProtocolDate(date: model.addedAt),
+                        isAdmin: model.role == .admin,
+                        isModerator: model.role == .moderator,
+                        promotedAt: nil,
+                        promotedBy: nil,
+                        leafIndex: model.leafIndex,
+                        credential: nil
+                    )
+                } catch {
+                    logger.error("⚠️ Failed to convert local member \(model.did): \(error.localizedDescription)")
+                    return nil
+                }
+            }
+
+            members = converted
+            membersUpdatedSubject.send(converted)
+            logger.info("💾 Loaded \(converted.count) members from encrypted DB fallback")
+        } catch {
+            logger.error("❌ Failed to load members from encrypted DB: \(error.localizedDescription)")
+        }
     }
 
     /// Add members to the conversation
@@ -130,28 +246,19 @@ final class MLSMemberManagementViewModel {
         error = nil
 
         do {
-            let dids = try memberDids.map { try DID(didString: $0) }
-            let (success, newEpoch) = try await apiClient.addMembers(
-                convoId: conversationId,
-                didList: dids
-            )
-
-            guard success else {
-                throw MLSError.operationFailed
-            }
+            logger.info("➕ Adding \(memberDids.count) members to convo \(self.conversationId)")
+            // Use ConversationManager to handle the complex MLS add flow (commits, epochs, etc.)
+            try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.addMembers(convoId: self.conversationId, memberDids: memberDids)
+            }.value
 
             // Refetch conversation to get updated state
-            let result = try await apiClient.getConversations(limit: 100)
-            if let updatedConvo = result.convos.first(where: { $0.groupId == conversationId }) {
-                conversation = updatedConvo
-                conversationUpdatedSubject.send(updatedConvo)
-                membersUpdatedSubject.send(updatedConvo.members)
-            }
+            await loadMembers()
 
             // Clear pending members
             pendingMembers.removeAll()
 
-            logger.debug("Added \(memberDids.count) members to conversation (new epoch: \(newEpoch))")
+            logger.debug("Added \(memberDids.count) members to conversation")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -159,6 +266,77 @@ final class MLSMemberManagementViewModel {
         }
 
         isAddingMembers = false
+    }
+
+    /// Remove a member from the conversation
+    @MainActor
+    func removeMember(_ memberDid: String) async {
+        guard !isRemovingMember else { return }
+
+        isRemovingMember = true
+        error = nil
+
+        do {
+            logger.info("🚮 Removing member \(memberDid) from convo \(self.conversationId)")
+            let did = try DID(didString: memberDid)
+            // Use ConversationManager/APIClient to remove member
+            // Note: MLSConversationManager doesn't expose removeMember directly yet, so we use APIClient
+            // Ideally MLSConversationManager should wrap this too for consistency
+            let (success, _) = try await Task.detached(priority: .userInitiated) {
+                try await self.apiClient.removeMember(convoId: self.conversationId, targetDid: did)
+            }.value
+
+            guard success else {
+                throw MLSError.operationFailed
+            }
+
+            // Refetch conversation to get updated state
+            await loadMembers()
+
+            logger.debug("Removed member: \(memberDid)")
+        } catch {
+            self.error = error
+            errorSubject.send(error)
+            logger.error("Failed to remove member: \(error.localizedDescription)")
+        }
+
+        isRemovingMember = false
+    }
+
+    /// Promote a member to admin
+    @MainActor
+    func promoteMember(_ memberDid: String) async {
+        error = nil
+        do {
+            logger.info("⭐️ Promoting member \(memberDid) to admin in convo \(self.conversationId)")
+            try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.promoteAdmin(convoId: self.conversationId, memberDid: memberDid)
+            }.value
+            await loadMembers()
+            logger.debug("Promoted member: \(memberDid)")
+        } catch {
+            self.error = error
+            errorSubject.send(error)
+            logger.error("Failed to promote member: \(error.localizedDescription)")
+        }
+    }
+
+    /// Demote an admin to member
+    @MainActor
+    func demoteMember(_ memberDid: String) async {
+        error = nil
+        do {
+            logger.info("⬇️ Demoting admin \(memberDid) in convo \(self.conversationId)")
+            try await Task.detached(priority: .userInitiated) {
+                try await self.conversationManager.demoteAdmin(convoId: self.conversationId, memberDid: memberDid)
+            }.value
+            await loadMembers()
+            logger.debug("Demoted member: \(memberDid)")
+        } catch {
+            self.error = error
+            errorSubject.send(error)
+            logger.error("Failed to demote member: \(error.localizedDescription)")
+        }
     }
 
     /// Add a pending member
@@ -189,28 +367,61 @@ final class MLSMemberManagementViewModel {
     /// Search for members to add
     @MainActor
     private func searchMembers() async {
-        guard !memberSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let query = memberSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
             searchResults = []
+            participantOptInStatus = [:]
             return
         }
 
         isSearching = true
 
-        // Simulate search - in production, this would call an API
-        // to search for users by DID or handle
-        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms delay
+        do {
+            // Use ATProtoClient to search for actors
+            let input = AppBskyActorSearchActorsTypeahead.Parameters(
+                term: query,
+                limit: 20
+            )
 
-        // For now, validate DID format and add to results
-        let query = memberSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.starts(with: "did:") {
-            // Filter out existing members
-            if !members.contains(where: { $0.did.description == query }) {
-                searchResults = [query]
+            let (_, response) = try await apiClient.client.app.bsky.actor.searchActorsTypeahead(input: input)
+
+            if let actors = response?.actors {
+                // Filter out existing members
+                let existingDids = Set(members.map { $0.did.description })
+                
+                let results = actors
+                    .filter { !existingDids.contains($0.did.didString()) }
+                    .map { actor in
+                        MLSParticipantViewModel(
+                            id: actor.did.didString(),
+                            handle: actor.handle.description,
+                            displayName: actor.displayName,
+                            avatarURL: actor.finalAvatarURL()
+                        )
+                    }
+                
+                // Check MLS opt-in status for all search results
+                let dids = results.compactMap { try? DID(didString: $0.id) }
+                if !dids.isEmpty {
+                    do {
+                        let statuses = try await apiClient.getOptInStatus(dids: dids)
+                        for status in statuses {
+                            participantOptInStatus[status.did] = status.optedIn
+                        }
+                        logger.info("Checked MLS opt-in status for \(statuses.count) users")
+                    } catch {
+                        logger.warning("Failed to check MLS opt-in status: \(error.localizedDescription)")
+                        // Continue without opt-in status - will show warning on selection
+                    }
+                }
+                
+                self.searchResults = results
             } else {
-                searchResults = []
+                self.searchResults = []
             }
-        } else {
-            searchResults = []
+        } catch {
+            logger.error("Search failed: \(error.localizedDescription)")
+            self.searchResults = []
         }
 
         isSearching = false

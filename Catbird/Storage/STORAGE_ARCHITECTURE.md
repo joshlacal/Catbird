@@ -368,7 +368,7 @@ public enum KeychainError: LocalizedError {
 
 ### Logging:
 
-Uses OSLog with subsystem `com.catbird.mls`:
+Uses OSLog with subsystem `blue.catbird.mls`:
 - Category: `MLSStorage` for Core Data operations
 - Category: `MLSKeychainManager` for Keychain operations
 

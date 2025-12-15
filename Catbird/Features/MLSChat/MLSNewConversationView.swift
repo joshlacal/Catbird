@@ -15,6 +15,8 @@ struct MLSNewConversationView: View {
     @State private var conversationName = ""
     @State private var searchText = ""
     @State private var selectedParticipants: Set<String> = []
+    @State private var selectionOrder: [String] = []
+    @State private var selectedParticipantDetails: [String: MLSParticipantViewModel] = [:]
     @State private var isCreatingConversation = false
     @State private var creationProgress: String = ""
     @State private var showingError = false
@@ -22,8 +24,17 @@ struct MLSNewConversationView: View {
     @State private var searchResults: [MLSParticipantViewModel] = []
     @State private var isSearching = false
     @State private var currentStep: CreationStep = .selectParticipants
+    @State private var isSearchPresented = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var participantOptInStatus: [String: Bool] = [:]  // Track which participants have opted into MLS
+    let onConversationCreated: (@Sendable () async -> Void)?
     
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSNewConversation")
+    private let searchDebounceInterval: Duration = .milliseconds(300)
+    
+    init(onConversationCreated: (@Sendable () async -> Void)? = nil) {
+        self.onConversationCreated = onConversationCreated
+    }
     
     enum CreationStep {
         case selectParticipants
@@ -46,6 +57,14 @@ struct MLSNewConversationView: View {
             }
         }
     }
+
+    private var orderedSelectedParticipants: [MLSParticipantViewModel] {
+        selectionOrder.compactMap { selectedParticipantDetails[$0] }
+    }
+    
+    private var hasSelection: Bool {
+        !orderedSelectedParticipants.isEmpty
+    }
     
     var body: some View {
         NavigationStack {
@@ -58,7 +77,6 @@ struct MLSNewConversationView: View {
             }
             .navigationTitle(currentStep.title)
             .navigationBarTitleDisplayMode(.inline)
-            .themedNavigationBar(appState.themeManager)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -77,6 +95,20 @@ struct MLSNewConversationView: View {
                 if let errorMessage = errorMessage {
                     Text(errorMessage)
                 }
+            }
+        }
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+        .searchable(
+            text: $searchText,
+            isPresented: $isSearchPresented,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search by name or handle"
+        )
+        .onAppear {
+            // Delay search bar presentation to avoid layout loop on appear
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isSearchPresented = true
             }
         }
     }
@@ -109,7 +141,7 @@ struct MLSNewConversationView: View {
             )
             
             // Selected participants chips
-            if !selectedParticipants.isEmpty {
+            if hasSelection {
                 selectedParticipantsChips
             }
             
@@ -122,11 +154,19 @@ struct MLSNewConversationView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .searchable(text: $searchText, prompt: "Search by name or handle")
             .onChange(of: searchText) { _, newValue in
-                Task {
-                    await searchParticipants(query: newValue)
+                searchTask?.cancel()
+                searchTask = Task {
+                    do {
+                        try await Task.sleep(for: searchDebounceInterval)
+                        await searchParticipants(query: newValue)
+                    } catch {
+                        // Task cancelled - ignore
+                    }
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                selectionActionBar
             }
         }
     }
@@ -164,21 +204,21 @@ struct MLSNewConversationView: View {
                 }
                 
                 Section {
-                    HStack {
-                        Image(systemName: "person.3.fill")
-                            .foregroundColor(.secondary)
-                        Text("\(selectedParticipants.count) participant\(selectedParticipants.count == 1 ? "" : "s")")
-                            .designBody()
-                        Spacer()
-                        Button("Edit") {
-                            withAnimation {
-                                currentStep = .selectParticipants
-                            }
+                    SelectedParticipantsSummaryList(participants: orderedSelectedParticipants)
+                        .padding(.vertical, DesignTokens.Spacing.sm)
+                    Button {
+                        withAnimation(.spring(response: 0.25)) {
+                            currentStep = .selectParticipants
                         }
-                        .designCaption()
+                    } label: {
+                        Label("Edit Selection", systemImage: "slider.horizontal.3")
+                            .fontWeight(.semibold)
                     }
                 } header: {
                     Text("Participants")
+                        .designCaption()
+                } footer: {
+                    Text("Everyone listed will join this secure group once it is created.")
                         .designCaption()
                 }
                 
@@ -186,7 +226,7 @@ struct MLSNewConversationView: View {
                     encryptionDetailRow(
                         icon: "lock.shield.fill",
                         title: "MLS Protocol",
-                        detail: "Military-grade encryption"
+                        detail: "RFC 9420 standard"
                     )
                     encryptionDetailRow(
                         icon: "key.fill",
@@ -202,11 +242,50 @@ struct MLSNewConversationView: View {
                     Label("Security Features", systemImage: "checkmark.shield")
                         .designCaption()
                 } footer: {
-                    Text("Your messages are encrypted end-to-end using the MLS protocol (RFC 9420). Only group members can decrypt and read messages.")
+                    Text("Your messages are encrypted end-to-end using the MLS protocol. Only group members can decrypt and read messages.")
                         .designCaption()
                 }
             }
             .listStyle(.insetGrouped)
+        }
+    }
+    
+    @ViewBuilder
+    private var selectionActionBar: some View {
+        if currentStep == .selectParticipants {
+            VStack(spacing: DesignTokens.Spacing.sm) {
+                HStack {
+                    if hasSelection {
+                        Label("\(selectedParticipants.count) selected", systemImage: "person.3")
+                            .designCaption()
+                            .foregroundColor(.secondary)
+                    } else {
+                        Label("Select at least one person", systemImage: "person.badge.plus")
+                            .designCaption()
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                
+                Button {
+                    withAnimation(.spring(response: 0.25)) {
+                        currentStep = .configure
+                    }
+                } label: {
+                    Text(hasSelection ? "Continue (\(selectedParticipants.count))" : "Continue")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!hasSelection)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, DesignTokens.Spacing.base)
+            .background(.ultraThinMaterial)
+            .overlay(alignment: .top) {
+                Divider()
+            }
         }
     }
     
@@ -309,25 +388,40 @@ struct MLSNewConversationView: View {
     
     @ViewBuilder
     private var selectedParticipantsChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                ForEach(selectedParticipants.sorted(), id: \.self) { participantId in
-                    if let participant = findParticipant(by: participantId) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack {
+                Label("Selected (\(selectedParticipants.count))", systemImage: "person.fill.checkmark")
+                    .designCaption()
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Clear") {
+                    withAnimation(.spring(response: 0.3)) {
+                        clearSelectedParticipants()
+                    }
+                }
+                .designCaption()
+                .disabled(selectedParticipants.isEmpty)
+            }
+            .padding(.horizontal)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    ForEach(orderedSelectedParticipants, id: \.id) { participant in
                         ParticipantChip(participant: participant) {
                             withAnimation(.spring(response: 0.3)) {
-                                _ = selectedParticipants.remove(participantId)
+                                removeParticipant(participant)
                             }
                         }
                     }
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
         }
         .background(
-            Color.secondary
-                .opacity(0.05)
+            Color.secondary.opacity(0.05)
         )
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
     }
     
     @ViewBuilder
@@ -361,18 +455,30 @@ struct MLSNewConversationView: View {
                 )
             } else {
                 ForEach(searchResults, id: \.id) { participant in
+                    let isOptedIn = participantOptInStatus[participant.id] ?? false
                     ParticipantRow(
                         participant: participant,
-                        isSelected: selectedParticipants.contains(participant.id)
+                        isSelected: selectedParticipants.contains(participant.id),
+                        isMLSAvailable: isOptedIn
                     ) {
-                        toggleParticipant(participant)
+                        if isOptedIn {
+                            toggleParticipant(participant)
+                        }
                     }
+                    .disabled(!isOptedIn)
+                    .opacity(isOptedIn ? 1.0 : 0.6)
                 }
             }
         } header: {
             if !searchResults.isEmpty {
                 Text("Search Results")
                     .designCaption()
+            }
+        } footer: {
+            if !searchResults.isEmpty && searchResults.contains(where: { participantOptInStatus[$0.id] == false }) {
+                Text("Users without the lock icon haven't enabled Catbird Groups yet.")
+                    .designCaption()
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -442,20 +548,37 @@ struct MLSNewConversationView: View {
     
     // MARK: - Helper Functions
     
-    private func findParticipant(by id: String) -> MLSParticipantViewModel? {
-        searchResults.first { $0.id == id }
-    }
-    
     private func toggleParticipant(_ participant: MLSParticipantViewModel) {
         withAnimation(.spring(response: 0.3)) {
             if selectedParticipants.contains(participant.id) {
-                selectedParticipants.remove(participant.id)
+                removeParticipant(participant)
             } else {
-                selectedParticipants.insert(participant.id)
+                addParticipant(participant)
             }
         }
     }
     
+    private func addParticipant(_ participant: MLSParticipantViewModel) {
+        selectedParticipants.insert(participant.id)
+        selectedParticipantDetails[participant.id] = participant
+        if !selectionOrder.contains(participant.id) {
+            selectionOrder.append(participant.id)
+        }
+    }
+    
+    private func removeParticipant(_ participant: MLSParticipantViewModel) {
+        selectedParticipants.remove(participant.id)
+        selectedParticipantDetails.removeValue(forKey: participant.id)
+        selectionOrder.removeAll { $0 == participant.id }
+    }
+    
+    private func clearSelectedParticipants() {
+        selectedParticipants.removeAll()
+        selectionOrder.removeAll()
+        selectedParticipantDetails.removeAll()
+    }
+    
+    @MainActor
     private func searchParticipants(query: String) async {
         guard !query.isEmpty else {
             searchResults = []
@@ -468,7 +591,7 @@ struct MLSNewConversationView: View {
         do {
             logger.info("Searching for participants: \(query)")
             
-             let client = appState.client 
+             let client = appState.client
             let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 20)
             let (code, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
             
@@ -478,7 +601,8 @@ struct MLSNewConversationView: View {
                 return
             }
             
-            searchResults = actors.map { actor in
+            // Map actors to view models
+            var results = actors.map { actor in
                 MLSParticipantViewModel(
                     id: actor.did.description,
                     handle: actor.handle.description,
@@ -487,11 +611,35 @@ struct MLSNewConversationView: View {
                 )
             }
             
+            // Check MLS opt-in status for all search results
+            if let apiClient = await appState.getMLSAPIClient() {
+                let dids = results.compactMap { try? DID(didString: $0.id) }
+                if !dids.isEmpty {
+                    do {
+                        let statuses = try await apiClient.getOptInStatus(dids: dids)
+                        for status in statuses {
+                            participantOptInStatus[status.did] = status.optedIn
+                        }
+                        logger.info("Checked MLS opt-in status for \(statuses.count) users")
+                    } catch {
+                        logger.warning("Failed to check MLS opt-in status: \(error.localizedDescription)")
+                        // Continue without opt-in status - will show warning on selection
+                    }
+                }
+            }
+            
+            searchResults = results
+            
+            for participant in searchResults where selectedParticipants.contains(participant.id) {
+                selectedParticipantDetails[participant.id] = participant
+            }
+            
         } catch {
             logger.error("Failed to search participants: \(error.localizedDescription)")
         }
     }
     
+    @MainActor
     private func createMLSConversation() async {
         guard !selectedParticipants.isEmpty else { return }
         guard let database = appState.mlsDatabase,
@@ -532,6 +680,9 @@ struct MLSNewConversationView: View {
             
             // Reload conversations
             await appState.reloadMLSConversations()
+            if let onConversationCreated {
+                await onConversationCreated()
+            }
             
             logger.info("Successfully created MLS conversation")
             dismiss()
@@ -552,36 +703,68 @@ struct MLSNewConversationView: View {
 struct ParticipantRow: View {
     let participant: MLSParticipantViewModel
     let isSelected: Bool
+    var isMLSAvailable: Bool = true  // Default to true for backward compatibility
     let onTap: () -> Void
     
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: DesignTokens.Spacing.base) {
-                AsyncProfileImage(
-                    url: participant.avatarURL,
-                    size: DesignTokens.Size.avatarMD
-                )
+                ZStack(alignment: .bottomTrailing) {
+                    AsyncProfileImage(
+                        url: participant.avatarURL,
+                        size: DesignTokens.Size.avatarMD
+                    )
+                    
+                    // MLS availability indicator
+                    if isMLSAvailable {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.green)
+                            .background(
+                                Circle()
+                                    .fill(Color(.systemBackground))
+                                    .frame(width: 16, height: 16)
+                            )
+                            .offset(x: 2, y: 2)
+                    }
+                }
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    if let displayName = participant.displayName {
-                        Text(displayName)
-                            .designCallout()
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if let displayName = participant.displayName {
+                            Text(displayName)
+                                .designCallout()
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                        }
                     }
                     
-                    Text("@\(participant.handle)")
-                        .designCaption()
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text("@\(participant.handle)")
+                            .designCaption()
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                        
+                        if !isMLSAvailable {
+                            Text("• Not available")
+                                .designCaption()
+                                .foregroundColor(.orange)
+                        }
+                    }
                 }
                 
                 Spacer()
                 
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 24))
-                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.3))
-                    .animation(.spring(response: 0.3), value: isSelected)
+                if isMLSAvailable {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 24))
+                        .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.3))
+                        .animation(.spring(response: 0.3), value: isSelected)
+                } else {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 24))
+                        .foregroundColor(.secondary.opacity(0.3))
+                }
             }
             .contentShape(Rectangle())
         }
@@ -614,6 +797,41 @@ struct ParticipantChip: View {
         .padding(.vertical, 6)
         .background(Color.secondary.opacity(0.15))
         .cornerRadius(20)
+    }
+}
+
+struct SelectedParticipantsSummaryList: View {
+    let participants: [MLSParticipantViewModel]
+    
+    var body: some View {
+        if participants.isEmpty {
+            Text("No participants selected")
+                .designCaption()
+                .foregroundColor(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                ForEach(participants, id: \.id) { participant in
+                    HStack(spacing: DesignTokens.Spacing.base) {
+                        AsyncProfileImage(
+                            url: participant.avatarURL,
+                            size: DesignTokens.Size.avatarSM
+                        )
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(participant.displayName ?? participant.handle)
+                                .designCallout()
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            Text("@\(participant.handle)")
+                                .designCaption()
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+        }
     }
 }
 

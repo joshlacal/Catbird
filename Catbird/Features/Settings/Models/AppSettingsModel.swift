@@ -9,7 +9,7 @@ final class AppSettingsModel {
     static let sharedId = "app_settings"
     
     // Unique identifier for single instance
-    var id: String = "app_settings"
+    @Attribute(.unique) var id: String = "app_settings"
     
     // MARK: - Stored Properties
     

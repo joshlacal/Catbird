@@ -3,6 +3,7 @@
 # Verify MLS plaintext caching implementation
 
 set -e
+set -x
 
 echo "🔍 Verifying MLS Plaintext Caching Implementation..."
 echo ""
@@ -22,10 +23,10 @@ check() {
     
     if eval "$command" > /dev/null 2>&1; then
         echo -e "${GREEN}✓${NC} $description"
-        ((PASS++))
+        PASS=$((PASS+1))
     else
         echo -e "${RED}✗${NC} $description"
-        ((FAIL++))
+        FAIL=$((FAIL+1))
     fi
 }
 
@@ -33,13 +34,10 @@ echo "📋 Core Data Encryption Configuration"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 check "FileProtectionType.complete configured" \
-    "grep -q 'FileProtectionType.complete' Catbird/Storage/MLSStorage.swift"
+    "grep -q 'FileProtectionType.complete' Catbird/Services/MLS/SQLCipher/Core/MLSGRDBManager.swift"
 
 check "Backup exclusion enabled" \
-    "grep -q 'isExcludedFromBackup.*true' Catbird/Storage/MLSStorage.swift"
-
-check "Persistent history tracking enabled" \
-    "grep -q 'NSPersistentHistoryTrackingKey' Catbird/Storage/MLSStorage.swift"
+    "grep -q 'isExcludedFromBackup.*true' Catbird/Services/MLS/SQLCipher/Core/MLSGRDBManager.swift"
 
 echo ""
 echo "💾 Plaintext Caching Logic"
@@ -51,17 +49,14 @@ check "savePlaintextForMessage implemented" \
 check "fetchPlaintextForMessage implemented" \
     "grep -q 'func fetchPlaintextForMessage' Catbird/Storage/MLSStorage.swift"
 
-check "Plaintext cached after server message decryption" \
-    "grep -q 'storage.savePlaintextForMessage' Catbird/Features/MLSChat/MLSConversationDetailView.swift | grep -A 5 'loadMessages'"
-
-check "Plaintext cached after WebSocket message decryption" \
-    "grep -q 'storage.savePlaintextForMessage' Catbird/Features/MLSChat/MLSConversationDetailView.swift | grep -A 5 'handleWebSocketEvent'"
+check "Plaintext cached during message processing" \
+    "grep -q 'storage.savePlaintextForMessage' Catbird/Services/MLS/MLSConversationManager.swift"
 
 check "Cache checked before decryption (server messages)" \
-    "grep -q 'fetchPlaintextForMessage' Catbird/Features/MLSChat/MLSConversationDetailView.swift | grep -B 5 'loadMessages'"
+    "grep -q 'fetchPlaintextForMessage' Catbird/Features/MLSChat/MLSConversationDetailView.swift"
 
 check "Cache checked before decryption (WebSocket messages)" \
-    "grep -q 'fetchPlaintextForMessage' Catbird/Features/MLSChat/MLSConversationDetailView.swift | grep -B 5 'handleWebSocketEvent'"
+    "grep -q 'fetchPlaintextForMessage' Catbird/Features/MLSChat/MLSConversationDetailView.swift"
 
 echo ""
 echo "📚 Documentation"
@@ -74,7 +69,7 @@ check "Implementation summary exists" \
     "test -f docs/session-notes/PLAINTEXT_CACHING_IMPLEMENTATION.md"
 
 check "Inline documentation in savePlaintextForMessage" \
-    "grep -A 10 'func savePlaintextForMessage' Catbird/Storage/MLSStorage.swift | grep -q 'SECURITY MODEL'"
+    "grep -B 20 'func savePlaintextForMessage' Catbird/Storage/MLSStorage.swift | grep -q 'SECURITY MODEL'"
 
 check "No deprecated annotations on caching functions" \
     "! grep -A 5 'func savePlaintextForMessage' Catbird/Storage/MLSStorage.swift | grep -q '@available.*deprecated'"
@@ -84,13 +79,13 @@ echo "🔐 Security Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 check "Multi-account isolation (currentUserDID filtering)" \
-    "grep -q 'currentUserDID == %@' Catbird/Storage/MLSStorage.swift"
+    "grep -q 'currentUserDID == currentUserDID' Catbird/Storage/MLSStorage.swift"
 
 check "Logging includes security context" \
-    "grep -q '💾 Caching decrypted plaintext' Catbird/Storage/MLSStorage.swift"
+    "grep -q '💾 Caching plaintext:' Catbird/Storage/MLSStorage.swift"
 
-check "Core Data model has plaintext attribute" \
-    "grep -q 'attribute name=\"plaintext\"' Catbird/Storage/MLS.xcdatamodeld/MLS.xcdatamodel/contents"
+check "GRDB model has plaintext attribute" \
+    "grep -q 't.column(\"plaintext\", .text)' Catbird/Services/MLS/SQLCipher/Core/MLSGRDBManager.swift"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

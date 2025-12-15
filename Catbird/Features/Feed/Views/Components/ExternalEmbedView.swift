@@ -11,7 +11,8 @@ struct ExternalEmbedView: View {
     @State private var isBlurred: Bool
     @State private var userOverrideBlock = false
     @State private var userTappedToShowEmbed = false
-    @Environment(AppState.self) private var appState
+    @Environment(\.appSettings) private var appSettings
+    @ObservationIgnored @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
     @State private var videoModel: VideoModel?
     @State private var gifError: String?
@@ -23,6 +24,10 @@ struct ExternalEmbedView: View {
         self.shouldBlur = shouldBlur
         self._isBlurred = State(initialValue: shouldBlur)
         self.postID = postID
+    }
+
+    private var destinationURL: URL? {
+        external.uri.url ?? URL(string: external.uri.uriString())
     }
     
     var body: some View {
@@ -53,8 +58,8 @@ struct ExternalEmbedView: View {
             videoPlayerContent(videoModel: videoModel)
         } else if let gifError = gifError {
             gifErrorContent(error: gifError)
-        } else if let url = URL(string: external.uri.uriString()),
-                  appState.appSettings.useWebViewEmbeds,
+        } else if let url = destinationURL,
+                  appSettings.useWebViewEmbeds,
                   userTappedToShowEmbed,
                   let embedType = ExternalMediaType.detect(from: url),
                   shouldShowWebViewEmbed(for: embedType) {
@@ -107,10 +112,14 @@ struct ExternalEmbedView: View {
     
     @ViewBuilder
     private func linkCardContent() -> some View {
-        let canShowEmbed = appState.appSettings.useWebViewEmbeds &&
-                          URL(string: external.uri.uriString()) != nil &&
-                          ExternalMediaType.detect(from: URL(string: external.uri.uriString())!) != nil &&
-                          shouldShowWebViewEmbed(for: ExternalMediaType.detect(from: URL(string: external.uri.uriString())!)!)
+        let canShowEmbed: Bool = {
+            if let url = destinationURL,
+               let embedType = ExternalMediaType.detect(from: url) {
+                return appSettings.useWebViewEmbeds && shouldShowWebViewEmbed(for: embedType)
+            } else {
+                return false
+            }
+        }()
 
         // ContentLabelManager handles all blur logic now - no need for shouldBlur checks
         VStack(alignment: .leading, spacing: 3) {
@@ -124,18 +133,9 @@ struct ExternalEmbedView: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.gray.opacity(0.3), lineWidth: 1)
         )
+        .contentShape(Rectangle())
         .onTapGesture {
-            if canShowEmbed {
-                // Show webview embed
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    userTappedToShowEmbed = true
-                }
-            } else {
-                // Open URL in browser
-                if let url = URL(string: external.uri.uriString()) {
-                    _ = appState.urlHandler.handle(url)
-                }
-            }
+            handleCardTap(canShowEmbed: canShowEmbed)
         }
     }
     
@@ -228,14 +228,14 @@ struct ExternalEmbedView: View {
     
 
     private func setupVideoIfNeeded() {
-        guard let url = URL(string: external.uri.uriString()) else {
+        guard let url = destinationURL else {
             logger.debug("❌ Failed to create URL from external URI: \(external.uri.uriString())")
             return
         }
         
         logger.debug("🔍 Checking URL for GIF conversion: \(url.absoluteString)")
         logger.debug("🔍 URL host: \(url.host ?? "nil")")
-        logger.debug("🔍 App settings - allowGiphy: \(appState.appSettings.allowGiphy), allowTenor: \(appState.appSettings.allowTenor), autoplayVideos: \(appState.appSettings.autoplayVideos)")
+        logger.debug("🔍 App settings - allowGiphy: \(appSettings.allowGiphy), allowTenor: \(appSettings.allowTenor), autoplayVideos: \(appSettings.autoplayVideos)")
         
         // Handle Tenor GIFs
         if url.host == "media.tenor.com" {
@@ -533,8 +533,8 @@ struct ExternalEmbedView: View {
             }
 
             // Show subtle indicator if embed is available
-            if appState.appSettings.useWebViewEmbeds,
-               let url = URL(string: external.uri.uriString()),
+            if appSettings.useWebViewEmbeds,
+               let url = destinationURL,
                let embedType = ExternalMediaType.detect(from: url),
                shouldShowWebViewEmbed(for: embedType) {
                 HStack(spacing: 4) {
@@ -580,9 +580,21 @@ struct ExternalEmbedView: View {
             withAnimation {
                 isBlurred = false
             }
-        } else if let url = URL(string: external.uri.uriString()) {
+        } else if let url = destinationURL {
             // Handle URL tap when content is visible
             _ = appState.urlHandler.handle(url)
+        }
+    }
+
+    private func handleCardTap(canShowEmbed: Bool) {
+        if canShowEmbed {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                userTappedToShowEmbed = true
+            }
+        } else if let url = destinationURL {
+            _ = appState.urlHandler.handle(url)
+        } else {
+            logger.error("❌ External embed missing valid URL for card tap")
         }
     }
     
@@ -596,25 +608,25 @@ struct ExternalEmbedView: View {
         case let h where h.contains("youtube.com") || h.contains("youtu.be"):
             // Check for YouTube Shorts specifically
             if uri.uriString().contains("/shorts/") {
-                return appState.appSettings.allowYouTubeShorts
+                return appSettings.allowYouTubeShorts
             }
-            return appState.appSettings.allowYouTube
+            return appSettings.allowYouTube
         case let h where h.contains("vimeo.com"):
-            return appState.appSettings.allowVimeo
+            return appSettings.allowVimeo
         case let h where h.contains("twitch.tv"):
-            return appState.appSettings.allowTwitch
+            return appSettings.allowTwitch
         case let h where h.contains("giphy.com"):
-            return appState.appSettings.allowGiphy
+            return appSettings.allowGiphy
         case let h where h.contains("tenor.com"):
-            return appState.appSettings.allowTenor
+            return appSettings.allowTenor
         case let h where h.contains("spotify.com"):
-            return appState.appSettings.allowSpotify
+            return appSettings.allowSpotify
         case let h where h.contains("music.apple.com"):
-            return appState.appSettings.allowAppleMusic
+            return appSettings.allowAppleMusic
         case let h where h.contains("soundcloud.com"):
-            return appState.appSettings.allowSoundCloud
+            return appSettings.allowSoundCloud
         case let h where h.contains("flickr.com"):
-            return appState.appSettings.allowFlickr
+            return appSettings.allowFlickr
         default:
             return true // Allow unknown external sites by default
         }
@@ -624,25 +636,25 @@ struct ExternalEmbedView: View {
     private func shouldShowWebViewEmbed(for embedType: ExternalMediaType) -> Bool {
         switch embedType {
         case .youtube:
-            return appState.appSettings.allowYouTube
+            return appSettings.allowYouTube
         case .youtubeShorts:
-            return appState.appSettings.allowYouTubeShorts
+            return appSettings.allowYouTubeShorts
         case .vimeo:
-            return appState.appSettings.allowVimeo
+            return appSettings.allowVimeo
         case .twitch:
-            return appState.appSettings.allowTwitch
+            return appSettings.allowTwitch
         case .spotify:
-            return appState.appSettings.allowSpotify
+            return appSettings.allowSpotify
         case .appleMusic:
-            return appState.appSettings.allowAppleMusic
+            return appSettings.allowAppleMusic
         case .soundcloud:
-            return appState.appSettings.allowSoundCloud
+            return appSettings.allowSoundCloud
         case .giphy:
-            return appState.appSettings.allowGiphy
+            return appSettings.allowGiphy
         case .tenor:
-            return appState.appSettings.allowTenor
+            return appSettings.allowTenor
         case .flickr:
-            return appState.appSettings.allowFlickr
+            return appSettings.allowFlickr
         }
     }
     
@@ -679,7 +691,7 @@ struct ExternalEmbedView: View {
                 Spacer()
                 
                 Button("Open Link") {
-                    if let url = URL(string: external.uri.uriString()) {
+                    if let url = destinationURL {
                         _ = appState.urlHandler.handle(url)
                     }
                 }

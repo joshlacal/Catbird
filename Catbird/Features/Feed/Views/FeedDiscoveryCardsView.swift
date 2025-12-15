@@ -550,7 +550,7 @@ struct FeedDiscoveryCard: View {
       NavigationStack {
         if let feedUri = try? ATProtocolURI(uriString: feed.uri.uriString()) {
             FeedScreen(path: $path, uri: feedUri)
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
             .navigationTitle(feed.displayName)
     #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
