@@ -366,8 +366,9 @@ extension PostComposerViewUIKit {
               }
               
               if vm.outlineTags.count < 10 {
-                Button(action: { 
+                Button(action: {
                   pcThreadLogger.info("PostComposerThread: Add tag button tapped in active entry")
+                  showingOutlineTagsEditor = true
                 }) {
                   Image(systemName: "plus.circle")
                     .font(.system(size: 12))

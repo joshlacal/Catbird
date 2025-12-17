@@ -132,7 +132,11 @@ struct MLSChatRequestsView: View {
       requests = response.requests.sorted { $0.createdAt.date > $1.createdAt.date }
 
       let senderDIDs = Array(Set(requests.map(\.senderDid)))
-      senderProfiles = await appState.mlsProfileEnricher.ensureProfiles(for: senderDIDs, using: appState.client)
+      senderProfiles = await appState.mlsProfileEnricher.ensureProfiles(
+        for: senderDIDs,
+        using: appState.client,
+        currentUserDID: appState.userDID
+      )
 
     } catch {
       logger.error("Failed to load chat requests: \(error.localizedDescription)")

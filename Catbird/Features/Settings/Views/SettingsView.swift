@@ -226,6 +226,15 @@ struct SettingsView: View {
             }
           }
 
+          NavigationLink(destination: DiagnosticsSettingsView()) {
+            Label {
+              Text("Diagnostics")
+            } icon: {
+              Image(systemName: "stethoscope")
+                .foregroundStyle(.gray)
+            }
+          }
+
           if #available(iOS 18.0, macOS 13.0, *) {
             NavigationLink(destination: DeviceManagementView()) {
               Label {

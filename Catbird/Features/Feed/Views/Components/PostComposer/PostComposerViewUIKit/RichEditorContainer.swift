@@ -73,7 +73,11 @@ struct RichEditorContainer: View {
         // Allow height to grow dynamically, with a reasonable minimum
         let clamped = max(newHeight, 140)
         if abs(clamped - editorHeight) > 1 {
-          editorHeight = clamped
+          DispatchQueue.main.async {
+            if abs(clamped - editorHeight) > 1 {
+              editorHeight = clamped
+            }
+          }
         }
       }
     )

@@ -148,6 +148,8 @@ final class AppStateManager {
     // Set transition flag to prevent operations during switch
     isTransitioning = true
     defer { isTransitioning = false }
+
+    let wasAuthenticated = lifecycle.userDID != nil
     
     // OOM FIX: Close the previous account's database BEFORE switching
     // This prevents the race condition where two databases are open simultaneously
@@ -163,7 +165,12 @@ final class AppStateManager {
       // Ensure the database is fully closed and checkpointed
       let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
       if !closeSuccess {
-        logger.warning("⚠️ Previous database close timed out - proceeding anyway")
+        logger.critical("🚨 Previous database drain failed - aborting account transition to prevent corruption")
+        authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
+          title: "Restart Required",
+          message: "Catbird couldn’t safely close the encrypted database for the previous account. Please restart the app and try switching again."
+        )
+        return
       }
     }
 
@@ -175,7 +182,10 @@ final class AppStateManager {
       logger.info("✅ AuthManager switched successfully")
     } catch {
       logger.error("❌ Failed to switch AuthManager: \(error.localizedDescription)")
-      lifecycle = .unauthenticated
+      // If we were mid-account-switch, keep the current authenticated lifecycle instead of logging out.
+      if !wasAuthenticated {
+        lifecycle = .unauthenticated
+      }
       return
     }
 
@@ -353,8 +363,10 @@ final class AppStateManager {
       logger.info("MLS: 🛑 Preparing to shutdown MLS for previous user \(oldUserDID)")
       
       #if os(iOS)
-        // Mark old user as under storage maintenance to block any new DB access
+        // Mark old user as under storage maintenance to block any new DB access.
+        // Keep this flag set for the full duration of the switch (including transitionToAuthenticated).
         beginStorageMaintenance(for: oldUserDID)
+        defer { endStorageMaintenance(for: oldUserDID) }
         
         // Get the old AppState and properly shutdown its MLS resources
         if let oldState = authenticatedStates[oldUserDID] {
@@ -362,9 +374,6 @@ final class AppStateManager {
           await oldState.prepareMLSStorageReset()
           logger.info("MLS: ✅ Previous account MLS shutdown complete")
         }
-        
-        // Clear maintenance flag after shutdown is complete
-        endStorageMaintenance(for: oldUserDID)
       #endif
       
       logger.info("MLS: SQLite storage for previous user \(oldUserDID) is automatically persisted")

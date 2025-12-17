@@ -477,7 +477,11 @@ struct MLSMemberManagementView: View {
         let dids = members.map { $0.did.description }
         logger.info("🔍 Enriching profiles for \(dids.count) members")
 
-        let profiles = await appState.mlsProfileEnricher.ensureProfiles(for: dids, using: client)
+        let profiles = await appState.mlsProfileEnricher.ensureProfiles(
+          for: dids,
+          using: client,
+          currentUserDID: appState.userDID
+        )
 
         await MainActor.run {
             enrichedProfiles = profiles

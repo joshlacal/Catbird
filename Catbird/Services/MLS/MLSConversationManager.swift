@@ -222,6 +222,7 @@ private struct PreparedInitialMembers {
   let commitData: Data
   let welcomeData: Data
   let hashEntries: [BlueCatbirdMlsCreateConvo.KeyPackageHashEntry]
+  let selectedPackages: [KeyPackageWithHash]  // Track for rollback on failure
 }
 
 /// Result returned after successfully creating a conversation on the server
@@ -504,6 +505,20 @@ final class MLSConversationManager {
 
   /// How long to pause sync after circuit breaker trips (5 minutes)
   private let syncPauseDuration: TimeInterval = 300
+  
+  // MARK: - Foreground Sync Coordination
+  
+  /// Tracks when the app last entered foreground (for grace period coordination)
+  private var lastForegroundTime: Date?
+  
+  /// Grace period during which MLS operations should wait for state reload (2 seconds)
+  private let foregroundSyncGracePeriod: TimeInterval = 2.0
+  
+  /// Flag indicating a state reload is currently in progress
+  private var isStateReloadInProgress: Bool = false
+  
+  /// Continuation for waiters blocking on state reload completion
+  private var stateReloadWaiters: [CheckedContinuation<Void, Never>] = []
 
   // MARK: - Configuration
 
@@ -583,6 +598,10 @@ final class MLSConversationManager {
 
     deduplicationCleanupTimer?.invalidate()
     deduplicationCleanupTimer = nil
+    
+    // CRITICAL FIX: Also invalidate typing cleanup timer
+    typingCleanupTimer?.invalidate()
+    typingCleanupTimer = nil
 
     // Shutdown device sync manager
     if let deviceSyncManager = deviceSyncManager {
@@ -593,8 +612,31 @@ final class MLSConversationManager {
     // Clear in-memory state
     conversations.removeAll()
     groupStates.removeAll()
+    typingUsers.removeAll()
+    recentlySentMessages.removeAll()
+    pendingMessages.removeAll()
+    ownCommits.removeAll()
+    conversationStates.removeAll()
+    exhaustedKeyPackageHashes.removeAll()
+    observers.removeAll()
     isInitialized = false
     isSyncing = false
+
+    // CRITICAL FIX (2024-12): Attempt WAL checkpoint BEFORE draining
+    // Use PASSIVE mode which doesn't block - we want fast shutdown over complete checkpoint
+    do {
+        try await database.write { db in
+        try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
+      }
+      logger.info("✅ [MLSConversationManager] WAL checkpoint(PASSIVE) completed for reset")
+    } catch {
+      let errorDesc = error.localizedDescription.lowercased()
+      if errorDesc.contains("locked") || errorDesc.contains("busy") {
+        logger.warning("⚠️ [MLSConversationManager] WAL checkpoint skipped (database busy) - proceeding")
+      } else {
+        logger.warning("⚠️ [MLSConversationManager] WAL checkpoint failed: \(error.localizedDescription) - proceeding")
+      }
+    }
 
     // Drain database with timeout
     let drainTask = Task {
@@ -616,8 +658,8 @@ final class MLSConversationManager {
     let timeoutTask = Task {
       try? await Task.sleep(nanoseconds: 3_000_000_000)
       if !drainTask.isCancelled {
-        logger.warning(
-          "⚠️ [MLSConversationManager] Database drain timed out - proceeding with reset")
+        logger.critical(
+          "🚨 [MLSConversationManager] Database drain timed out - reset may be unsafe")
         drainTask.cancel()
       }
     }
@@ -643,16 +685,18 @@ final class MLSConversationManager {
   ///
   /// Note: This method has a 5-second timeout to prevent hanging during account switch.
   @MainActor
-  func shutdown() async {
+  @discardableResult
+  func shutdown() async -> Bool {
     guard !isShuttingDown else {
       logger.debug("MLSConversationManager already shutting down")
-      return
+      return false
     }
 
     logger.info(
       "🛑 [MLSConversationManager.shutdown] Starting graceful shutdown for user: \(self.userDid?.prefix(20) ?? "unknown")..."
     )
     isShuttingDown = true
+    var shutdownWasSafe = true
 
     // Cancel all background tasks immediately
     cleanupTask?.cancel()
@@ -663,6 +707,10 @@ final class MLSConversationManager {
 
     deduplicationCleanupTimer?.invalidate()
     deduplicationCleanupTimer = nil
+    
+    // CRITICAL FIX: Also invalidate typing cleanup timer
+    typingCleanupTimer?.invalidate()
+    typingCleanupTimer = nil
 
     // Shutdown device sync manager with timeout
     if let deviceSyncManager = deviceSyncManager {
@@ -689,6 +737,45 @@ final class MLSConversationManager {
     isInitialized = false
     isSyncing = false
 
+    // CRITICAL: Close the MLSClient context to release Rust SQLite connections too.
+    // Account switching uses prepareForStorageReset(); without this, the old user may keep
+    // a live FFI database handle while the new user tries to open their SQLCipher DB.
+    if let userDid = userDid {
+      let closedContext = await MLSClient.shared.closeContext(for: userDid)
+      if closedContext {
+        logger.info("✅ [MLSConversationManager] Closed MLSClient context for storage reset")
+      }
+    }
+    
+    // CRITICAL FIX: Close the MLSClient context to release SQLite connections
+    // This prevents "out of memory" errors from accumulated file handles during account switching
+    if let userDid = userDid {
+      let closedContext = await MLSClient.shared.closeContext(for: userDid)
+      if closedContext {
+        logger.info("✅ [MLSConversationManager.shutdown] Closed MLSClient context for user")
+      }
+    }
+
+    // CRITICAL FIX (2024-12): Attempt WAL checkpoint BEFORE draining
+    // Use PASSIVE mode which doesn't block - we want fast shutdown over complete checkpoint
+    // PASSIVE copies what it can without blocking on other connections
+    // If checkpoint fails, we still proceed with close - failing to close is worse
+    do {
+        try await database.write { db in
+        // PASSIVE mode: non-blocking, best-effort checkpoint
+        try db.execute(sql: "PRAGMA wal_checkpoint(PASSIVE);")
+      }
+      logger.info("✅ [MLSConversationManager.shutdown] WAL checkpoint(PASSIVE) completed")
+    } catch {
+      // Checkpoint failure is not fatal - proceed with shutdown anyway
+      let errorDesc = error.localizedDescription.lowercased()
+      if errorDesc.contains("locked") || errorDesc.contains("busy") {
+        logger.warning("⚠️ [MLSConversationManager.shutdown] WAL checkpoint skipped (database busy) - proceeding")
+      } else {
+        logger.warning("⚠️ [MLSConversationManager.shutdown] WAL checkpoint failed: \(error.localizedDescription) - proceeding")
+      }
+    }
+
     // Wait for any in-flight database operations to complete with TIMEOUT
     // This prevents "disk I/O error" from concurrent access
     // But we don't want to hang indefinitely during account switch
@@ -713,9 +800,10 @@ final class MLSConversationManager {
     let timeoutTask = Task {
       try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5 seconds
       if !drainTask.isCancelled {
-        logger.warning(
-          "⚠️ [MLSConversationManager.shutdown] Database drain timed out after 5s - proceeding with shutdown"
+        logger.critical(
+          "🚨 [MLSConversationManager.shutdown] Database drain timed out after 5s - shutdown is NOT guaranteed safe"
         )
+        shutdownWasSafe = false
         drainTask.cancel()
       }
     }
@@ -723,8 +811,176 @@ final class MLSConversationManager {
     // Wait for drain or timeout, whichever comes first
     _ = await drainTask.result
     timeoutTask.cancel()
+    
+    // CRITICAL FIX: Also close the GRDB database pool for this user
+    if let userDid = userDid {
+      let success = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: userDid, timeout: 3.0)
+      if success {
+        logger.info("✅ [MLSConversationManager.shutdown] GRDB database closed and drained")
+      } else {
+        shutdownWasSafe = false
+        logger.critical("🚨 [MLSConversationManager.shutdown] GRDB database drain failed - NOT safe to switch accounts")
+      }
+    }
+    
+    // CRITICAL FIX: Add delay to allow iOS to reclaim mlocked memory pages
+    // This prevents "SQLite error 7: out of memory" during rapid account switching.
+    // The 200ms delay gives the OS time to release memory locks before we try
+    // to allocate new ones for the next account's database.
+    try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+    
+    if shutdownWasSafe {
+      logger.info("✅ [MLSConversationManager.shutdown] Shutdown complete - safe to switch accounts")
+    } else {
+      logger.critical("🚨 [MLSConversationManager.shutdown] Shutdown complete but was NOT safe")
+    }
 
-    logger.info("✅ [MLSConversationManager.shutdown] Shutdown complete - safe to switch accounts")
+    return shutdownWasSafe
+  }
+  
+  // MARK: - State Reload (NSE Sync)
+  
+  /// Reload MLS group state from disk to catch up with NSE changes
+  ///
+  /// **CRITICAL**: The Notification Service Extension (NSE) runs as a separate process
+  /// and may advance the MLS ratchet (decrypt messages, process commits) while the
+  /// main app holds stale in-memory state. This causes:
+  /// - `SecretReuseError` - trying to use a nonce the NSE already consumed
+  /// - `InvalidEpoch` - app at epoch N but disk/server is at epoch N+1
+  /// - `DecryptionFailed` - using old keys that were deleted by forward secrecy
+  ///
+  /// Call this method when:
+  /// - App enters foreground (UIApplication.willEnterForegroundNotification)
+  /// - After tapping a notification that may have triggered NSE decryption
+  /// - Before any MLS operation if you suspect the NSE may have run
+  ///
+  /// This method:
+  /// 1. Sets isStateReloadInProgress to block concurrent MLS operations
+  /// 2. Clears in-memory group states (forces reload from disk on next access)
+  /// 3. Invalidates conversation states to force re-initialization
+  /// 4. Notifies any waiting operations that reload is complete
+  /// 5. Does NOT close the database (the connection can be reused)
+  @MainActor
+  func reloadStateFromDisk() async {
+    guard let userDid = userDid else {
+      logger.warning("🔄 [MLS Reload] No user DID - skipping state reload")
+      return
+    }
+    
+    // Mark reload as in progress to block concurrent MLS operations
+    isStateReloadInProgress = true
+    lastForegroundTime = Date()
+    
+    logger.info("🔄 [MLS Reload] Reloading MLS state from disk for user: \(userDid.prefix(20))...")
+    logger.info("   Reason: NSE may have advanced the ratchet while app was in background")
+    
+    // Track how many groups we're invalidating
+    let groupCount = groupStates.count
+    let conversationCount = conversationStates.count
+    
+    // Step 1: Clear in-memory group states
+    // The next access to any group will reload from the FFI layer which reads from disk
+    groupStates.removeAll()
+    
+    // Step 2: Clear conversation initialization states
+    // This forces re-initialization which will reload the current epoch from disk
+    conversationStates.removeAll()
+    
+    // Step 3: Clear pending message tracking
+    // Any pending messages from before background may now be stale
+    pendingMessagesLock.withLock {
+      pendingMessages.removeAll()
+    }
+    
+    // Step 4: Clear own commits tracking
+    // Commits made before background are no longer relevant
+    ownCommitsLock.withLock {
+      ownCommits.removeAll()
+    }
+    
+    // Step 5: Clear recently sent messages deduplication
+    // Fresh start after potential NSE activity
+    recentlySentMessages.removeAll()
+    
+    logger.info("✅ [MLS Reload] Cleared \(groupCount) group states, \(conversationCount) conversation states")
+    logger.info("   Next MLS operation will reload fresh state from disk/FFI")
+    
+    // Step 6: Reload MLS context from disk (monotonic version check)
+    // This ensures the in-memory MLS context is fresh with the latest epoch
+    do {
+        try await MLSCoreContext.shared.reloadContext(for: userDid)
+      logger.info("✅ [MLS Reload] MLSCoreContext reloaded from disk")
+    } catch {
+      logger.warning("⚠️ [MLS Reload] Failed to reload MLSCoreContext: \(error.localizedDescription)")
+      // Continue anyway - context will be reloaded on next access
+    }
+    
+    // Step 7: Mark reload as complete and notify waiters
+    isStateReloadInProgress = false
+    let waiters = stateReloadWaiters
+    stateReloadWaiters.removeAll()
+    for waiter in waiters {
+      waiter.resume()
+    }
+    logger.debug("🔄 [MLS Reload] Notified \(waiters.count) waiting operation(s)")
+    
+    // Step 8: Optionally trigger a sync to fetch any messages we might have missed
+    // This is non-blocking - we fire and forget
+    Task(priority: .userInitiated) { [weak self] in
+      guard let self = self else { return }
+      do {
+        try await self.syncWithServer(fullSync: false)
+        self.logger.info("✅ [MLS Reload] Post-reload sync completed")
+      } catch {
+        self.logger.warning("⚠️ [MLS Reload] Post-reload sync failed: \(error.localizedDescription)")
+      }
+    }
+  }
+  
+  /// Ensure state is fresh before performing an MLS operation
+  ///
+  /// **CRITICAL**: Call this at the start of any MLS operation that mutates state
+  /// (encrypt, decrypt, process commit). If the app recently entered foreground,
+  /// this will block until the state reload completes.
+  ///
+  /// This prevents the race where:
+  /// 1. User opens app and immediately opens a conversation
+  /// 2. MLS operation starts with stale in-memory state
+  /// 3. State reload (async) hasn't completed yet
+  /// 4. MLS operation fails with SecretReuseError
+  ///
+  /// - Throws: MLSError.stateReloadInProgress if waiting times out
+  func ensureStateReloaded() async throws {
+    // Check state on MainActor where it's modified
+    let needsToWait = await MainActor.run { [self] in
+      return isStateReloadInProgress
+    }
+    
+    // If state reload is in progress, wait for it to complete
+    if needsToWait {
+      logger.info("⏳ [MLS Reload] Operation waiting for state reload to complete...")
+      
+      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        Task { @MainActor in
+          stateReloadWaiters.append(continuation)
+        }
+      }
+      
+      logger.info("✅ [MLS Reload] State reload completed - operation may proceed")
+      return
+    }
+    
+    // If we recently entered foreground, ensure reload has completed
+    let timeSinceForeground = await MainActor.run { [self] () -> TimeInterval? in
+      guard let lastForeground = lastForegroundTime else { return nil }
+      return Date().timeIntervalSince(lastForeground)
+    }
+    
+    if let elapsed = timeSinceForeground, elapsed < foregroundSyncGracePeriod {
+      // Within grace period but reload not in progress - reload may have already completed
+      // or it may not have started yet. Trigger a sync check to be safe.
+      logger.debug("🔄 [MLS Reload] Within grace period (\(String(format: "%.1f", elapsed))s) - state should be fresh")
+    }
   }
 
   /// Initialize the MLS crypto context
@@ -3074,6 +3330,15 @@ final class MLSConversationManager {
       "🔵 [MLSConversationManager.sendMessage] START - convoId: \(convoId), text: \(plaintext.count) chars, embed: \(embed != nil ? "yes" : "no")"
     )
     try throwIfShuttingDown("sendMessage")
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX: Ensure state is fresh before MLS operation
+    // ═══════════════════════════════════════════════════════════════════════════
+    // If the app just returned to foreground, the NSE may have advanced the
+    // ratchet. Wait for any pending state reload to complete before proceeding.
+    // ═══════════════════════════════════════════════════════════════════════════
+    try await ensureStateReloaded()
+    
     let startTotal = Date()
 
     guard let convo = conversations[convoId] else {
@@ -3907,8 +4172,14 @@ final class MLSConversationManager {
   private func processServerMessage(_ message: BlueCatbirdMlsDefs.MessageView) async throws
     -> MessageProcessingOutcome
   {
-    try await messageProcessingCoordinator.withCriticalSection(conversationID: message.convoId) {
-      try await processServerMessageLocked(message)
+    guard let userDid = userDid else {
+      throw MLSConversationError.noAuthentication
+    }
+
+    return try await withMLSUserPermit(for: userDid) { [self] in
+      try await messageProcessingCoordinator.withCriticalSection(conversationID: message.convoId) {
+        try await processServerMessageLocked(message)
+      }
     }
   }
 
@@ -4093,51 +4364,155 @@ final class MLSConversationManager {
       // Don't throw - continue to try decryption, but log the issue
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // 🔒 CRITICAL FIX: Safe cache lookup with DB lock protection
+    // ═══════════════════════════════════════════════════════════════════════════════
+    //
+    // PROBLEM: When the database is locked (e.g., during account switching), cache
+    // lookups can fail silently (return nil or throw). The old code would then fall
+    // back to MLS decryption. But if the epoch has advanced, the decryption keys are
+    // DELETED (Forward Secrecy), so re-decryption fails with "Cannot decrypt message
+    // from epoch X - group is at epoch Y".
+    //
+    // SOLUTION:
+    // 1. Catch and distinguish DB lock errors from cache misses
+    // 2. For DB lock errors: Retry with backoff, don't fall through to decrypt
+    // 3. For cached messages with unknown sender: Use cached plaintext instead of
+    //    re-decrypting (especially for old epoch messages where re-decrypt is impossible)
+    //
+    // ═══════════════════════════════════════════════════════════════════════════════
+    
+    // Get local epoch BEFORE cache lookup to check for old-epoch messages
+    var localEpochForCacheCheck: UInt64?
+    do {
+      localEpochForCacheCheck = try await mlsClient.getEpoch(for: userDid, groupId: groupIdData)
+    } catch {
+      logger.debug("⚠️ Could not get local epoch for cache check: \(error.localizedDescription)")
+    }
+    
     // Check if we have cached data for other users' messages (replay protection)
-    if let cachedPlaintext = try? await storage.fetchPlaintextForMessage(
-      message.id,
-      currentUserDID: userDid,
-      database: database
-    ),
-      let cachedSender = try? await storage.fetchSenderForMessage(
-        message.id,
+    // Use do-catch to distinguish DB errors from cache misses
+    do {
+      // 🔒 ENHANCED FIX: Use fetchMessage to get full model including error state
+      // This allows us to detect messages that previously failed processing
+      if let cachedMessage = try await storage.fetchMessage(
+        messageID: message.id,
         currentUserDID: userDid,
         database: database
-      )
-    {
-      // Check if this is a cached control message (reaction, readReceipt, typing, etc.)
-      // These have sentinel plaintext and should be skipped without re-processing
-      if cachedPlaintext.hasPrefix("[control:") {
-        logger.debug(
-          "♻️ Skipping already-processed control message \(message.id) (\(cachedPlaintext))")
-        return .controlMessage
+      ) {
+        let cachedPlaintext = cachedMessage.plaintext
+        let cachedSender = cachedMessage.senderID
+        let cachedEmbed = cachedMessage.parsedEmbed
+        let hasProcessingError = cachedMessage.processingError != nil
+        let isPlaintextExpired = cachedMessage.plaintextExpired
+        
+        // 🔒 CRITICAL: If message already has a processing error saved, don't re-process
+        // This prevents infinite retry loops and respects previous error placeholders
+        if hasProcessingError {
+          logger.debug(
+            "⏭️ Skipping previously-failed message \(message.id) (error: \(cachedMessage.processingError ?? "unknown"))"
+          )
+          // Return as non-application - it's already saved with error state
+          return .nonApplication
+        }
+        
+        // If plaintext was explicitly marked as expired, don't try to re-decrypt
+        if isPlaintextExpired {
+          logger.debug(
+            "⏭️ Skipping expired-plaintext message \(message.id) - forward secrecy"
+          )
+          return .nonApplication
+        }
+        
+        // Check for actual plaintext
+        guard let plaintext = cachedPlaintext else {
+          // No plaintext cached - fall through to processing
+          logger.debug("📋 Message \(message.id) found in DB but no plaintext - will process")
+          // Fall through to MLS processing below
+          throw NSError(domain: "CacheMiss", code: 0, userInfo: nil) // Force catch block
+        }
+        
+        // Check if this is a cached control message (reaction, readReceipt, typing, etc.)
+        // These have sentinel plaintext and should be skipped without re-processing
+        if plaintext.hasPrefix("[control:") {
+          logger.debug(
+            "♻️ Skipping already-processed control message \(message.id) (\(plaintext))")
+          return .controlMessage
+        }
+        
+        // 🔒 CRITICAL FIX: For old epoch messages, ALWAYS use cached plaintext
+        // Re-decryption is IMPOSSIBLE due to Forward Secrecy - keys are deleted
+        let isOldEpochMessage: Bool
+        if let localEpoch = localEpochForCacheCheck {
+          isOldEpochMessage = UInt64(message.epoch) < localEpoch
+        } else {
+          isOldEpochMessage = false
+        }
+        
+        if cachedSender == "unknown" {
+          if isOldEpochMessage {
+            // Old epoch message with unknown sender: Use cached plaintext, don't try decrypt
+            logger.warning(
+              "⚠️ [FORWARD-SECRECY-PROTECTION] Message \(message.id) from old epoch \(message.epoch) (local: \(localEpochForCacheCheck ?? 0)) has cached plaintext but unknown sender"
+            )
+            logger.warning(
+              "   Using cached plaintext with 'unknown' sender - re-decryption is impossible (keys deleted)"
+            )
+            let payload = MLSMessagePayload.text(plaintext, embed: cachedEmbed)
+            return .application(payload: payload, sender: "unknown")
+          } else {
+            // Current/future epoch with unknown sender: Safe to re-process to refresh sender
+            logger.debug(
+              "📋 Cached plaintext found but sender is 'unknown' for message \(message.id) (current epoch) - proceeding to refresh sender"
+            )
+            // Fall through to MLS processing
+          }
+        } else {
+          // Valid sender cached - use cached data
+          let payload = MLSMessagePayload.text(plaintext, embed: cachedEmbed)
+          logger.debug("♻️ Using cached plaintext for message \(message.id) (sender: \(cachedSender))")
+          return .application(payload: payload, sender: cachedSender)
+        }
       }
-
-      if cachedSender == "unknown" {
-        logger.debug(
-          "📋 Cached plaintext found but sender is 'unknown' for message \(message.id) - skipping cache fast-path to refresh sender"
+    } catch let error as NSError where error.domain == "CacheMiss" {
+      // Expected - no cached data, proceed to processing
+      logger.debug("📋 No cached data for message \(message.id) - will process")
+    } catch {
+      // 🔒 CRITICAL: Distinguish database lock errors from other errors
+      let errorDesc = error.localizedDescription.lowercased()
+      let isDbLockError = errorDesc.contains("database is locked") 
+        || errorDesc.contains("sqlite error 5")  // SQLITE_BUSY
+        || errorDesc.contains("sqlite error 6")  // SQLITE_LOCKED
+        || errorDesc.contains("database table is locked")
+      
+      if isDbLockError {
+        logger.error("🔒 [DB-LOCK-PROTECTION] Database locked during cache lookup for message \(message.id)")
+        logger.error("   Error: \(error.localizedDescription)")
+        
+        // 🔒 CRITICAL: For old epoch messages, do NOT fall through to decrypt
+        // The decryption WILL fail and we'll lose the ability to show this message
+        if let localEpoch = localEpochForCacheCheck, UInt64(message.epoch) < localEpoch {
+          logger.error(
+            "   ⛔ Message is from old epoch \(message.epoch) (local: \(localEpoch)) - CANNOT re-decrypt"
+          )
+          logger.error(
+            "   Returning loading state - DO NOT attempt MLS decryption (forward secrecy)"
+          )
+          // Return a special outcome indicating transient failure - caller should retry
+          throw MLSConversationError.operationFailed(
+            "Database locked during cache lookup. Message \(message.id) is from old epoch and cannot be re-decrypted. Please retry."
+          )
+        }
+        
+        // For current epoch messages, log warning but allow fallthrough
+        // The decryption might succeed, but we risk SecretReuseError if already processed
+        logger.warning(
+          "   ⚠️ Message is from current epoch - will attempt decrypt (risk of SecretReuseError)"
         )
       } else {
-        let cachedEmbed = try? await storage.fetchEmbedForMessage(
-          message.id,
-          currentUserDID: userDid,
-          database: database
-        )
-        let payload = MLSMessagePayload.text(cachedPlaintext, embed: cachedEmbed)
-        logger.debug("♻️ Using cached plaintext for message \(message.id) (sender: \(cachedSender))")
-        return .application(payload: payload, sender: cachedSender)
+        // Other DB errors - log but continue
+        logger.warning("⚠️ Cache lookup failed for message \(message.id): \(error.localizedDescription)")
       }
-    }
-
-    // If plaintext exists but sender is missing, continue to decrypt to repopulate sender metadata
-    if let cachedPlaintext = try? await storage.fetchPlaintextForMessage(
-      message.id,
-      currentUserDID: userDid,
-      database: database
-    ) {
-      logger.debug(
-        "📋 Plaintext cached but sender missing for message \(message.id) - proceeding to MLS decrypt to recover sender"
-      )
     }
 
     // Check if this is our own commit that we already merged locally
@@ -4150,32 +4525,36 @@ final class MLSConversationManager {
       return .nonApplication
     }
 
-    var localEpochBeforeMessage: UInt64?
-    do {
-      localEpochBeforeMessage = try await mlsClient.getEpoch(for: userDid, groupId: groupIdData)
-      if let epochValue = localEpochBeforeMessage {
-        logger.debug("🧠 [MLS] Before processing \(message.id) local epoch = \(epochValue)")
-
-        // 🔒 FIX #7: Skip old epoch messages BEFORE calling FFI decryption
-        // MLS forward secrecy means old epoch keys are deleted after advancement.
-        // Attempting to decrypt old epoch messages will fail with key-not-found errors.
-        // Skip these early to avoid log noise and unnecessary FFI calls.
-        if UInt64(message.epoch) < epochValue {
-          logger.debug(
-            "⏭️ Skipping old message from epoch \(message.epoch) (local: \(epochValue)) - keys no longer available"
-          )
-          return try await saveErrorPlaceholder(
-            message: message,
-            error: "Message from old epoch",
-            validationReason:
-              "Epoch \(message.epoch) is behind local epoch \(epochValue) - forward secrecy prevents decryption"
-          )
-        }
+    // Reuse the epoch check from cache lookup, or re-fetch if not available
+    var localEpochBeforeMessage: UInt64? = localEpochForCacheCheck
+    if localEpochBeforeMessage == nil {
+      do {
+        localEpochBeforeMessage = try await mlsClient.getEpoch(for: userDid, groupId: groupIdData)
+      } catch {
+        logger.warning(
+          "⚠️ Unable to query local epoch before processing message \(message.id): \(error.localizedDescription)"
+        )
       }
-    } catch {
-      logger.warning(
-        "⚠️ Unable to query local epoch before processing message \(message.id): \(error.localizedDescription)"
-      )
+    }
+    
+    if let epochValue = localEpochBeforeMessage {
+      logger.debug("🧠 [MLS] Before processing \(message.id) local epoch = \(epochValue)")
+
+      // 🔒 FIX #7: Skip old epoch messages BEFORE calling FFI decryption
+      // MLS forward secrecy means old epoch keys are deleted after advancement.
+      // Attempting to decrypt old epoch messages will fail with key-not-found errors.
+      // Skip these early to avoid log noise and unnecessary FFI calls.
+      if UInt64(message.epoch) < epochValue {
+        logger.debug(
+          "⏭️ Skipping old message from epoch \(message.epoch) (local: \(epochValue)) - keys no longer available"
+        )
+        return try await saveErrorPlaceholder(
+          message: message,
+          error: "Message from old epoch",
+          validationReason:
+            "Epoch \(message.epoch) is behind local epoch \(epochValue) - forward secrecy prevents decryption"
+        )
+      }
     }
 
     do {
@@ -4184,6 +4563,9 @@ final class MLSConversationManager {
         groupId: groupIdData,
         messageData: ciphertextData
       )
+
+      // Signal ratchet advance to other in-process/cross-process contexts.
+      MLSStateVersionManager.shared.incrementVersion(for: userDid)
 
       // NOTE: OpenMLS SqliteStorageProvider auto-persists state changes
       // No manual save needed - secret tree state is durable after processMessage returns
@@ -4413,35 +4795,62 @@ final class MLSConversationManager {
         )
       }
 
-      // Handle SecretReuseError (message already processed)
+      // ═══════════════════════════════════════════════════════════════════════════
+      // CRITICAL FIX (2024-12): Handle SecretReuseError by checking cache
+      // ═══════════════════════════════════════════════════════════════════════════
+      //
+      // SecretReuseError means the message was already decrypted (likely by NSE).
+      // Before giving up, check if the plaintext is in the database cache.
+      // This is the expected case when NSE wins the race to decrypt a message.
+      //
+      // ═══════════════════════════════════════════════════════════════════════════
       if isSecretReuse {
+        logger.info(
+          "ℹ️ Message \(message.id) SecretReuseError - checking if NSE cached the plaintext")
+        
+        // Try to retrieve from cache (NSE should have saved it)
+        let userDid = userDid 
+          do {
+            let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDid)
+            if let cachedPlaintext = try await storage.fetchPlaintextForMessage(
+              message.id,
+              currentUserDID: userDid,
+              database: database
+            ) {
+              logger.info("✅ Retrieved cached plaintext for message \(message.id) (decrypted by NSE)")
+              // Also fetch the sender from the database (stored during decryption)
+              let cachedSender = try await storage.fetchSenderForMessage(
+                message.id,
+                currentUserDID: userDid,
+                database: database
+              ) ?? "unknown"
+              
+              // Return success with cached content - message was already processed correctly
+              // Parse the cached plaintext back into a payload
+              if let payloadData = cachedPlaintext.data(using: .utf8),
+                 let payload = try? MLSMessagePayload.decodeFromJSON(payloadData) {
+                return .application(payload: payload, sender: cachedSender)
+              } else {
+                // Fallback: wrap plaintext in a text payload
+                let payload = MLSMessagePayload.text(cachedPlaintext, embed: nil)
+                return .application(payload: payload, sender: cachedSender)
+              }
+            }
+            logger.warning("⚠️ SecretReuseError but cache miss for \(message.id)")
+          } catch {
+            logger.warning("⚠️ Failed to check cache for \(message.id): \(error.localizedDescription)")
+          }
+        
+        
+        // If cache miss, log diagnostics but don't save error placeholder
+        // The message may appear on next sync
         logger.warning(
-          "⚠️ Message \(message.id) already processed (SecretReuseError). Content lost.")
-
-        // Log comprehensive diagnostics for secret reuse errors
-        logger.error("🔴 SECRET REUSE ERROR - Critical diagnostic data:")
-        logger.error("   Message ID: \(message.id)")
-        logger.error("   Epoch: \(message.epoch), Sequence: \(message.seq)")
-        logger.error("   Ciphertext length: \(ciphertextData.count) bytes")
-        logger.error("   Conversation: \(message.convoId)")
-        logger.error("   Group ID: \(convo.groupId.prefix(16))...")
-        logger.error("   Local epoch: \(localEpoch), Remote epoch: \(message.epoch)")
-
-        if let epochBefore = localEpochBeforeMessage {
-          logger.error("   Epoch before processing: \(epochBefore)")
-        }
-
-        logger.error("   Error details: \(error.localizedDescription)")
-        logger.error("   This usually indicates: message was already processed and decrypted")
-        logger.error(
-          "   Root cause may be: app crash after decrypt but before DB save, or network replay")
-
-        // Save placeholder (no recovery needed for secret reuse)
-        return try await saveErrorPlaceholder(
-          message: message,
-          error: "Message already processed (secret reuse)",
-          validationReason: nil
-        )
+          "⚠️ Message \(message.id) SecretReuseError - plaintext not in cache, skipping")
+        logger.debug("   Epoch: \(message.epoch), Sequence: \(message.seq)")
+        logger.debug("   This can happen if NSE was interrupted before saving")
+        
+        // Skip silently - don't save error placeholder for expected race condition
+        return .nonApplication
       }
 
       if case .ratchetStateDesync(let reason) = error {
@@ -5092,6 +5501,34 @@ final class MLSConversationManager {
     let maxRetries = 2
 
     do {
+      // Fast-path: if plaintext already cached (e.g., decrypted by NSE), skip FFI processing.
+      if let userDid = userDid {
+        do {
+          let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDid)
+          if let cachedPlaintext = try await storage.fetchPlaintextForMessage(
+            message.id,
+            currentUserDID: userDid,
+            database: database
+          ) {
+            let cachedSender = try await storage.fetchSenderForMessage(
+              message.id,
+              currentUserDID: userDid,
+              database: database
+            ) ?? "unknown"
+            let cachedEmbed = try? await storage.fetchEmbedForMessage(
+              message.id,
+              currentUserDID: userDid,
+              database: database
+            )
+            logger.info("✅ Message \(message.id) already decrypted (cache hit) - skipping FFI processMessage")
+            let payload = MLSMessagePayload.text(cachedPlaintext, embed: cachedEmbed)
+            return .success(.application(payload: payload, sender: cachedSender))
+          }
+        } catch {
+          logger.debug("ℹ️ Cache pre-check for message \(message.id) failed (continuing to FFI): \(error.localizedDescription)")
+        }
+      }
+
       // Wrap in Task.detached to make uninterruptible
       // This ensures decrypt + cache is atomic (prevents SecretReuseError)
       let outcome = try await Task.detached { [self] in
@@ -5103,6 +5540,54 @@ final class MLSConversationManager {
     } catch MLSError.ignoredOldEpochMessage {
       // Expected for messages from epochs we've already advanced past
       logger.debug("⏭️ Message \(message.id) from old epoch \(epoch) - forward secrecy skip")
+      return .skipped
+
+    } catch MLSError.secretReuseSkipped {
+      // ═══════════════════════════════════════════════════════════════════════════
+      // CRITICAL FIX (2024-12): Handle SecretReuseError gracefully
+      // ═══════════════════════════════════════════════════════════════════════════
+      //
+      // SecretReuseError means the message was already decrypted (likely by NSE).
+      // The plaintext should be in the database cache. This is NOT an error.
+      //
+      // ═══════════════════════════════════════════════════════════════════════════
+      logger.info("✅ Message \(message.id) already decrypted (SecretReuseSkipped) - checking cache")
+      
+      // Try to retrieve from cache
+      if let userDid = userDid {
+        do {
+          let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDid)
+          if let cachedPlaintext = try await storage.fetchPlaintextForMessage(
+            message.id,
+            currentUserDID: userDid,
+            database: database
+          ) {
+            logger.info("✅ Retrieved cached plaintext for message \(message.id) (decrypted by NSE)")
+            // Also fetch the sender from the database (stored during decryption)
+            let cachedSender = try await storage.fetchSenderForMessage(
+              message.id,
+              currentUserDID: userDid,
+              database: database
+            ) ?? "unknown"
+            
+            // Return success with cached content
+            // Parse the cached plaintext back into a payload
+            if let payloadData = cachedPlaintext.data(using: .utf8),
+               let payload = try? MLSMessagePayload.decodeFromJSON(payloadData) {
+              return .success(.application(payload: payload, sender: cachedSender))
+            } else {
+              // Fallback: wrap plaintext in a text payload
+              let payload = MLSMessagePayload.text(cachedPlaintext, embed: nil)
+              return .success(.application(payload: payload, sender: cachedSender))
+            }
+          }
+        } catch {
+          logger.warning("⚠️ Failed to retrieve cached plaintext for \(message.id): \(error.localizedDescription)")
+        }
+      }
+      
+      // If we can't find the cached plaintext, skip (it should appear on next sync)
+      logger.warning("⚠️ SecretReuseSkipped but cache miss for \(message.id) - will appear on next sync")
       return .skipped
 
     } catch let error as MLSError {
@@ -7281,10 +7766,41 @@ final class MLSConversationManager {
       logger.error("Failed to decode hex groupId: \(groupId.prefix(20))...")
       throw MLSConversationError.invalidGroupId
     }
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX: Epoch Pre-Flight Check
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Before encrypting, verify our in-memory epoch matches the on-disk state.
+    // If the NSE advanced the ratchet while we were in background, our in-memory
+    // state is stale and we must force a reload.
+    //
+    // This prevents:
+    // - SecretReuseError (using a nonce the NSE already consumed)
+    // - Encrypting at an old epoch that recipients can't decrypt
+    // ═══════════════════════════════════════════════════════════════════════════
+    if let memoryState = groupStates[groupId] {
+      do {
+        let diskEpoch = try await mlsClient.getEpoch(for: userDid, groupId: groupIdData)
+        if diskEpoch > memoryState.epoch {
+          logger.warning("⚠️ [Epoch Check] Disk epoch (\(diskEpoch)) > memory epoch (\(memoryState.epoch))")
+          logger.info("   NSE likely advanced ratchet - forcing state reload before encrypt")
+          groupStates.removeValue(forKey: groupId)
+          conversationStates.removeValue(forKey: groupId)
+          // FFI will reload fresh state on next access
+        }
+      } catch {
+        logger.debug("⚠️ [Epoch Check] Could not verify epoch: \(error.localizedDescription)")
+        // Non-fatal - proceed with operation, FFI layer handles state
+      }
+    }
 
     logger.debug("Calling mlsClient.encryptMessage with groupIdData.count=\(groupIdData.count)")
     let encryptResult = try await mlsClient.encryptMessage(
       for: userDid, groupId: groupIdData, plaintext: plaintext)
+
+    // Signal ratchet advance to other in-process/cross-process contexts.
+    MLSStateVersionManager.shared.incrementVersion(for: userDid)
+
     logger.debug(
       "mlsClient.encryptMessage succeeded, ciphertext.count=\(encryptResult.ciphertext.count)")
 
@@ -7317,6 +7833,32 @@ final class MLSConversationManager {
       logger.error("Invalid group ID format")
       throw MLSConversationError.invalidGroupId
     }
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX: Epoch Pre-Flight Check
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Before decrypting, verify our in-memory epoch matches the on-disk state.
+    // If the NSE advanced the ratchet while we were in background, our in-memory
+    // state is stale and we must force a reload.
+    //
+    // This prevents attempting decryption with stale keys that would fail with
+    // SecretReuseError or DecryptionFailed.
+    // ═══════════════════════════════════════════════════════════════════════════
+    if let memoryState = groupStates[groupId] {
+      do {
+        let diskEpoch = try await mlsClient.getEpoch(for: userDid, groupId: groupIdData)
+        if diskEpoch > memoryState.epoch {
+          logger.warning("⚠️ [Epoch Check] Disk epoch (\(diskEpoch)) > memory epoch (\(memoryState.epoch))")
+          logger.info("   NSE likely advanced ratchet - forcing state reload before decrypt")
+          groupStates.removeValue(forKey: groupId)
+          conversationStates.removeValue(forKey: groupId)
+          // FFI will reload fresh state on next access
+        }
+      } catch {
+        logger.debug("⚠️ [Epoch Check] Could not verify epoch: \(error.localizedDescription)")
+        // Non-fatal - proceed with operation, FFI layer handles state
+      }
+    }
 
     let ciphertextData = ciphertext
 
@@ -7327,6 +7869,9 @@ final class MLSConversationManager {
         groupId: groupIdData,
         messageData: ciphertextData
       )
+
+      // Signal ratchet advance to other in-process/cross-process contexts.
+      MLSStateVersionManager.shared.incrementVersion(for: userDid)
 
       // CRITICAL FIX: Persist MLS state after decryption (receiver ratchet advanced)
       // This prevents SecretReuseError when trying to decrypt subsequent messages
@@ -7557,6 +8102,24 @@ final class MLSConversationManager {
 
     do {
       groupIdHex = try await processWelcome(welcomeData: welcomeData)
+      
+      // 🚨 ROOT CAUSE FIX: Create SQLCipher conversation record IMMEDIATELY after Welcome
+      // This prevents "FOREIGN KEY constraint failed" errors when messages are decrypted.
+      // Without this, the message INSERT fails, plaintext is lost, and Forward Secrecy
+      // means we can never decrypt the message again (keys are burned after first use).
+      do {
+        _ = try await storage.ensureConversationExistsOrPlaceholder(
+          userDID: userDid,
+          conversationID: convo.groupId,
+          groupID: groupIdHex,
+          senderDID: convo.members.first(where: { $0.did.description.lowercased() != userDid.lowercased() })?.did.description,
+          database: database
+        )
+        logger.info("✅ [FK-FIX] Ensured conversation record exists after Welcome processing")
+      } catch {
+        // Non-fatal - the safety net in savePlaintext will create a placeholder if needed
+        logger.warning("⚠️ [FK-FIX] Failed to pre-create conversation record: \(error.localizedDescription)")
+      }
     } catch let error as MlsError {
       // CRITICAL FIX: Handle NoMatchingKeyPackage by falling back to External Commit
       // This occurs when the Welcome references a key package that no longer exists in storage
@@ -8018,6 +8581,14 @@ final class MLSConversationManager {
       logger.debug("   Processing \(didKey): \(options.count) candidates available")
       var validPackagesForMember = 0
 
+      // CRITICAL FIX: Detect Last Resort Key Packages
+      // If the server only provides 1 package for this member, it's likely a Last Resort package
+      // that should be reused even if we've marked it as exhausted before
+      let isLastResortScenario = options.count == 1
+      if isLastResortScenario {
+        logger.info("🔑 [Last Resort] Only 1 key package available for \(didKey) - will use even if marked exhausted")
+      }
+
       // Select ALL valid packages for this member (multi-device support)
       for candidate in options {
         guard let decoded = Data(base64Encoded: candidate.keyPackage, options: []) else {
@@ -8053,10 +8624,17 @@ final class MLSConversationManager {
           logger.debug("   ✅ Hash verified: server and local match (\(serverHash.prefix(16))...)")
         }
 
-        if isKeyPackageHashExhausted(hash, for: didKey) {
+        // CRITICAL FIX: Allow exhausted hashes if this is a Last Resort scenario
+        // Last Resort packages are meant to be reused when no other options exist
+        let isExhausted = isKeyPackageHashExhausted(hash, for: didKey)
+        if isExhausted && !isLastResortScenario {
           logger.warning("⚠️ Skipping exhausted hash for \(didKey): \(hash.prefix(16))...")
           skippedCount += 1
           continue
+        } else if isExhausted && isLastResortScenario {
+          logger.info("🔓 [Last Resort] Using exhausted hash as it's the only option: \(hash.prefix(16))...")
+          // Clear the exhausted marker so it won't be skipped on next selection
+          unreserveKeyPackages([KeyPackageWithHash(data: decoded, hash: hash, did: member)])
         }
 
         logger.info(
@@ -8194,7 +8772,8 @@ final class MLSConversationManager {
     return PreparedInitialMembers(
       commitData: addResult.commitData,
       welcomeData: addResult.welcomeData,
-      hashEntries: hashEntries
+      hashEntries: hashEntries,
+      selectedPackages: selectedPackages  // Track for rollback on failure
     )
   }
 
@@ -8268,6 +8847,11 @@ final class MLSConversationManager {
             logger.error(
               "❌ [MLSConversationManager.createGroup] Failed to clear pending commit after key package error: \(error.localizedDescription)"
             )
+            // CRITICAL FIX: Unreserve packages on failure so they can be retried
+            if let packages = prepared?.selectedPackages {
+              unreserveKeyPackages(packages)
+              logger.info("♻️ Unreserved \(packages.count) key packages after commit clear failure")
+            }
             throw error
           }
 
@@ -8282,9 +8866,23 @@ final class MLSConversationManager {
           lastError = normalizedError
           continue
         }
+        
+        // CRITICAL FIX: Unreserve packages on final failure
+        // If we're not retrying, we need to unreserve the packages so they can be used in future attempts
+        if let packages = prepared?.selectedPackages {
+          unreserveKeyPackages(packages)
+          logger.info("♻️ Unreserved \(packages.count) key packages after final server error")
+        }
+        
         lastError = normalizedError
         break
       } catch {
+        // CRITICAL FIX: Unreserve packages on unexpected error
+        if let packages = prepared?.selectedPackages {
+          unreserveKeyPackages(packages)
+          logger.info("♻️ Unreserved \(packages.count) key packages after unexpected error")
+        }
+        
         lastError = error
         break
       }

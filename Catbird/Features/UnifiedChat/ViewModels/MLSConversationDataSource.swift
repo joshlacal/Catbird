@@ -555,7 +555,10 @@ import SwiftUI
       guard !uniqueDIDs.isEmpty else { return }
 
       let profiles = await appState.mlsProfileEnricher.ensureProfiles(
-        for: Array(uniqueDIDs), using: client)
+        for: Array(uniqueDIDs),
+        using: client,
+        currentUserDID: currentUserDID
+      )
 
       // Update cache and rebuild affected messages
       for (did, profile) in profiles {

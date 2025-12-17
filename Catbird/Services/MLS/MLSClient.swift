@@ -20,6 +20,10 @@ actor MLSClient {
   /// With SQLite storage, persistence is automatic - no manual hydration needed
   private var contexts: [String: MlsContext] = [:]
 
+  /// Per-user generation token.
+  /// Bump this before account switches / storage resets so in-flight tasks fail fast.
+  private var generations: [String: UInt64] = [:]
+
   /// Per-user API clients for server operations
   private var apiClients: [String: MLSAPIClient] = [:]
 
@@ -135,11 +139,11 @@ actor MLSClient {
 
   /// Execute FFI operation with automatic recovery from poisoned context
   /// If the context is poisoned (previous operation panicked), clears it and retries once
-  private func runFFIWithRecovery<T: Sendable>(
+  private func runFFIWithRecoveryLocked<T: Sendable>(
     for userDID: String,
     operation: @Sendable @escaping (MlsContext) throws -> T
   ) async throws -> T {
-    var context = getContext(for: userDID)
+    var context = try getContext(for: userDID)
 
     for attempt in 1...2 {
       do {
@@ -152,21 +156,70 @@ actor MLSClient {
             "⚠️ [MLSClient] Context poisoned for user \(userDID.prefix(20))..., clearing and retrying (attempt \(attempt))"
           )
           clearPoisonedContext(for: userDID)
-          context = getContext(for: userDID)
+          context = try getContext(for: userDID)
           continue
         }
         throw error
       }
     }
 
-    // Should not reach here
     throw MLSError.operationFailed
+  }
+
+  /// Execute FFI operation with automatic recovery from poisoned context,
+  /// serialized per-user and coordinated cross-process to avoid ratchet/db desync.
+  private func runFFIWithRecovery<T: Sendable>(
+    for userDID: String,
+    operation: @Sendable @escaping (MlsContext) throws -> T
+  ) async throws -> T {
+    let normalizedDID = normalizeUserDID(userDID)
+    let generation = currentGeneration(for: normalizedDID)
+
+    return try await withMLSUserPermit(for: normalizedDID) {
+      try assertGeneration(generation, for: normalizedDID)
+
+      // Phase 2 (single-writer): Hold POSIX advisory lock for all MLS state-mutating FFI ops.
+      let lockAcquired = MLSAdvisoryLockCoordinator.shared.acquireExclusiveLock(for: normalizedDID, timeout: 5.0)
+      if !lockAcquired {
+        self.logger.warning("🔒 [MLSClient] Advisory lock busy for \(normalizedDID.prefix(20))... - cancelling operation")
+        throw CancellationError()
+      }
+      defer { MLSAdvisoryLockCoordinator.shared.releaseExclusiveLock(for: normalizedDID) }
+
+      try assertGeneration(generation, for: normalizedDID)
+
+      let result = try await MLSDatabaseCoordinator.shared.performWrite(for: normalizedDID, timeout: 15.0) { [weak self] in
+        guard let self else { throw CancellationError() }
+          try await self.assertGeneration(generation, for: normalizedDID)
+        return try await self.runFFIWithRecoveryLocked(for: normalizedDID, operation: operation)
+      }
+
+      try assertGeneration(generation, for: normalizedDID)
+      return result
+    }
   }
 
   /// Normalize user DID to ensure consistent context lookup
   /// Prevents multiple contexts for the same user due to whitespace/encoding differences
   private func normalizeUserDID(_ userDID: String) -> String {
     return userDID.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func currentGeneration(for normalizedDID: String) -> UInt64 {
+    generations[normalizedDID] ?? 0
+  }
+
+  func bumpGeneration(for userDID: String) {
+    let normalizedDID = normalizeUserDID(userDID)
+    let next = (generations[normalizedDID] ?? 0) &+ 1
+    generations[normalizedDID] = next
+    logger.debug("🔁 [MLSClient] Bumped generation for \(normalizedDID.prefix(20))... → \(next)")
+  }
+
+  private func assertGeneration(_ captured: UInt64, for normalizedDID: String) throws {
+    if currentGeneration(for: normalizedDID) != captured {
+      throw CancellationError()
+    }
   }
 
   /// Check if an MlsError indicates a poisoned/unrecoverable context
@@ -190,7 +243,7 @@ actor MLSClient {
   }
 
   /// Get or create a context for a specific user.
-  private func getContext(for userDID: String) -> MlsContext {
+  private func getContext(for userDID: String) throws -> MlsContext {
     let normalizedDID = normalizeUserDID(userDID)
 
     if let existingContext = contexts[normalizedDID] {
@@ -204,7 +257,7 @@ actor MLSClient {
     logger.debug(
       "[MLSClient] Existing context keys in cache: \(self.contexts.keys.map { $0.prefix(20) })")
 
-    let newContext = createContext(for: normalizedDID)
+    let newContext = try createContext(for: normalizedDID)
     contexts[normalizedDID] = newContext
     return newContext
   }
@@ -223,7 +276,7 @@ actor MLSClient {
     logger.debug("   ♻️ Cleared in-memory context from cache")
 
     // Create fresh context - this will load from SQLite
-    let newContext = createContext(for: normalizedDID)
+    let newContext = try createContext(for: normalizedDID)
     contexts[normalizedDID] = newContext
     logger.debug("   ✅ Created fresh context from SQLite storage")
 
@@ -243,7 +296,7 @@ actor MLSClient {
 
   /// Create a new MLS context with per-DID SQLite storage
   /// Storage path: {appSupport}/mls-state/{did_hash}.db
-  private func createContext(for userDID: String) -> MlsContext {
+  private func createContext(for userDID: String) throws -> MlsContext {
     // Create storage directory if needed
     let appSupport: URL
     if let sharedContainer = FileManager.default.containerURL(
@@ -342,43 +395,18 @@ actor MLSClient {
         }
 
         if attempt < 3 {
-          // Only delete database for true key mismatch (not HMAC failures from race conditions)
-          if attempt == 1 && isKeyMismatch {
-            logger.warning("🗑️ Attempting to delete potentially corrupted database...")
-            try? FileManager.default.removeItem(atPath: storagePath)
-            // Also try deleting associated files (WAL, SHM)
-            try? FileManager.default.removeItem(atPath: storagePath + "-wal")
-            try? FileManager.default.removeItem(atPath: storagePath + "-shm")
-          }
-          // Brief sleep for exponential backoff (100ms, 200ms)
-          // Note: Thread.sleep is acceptable here in sync context during initialization
+          // Fail-closed: never delete or rewrite storage automatically.
+          // Brief sleep for exponential backoff (100ms, 200ms).
           Thread.sleep(forTimeInterval: TimeInterval(attempt) * 0.1)
         }
       }
     }
 
     guard let context = newContext else {
-      logger.error("❌ CRITICAL: All attempts to create MlsContext failed after \(3) retries")
+      logger.error("❌ CRITICAL: All attempts to create MlsContext failed after 3 retries")
       logger.error("❌ Storage path: \(storagePath)")
       logger.error("❌ Last error: \(lastError?.localizedDescription ?? "Unknown error")")
-      logger.error(
-        "❌ MLS functionality will be unavailable - app may crash if MLS features are accessed")
-
-      // Last resort: try one more time with a timestamped backup path
-      let backupPath = storagePath.replacingOccurrences(
-        of: ".db", with: "_recovery_\(Date().timeIntervalSince1970).db")
-      logger.warning("🚨 Final attempt with backup path: \(backupPath)")
-      do {
-        let recoveryContext = try MlsContext(
-          storagePath: backupPath, encryptionKey: encryptionKey, keychain: keychainAdapter)
-        logger.info("✅ Recovery successful with backup storage path")
-        return recoveryContext
-      } catch {
-        logger.error("❌ Recovery attempt also failed: \(error.localizedDescription)")
-        fatalError(
-          "Critical: Cannot initialize MLS storage at any path. Check file system permissions and available space."
-        )
-      }
+      throw lastError ?? MLSError.operationFailed
     }
 
     // Set up logging
@@ -411,7 +439,7 @@ actor MLSClient {
     )
 
     // Log bundle count BEFORE group creation
-    let context = getContext(for: userDID)
+    let context = try getContext(for: userDID)
     if let bundleCount = try? context.getKeyPackageBundleCount() {
       logger.debug("[MLSClient.createGroup] Bundle count BEFORE group creation: \(bundleCount)")
       if bundleCount == 0 {
@@ -469,9 +497,8 @@ actor MLSClient {
       // This ensures the new group state is durably persisted before any messages are sent/received
       // Without this, app restart could cause SecretReuseError from incomplete WAL checkpoint
       do {
-        let context = getContext(for: userDID)
-        try await runFFI {
-          try context.syncDatabase()
+        try await runFFIWithRecovery(for: userDID) { ctx in
+          try ctx.syncDatabase()
         }
         logger.info("✅ [MLSClient.joinGroup] Database synced after Welcome processing")
       } catch {
@@ -490,7 +517,7 @@ actor MLSClient {
           "🔍 [MLSClient.joinGroup] NoMatchingKeyPackage - Listing local manifest hashes...")
 
         do {
-          let context = getContext(for: userDID)
+          let context = try getContext(for: userDID)
           let localHashes = try context.debugListKeyPackageHashes()
           logger.error("🔍 Local manifest contains \(localHashes.count) key package hashes:")
           for (i, hash) in localHashes.prefix(10).enumerated() {
@@ -531,7 +558,6 @@ actor MLSClient {
       throw MLSError.configurationError
     }
 
-    let context = getContext(for: userDID)
     let maxRetries = 3
     var lastError: Error?
 
@@ -626,8 +652,8 @@ actor MLSClient {
 
         // 5. Create External Commit
         let identityBytes = Data(userDID.utf8)
-        let result = try await runFFI {
-          try context.createExternalCommit(
+        let result = try await runFFIWithRecovery(for: userDID) { ctx in
+          try ctx.createExternalCommit(
             groupInfoBytes: groupInfo, identityBytes: identityBytes)
         }
 
@@ -729,9 +755,8 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.exportEpochSecret] Exporting epoch secret for group: \(groupId.hexEncodedString().prefix(16))"
     )
-    let context = getContext(for: userDID)
-    try await runFFI {
-      try context.exportEpochSecret(groupId: groupId)
+    try await runFFIWithRecovery(for: userDID) { ctx in
+      try ctx.exportEpochSecret(groupId: groupId)
     }
     logger.info("✅ [MLSClient.exportEpochSecret] Successfully exported epoch secret")
   }
@@ -753,14 +778,11 @@ actor MLSClient {
       throw MLSError.configurationError
     }
 
-    let context = getContext(for: userDID)
-
     // 1. Export GroupInfo from FFI
     // We use the user's DID as the signer identity
     let identityBytes = Data(userDID.utf8)
-    let groupInfoBytes = try await runFFI {
-      try context.exportGroupInfo(
-        groupId: groupId, signerIdentityBytes: identityBytes)
+    let groupInfoBytes = try await runFFIWithRecovery(for: userDID) { ctx in
+      try ctx.exportGroupInfo(groupId: groupId, signerIdentityBytes: identityBytes)
     }
 
     // 2. Validate exported GroupInfo meets minimum size
@@ -773,8 +795,8 @@ actor MLSClient {
 
     // 🔒 FIX #3: Validate GroupInfo format before upload using FFI
     // This catches serialization corruption BEFORE it reaches the server
-    let isValid = try await runFFI {
-      context.validateGroupInfoFormat(groupInfoBytes: groupInfoBytes)
+    let isValid = try await runFFIWithRecovery(for: userDID) { ctx in
+      ctx.validateGroupInfoFormat(groupInfoBytes: groupInfoBytes)
     }
     guard isValid else {
       logger.error(
@@ -788,8 +810,8 @@ actor MLSClient {
     logger.info("✅ [MLSClient.publishGroupInfo] GroupInfo validated: \(groupInfoBytes.count) bytes")
 
     // 3. Get current epoch
-    let epoch = try await runFFI {
-      try context.getEpoch(groupId: groupId)
+    let epoch = try await runFFIWithRecovery(for: userDID) { ctx in
+      try ctx.getEpoch(groupId: groupId)
     }
 
     // 4. Upload to server (MLSAPIClient now has retry logic + verification)
@@ -863,11 +885,9 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.selfUpdate] START - user: \(userDID.prefix(20)), groupId: \(groupId.hexEncodedString().prefix(16))"
     )
-    let context = getContext(for: userDID)
-
     do {
-      let result = try await runFFI {
-        try context.selfUpdate(groupId: groupId)
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.selfUpdate(groupId: groupId)
       }
       logger.info("✅ [MLSClient.selfUpdate] Success - commit: \(result.commitData.count) bytes")
       return result
@@ -891,11 +911,9 @@ actor MLSClient {
       "📍 [MLSClient.removeMembers] Removing \(memberIdentities.count) members from group \(groupId.hexEncodedString().prefix(16))"
     )
 
-    let context = getContext(for: userDID)
-
     do {
-      let commitData = try await runFFI {
-        try context.removeMembers(groupId: groupId, memberIdentities: memberIdentities)
+      let commitData = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.removeMembers(groupId: groupId, memberIdentities: memberIdentities)
       }
 
       logger.info(
@@ -921,11 +939,9 @@ actor MLSClient {
       "📍 [MLSClient.proposeAddMember] Creating add proposal for group \(groupId.hexEncodedString().prefix(16))"
     )
 
-    let context = getContext(for: userDID)
-
     do {
-      let result = try await runFFI {
-        try context.proposeAddMember(groupId: groupId, keyPackageData: keyPackageData)
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.proposeAddMember(groupId: groupId, keyPackageData: keyPackageData)
       }
 
       logger.info(
@@ -952,11 +968,9 @@ actor MLSClient {
       "📍 [MLSClient.proposeRemoveMember] Creating remove proposal for member"
     )
 
-    let context = getContext(for: userDID)
-
     do {
-      let result = try await runFFI {
-        try context.proposeRemoveMember(groupId: groupId, memberIdentity: memberIdentity)
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.proposeRemoveMember(groupId: groupId, memberIdentity: memberIdentity)
       }
 
       logger.info(
@@ -980,11 +994,9 @@ actor MLSClient {
       "📍 [MLSClient.proposeSelfUpdate] Creating self-update proposal for group \(groupId.hexEncodedString().prefix(16))"
     )
 
-    let context = getContext(for: userDID)
-
     do {
-      let result = try await runFFI {
-        try context.proposeSelfUpdate(groupId: groupId)
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.proposeSelfUpdate(groupId: groupId)
       }
 
       logger.info(
@@ -1002,10 +1014,9 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.deleteGroup] START - user: \(userDID), groupId: \(groupId.hexEncodedString().prefix(16))"
     )
-    let context = getContext(for: userDID)
     do {
-      try await runFFI {
-        try context.deleteGroup(groupId: groupId)
+      try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.deleteGroup(groupId: groupId)
       }
       logger.info("✅ [MLSClient.deleteGroup] Successfully deleted group")
     } catch let error as MlsError {
@@ -1037,7 +1048,8 @@ actor MLSClient {
   }
 
   /// Decrypt a message from the group
-  /// Delegates to shared MLSCoreContext which properly handles epoch/sequence metadata
+  /// Returns the raw DecryptResult from FFI including plaintext, epoch, sequence, and sender credential
+  /// Note: For most use cases, prefer MLSCoreContext.shared.decryptAndStore which also persists to database
   func decryptMessage(
     for userDID: String, groupId: Data, ciphertext: Data, conversationID: String, messageID: String
   ) async throws -> DecryptResult {
@@ -1046,21 +1058,19 @@ actor MLSClient {
     )
 
     do {
-      // Use shared MLSCoreContext - decrypts AND saves with proper epoch/sequence from FFI
-      let plaintextString = try await MLSCoreContext.shared.decryptAndStore(
-        userDid: userDID,
-        groupId: groupId,
-        ciphertext: ciphertext,
-        conversationID: conversationID,
-        messageID: messageID
-      )
-
-      logger.info("✅ Decrypted and cached plaintext with proper metadata")
-
-      // Return DecryptResult for backward compatibility with existing callers
-      let plaintextData = Data(plaintextString.utf8)
-      return DecryptResult(plaintext: plaintextData, epoch: 0, sequenceNumber: 0)
-      // Note: epoch/sequence in return value are unused - real values are in database
+      // Call FFI directly to get full DecryptResult with sender credential
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.decryptMessage(groupId: groupId, ciphertext: ciphertext)
+      }
+      
+      logger.info("✅ Decrypted message - epoch: \(result.epoch), seq: \(result.sequenceNumber), plaintext: \(result.plaintext.count) bytes")
+      
+      // Extract sender DID for logging
+      if let senderDID = String(data: result.senderCredential.identity, encoding: .utf8) {
+        logger.debug("   Sender: \(senderDID.prefix(24))...")
+      }
+      
+      return result
 
     } catch let error as MlsError {
       // Extract message from error case
@@ -1119,7 +1129,6 @@ actor MLSClient {
       "[MLSClient.createKeyPackage] Full userDID: '\(userDID)' (length: \(userDID.count))")
     logger.debug(
       "[MLSClient.createKeyPackage] Full identity: '\(identity)' (length: \(identity.count))")
-    var context = getContext(for: userDID)
 
     // RECOVERY CHECK: Check if we have a saved identity key in Keychain but not in Rust context
     // This happens on reinstall. If found, import it before creating key package.
@@ -1128,17 +1137,11 @@ actor MLSClient {
       let keyData = savedKeyData
       logger.info("♻️ Found saved identity key in Keychain. Importing to restore identity...")
       do {
-        try await runFFI {
-          try context.importIdentityKey(identity: identity, keyData: keyData)
+        try await runFFIWithRecovery(for: userDID) { ctx in
+          try ctx.importIdentityKey(identity: identity, keyData: keyData)
         }
         logger.info("✅ Identity key restored successfully")
       } catch let error as MlsError {
-        // Check if context is poisoned
-        if isPoisonedContextError(error) {
-          logger.warning("⚠️ Context poisoned during identity key import, recreating...")
-          clearPoisonedContext(for: userDID)
-          context = getContext(for: userDID)
-        }
         logger.error("❌ Failed to restore identity key: \(error.localizedDescription)")
         // Continue - will generate new key, but this is suboptimal
       } catch {
@@ -1152,20 +1155,17 @@ actor MLSClient {
         try ctx.createKeyPackage(identityBytes: identityBytes)
       }
 
-      // Refresh context reference after potential recovery
-      context = getContext(for: userDID)
-
       // BACKUP: Export and save the identity key to Keychain for future recovery
-      if let identityKeyData = try? await runFFI({
-        try context.exportIdentityKey(identity: identity)
+      if let identityKeyData = try? await runFFIWithRecovery(for: userDID, operation: { ctx in
+        try ctx.exportIdentityKey(identity: identity)
       }) {
         try? MLSKeychainManager.shared.store(identityKeyData, forKey: identityKeyKey)
         logger.debug("💾 Identity key backed up to Keychain for recovery")
       }
 
       // Log bundle count after creation
-      if let bundleCount = try? await runFFI({
-        try context.getKeyPackageBundleCount()
+      if let bundleCount = try? await runFFIWithRecovery(for: userDID, operation: { ctx in
+        try ctx.getKeyPackageBundleCount()
       }) {
         logger.debug("[MLSClient.createKeyPackage] Bundle count after creation: \(bundleCount)")
       }
@@ -1190,10 +1190,9 @@ actor MLSClient {
   func computeKeyPackageHash(for userDID: String, keyPackageData: Data) async throws -> Data {
     logger.debug(
       "📍 [MLSClient.computeKeyPackageHash] Computing hash for \(keyPackageData.count) bytes")
-    let context = getContext(for: userDID)
     do {
-      let hashBytes = try await runFFI {
-        try context.computeKeyPackageHash(keyPackageBytes: keyPackageData)
+      let hashBytes = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.computeKeyPackageHash(keyPackageBytes: keyPackageData)
       }
       logger.debug("✅ [MLSClient.computeKeyPackageHash] Hash:  \(hashBytes.hexEncodedString())")
       return hashBytes
@@ -1208,10 +1207,9 @@ actor MLSClient {
   func getLocalKeyPackageHashes(for userDID: String) async throws -> [String] {
     logger.debug(
       "📍 [MLSClient.getLocalKeyPackageHashes] Getting local hashes for \(userDID.prefix(20))...")
-    let context = getContext(for: userDID)
     do {
-      let hashes = try await runFFI {
-        try context.debugListKeyPackageHashes()
+      let hashes = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.debugListKeyPackageHashes()
       }
       logger.debug("✅ [MLSClient.getLocalKeyPackageHashes] Found \(hashes.count) local hashes")
       return hashes
@@ -1231,10 +1229,9 @@ actor MLSClient {
 
   /// Get the current epoch for a group
   func getEpoch(for userDID: String, groupId: Data) async throws -> UInt64 {
-    let context = getContext(for: userDID)
     do {
-      return try await runFFI {
-        try context.getEpoch(groupId: groupId)
+      return try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.getEpoch(groupId: groupId)
       }
     } catch let error as MlsError {
       logger.error("Get epoch failed: \(error.localizedDescription)")
@@ -1244,10 +1241,9 @@ actor MLSClient {
 
   /// Get debug information about group members
   func debugGroupMembers(for userDID: String, groupId: Data) async throws -> GroupDebugInfo {
-    let context = getContext(for: userDID)
     do {
-      return try await runFFI {
-        try context.debugGroupMembers(groupId: groupId)
+      return try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.debugGroupMembers(groupId: groupId)
       }
     } catch let error as MlsError {
       logger.error("Debug group members failed: \(error.localizedDescription)")
@@ -1258,13 +1254,12 @@ actor MLSClient {
   /// Export a secret from the group's key schedule for debugging/comparison
   /// This can be used to verify that two clients at the same epoch have the same cryptographic state
   func exportSecret(
-    for userDID: String, groupId: Data, label: String, context: Data, keyLength: UInt64
+    for userDID: String, groupId: Data, label: String, context contextData: Data, keyLength: UInt64
   ) async throws -> Data {
-    let mlsContext = getContext(for: userDID)
     do {
-      let result = try await runFFI {
-        try mlsContext.exportSecret(
-          groupId: groupId, label: label, context: context, keyLength: keyLength)
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.exportSecret(
+          groupId: groupId, label: label, context: contextData, keyLength: keyLength)
       }
       return result.secret
     } catch let error as MlsError {
@@ -1275,8 +1270,7 @@ actor MLSClient {
 
   /// Check if a group exists in local storage
   func groupExists(for userDID: String, groupId: Data) -> Bool {
-    let context = getContext(for: userDID)
-    return context.groupExists(groupId: groupId)
+    (try? getContext(for: userDID).groupExists(groupId: groupId)) ?? false
   }
 
   /// Get group info for external parties
@@ -1292,10 +1286,9 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.processCommit] START - user: \(userDID), groupId: \(groupId.hexEncodedString().prefix(16)), commit: \(commitData.count) bytes"
     )
-    let context = getContext(for: userDID)
     do {
-      let result = try await runFFI {
-        try context.processCommit(groupId: groupId, commitData: commitData)
+      let result = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.processCommit(groupId: groupId, commitData: commitData)
       }
       logger.info(
         "✅ [MLSClient.processCommit] Success - newEpoch: \(result.newEpoch), updateProposals: \(result.updateProposals.count)"
@@ -1318,10 +1311,9 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.clearPendingCommit] START - user: \(userDID), groupId: \(groupId.hexEncodedString().prefix(16))"
     )
-    let context = getContext(for: userDID)
     do {
-      try await runFFI {
-        try context.clearPendingCommit(groupId: groupId)
+      try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.clearPendingCommit(groupId: groupId)
       }
       logger.info("✅ [MLSClient.clearPendingCommit] Success")
     } catch let error as MlsError {
@@ -1337,10 +1329,9 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.mergePendingCommit] START - user: \(userDID), groupId: \(groupId.hexEncodedString().prefix(16))"
     )
-    let context = getContext(for: userDID)
     do {
-      let newEpoch = try await runFFI {
-        try context.mergePendingCommit(groupId: groupId)
+      let newEpoch = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.mergePendingCommit(groupId: groupId)
       }
       logger.info("✅ [MLSClient.mergePendingCommit] Success - newEpoch: \(newEpoch)")
 
@@ -1359,10 +1350,9 @@ actor MLSClient {
 
   /// Merge a staged commit after validation
   func mergeStagedCommit(for userDID: String, groupId: Data) async throws -> UInt64 {
-    let context = getContext(for: userDID)
     do {
-      let newEpoch = try await runFFI {
-        try context.mergeStagedCommit(groupId: groupId)
+      let newEpoch = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.mergeStagedCommit(groupId: groupId)
       }
       logger.info("Staged commit merged, new epoch: \(newEpoch)")
       return newEpoch
@@ -1392,10 +1382,9 @@ actor MLSClient {
     logger.info(
       "📍 [MLSClient.processMessage] START - user: \(userDID), groupId: \(groupId.hexEncodedString().prefix(16)), message: \(actualMessageData.count) bytes"
     )
-    let context = getContext(for: userDID)
     do {
-      let content = try await runFFI {
-        try context.processMessage(groupId: groupId, messageData: actualMessageData)
+      let content = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.processMessage(groupId: groupId, messageData: actualMessageData)
       }
       logger.info(
         "✅ [MLSClient.processMessage] Success - content type: \(String(describing: content))")
@@ -1419,11 +1408,37 @@ actor MLSClient {
         throw MLSError.ignoredOldEpochMessage
       }
 
+      // ═══════════════════════════════════════════════════════════════════════════
+      // CRITICAL FIX (2024-12): Handle SecretReuseError as a skip, NOT a desync
+      // ═══════════════════════════════════════════════════════════════════════════
+      //
+      // Problem: SecretReuseError occurs when the same message is decrypted twice.
+      // This commonly happens when:
+      // 1. NSE decrypts a message (advances ratchet, deletes key)
+      // 2. Main app tries to decrypt the same message (key is gone)
+      //
+      // Old behavior: Treated as ratchetStateDesync → triggers group rejoin
+      // New behavior: Treat as secretReuseSkipped → caller should check DB cache
+      //
+      // This is NOT a true desync - the message WAS decrypted successfully (by NSE).
+      // The plaintext should be in the database cache.
+      //
+      // ═══════════════════════════════════════════════════════════════════════════
+      if errorMessageLower.contains("secretreuse") || errorMessageLower.contains("secret_reuse")
+         || errorMessage.contains("SecretReuseError") || errorMessage.contains("SecretTreeError(SecretReuseError)")
+      {
+        logger.info("ℹ️ [MLSClient.processMessage] SecretReuseError - message already decrypted (likely by NSE)")
+        logger.info("   This is expected when NSE and main app race to decrypt the same message")
+        logger.info("   Caller should retrieve plaintext from database cache")
+        // Note: We don't have messageID here, but caller will handle appropriately
+        throw MLSError.secretReuseSkipped(messageID: "unknown")
+      }
+
       // Detect ratchet state desynchronization errors
       // These can occur when SSE connection fails and client state becomes stale
       if case .DecryptionFailed = error {
-        // ANY DecryptionFailed during message processing could indicate state desync
-        // OpenMLS errors like RatchetTypeError, InvalidSignature, SecretReuse are all wrapped as DecryptionFailed
+        // DecryptionFailed OTHER than SecretReuseError indicates true state desync
+        // OpenMLS errors like RatchetTypeError, InvalidSignature are wrapped as DecryptionFailed
         logger.error(
           "🔴 RATCHET STATE DESYNC DETECTED in processMessage: DecryptionFailed - likely stale MLS state"
         )
@@ -1435,9 +1450,9 @@ actor MLSClient {
           message: "DecryptionFailed - MLS state out of sync: \(errorMessage)")
       }
 
-      // Also check message content for specific error keywords
+      // Also check message content for specific error keywords (excluding SecretReuse which is handled above)
       if errorMessageLower.contains("ratchet") || errorMessageLower.contains("invalidsignature")
-        || errorMessageLower.contains("secretreuse") || errorMessageLower.contains("epoch")
+        || errorMessageLower.contains("epoch")
       {
         logger.error("🔴 RATCHET STATE DESYNC DETECTED in processMessage: \(errorMessage)")
         logger.error("   This indicates the client's MLS state is out of sync with the group")
@@ -1453,10 +1468,9 @@ actor MLSClient {
 
   /// Store a validated proposal in the proposal queue
   func storeProposal(for userDID: String, groupId: Data, proposalRef: ProposalRef) async throws {
-    let context = getContext(for: userDID)
     do {
-      try await runFFI {
-        try context.storeProposal(groupId: groupId, proposalRef: proposalRef)
+      try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.storeProposal(groupId: groupId, proposalRef: proposalRef)
       }
       logger.info("Proposal stored successfully")
     } catch let error as MlsError {
@@ -1467,10 +1481,9 @@ actor MLSClient {
 
   /// List all pending proposals for a group
   func listPendingProposals(for userDID: String, groupId: Data) async throws -> [ProposalRef] {
-    let context = getContext(for: userDID)
     do {
-      let proposals = try await runFFI {
-        try context.listPendingProposals(groupId: groupId)
+      let proposals = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.listPendingProposals(groupId: groupId)
       }
       logger.info("Found \(proposals.count) pending proposals")
       return proposals
@@ -1482,10 +1495,9 @@ actor MLSClient {
 
   /// Remove a proposal from the proposal queue
   func removeProposal(for userDID: String, groupId: Data, proposalRef: ProposalRef) async throws {
-    let context = getContext(for: userDID)
     do {
-      try await runFFI {
-        try context.removeProposal(groupId: groupId, proposalRef: proposalRef)
+      try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.removeProposal(groupId: groupId, proposalRef: proposalRef)
       }
       logger.info("Proposal removed successfully")
     } catch let error as MlsError {
@@ -1496,10 +1508,9 @@ actor MLSClient {
 
   /// Commit all pending proposals that have been validated
   func commitPendingProposals(for userDID: String, groupId: Data) async throws -> Data {
-    let context = getContext(for: userDID)
     do {
-      let commitData = try await runFFI {
-        try context.commitPendingProposals(groupId: groupId)
+      let commitData = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.commitPendingProposals(groupId: groupId)
       }
       logger.info("Pending proposals committed successfully")
       return commitData
@@ -1661,11 +1672,10 @@ actor MLSClient {
     logger.info("🔬 [Phase 4] Bundle Diagnostics for user: \(userDID.prefix(20))")
 
     // Local bundle count (Phase 2 FFI query)
-    let context = getContext(for: userDID)
     let localCount: UInt64
     do {
-      localCount = try await runFFI {
-        try context.getKeyPackageBundleCount()
+      localCount = try await runFFIWithRecovery(for: userDID) { ctx in
+        try ctx.getKeyPackageBundleCount()
       }
       logger.info("   📍 Local bundles in cache: \(localCount)")
     } catch {
@@ -1715,9 +1725,8 @@ actor MLSClient {
   /// With automatic SQLite persistence, bundles should exist after initial creation
   /// Returns the number of local bundles available
   func ensureLocalBundlesAvailable(for userDID: String) async throws -> UInt64 {
-    let context = getContext(for: userDID)
-    let bundleCount = try await runFFI {
-      try context.getKeyPackageBundleCount()
+    let bundleCount = try await runFFIWithRecovery(for: userDID) { ctx in
+      try ctx.getKeyPackageBundleCount()
     }
 
     if bundleCount == 0 {
@@ -1735,9 +1744,8 @@ actor MLSClient {
   /// Get the current key package bundle count for a user
   /// Used by recovery manager to check for desync
   func getKeyPackageBundleCount(for userDID: String) async throws -> UInt64 {
-    let context = getContext(for: userDID)
-    return try await runFFI {
-      try context.getKeyPackageBundleCount()
+    try await runFFIWithRecovery(for: userDID) { ctx in
+      try ctx.getKeyPackageBundleCount()
     }
   }
 
@@ -1765,12 +1773,22 @@ actor MLSClient {
   /// - Throws: MLSError if flush fails
   public func flushStorage(for userDID: String) async throws {
     let normalizedDID = normalizeUserDID(userDID)
+
+    try await withMLSUserPermit(for: normalizedDID) {
+      try await MLSDatabaseCoordinator.shared.performWrite(for: normalizedDID, timeout: 15.0) { [weak self] in
+        guard let self else { throw CancellationError() }
+        try await self.flushStorageLocked(normalizedDID: normalizedDID)
+        return ()
+      }
+    }
+  }
+
+  private func flushStorageLocked(normalizedDID: String) async throws {
     logger.info("💾 Flushing MLS storage for user: \(normalizedDID.prefix(20))")
 
-    let context = getContext(for: normalizedDID)
     do {
-      try await runFFI {
-        try context.flushStorage()
+      try await runFFIWithRecoveryLocked(for: normalizedDID) { ctx in
+        try ctx.flushStorage()
       }
       logger.info("✅ MLS storage flushed successfully")
     } catch let error as MlsError {
@@ -1778,70 +1796,161 @@ actor MLSClient {
       throw MLSError.operationFailed
     }
   }
+  
+  /// Close and release an MLS context for a specific user
+  ///
+  /// CRITICAL: Call this during account switching to prevent SQLite connection exhaustion.
+  /// This method:
+  /// 1. Flushes all pending writes to disk (WAL checkpoint)
+  /// 2. Removes the context from the in-memory cache
+  /// 3. Removes associated API clients and managers
+  ///
+  /// The underlying Rust FFI context will be deallocated when all Arc references are dropped.
+  /// SQLite connections are closed when the rusqlite::Connection is dropped.
+  ///
+  /// - Parameter userDID: The user's DID to close context for
+  /// - Returns: True if a context was closed, false if no context existed for this user
+  @discardableResult
+  public func closeContext(for userDID: String) async -> Bool {
+    let normalizedDID = normalizeUserDID(userDID)
+    bumpGeneration(for: normalizedDID)
 
-  /// Clear all MLS storage for a specific user
+    do {
+      return try await withMLSUserPermit(for: normalizedDID) {
+        try await MLSDatabaseCoordinator.shared.performWrite(for: normalizedDID, timeout: 15.0) { [weak self] in
+          guard let self else { return false }
+          return await self.closeContextLocked(normalizedDID: normalizedDID)
+        }
+      }
+    } catch {
+      logger.error("🚨 [MLSClient] Failed to acquire cross-process lock for closeContext: \(error.localizedDescription)")
+      return false
+    }
+  }
+
+  private func closeContextLocked(normalizedDID: String) async -> Bool {
+    logger.info("🛑 [MLSClient] Closing context for user: \(normalizedDID.prefix(20))...")
+
+    // Try to flush before closing (but don't fail if flush fails)
+    if contexts[normalizedDID] != nil {
+      do {
+        try await runFFIWithRecoveryLocked(for: normalizedDID) { ctx in
+          try ctx.flushAndPrepareClose()
+        }
+        logger.debug("   ✅ Context flushed before close")
+      } catch {
+        logger.warning("   ⚠️ Flush before close failed: \(error.localizedDescription)")
+      }
+    }
+
+    let hadContext = contexts.removeValue(forKey: normalizedDID) != nil
+
+    apiClients.removeValue(forKey: normalizedDID)
+    deviceManagers.removeValue(forKey: normalizedDID)
+    recoveryManagers.removeValue(forKey: normalizedDID)
+
+    if hadContext {
+      logger.info("   ✅ Context closed and removed from cache")
+    } else {
+      logger.debug("   ℹ️ No context existed for this user")
+    }
+
+    return hadContext
+  }
+  
+  /// Close all contexts except for the specified user
+  ///
+  /// CRITICAL: Call this during account switching to prevent SQLite connection exhaustion.
+  /// This closes all contexts for other users, preventing "out of memory" errors from
+  /// accumulated SQLite connections.
+  ///
+  /// - Parameter keepUserDID: The user DID to keep open (the active user after switch)
+  /// - Returns: Number of contexts that were closed
+  @discardableResult
+  public func closeAllContextsExcept(keepUserDID: String) async -> Int {
+    let normalizedKeepDID = normalizeUserDID(keepUserDID)
+    logger.info("🧹 [MLSClient] Closing all contexts except: \(normalizedKeepDID.prefix(20))...")
+    
+    let usersToClose = contexts.keys.filter { $0 != normalizedKeepDID }
+    var closedCount = 0
+    
+    for userDID in usersToClose {
+      if await closeContext(for: userDID) {
+        closedCount += 1
+      }
+    }
+    
+    logger.info("   ✅ Closed \(closedCount) context(s), kept context for \(normalizedKeepDID.prefix(20))")
+    return closedCount
+  }
+
+  /// Clear all MLS storage for a specific user.
+  ///
+  /// IMPORTANT: This is a manual, user-initiated operation. It quarantines files (does not delete).
   public func clearStorage(for userDID: String) async throws {
     let normalizedDID = normalizeUserDID(userDID)
-    logger.info("🔐 Clearing MLS storage for user: \(normalizedDID)")
+    bumpGeneration(for: normalizedDID)
+    logger.info("🧰 [Diagnostics] Resetting MLS storage for user: \(normalizedDID)")
 
     #if !APP_EXTENSION
       await AppStateManager.shared.beginStorageMaintenance(for: normalizedDID)
       defer {
-        Task {
-          await AppStateManager.shared.endStorageMaintenance(for: normalizedDID)
-        }
+        Task { await AppStateManager.shared.endStorageMaintenance(for: normalizedDID) }
       }
 
       await AppStateManager.shared.prepareMLSStorageReset(for: normalizedDID)
     #endif
 
+    // Drop in-memory Rust context so it will reload from disk on next operation.
     contexts.removeValue(forKey: normalizedDID)
 
-    // Delete GRDB database
-    try await MLSGRDBManager.shared.deleteDatabase(for: normalizedDID)
+    // Quarantine + reset the Swift SQLCipher database.
+    try await MLSGRDBManager.shared.quarantineAndResetDatabase(for: normalizedDID)
 
-    // Delete SQLite storage file
+    // Quarantine the Rust SQLite file (mls-state) so it can be recreated fresh.
     let appSupport: URL
     if let sharedContainer = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared")
     {
       appSupport = sharedContainer
     } else {
-      appSupport =
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     }
+
     let mlsStateDir = appSupport.appendingPathComponent("mls-state", isDirectory: true)
 
-    let didHash =
-      normalizedDID.data(using: .utf8)?.base64EncodedString()
+    let didHash = normalizedDID.data(using: .utf8)?.base64EncodedString()
       .replacingOccurrences(of: "/", with: "_")
       .replacingOccurrences(of: "+", with: "-")
       .replacingOccurrences(of: "=", with: "")
       .prefix(64) ?? "default"
 
     let storageFileURL = mlsStateDir.appendingPathComponent("\(didHash).db")
+    let wal = storageFileURL.appendingPathExtension("wal")
+    let shm = storageFileURL.appendingPathExtension("shm")
 
-    // Delete main database file and associated files (-wal, -shm)
-    let filesToDelete = [
-      storageFileURL,
-      storageFileURL.appendingPathExtension("wal"),
-      storageFileURL.appendingPathExtension("shm"),
-    ]
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
+    let timestamp = formatter.string(from: Date())
 
-    for fileURL in filesToDelete {
-      if FileManager.default.fileExists(atPath: fileURL.path) {
-        do {
-          try FileManager.default.removeItem(at: fileURL)
-          logger.info("🗑️ Deleted SQLite file: \(fileURL.lastPathComponent)")
-        } catch {
-          logger.error(
-            "❌ Failed to delete SQLite file \(fileURL.lastPathComponent): \(error.localizedDescription)"
-          )
-        }
+    let quarantineDir = mlsStateDir
+      .appendingPathComponent("Quarantine", isDirectory: true)
+      .appendingPathComponent("\(timestamp)_\(didHash.prefix(16))", isDirectory: true)
+
+    try? FileManager.default.createDirectory(at: quarantineDir, withIntermediateDirectories: true)
+
+    for url in [storageFileURL, wal, shm] {
+      guard FileManager.default.fileExists(atPath: url.path) else { continue }
+      let dest = quarantineDir.appendingPathComponent(url.lastPathComponent)
+      do {
+        try FileManager.default.moveItem(at: url, to: dest)
+        logger.info("📦 [Diagnostics] Quarantined Rust storage file: \(url.lastPathComponent)")
+      } catch {
+        logger.warning("⚠️ [Diagnostics] Failed to quarantine \(url.lastPathComponent): \(error.localizedDescription)")
       }
     }
 
-    logger.info("✅ MLS storage cleared for \(normalizedDID)")
+    logger.info("✅ [Diagnostics] MLS storage reset complete for \(normalizedDID)")
   }
 
   /// Delete specific consumed key package bundles from storage
@@ -1857,7 +1966,6 @@ actor MLSClient {
   public func deleteKeyPackageBundles(for userDID: String, hashRefs: [Data]) async throws -> UInt64
   {
     let normalizedDID = normalizeUserDID(userDID)
-    let context = getContext(for: normalizedDID)
 
     guard !hashRefs.isEmpty else {
       logger.debug("No key package bundles to delete")
@@ -1870,8 +1978,8 @@ actor MLSClient {
 
     // Call Rust FFI method to delete from both in-memory and persistent storage
     // hashRefs is already [Data], which UniFFI will convert to Vec<Vec<u8>>
-    let deletedCount = try await runFFI {
-      try context.deleteKeyPackageBundles(hashRefs: hashRefs)
+    let deletedCount = try await runFFIWithRecovery(for: normalizedDID) { ctx in
+      try ctx.deleteKeyPackageBundles(hashRefs: hashRefs)
     }
 
     logger.info("✅ Deleted \(deletedCount) bundles from storage")
@@ -1913,12 +2021,11 @@ actor MLSClient {
       "🔍 [Reconciliation] Starting key package reconciliation for user: \(userDID.prefix(20))...")
 
     // Query local bundle count
-    let context = getContext(for: userDID)
     var localCount: Int
     do {
       localCount = Int(
-        try await runFFI {
-          try context.getKeyPackageBundleCount()
+        try await runFFIWithRecovery(for: userDID) { ctx in
+          try ctx.getKeyPackageBundleCount()
         })
       logger.info("📍 [Reconciliation] Local bundles in cache: \(localCount)")
     } catch {
@@ -2125,8 +2232,8 @@ actor MLSClient {
 
                 // Re-check counts after deletion
                 let newLocalCount = Int(
-                  try await runFFI {
-                    try context.getKeyPackageBundleCount()
+                  try await runFFIWithRecovery(for: userDID) { ctx in
+                    try ctx.getKeyPackageBundleCount()
                   })
                 let newServerStats = try await apiClient.getKeyPackageStats()
                 logger.info(

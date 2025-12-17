@@ -67,10 +67,10 @@ struct ToastView: View {
     .frame(height: toastHeight)
     .background(
       Group {
-        if #available(iOS 18.0, macOS 15.0, *) {
+        // Only iOS 26+/macOS 15+ has the real glass effect; older OSes need a visible fallback.
+        if #available(iOS 26.0, macOS 15.0, *) {
           Color.clear
         } else {
-          // Fallback for pre-iOS 18 / macOS 15
           Capsule()
             .fill(.ultraThinMaterial)
             .overlay(

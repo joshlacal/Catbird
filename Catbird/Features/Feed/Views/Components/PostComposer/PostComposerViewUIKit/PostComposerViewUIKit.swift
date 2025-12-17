@@ -60,6 +60,7 @@ struct PostComposerViewUIKit: View {
   @State var showingGifPicker = false
   @State var showingThreadgate = false
   @State var showingLabelSelector = false
+  @State var showingOutlineTagsEditor = false
   @State private var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false

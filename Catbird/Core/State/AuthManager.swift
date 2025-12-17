@@ -1,3 +1,4 @@
+import CatbirdMLSCore
 import Foundation
 import LocalAuthentication
 import OSLog
@@ -187,10 +188,17 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   // OAuth configuration
   private let oauthConfig = OAuthConfiguration(
-    clientId: "https://catbird.blue/oauth/client-metadata.json",
+    clientId: "https://catbird.blue/oauth-client-metadata.json",
     redirectUri: "https://catbird.blue/oauth/callback",
     scope: "atproto transition:generic transition:chat.bsky"
   )
+  
+  // MARK: - Debounce Flag for Auth Expiration
+  
+  /// Prevents multiple simultaneous auth expiration handlers from triggering.
+  /// When true, additional calls to handleAutoLogoutFromPetrel are ignored until
+  /// re-authentication completes or is cancelled.
+  private var isHandlingAuthExpiration = false
   
   // Service DID configuration - can be customized before authentication
   var customAppViewDID: String = "did:web:api.bsky.app#bsky_appview"
@@ -240,7 +248,18 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Called when Petrel detects a terminal auth failure (e.g., invalid_grant) and performs a logout.
   @MainActor
   func handleAutoLogoutFromPetrel(did: String?, reason: String?) async {
+    // DEBOUNCE: If we're already handling an auth expiration, skip duplicate triggers.
+    // This prevents the "death spiral" where dozens of parallel network requests all
+    // fail and each tries to trigger logout simultaneously.
+    if isHandlingAuthExpiration {
+      logger.warning("Already handling auth expiration, skipping duplicate trigger (reason: \(reason ?? "nil"))")
+      return
+    }
+    
     logger.error("Auto logout from Petrel: did=\(did ?? "nil") reason=\(reason ?? "nil")")
+    
+    // Mark that we're handling an expiration to block further triggers
+    isHandlingAuthExpiration = true
 
     if let did {
       let storedHandle = getStoredHandle(for: did)
@@ -254,27 +273,43 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
     }
 
+    // Clear handle if this was the active account (check before state change)
+    let wasActiveAccount = if let did, case .authenticated(let current) = state {
+      current == did
+    } else {
+      false
+    }
+
     updateState(.unauthenticated)
 
     client = nil
 
-    if let did, case .authenticated(let current) = state, current == did {
+    if wasActiveAccount {
       handle = nil
     }
 
     updateAvailableAccountsFromStoredHandles(activeDID: nil)
 
-    let reasonText: String = {
-      switch (reason ?? "").lowercased() {
-      case "invalid_grant":
-        return "Your session expired or was revoked. Please sign in again."
-      case "invalid_token":
-        return "Your session token is no longer valid. Please sign in again."
-      default:
-        return reason.map { "Signed out: \($0). Please sign in again." } ?? "You were signed out. Please sign in again."
-      }
-    }()
-    pendingAuthAlert = AuthAlert(title: "Signed Out", message: reasonText)
+    // CRITICAL: Do NOT set pendingAuthAlert if we have expiredAccountInfo.
+    // We want ContentView to auto-trigger the browser flow immediately.
+    // Setting an alert here blocks the ASWebAuthenticationSession from presenting.
+    if expiredAccountInfo == nil {
+      let reasonText: String = {
+        switch (reason ?? "").lowercased() {
+        case "invalid_grant":
+          return "Your session expired or was revoked. Please sign in again."
+        case "invalid_token":
+          return "Your session token is no longer valid. Please sign in again."
+        default:
+          return reason.map { "Signed out: \($0). Please sign in again." } ?? "You were signed out. Please sign in again."
+        }
+      }()
+      pendingAuthAlert = AuthAlert(title: "Signed Out", message: reasonText)
+    } else {
+      // Clear any existing alert so it doesn't block the sheet
+      pendingAuthAlert = nil
+      logger.info("Skipping alert - expiredAccountInfo is set, will auto-trigger re-auth flow")
+    }
   }
 
   @MainActor
@@ -286,6 +321,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func clearExpiredAccountInfo() {
     expiredAccountInfo = nil
+    isHandlingAuthExpiration = false  // Reset debounce flag when user dismisses/cancels
   }
 
   /// Start OAuth flow for the expired account (if available)
@@ -745,6 +781,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         await client.clearTemporaryAccountStorage()
 
         self.isAuthenticationCancelled = false
+        self.isHandlingAuthExpiration = false  // Reset debounce flag on successful auth
         self.expiredAccountInfo = nil
           await self.updateState(.authenticated(userDID: did))
 
@@ -799,7 +836,13 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     self.client = nil
     handle = nil
-    expiredAccountInfo = nil
+    // NOTE: Do NOT clear expiredAccountInfo here!
+    // When auto-logout occurs via handleAutoLogoutFromPetrel, expiredAccountInfo is set
+    // to enable automatic re-authentication. Clearing it here would break that flow.
+    // expiredAccountInfo is cleared only on:
+    // 1. Successful re-authentication (handleCallback)
+    // 2. User explicitly dismisses the expired account error (LoginView X button)
+    // 3. User cancels re-authentication (LoginView cancel)
 
     updateAvailableAccountsFromStoredHandles(activeDID: nil)
   }
@@ -817,6 +860,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
     
     isAuthenticationCancelled = true
+    isHandlingAuthExpiration = false  // Reset debounce flag so future failures can trigger
     
     if case .error = state {
       updateState(.unauthenticated)
@@ -1139,7 +1183,27 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func switchToAccount(did: String) async throws {
     logger.info("🔄 [AUTHMAN-SWITCH] Starting switchToAccount for DID: \(did)")
-      logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(String(describing: self.state))")
+    logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(String(describing: self.state))")
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX (2024-12): Prevent re-entrancy during account switching
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // Problem: Rapid account switching causes "death spiral":
+    // 1. Switch A → B starts, opens B's database
+    // 2. User taps switch B → C before A→B completes
+    // 3. A's database still closing, B's opening, C's requested
+    // 4. WAL files get corrupted, "SQLite error 7: out of memory"
+    //
+    // Solution: Guard against re-entrancy and wait for previous switch to complete
+    //
+    // ═══════════════════════════════════════════════════════════════════════════
+    guard !isSwitchingAccount else {
+      logger.warning("⚠️ [AUTHMAN-SWITCH] Account switch already in progress - ignoring request")
+      logger.warning("   Requested DID: \(did)")
+      throw AuthError.accountSwitchInProgress
+    }
+    
     logger.debug("🔄 [AUTHMAN-SWITCH] Ensuring client initialized...")
     await ensureClientInitializedForAccountOperations()
 
@@ -1157,6 +1221,93 @@ final class AuthenticationManager: AuthProgressDelegate {
     logger.info("🔄 [AUTHMAN-SWITCH] Proceeding with account switch to DID: \(did)")
     logger.debug("🔄 [AUTHMAN-SWITCH] Setting isSwitchingAccount = true")
     isSwitchingAccount = true
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX (2024-12): Close current user's MLS databases before switching
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // BOTH databases must be properly closed and checkpointed BEFORE opening
+    // the new user's database:
+    //
+    // 1. **MLS FFI Context (Rust layer)** - Contains OpenMLS cryptographic state
+    //    - Secret tree, epoch keys, ratchet state
+    //    - Uses its own SQLite database (via rusqlite)
+    //    - If not flushed: SecretReuseError on reload (ratchet advanced but not persisted)
+    //
+    // 2. **MLSGRDBManager (Swift layer)** - Contains message cache and metadata
+    //    - Decrypted plaintexts, conversation records
+    //    - Uses GRDB/SQLCipher
+    //    - If not checkpointed: WAL grows unbounded, "SQLite error 7"
+    //
+    // Without proper closing of BOTH:
+    // - WAL files grow unbounded (no checkpoint)
+    // - File descriptors exhausted ("SQLite error 7")
+    // - HMAC verification fails (reading wrong user's WAL)
+    // - SecretReuseError (MLS ratchet advanced in memory but not persisted)
+    //
+    // ═══════════════════════════════════════════════════════════════════════════
+    if case .authenticated(let currentDid) = state {
+      // STEP 1: Close MLS FFI context (Rust layer) - MUST come before GRDB close
+      // This flushes the OpenMLS secret tree state to disk
+      logger.info("🔄 [AUTHMAN-SWITCH] Step 1: Closing MLS FFI context for current user...")
+      await MLSClient.shared.bumpGeneration(for: currentDid)
+      let ffiClosed = await MLSClient.shared.closeContext(for: currentDid)
+      if ffiClosed {
+        logger.info("✅ [AUTHMAN-SWITCH] MLS FFI context closed and flushed")
+      } else {
+        logger.debug("   ℹ️ [AUTHMAN-SWITCH] No MLS FFI context existed for this user")
+      }
+      
+      // STEP 2: Close MLS GRDB database (Swift layer)
+      // This checkpoints the message cache WAL
+      // ═══════════════════════════════════════════════════════════════════════════
+      // CRITICAL FIX (2024-12): Retry database close with exponential backoff
+      // ═══════════════════════════════════════════════════════════════════════════
+      // The NSE might be holding a read lock on the database. We must wait for it
+      // to release, otherwise the WAL will be left in an inconsistent state,
+      // causing HMAC check failures when we try to open it later.
+      // ═══════════════════════════════════════════════════════════════════════════
+      logger.info("🔄 [AUTHMAN-SWITCH] Step 2: Closing MLS GRDB database for current user...")
+      
+      var closeSuccess = false
+      var retryCount = 0
+      let maxRetries = 3
+      var retryDelay: UInt64 = 500_000_000  // Start with 500ms
+      
+      while !closeSuccess && retryCount < maxRetries {
+        if retryCount > 0 {
+          logger.info("🔄 [AUTHMAN-SWITCH] Retry \(retryCount)/\(maxRetries) after \(retryDelay / 1_000_000)ms...")
+          try? await Task.sleep(nanoseconds: retryDelay)
+          retryDelay *= 2  // Exponential backoff
+        }
+        
+        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: currentDid, timeout: 5.0)
+        retryCount += 1
+      }
+      
+      if closeSuccess {
+        logger.info("✅ [AUTHMAN-SWITCH] MLS GRDB database closed and checkpointed")
+      } else {
+        logger.critical("🚨 [AUTHMAN-SWITCH] Database drain FAILED after \(maxRetries) retries - aborting switch to prevent corruption")
+        pendingAuthAlert = AuthAlert(
+          title: "Restart Required",
+          message: "Catbird couldn’t safely close the encrypted database for the previous account. Please restart the app and try switching again."
+        )
+        isSwitchingAccount = false
+        throw AuthError.databaseDrainFailed
+      }
+      
+      // Brief pause to allow OS to release file handles
+      try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+    }
+
+    // Prewarm the target account's database now that the previous account is fully drained.
+    do {
+      _ = try await MLSGRDBManager.shared.getDatabasePool(for: did)
+      logger.debug("⚡️ [AUTHMAN-SWITCH] Prewarmed MLS database for target account")
+    } catch {
+      logger.debug("⚠️ [AUTHMAN-SWITCH] Prewarm failed (non-fatal): \(error.localizedDescription)")
+    }
 
     do {
       logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .initializing")
@@ -1176,6 +1327,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .authenticated")
       updateState(.authenticated(userDID: newDid))
+      MLSAppActivityState.updateActiveUserDID(newDid)
 
       // Account switching is now handled by AppStateManager.transitionToAuthenticated()
       // which is called automatically when the AuthManager state changes to .authenticated
@@ -1432,11 +1584,26 @@ extension AuthenticationManager: AuthenticationDelegate {
   func authenticationRequired(client: ATProtoClient) {
     logger.error("AuthenticationDelegate.authenticationRequired received from Petrel")
     Task { @MainActor in
-      await self.markCurrentAccountExpiredForReauth(client: client, reason: "authentication_required")
-      // Surface a gentle alert once; LoginView will auto-start reauth for expiredAccountInfo
-      if self.pendingAuthAlert == nil {
-        self.pendingAuthAlert = AuthAlert(title: "Signed Out", message: "Your session has expired. Please sign in again.")
+      // DEBOUNCE: Avoid multiple triggers
+      if self.isHandlingAuthExpiration {
+        logger.warning("Already handling auth expiration, skipping duplicate trigger")
+        return
       }
+      self.isHandlingAuthExpiration = true
+
+      await self.markCurrentAccountExpiredForReauth(client: client, reason: "authentication_required")
+      
+      // Only show alert if we couldn't identify the account for auto-reauth
+      if self.expiredAccountInfo == nil {
+        if self.pendingAuthAlert == nil {
+          self.pendingAuthAlert = AuthAlert(title: "Signed Out", message: "Your session has expired. Please sign in again.")
+        }
+      } else {
+        // Clear any existing alert so it doesn't block the auto-reauth flow
+        self.pendingAuthAlert = nil
+        logger.info("Skipping alert in authenticationRequired - expiredAccountInfo is set, will auto-trigger re-auth flow")
+      }
+      
       self.updateState(.unauthenticated)
     }
   }
@@ -1448,16 +1615,35 @@ extension AuthenticationManager: AuthFailureDelegate {
   @MainActor
   func handleCatastrophicAuthFailure(did: String, error: Error, isRetryable: Bool) async {
     logger.error("AuthFailureDelegate.catastrophic did=\(did) retryable=\(isRetryable) error=\(error.localizedDescription)")
+    
+    // DEBOUNCE
+    if isHandlingAuthExpiration {
+      logger.warning("Already handling auth expiration, skipping duplicate trigger (catastrophic)")
+      return
+    }
+    isHandlingAuthExpiration = true
+
     // Prime re-auth for the specified DID
     let storedHandle = getStoredHandle(for: did)
     if expiredAccountInfo == nil {
       expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
     }
-    if pendingAuthAlert == nil {
-      let title = isRetryable ? "Authentication Unavailable" : "Signed Out"
-      let message = isRetryable ? "The server is temporarily unavailable. Please try again shortly." : "Your session is no longer valid. Please sign in again."
-      pendingAuthAlert = AuthAlert(title: title, message: message)
+    
+    if isRetryable {
+      if pendingAuthAlert == nil {
+        let message = "The server is temporarily unavailable. Please try again shortly."
+        pendingAuthAlert = AuthAlert(title: "Authentication Unavailable", message: message)
+      }
+    } else {
+      // Terminal failure - prefer auto-reauth without alert if possible
+      if expiredAccountInfo != nil {
+        pendingAuthAlert = nil
+        logger.info("Skipping alert in catastrophic failure - expiredAccountInfo is set, will auto-trigger re-auth flow")
+      } else if pendingAuthAlert == nil {
+        pendingAuthAlert = AuthAlert(title: "Signed Out", message: "Your session is no longer valid. Please sign in again.")
+      }
     }
+    
     updateState(.unauthenticated)
   }
 
@@ -1481,6 +1667,10 @@ enum AuthError: Error, LocalizedError {
   case timeout
   case cancelled
   case unknown(Error)
+  /// Account switch is already in progress - prevents re-entrancy
+  case accountSwitchInProgress
+  /// Database drain failed during account switch; do not proceed to avoid corruption.
+  case databaseDrainFailed
 
   var errorDescription: String? {
     switch self {
@@ -1500,6 +1690,10 @@ enum AuthError: Error, LocalizedError {
       return "Authentication was cancelled"
     case .unknown(let error):
       return "Unknown error: \(error.localizedDescription)"
+    case .accountSwitchInProgress:
+      return "Please wait for the current account switch to complete"
+    case .databaseDrainFailed:
+      return "Could not safely close the database. Please restart the app and try again."
     }
   }
   
@@ -1525,6 +1719,8 @@ enum AuthError: Error, LocalizedError {
       return "Authentication was cancelled by the user."
     case .unknown:
       return "An unexpected error occurred during authentication."
+    case .databaseDrainFailed:
+      return "The app couldn’t acquire exclusive access to the encrypted database to flush and close it safely."
     default:
       return nil
     }
@@ -1552,6 +1748,10 @@ enum AuthError: Error, LocalizedError {
       return "You can try logging in again when ready."
     case .unknown:
       return "Please try again or contact support if the problem persists."
+    case .accountSwitchInProgress:
+      return "Wait a moment for the current account switch to finish, then try again."
+    case .databaseDrainFailed:
+      return "Restart the app, then try switching accounts again."
     default:
       return "Please try again or contact support if the problem persists."
     }

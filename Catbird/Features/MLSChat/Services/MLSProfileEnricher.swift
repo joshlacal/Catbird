@@ -1,6 +1,7 @@
 import Foundation
 import Petrel
 import OSLog
+import CatbirdMLSCore
 
 #if os(iOS)
 
@@ -75,6 +76,26 @@ actor MLSProfileEnricher {
     for dids: [String],
     using client: ATProtoClient
   ) async -> [String: ProfileData] {
+    // Delegate to the new method without database persistence
+    await ensureProfiles(for: dids, using: client, currentUserDID: nil)
+  }
+  
+  /// Ensure profile data exists for the provided DIDs with database persistence
+  ///
+  /// This overload persists fetched profiles to the MLS member table in the database,
+  /// enabling the Notification Service Extension to show rich notifications with
+  /// sender names instead of "New Message".
+  ///
+  /// - Parameters:
+  ///   - dids: The unique DIDs to resolve
+  ///   - client: Authenticated AT Protocol client for fetching missing profiles
+  ///   - currentUserDID: Current user's DID for scoping database updates (nil skips DB persistence)
+  /// - Returns: Mapping of DID → enriched profile info for the requested IDs
+  func ensureProfiles(
+    for dids: [String],
+    using client: ATProtoClient,
+    currentUserDID: String?
+  ) async -> [String: ProfileData] {
     let requestedDIDs = Array(Set(dids))
     let canonicalByRequested = Dictionary(uniqueKeysWithValues: requestedDIDs.map { ($0, Self.canonicalDID($0)) })
     let canonicalDIDs = Array(Set(canonicalByRequested.values))
@@ -82,7 +103,7 @@ actor MLSProfileEnricher {
     let uncachedCanonical = canonicalDIDs.filter { profileCache[$0] == nil }
     if !uncachedCanonical.isEmpty {
       logger.info("Ensuring profiles for \(uncachedCanonical.count) uncached participants")
-      await fetchProfilesInBatches(uncachedCanonical, using: client)
+      await fetchProfilesInBatches(uncachedCanonical, using: client, currentUserDID: currentUserDID)
     }
 
     var resolved: [String: ProfileData] = [:]
@@ -114,17 +135,17 @@ actor MLSProfileEnricher {
     return Array(uniqueDIDs)
   }
 
-  private func fetchProfilesInBatches(_ dids: [String], using client: ATProtoClient) async {
+  private func fetchProfilesInBatches(_ dids: [String], using client: ATProtoClient, currentUserDID: String? = nil) async {
     // AT Protocol getProfiles supports up to 25 actors per request
     let batchSize = 25
     let batches = dids.chunked(into: batchSize)
 
     for batch in batches {
-      await fetchProfileBatch(batch, using: client)
+      await fetchProfileBatch(batch, using: client, currentUserDID: currentUserDID)
     }
   }
 
-  private func fetchProfileBatch(_ dids: [String], using client: ATProtoClient) async {
+  private func fetchProfileBatch(_ dids: [String], using client: ATProtoClient, currentUserDID: String? = nil) async {
     let actors = dids.compactMap { did -> ATIdentifier? in
       do {
         return try ATIdentifier(string: did)
@@ -154,6 +175,8 @@ actor MLSProfileEnricher {
       }
 
       // Cache the fetched profiles
+      var profilesToPersist: [(did: String, handle: String?, displayName: String?)] = []
+      
       for profile in profiles {
         let profileData = ProfileData(from: profile)
         profileCache[Self.canonicalDID(profileData.did)] = profileData
@@ -161,12 +184,52 @@ actor MLSProfileEnricher {
         
         // Also persist to shared UserDefaults for NSE access
         persistProfileToSharedStorage(profileData)
+        
+        // Collect profiles for database persistence
+        if currentUserDID != nil {
+          profilesToPersist.append((
+            did: profileData.did,
+            handle: profileData.handle,
+            displayName: profileData.displayName
+          ))
+        }
+      }
+      
+      // Persist to MLS member table for NSE rich notifications
+      if let userDID = currentUserDID, !profilesToPersist.isEmpty {
+        await persistProfilesToDatabase(profilesToPersist, currentUserDID: userDID)
       }
 
       logger.info("Successfully cached \(profiles.count) profiles")
 
     } catch {
       logger.error("Failed to fetch profile batch: \(error.localizedDescription)")
+    }
+  }
+  
+  /// Persist profiles to the MLS member table in the database
+  ///
+  /// This enables the NSE to look up sender names when showing notifications.
+  /// The update only affects members that already exist in the database.
+  private func persistProfilesToDatabase(
+    _ profiles: [(did: String, handle: String?, displayName: String?)],
+    currentUserDID: String
+  ) async {
+    do {
+      let database = try await MLSGRDBManager.shared.getDatabasePool(for: currentUserDID)
+      
+      let updatedCount = try await MLSStorageHelpers.batchUpdateMemberProfiles(
+        in: database,
+        profiles: profiles,
+        currentUserDID: currentUserDID
+      )
+      
+      if updatedCount > 0 {
+        logger.info("📝 Persisted \(updatedCount) profile(s) to MLS member table for NSE access")
+      }
+    } catch {
+      // Non-fatal - the in-memory cache and shared UserDefaults still work
+      logger.warning("Failed to persist profiles to database: \(error.localizedDescription)")
     }
   }
   

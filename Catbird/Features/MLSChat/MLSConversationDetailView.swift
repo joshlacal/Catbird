@@ -2336,7 +2336,8 @@ struct MLSConversationDetailView: View {
 
       let profiles = await appState.mlsProfileEnricher.ensureProfiles(
         for: Array(dids),
-        using: client
+        using: client,
+        currentUserDID: appState.userDID
       )
 
       await MainActor.run {
@@ -2357,6 +2358,8 @@ struct MLSConversationDetailView: View {
     for (did, profile) in newProfiles {
       participantProfiles[did] = profile
     }
+    // Rebuild messages to reflect newly loaded profile data
+    rebuildMessagesWithProfiles()
   }
 
   /// Load cached reactions from SQLite for this conversation
@@ -2463,11 +2466,13 @@ struct MLSConversationDetailView: View {
       guard !missing.isEmpty else { return }
       guard let client = appState.atProtoClient else { return }
 
-      let profiles = await appState.mlsProfileEnricher.ensureProfiles(for: missing, using: client)
+      let profiles = await appState.mlsProfileEnricher.ensureProfiles(
+        for: missing,
+        using: client,
+        currentUserDID: appState.userDID
+      )
       await MainActor.run {
         mergeParticipantProfiles(with: profiles)
-        // Rebuild messages to reflect newly loaded profile data
-        rebuildMessagesWithProfiles()
       }
     }
   }

@@ -144,6 +144,15 @@ struct MLSConversationListView: View {
                 }
             }
         }
+        .onChange(of: appState.navigationManager.targetMLSConversationId) { oldValue, newValue in
+            // Handle deep-link navigation to a specific MLS conversation (e.g., from notification tap)
+            if let convoId = newValue, convoId != selectedConvoId {
+                logger.info("Deep-link navigation to MLS conversation: \(convoId.prefix(16))...")
+                selectedConvoId = convoId
+                // Clear the target after setting to avoid repeated navigation
+                appState.navigationManager.targetMLSConversationId = nil
+            }
+        }
         .alert("Error", isPresented: $showingErrorAlert) {
             Button("OK", role: .cancel) {}
 

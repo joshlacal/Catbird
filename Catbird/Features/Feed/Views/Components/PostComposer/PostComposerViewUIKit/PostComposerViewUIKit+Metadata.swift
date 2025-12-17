@@ -209,9 +209,8 @@ extension PostComposerViewUIKit {
   }
   
   private func showAddTagDialog(vm: PostComposerViewModel) {
-    // For now, users can use the full OutlineTagsView from the toolbar
-    // This is just a placeholder for future inline tag addition
     pcMetadataLogger.info("PostComposerMetadata: Add tag button tapped")
+    showingOutlineTagsEditor = true
   }
   
   @ViewBuilder

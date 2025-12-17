@@ -679,10 +679,28 @@ private extension CatbirdApp {
       await FeedStateStore.shared.handleScenePhaseChange(newPhase)
 
 #if os(iOS)
+      if let appState = appStateManager.lifecycle.appState {
+        MLSAppActivityState.setMainAppActive(newPhase == .active, activeUserDID: appState.userDID)
+      } else {
+        MLSAppActivityState.setMainAppActive(newPhase == .active, activeUserDID: nil)
+      }
+
       // Flush as early as possible (active → inactive) while file access is still valid.
       if oldPhase == .active, newPhase == .inactive {
         if let appState = appStateManager.lifecycle.appState {
           await appState.flushMLSStorageForSuspension()
+        }
+      }
+      
+      // CRITICAL FIX (2024-12): Reload MLS state from disk when returning to foreground
+      // The NSE may have advanced the MLS ratchet while the app was in background.
+      // Without this, the app's in-memory state is stale and will cause:
+      // - SecretReuseError (trying to use a nonce the NSE already consumed)
+      // - InvalidEpoch (app at epoch N but disk/server is at N+1)
+      // - DecryptionFailed (using old keys deleted by forward secrecy)
+      if (oldPhase == .background || oldPhase == .inactive), newPhase == .active {
+        if let appState = appStateManager.lifecycle.appState {
+          await appState.reloadMLSStateFromDisk()
         }
       }
 #endif
@@ -694,6 +712,18 @@ private extension CatbirdApp {
           ChatBackgroundRefreshManager.schedule()
           BackgroundCacheRefreshManager.schedule()
           MLSBackgroundRefreshManager.scheduleInitialRefresh()
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // IDLE MAINTENANCE (2024-12): Perform database cleanup when entering background
+        // ═══════════════════════════════════════════════════════════════════════════
+        // This helps prevent WAL file growth and resource exhaustion by:
+        // 1. Checkpointing WAL files to merge changes into main DB
+        // 2. Closing inactive database connections
+        // 3. Logging health metrics for debugging
+        // ═══════════════════════════════════════════════════════════════════════════
+        Task(priority: .utility) {
+          await MLSGRDBManager.shared.performIdleMaintenance(aggressiveCheckpoint: false)
         }
 #endif
       }
@@ -1103,23 +1133,127 @@ extension CatbirdApp.AppDelegate {
 
     logger.info("User tapped notification")
 
+    // 1. Handle silent background notifications (key inventory)
+    if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
+      Task { @MainActor in
+        guard let appState = AppStateManager.shared.lifecycle.appState else {
+          logger.warning("AppState not available for MLS notification handling")
+          completionHandler()
+          return
+        }
+        await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+        completionHandler()
+      }
+      return
+    }
+    
+    // 2. Forward to NotificationManager for navigation handling if available
+    if let appState = AppStateManager.shared.lifecycle.appState {
+      appState.notificationManager.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
+      return
+    }
+
+    // 3. Fallback handling if AppState/NotificationManager not ready
     // Handle MLS notifications
     if let type = userInfo["type"] as? String {
-      if type == "keyPackageLowInventory" {
+      switch type {
+      case "mls_message", "mls_message_decrypted":
+        // Handle MLS chat message notification tap
+        // Navigate to the conversation and switch account if needed
+        logger.info("🔐 MLS message notification tapped - navigating to conversation")
+        
+        guard let convoId = userInfo["convo_id"] as? String else {
+          logger.warning("MLS notification missing convo_id")
+          completionHandler()
+          return
+        }
+        
+        let recipientDid = userInfo["recipient_did"] as? String
+        
         Task { @MainActor in
-          guard let appState = AppStateManager.shared.lifecycle.appState else {
-            logger.warning("AppState not available for MLS notification handling")
-            completionHandler()
-            return
+          // Switch to the correct account if needed
+          if let targetDid = recipientDid {
+            await self.switchToAccountIfNeeded(did: targetDid)
           }
-          await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+          
+          // Navigate to the MLS conversation
+          await self.navigateToMLSConversation(convoId: convoId)
+          
           completionHandler()
         }
         return
+        
+      default:
+        break
       }
     }
 
     completionHandler()
+  }
+  
+  /// Switch to a different account if it's not currently active
+  @MainActor
+  private func switchToAccountIfNeeded(did: String) async {
+    let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
+    let appStateManager = AppStateManager.shared
+    
+    // Check if we're already on the correct account
+    if appStateManager.lifecycle.userDID == did {
+      logger.debug("Already on correct account: \(did.prefix(24))...")
+      return
+    }
+    
+    logger.info("🔄 Switching account to \(did.prefix(24))... for notification navigation")
+    _ = await appStateManager.switchAccount(to: did)
+    logger.info("✅ Account switched for notification navigation")
+  }
+  
+  /// Navigate to an MLS conversation
+  @MainActor
+  private func navigateToMLSConversation(convoId: String) async {
+    let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
+    
+    guard let appState = AppStateManager.shared.lifecycle.appState else {
+      logger.warning("Cannot navigate to MLS conversation - AppState not available")
+      return
+    }
+
+    // Wait for MLS service to be ready (up to 5 seconds)
+    let maxWaitTime: TimeInterval = 5.0
+    let checkInterval: TimeInterval = 0.2
+    var elapsed: TimeInterval = 0
+    var shouldWait = true
+    
+    while shouldWait && elapsed < maxWaitTime {
+      let status = appState.mlsServiceState.status
+      switch status {
+      case .ready:
+        logger.info("MLS service ready, proceeding with navigation")
+        shouldWait = false
+      case .failed, .databaseFailed:
+        logger.warning("MLS service in failed state, proceeding with navigation anyway")
+        shouldWait = false
+      case .initializing, .notStarted, .retrying:
+        // Still initializing, wait a bit
+        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+        elapsed += checkInterval
+      }
+    }
+    
+    if elapsed >= maxWaitTime {
+      logger.warning("MLS service did not become ready within \(maxWaitTime)s, proceeding with navigation anyway")
+    }
+    
+    logger.info("📍 Navigating to MLS conversation: \(convoId.prefix(16))...")
+    
+    // Switch to the chat tab (index 4) 
+    appState.navigationManager.updateCurrentTab(4)
+    
+    // Navigate to the specific MLS conversation
+    let destination = NavigationDestination.mlsConversation(convoId)
+    appState.navigationManager.navigate(to: destination, in: 4)
+    
+    logger.info("✅ Navigation to MLS conversation initiated")
   }
 
   func userNotificationCenter(
@@ -1127,10 +1261,10 @@ extension CatbirdApp.AppDelegate {
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    // For MLS notifications, don't show banner/alert (they're silent background notifications)
     let userInfo = notification.request.content.userInfo
+    
+    // 1. Handle silent background notifications (key inventory)
     if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
-      // Silent notification - process in background
       Task { @MainActor in
         guard let appState = AppStateManager.shared.lifecycle.appState else {
           let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
@@ -1140,10 +1274,17 @@ extension CatbirdApp.AppDelegate {
         await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
       }
       completionHandler([]) // No presentation
-    } else {
-      // Show other notifications normally
-      completionHandler([.banner, .sound, .badge])
+      return
     }
+    
+    // 2. Forward to NotificationManager for rich content/decryption if available
+    if let appState = AppStateManager.shared.lifecycle.appState {
+      appState.notificationManager.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
+      return
+    }
+    
+    // 3. Fallback: Show standard notifications normally
+    completionHandler([.banner, .sound, .badge])
   }
 }
 #endif 

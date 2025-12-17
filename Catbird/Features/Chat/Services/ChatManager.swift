@@ -437,20 +437,8 @@ final class ChatManager: StateInvalidationSubscriber {
     // Don't notify if chat notifications are disabled
     guard appState.notificationManager.chatNotificationsEnabled else { return false }
 
-    // Don't notify if the app is currently active and user is viewing this conversation
-    // This requires checking if the current tab is chat and if this conversation is selected
-    // For simplicity, we'll check if the app is in the foreground
-    #if os(iOS)
-    guard UIApplication.shared.applicationState != .active else {
-      logger.debug("App is active, skipping chat notification")
-      return false
-    }
-    #elseif os(macOS)
-    guard !NSApplication.shared.isActive else {
-      logger.debug("App is active, skipping chat notification")
-      return false
-    }
-    #endif
+    // Allow chat notifications even when app is active ("push-like" UX for DM polling).
+    // If we later track the currently-open conversation, we can suppress just that thread.
 
     // Don't notify if the sender is muted or blocked
     if appState.graphManager.muteCache.contains(senderDID) ||

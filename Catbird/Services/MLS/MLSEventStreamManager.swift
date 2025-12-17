@@ -133,18 +133,71 @@ public actor MLSEventStreamManager {
     public func stop(_ convoId: String) {
         logger.info("Stopping subscription for: \(convoId)")
         
+        // Set the graceful shutdown flag FIRST so the loop can exit cleanly
+        shouldStop[convoId] = true
+        
         activeSubscriptions[convoId]?.cancel()
         activeSubscriptions.removeValue(forKey: convoId)
         eventHandlers.removeValue(forKey: convoId)
         connectionState[convoId] = .disconnected
     }
     
-    /// Stop all active subscriptions
+    /// Stop all active subscriptions (synchronous - for quick cancellation)
     public func stopAll() {
         logger.info("Stopping all subscriptions")
         
         for convoId in activeSubscriptions.keys {
             stop(convoId)
+        }
+    }
+    
+    /// Stop all subscriptions and wait for them to complete
+    /// CRITICAL: Call this during account switching to ensure all SSE tasks have
+    /// finished writing to the database before closing it
+    /// - Parameter timeout: Maximum time to wait for tasks to complete (default 2 seconds)
+    public func stopAllAndWait(timeout: TimeInterval = 2.0) async {
+        logger.info("🛑 Stopping all subscriptions and waiting for completion...")
+        
+        // Capture tasks before stopping (stop() removes them from the dictionary)
+        let tasksToWait = Array(activeSubscriptions.values)
+        let convoIds = Array(activeSubscriptions.keys)
+        
+        // Set all stop flags first to signal graceful shutdown
+        for convoId in convoIds {
+            shouldStop[convoId] = true
+        }
+        
+        // Cancel all tasks
+        for convoId in convoIds {
+            stop(convoId)
+        }
+        
+        // Wait for all tasks to complete with timeout
+        if !tasksToWait.isEmpty {
+            logger.info("   Waiting for \(tasksToWait.count) SSE task(s) to complete...")
+            
+            await withTaskGroup(of: Void.self) { group in
+                // Add task to wait for all SSE tasks
+                group.addTask {
+                    for task in tasksToWait {
+                        // Wait for each task to complete (they're already cancelled)
+                        _ = await task.result
+                    }
+                }
+                
+                // Add timeout task
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                }
+                
+                // Wait for whichever finishes first
+                _ = await group.next()
+                group.cancelAll()
+            }
+            
+            logger.info("✅ All SSE tasks stopped")
+        } else {
+            logger.info("✅ No active SSE tasks to wait for")
         }
     }
     
@@ -170,7 +223,8 @@ public actor MLSEventStreamManager {
         let maxReconnectAttempts = 5
         let reconnectDelay: TimeInterval = 2.0
 
-        while !Task.isCancelled && reconnectAttempts < maxReconnectAttempts {
+        // Check both Task.isCancelled and shouldStop flag for graceful shutdown
+        while !Task.isCancelled && shouldStop[convoId] != true && reconnectAttempts < maxReconnectAttempts {
             let connectionStartTime = Date()
             
             do {
@@ -203,9 +257,21 @@ public actor MLSEventStreamManager {
                 logger.info("📡 SSE: Starting event loop for convoId: \(convoId)")
                 var eventCount = 0
                 for try await output in eventStream {
+                    // Check for graceful shutdown signal
+                    if shouldStop[convoId] == true {
+                        logger.info("📡 SSE: Graceful shutdown requested for: \(convoId)")
+                        break
+                    }
+                    
                     eventCount += 1
                     logger.info("📡 SSE: Event #\(eventCount) received from stream for convoId: \(convoId)")
                     await handleEvent(output, for: convoId)
+                }
+                
+                // Check if we're stopping gracefully
+                if shouldStop[convoId] == true {
+                    logger.info("📡 SSE: Exiting loop due to graceful shutdown for: \(convoId)")
+                    break
                 }
                 
                 // Check if connection was stable for a while (reset retries if > 5 seconds)
@@ -227,12 +293,18 @@ public actor MLSEventStreamManager {
                     }
                 }
                 
-                if reconnectAttempts < maxReconnectAttempts && reconnectAttempts > 0 {
+                if reconnectAttempts < maxReconnectAttempts && reconnectAttempts > 0 && shouldStop[convoId] != true {
                     connectionState[convoId] = .reconnecting
                     try? await Task.sleep(nanoseconds: UInt64(reconnectDelay * Double(reconnectAttempts) * 1_000_000_000))
                 }
 
             } catch {
+                // Check if this is a cancellation error during graceful shutdown
+                if shouldStop[convoId] == true || Task.isCancelled {
+                    logger.info("📡 SSE: Exiting due to shutdown/cancellation for: \(convoId)")
+                    break
+                }
+                
                 logger.error("📡 SSE: Connection error for \(convoId): \(error.localizedDescription) - \(String(describing: error))")
 
                 connectionState[convoId] = .error(error)
@@ -247,8 +319,8 @@ public actor MLSEventStreamManager {
                     reconnectAttempts = 0
                 }
 
-                // Attempt reconnect
-                if !Task.isCancelled {
+                // Attempt reconnect only if not shutting down
+                if !Task.isCancelled && shouldStop[convoId] != true {
                     reconnectAttempts += 1
 
                     if reconnectAttempts < maxReconnectAttempts {
@@ -263,6 +335,9 @@ public actor MLSEventStreamManager {
 
         if reconnectAttempts >= maxReconnectAttempts {
             logger.error("Max reconnect attempts reached for: \(convoId)")
+            connectionState[convoId] = .disconnected
+        } else if shouldStop[convoId] == true {
+            logger.info("📡 SSE: Subscription stopped gracefully for: \(convoId)")
             connectionState[convoId] = .disconnected
         }
     }

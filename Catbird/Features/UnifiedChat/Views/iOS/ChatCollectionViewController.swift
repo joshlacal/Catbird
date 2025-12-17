@@ -397,7 +397,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       guard let self, let host else { return }
       guard let appState = self.appState, let client = appState.atProtoClient else { return }
 
-      let requestedProfiles = await appState.mlsProfileEnricher.ensureProfiles(for: senderDIDs, using: client)
+      let requestedProfiles = await appState.mlsProfileEnricher.ensureProfiles(
+        for: senderDIDs,
+        using: client,
+        currentUserDID: appState.userDID
+      )
 
       var canonicalProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
       canonicalProfiles.reserveCapacity(requestedProfiles.count)

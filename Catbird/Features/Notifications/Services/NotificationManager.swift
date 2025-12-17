@@ -2,6 +2,7 @@ import CatbirdMLSCore
 import CryptoKit
 import DeviceCheck
 import Foundation
+import GRDB
 import Nuke
 import OSLog
 import Petrel
@@ -1068,7 +1069,10 @@ final class NotificationManager: NSObject {
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
 
-    guard settings.authorizationStatus == .authorized else {
+    switch settings.authorizationStatus {
+    case .authorized, .provisional, .ephemeral:
+      break
+    default:
       notificationLogger.warning("No permission to send chat notifications")
       return
     }
@@ -3246,6 +3250,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   /// Called when an MLS push notification arrives while the app is in foreground.
   /// Since iOS bypasses the Notification Service Extension in this case, we must
   /// decrypt the message here to show meaningful notification content.
+  ///
+  /// CRITICAL FIX: This method now distinguishes between active and inactive users
+  /// to prevent "database locked" errors during account switching:
+  /// - Active user: Uses the standard decryption path (no database switching needed)
+  /// - Inactive user: Uses ephemeral database access (no checkpoint of active DB)
   private func decryptAndPresentMLSNotification(
     ciphertext: String,
     convoId: String,
@@ -3257,6 +3266,15 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     notificationLogger.info("🔓 [FG] Starting MLS decryption for message: \(messageId.prefix(16))...")
     notificationLogger.info("🔓 [FG] Recipient DID: \(recipientDid.prefix(24))...")
     
+    // CRITICAL FIX: Check if the recipient is the currently active user
+    // If not, we must use ephemeral database access to avoid "database locked" errors
+    let isActiveUser = await checkIfActiveUser(recipientDid)
+    if isActiveUser {
+      notificationLogger.info("✅ [FG] Recipient IS the active user - using standard path")
+    } else {
+      notificationLogger.info("🔄 [FG] Recipient is NOT the active user - using EPHEMERAL path")
+    }
+    
     do {
       // Check if already cached (decrypted by background polling or sender's cache)
       if let cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
@@ -3265,6 +3283,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         notificationLogger.info("📦 [FG] Cache HIT - using cached content")
         await presentDecryptedNotification(
           plaintext: cachedPlaintext,
+          convoId: convoId,
+          messageId: messageId,
+          recipientDid: recipientDid,
           originalNotification: originalNotification,
           completionHandler: completionHandler
         )
@@ -3286,24 +3307,80 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         groupIdData = Data(convoId.utf8)
       }
       
-      // CRITICAL: Sync the recipient's group state before decryption
-      // This fetches any pending commits/messages that the recipient's context missed
-      notificationLogger.info("🔄 [FG] Syncing group state for recipient before decryption...")
-      await syncGroupStateForRecipient(convoId: convoId, recipientDid: recipientDid)
-      
-      // Decrypt using shared MLSCoreContext
-      let decryptedText = try await CatbirdMLSCore.MLSCoreContext.shared.decryptAndStore(
-        userDid: recipientDid,
-        groupId: groupIdData,
-        ciphertext: ciphertextData,
-        conversationID: convoId,
-        messageID: messageId
+      // CRITICAL FIX: Sync group state AND capture plaintext if target message is decrypted
+      // This prevents "SecretReuseError" from trying to decrypt the same message twice
+      notificationLogger.info("🔄 [FG] Syncing group state for recipient (may capture target message)...")
+      let syncResult = await syncGroupStateForRecipient(
+        convoId: convoId, 
+        recipientDid: recipientDid,
+        targetMessageId: messageId
       )
+      
+      // If sync already decrypted our target message, use that plaintext
+      if let capturedPlaintext = syncResult {
+        notificationLogger.info("✅ [FG] Target message decrypted during sync - using captured plaintext")
+        await presentDecryptedNotification(
+          plaintext: capturedPlaintext,
+          convoId: convoId,
+          messageId: messageId,
+          recipientDid: recipientDid,
+          originalNotification: originalNotification,
+          completionHandler: completionHandler
+        )
+        return
+      }
+      
+      // Check cache again after sync (message may have been stored)
+      if let cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
+        messageID: messageId, userDid: recipientDid
+      ) {
+        notificationLogger.info("📦 [FG] Cache HIT after sync - using cached content")
+        await presentDecryptedNotification(
+          plaintext: cachedPlaintext,
+          convoId: convoId,
+          messageId: messageId,
+          recipientDid: recipientDid,
+          originalNotification: originalNotification,
+          completionHandler: completionHandler
+        )
+        return
+      }
+      
+      // If we get here, the target message wasn't in the sync batch
+      // This can happen if it's a brand new message not yet on server
+      notificationLogger.info("🔓 [FG] Target message not in sync - attempting direct decryption...")
+      
+      // Choose decryption path based on whether recipient is active user
+      let decryptedText: String
+      if isActiveUser {
+        // Standard path: recipient is active, use normal decryption
+        decryptedText = try await CatbirdMLSCore.MLSCoreContext.shared.decryptAndStore(
+          userDid: recipientDid,
+          groupId: groupIdData,
+          ciphertext: ciphertextData,
+          conversationID: convoId,
+          messageID: messageId
+        )
+      } else {
+        // CRITICAL FIX: Ephemeral path for non-active users
+        // This prevents "database locked" errors by NOT checkpointing the active user's DB
+        let decryptResult = try await CatbirdMLSCore.MLSCoreContext.shared.decryptForNotification(
+          userDid: recipientDid,
+          groupId: groupIdData,
+          ciphertext: ciphertextData,
+          conversationID: convoId,
+          messageID: messageId
+        )
+        decryptedText = decryptResult.plaintext
+      }
       
       notificationLogger.info("✅ [FG] Decryption SUCCESS - showing decrypted notification")
       
       await presentDecryptedNotification(
         plaintext: decryptedText,
+        convoId: convoId,
+        messageId: messageId,
+        recipientDid: recipientDid,
         originalNotification: originalNotification,
         completionHandler: completionHandler
       )
@@ -3315,50 +3392,103 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     }
   }
   
+  /// Check if the given DID matches the currently active user
+  /// - Parameter recipientDid: The DID to check
+  /// - Returns: true if this DID is the currently active user
+  private func checkIfActiveUser(_ recipientDid: String) async -> Bool {
+    // First check against our local appState reference
+    if let currentAppState = appState {
+      let currentUserDID = await MainActor.run { currentAppState.userDID }
+      if currentUserDID.lowercased() == recipientDid.lowercased() {
+        return true
+      }
+    }
+    
+    // Also check against the database manager's tracking
+    let isActiveInDB = await CatbirdMLSCore.MLSGRDBManager.shared.isActiveUser(recipientDid)
+    return isActiveInDB
+  }
+  
   /// Sync the group state for a recipient before attempting decryption
   /// This ensures the recipient's MLS context has all pending commits processed
-  private func syncGroupStateForRecipient(convoId: String, recipientDid: String) async {
+  ///
+  /// CRITICAL FIX: This method now captures the plaintext if the target message is decrypted
+  /// during sync, preventing "SecretReuseError" from double-decryption.
+  ///
+  /// CRITICAL FIX: This method now handles GroupNotFound by fetching and processing
+  /// the Welcome message to join the group before retrying message processing.
+  ///
+  /// - Parameters:
+  ///   - convoId: The conversation ID
+  ///   - recipientDid: The recipient's DID
+  ///   - targetMessageId: The message ID we want to decrypt (if found during sync, its plaintext is returned)
+  /// - Returns: The decrypted plaintext if the target message was found and decrypted during sync, nil otherwise
+  private func syncGroupStateForRecipient(
+    convoId: String, 
+    recipientDid: String,
+    targetMessageId: String
+  ) async -> String? {
     notificationLogger.info("🔄 [FG] Fetching pending messages for recipient's group sync...")
+    notificationLogger.info("🔄 [FG] Target message ID: \(targetMessageId.prefix(16))...")
     
     do {
       // Get or create API client for the recipient
-      let apiClient: MLSAPIClient
+      let apiClient = await getOrCreateAPIClient(for: recipientDid)
+      guard let apiClient = apiClient else {
+        notificationLogger.warning("⚠️ [FG] Failed to create API client for recipient - skipping group sync")
+        return nil
+      }
       
-      if let recipientAppState = await getAppStateForUser(recipientDid),
-         let existingClient = await recipientAppState.getMLSAPIClient() {
-        // Use existing API client from cached AppState
-        notificationLogger.info("🔄 [FG] Using existing API client for recipient")
-        apiClient = existingClient
-      } else {
-        // Create a standalone ATProtoClient for the recipient
-        // It will read auth tokens from shared keychain
-        notificationLogger.info("🔄 [FG] Creating standalone API client for recipient...")
+      // Get MLS context for the recipient
+      let context = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: recipientDid)
+      
+      guard let groupIdData = Data(hexEncoded: convoId) else {
+        notificationLogger.error("❌ [FG] Invalid convoId format for group sync")
+        return nil
+      }
+      
+      // Check if the group exists locally
+      var groupExists = await checkGroupExists(context: context, groupId: groupIdData)
+      
+      // If group doesn't exist, try to fetch and process the Welcome message
+      if !groupExists {
+        notificationLogger.info("🆕 [FG] Group not found locally - attempting to fetch Welcome message...")
+        groupExists = await attemptWelcomeJoin(
+          apiClient: apiClient, 
+          context: context, 
+          convoId: convoId,
+          recipientDid: recipientDid
+        )
         
-        let standaloneClient = await createStandaloneClientForUser(recipientDid)
-        guard let client = standaloneClient else {
-          notificationLogger.warning("⚠️ [FG] Failed to create standalone client for recipient - skipping group sync")
-          return
+        if !groupExists {
+          notificationLogger.warning("⚠️ [FG] Could not join group - Welcome may not be available yet")
+          return nil
         }
-        
-        // Create MLS API client with the standalone client
-        apiClient = await MLSAPIClient(client: client, environment: .production)
-        notificationLogger.info("🔄 [FG] Created standalone MLS API client for recipient")
       }
       
       // Fetch recent messages to process any commits we missed
       let result = try await apiClient.getMessages(convoId: convoId, sinceSeq: nil)
       notificationLogger.info("🔄 [FG] Fetched \(result.messages.count) messages for group sync")
       
-      // Process ALL messages (commits, proposals, AND application messages) in order
-      // This ensures the ratchet state is properly synchronized
-      let context = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: recipientDid)
-      
-      guard let groupIdData = Data(hexEncoded: convoId) else {
-        notificationLogger.error("❌ [FG] Invalid convoId format for group sync")
-        return
+      var processedCount = 0
+      var capturedPlaintext: String? = nil
+
+      // Fail-closed: do not advance the MLS ratchet unless we can also persist plaintext.
+      let lockAcquired = CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.acquireExclusiveLock(for: recipientDid, timeout: 5.0)
+      guard lockAcquired else {
+        notificationLogger.warning("🔒 [FG] Advisory lock busy - skipping group sync decryption")
+        return nil
+      }
+      defer { CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.releaseExclusiveLock(for: recipientDid) }
+
+      let database: DatabasePool
+      do {
+        database = try await CatbirdMLSCore.MLSGRDBManager.shared.getEphemeralDatabasePool(for: recipientDid)
+      } catch {
+        notificationLogger.warning("⚠️ [FG] Could not open MLS storage for caching - skipping group sync: \(error.localizedDescription)")
+        return nil
       }
       
-      var processedCount = 0
       for message in result.messages {
         // ciphertext is already Bytes (Data)
         let ciphertextData = message.ciphertext.data
@@ -3367,8 +3497,58 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         let actualCiphertext = CatbirdMLSCore.MLSPaddingUtility.stripPaddingIfPresent(ciphertextData)
         
         do {
-          _ = try context.processMessage(groupId: groupIdData, messageData: actualCiphertext)
+          let processResult = try context.processMessage(groupId: groupIdData, messageData: actualCiphertext)
           processedCount += 1
+          
+          // CRITICAL: Check if this is our target message AND it's an application message
+          if message.id == targetMessageId {
+            // ProcessedContent is an enum - extract plaintext from .applicationMessage case
+            if case .applicationMessage(let plaintextData, let senderCredential) = processResult {
+              // Extract sender DID from credential identity
+              let senderDid = String(data: senderCredential.identity, encoding: .utf8) ?? "unknown"
+              
+              // Try to decode as MLSMessagePayload first
+              if let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(plaintextData) {
+                capturedPlaintext = payload.text
+                notificationLogger.info("🎯 [FG] CAPTURED target message plaintext during sync!")
+              } else if let textContent = String(data: plaintextData, encoding: .utf8) {
+                capturedPlaintext = textContent
+                notificationLogger.info("🎯 [FG] CAPTURED target message (raw text) during sync!")
+              }
+              
+              // Use server-assigned epoch and sequence number from MessageView
+              // These are the correct values for message ordering in the UI
+              let serverEpoch = Int64(message.epoch)
+              let serverSeq = Int64(message.seq)
+              
+              // Also store it in the database for future cache hits
+              if let plaintext = capturedPlaintext {
+                do {
+                  try await CatbirdMLSCore.MLSDatabaseCoordinator.shared.performWrite(for: recipientDid, timeout: 10.0) {
+                    try await CatbirdMLSCore.MLSStorageHelpers.savePlaintext(
+                      in: database,
+                      messageID: targetMessageId,
+                      conversationID: convoId,
+                      currentUserDID: recipientDid,
+                      plaintext: plaintext,
+                      senderID: senderDid,
+                      embedDataJSON: nil,
+                      epoch: serverEpoch,
+                      sequenceNumber: serverSeq
+                    )
+                  }
+                  notificationLogger.info(
+                    "💾 [FG] Stored captured plaintext in database (epoch: \(serverEpoch), seq: \(serverSeq), sender: \(senderDid.prefix(20))...)"
+                  )
+                } catch {
+                  notificationLogger.warning("⚠️ [FG] Failed to store captured plaintext: \(error.localizedDescription)")
+                }
+              }
+            } else {
+              notificationLogger.warning("⚠️ [FG] Target message is not an application message - cannot extract plaintext")
+            }
+          }
+          
           notificationLogger.debug("🔄 [FG] Processed message \(message.id.prefix(8)) (type: \(message.messageType ?? "unknown"))")
         } catch {
           // Ignore errors - might be already processed, or the target message we want to decrypt
@@ -3378,9 +3558,132 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       
       notificationLogger.info("✅ [FG] Group sync complete - processed \(processedCount)/\(result.messages.count) messages")
       
+      if capturedPlaintext != nil {
+        notificationLogger.info("✅ [FG] Target message was captured during sync!")
+      } else {
+        notificationLogger.info("ℹ️ [FG] Target message was NOT in the sync batch")
+      }
+      
+      return capturedPlaintext
+      
     } catch {
       notificationLogger.warning("⚠️ [FG] Group sync failed: \(error.localizedDescription)")
       // Continue anyway - decryption might still work
+      return nil
+    }
+  }
+  
+  // MARK: - Group Join Helpers
+  
+  /// Get or create an MLS API client for a specific user
+  private func getOrCreateAPIClient(for userDid: String) async -> MLSAPIClient? {
+    if let recipientAppState = await getAppStateForUser(userDid),
+       let existingClient = await recipientAppState.getMLSAPIClient() {
+      notificationLogger.info("🔄 [FG] Using existing API client for recipient")
+      return existingClient
+    }
+    
+    // Create a standalone ATProtoClient for the recipient
+    notificationLogger.info("🔄 [FG] Creating standalone API client for recipient...")
+    
+    guard let standaloneClient = await createStandaloneClientForUser(userDid) else {
+      return nil
+    }
+    
+    let apiClient = await MLSAPIClient(client: standaloneClient, environment: .production)
+    notificationLogger.info("🔄 [FG] Created standalone MLS API client for recipient")
+    return apiClient
+  }
+  
+  /// Check if a group exists in the MLS context
+  private func checkGroupExists(context: MLSFFI.MlsContext, groupId: Data) async -> Bool {
+    do {
+      // Try to get the epoch - if it fails, the group doesn't exist
+      _ = try context.getEpoch(groupId: groupId)
+      return true
+    } catch {
+      return false
+    }
+  }
+  
+  /// Attempt to join a group by fetching and processing the Welcome message
+  /// - Returns: true if the group was successfully joined, false otherwise
+  private func attemptWelcomeJoin(
+    apiClient: MLSAPIClient,
+    context: MLSFFI.MlsContext,
+    convoId: String,
+    recipientDid: String
+  ) async -> Bool {
+    do {
+      notificationLogger.info("📩 [FG] Fetching Welcome message for group: \(convoId.prefix(16))...")
+      
+      // Fetch Welcome message from server
+      let welcomeData = try await apiClient.getWelcome(convoId: convoId)
+      notificationLogger.info("📩 [FG] Received Welcome message: \(welcomeData.count) bytes")
+      
+      // Get identity bytes for the user
+      let identityBytes = Data(recipientDid.utf8)
+      
+      // Process the Welcome message to join the group
+      notificationLogger.info("🔐 [FG] Processing Welcome message...")
+      let welcomeResult = try context.processWelcome(
+        welcomeBytes: welcomeData,
+        identityBytes: identityBytes,
+        config: nil
+      )
+      
+      notificationLogger.info("✅ [FG] Successfully joined group via Welcome! GroupID: \(welcomeResult.groupId.hexEncodedString().prefix(16))...")
+      
+      // 🚨 ROOT CAUSE FIX: Create SQLCipher conversation record IMMEDIATELY after Welcome
+      // This prevents "FOREIGN KEY constraint failed" errors when messages are decrypted.
+      // Without this, the message INSERT fails, plaintext is lost, and Forward Secrecy
+      // means we can never decrypt the message again (keys are burned after first use).
+      do {
+        let database = try await CatbirdMLSCore.MLSGRDBManager.shared.getEphemeralDatabasePool(for: recipientDid)
+        let groupIdHex = welcomeResult.groupId.hexEncodedString()
+        _ = try await CatbirdMLSCore.MLSStorage.shared.ensureConversationExistsOrPlaceholder(
+          userDID: recipientDid,
+          conversationID: convoId,
+          groupID: groupIdHex,
+          senderDID: nil,  // We don't know the sender yet
+          database: database
+        )
+        notificationLogger.info("✅ [FG] Created conversation record for new group (FK fix)")
+      } catch {
+        // Non-fatal - the safety net in savePlaintext will create a placeholder if needed
+        notificationLogger.warning("⚠️ [FG] Failed to pre-create conversation record: \(error.localizedDescription)")
+      }
+      
+      // Confirm Welcome processing with server (best effort)
+      do {
+        try await apiClient.confirmWelcome(convoId: convoId, success: true, errorMessage: nil)
+        notificationLogger.info("✅ [FG] Confirmed Welcome processing with server")
+      } catch {
+        notificationLogger.warning("⚠️ [FG] Failed to confirm Welcome (non-critical): \(error.localizedDescription)")
+      }
+      
+      return true
+      
+    } catch let error as MLSAPIError {
+      // Check if Welcome is not available (404)
+      if case .httpError(let statusCode, _) = error, statusCode == 404 {
+        notificationLogger.info("ℹ️ [FG] No Welcome message available for this group (404)")
+      } else {
+        notificationLogger.warning("⚠️ [FG] Failed to fetch Welcome: \(error.localizedDescription)")
+      }
+      return false
+    } catch let error as MLSFFI.MlsError {
+      // Handle specific MLS errors
+      switch error {
+      case .NoMatchingKeyPackage(let msg):
+        notificationLogger.warning("⚠️ [FG] NoMatchingKeyPackage - Welcome references unavailable key package: \(msg)")
+      default:
+        notificationLogger.warning("⚠️ [FG] Failed to process Welcome: \(error.localizedDescription)")
+      }
+      return false
+    } catch {
+      notificationLogger.warning("⚠️ [FG] Failed to join group: \(error.localizedDescription)")
+      return false
     }
   }
   
@@ -3396,7 +3699,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     #endif
     
     let oauthConfig = OAuthConfiguration(
-      clientId: "https://catbird.blue/oauth/client-metadata.json",
+      clientId: "https://catbird.blue/oauth-client-metadata.json",
       redirectUri: "https://catbird.blue/oauth/callback",
       scope: "atproto transition:generic transition:chat.bsky"
     )
@@ -3436,44 +3739,216 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   }
   
   /// Present a notification with decrypted MLS message content
-  @MainActor
+  ///
+  /// NOTE: When the app is in foreground, iOS bypasses the Notification Service Extension,
+  /// so we must replicate its “rich notification” logic here (sender + group title + avatar).
   private func presentDecryptedNotification(
     plaintext: String,
+    convoId: String,
+    messageId: String,
+    recipientDid: String,
     originalNotification: UNNotification,
     completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-  ) {
+  ) async {
     // For foreground notifications, we can't modify the content directly.
     // Instead, we schedule a new local notification with the decrypted content
     // and suppress the original push notification.
-    
     let content = UNMutableNotificationContent()
-    content.title = "New Message"
     content.body = plaintext
     content.sound = .default
-    
+    content.categoryIdentifier = "MLS_MESSAGE"
+    content.threadIdentifier = "mls-\(convoId)"
+
+    let conversationTitle = await getMLSConversationTitle(convoId: convoId, recipientDid: recipientDid)
+
+    // Prefer sender from stored message (post-decryption), fall back to payload if present.
+    var senderDid = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
+    if senderDid == nil {
+      senderDid = originalNotification.request.content.userInfo["sender_did"] as? String
+    }
+
+    let canonicalSenderDid = senderDid.map(canonicalDID)
+
+    var senderName: String? = nil
+    var senderAvatarURL: URL? = nil
+
+    if let senderDid = canonicalSenderDid {
+      if let profile = getCachedProfile(for: senderDid) {
+        senderName = profile.displayName ?? profile.handle
+        senderAvatarURL = profile.avatarURL.flatMap(URL.init(string:))
+      } else if let memberInfo = await getMLSMemberInfo(senderDid: senderDid, convoId: convoId, recipientDid: recipientDid) {
+        senderName = memberInfo.displayName ?? memberInfo.handle
+      }
+
+      if senderName == nil {
+        senderName = formatShortDID(senderDid)
+      }
+    }
+
+    if let sender = senderName {
+      if let convTitle = conversationTitle, !convTitle.isEmpty {
+        content.title = "\(sender) in \(convTitle)"
+      } else {
+        content.title = sender
+      }
+    } else if let convTitle = conversationTitle, !convTitle.isEmpty {
+      content.title = convTitle
+    } else {
+      content.title = "New Message"
+    }
+
     // Copy over metadata but mark as already decrypted to prevent infinite loop
     var modifiedUserInfo = originalNotification.request.content.userInfo
-    modifiedUserInfo["_mls_decrypted"] = true  // Mark as already processed
-    modifiedUserInfo["type"] = "mls_message_decrypted"  // Change type to prevent re-processing
+    modifiedUserInfo["_mls_decrypted"] = true
+    modifiedUserInfo["type"] = "mls_message_decrypted"
+    modifiedUserInfo["convo_id"] = convoId
+    modifiedUserInfo["recipient_did"] = recipientDid
+    modifiedUserInfo["message_id"] = messageId
+    if let senderDid = canonicalSenderDid { modifiedUserInfo["sender_did"] = senderDid }
     content.userInfo = modifiedUserInfo
-    
+
+    if let avatarURL = senderAvatarURL {
+      await attachProfilePhoto(to: content, from: avatarURL)
+    }
+
     let request = UNNotificationRequest(
       identifier: UUID().uuidString,
       content: content,
-      trigger: nil  // Show immediately
+      trigger: nil
     )
-    
+
     UNUserNotificationCenter.current().add(request) { [weak self] error in
       if let error = error {
         self?.notificationLogger.error("❌ [FG] Failed to schedule decrypted notification: \(error.localizedDescription)")
-        // Fall back to showing original notification
         completionHandler([.banner, .sound])
       } else {
         self?.notificationLogger.info("✅ [FG] Decrypted notification scheduled")
-        // Suppress original notification (we're showing the decrypted one)
         completionHandler([])
       }
     }
+  }
+
+  // MARK: - Foreground rich notification helpers
+
+  private static let mlsNotificationAppGroupSuite = "group.blue.catbird.shared"
+  private static let mlsProfileCacheKeyPrefix = "profile_cache_"
+
+  private struct MLSCachedProfile: Codable {
+    let did: String
+    let handle: String
+    let displayName: String?
+    let avatarURL: String?
+    let cachedAt: Date?
+  }
+
+  private func canonicalDID(_ did: String) -> String {
+    let trimmed = did.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? trimmed
+  }
+
+  private func getCachedProfile(for did: String) -> MLSCachedProfile? {
+    guard let defaults = UserDefaults(suiteName: Self.mlsNotificationAppGroupSuite) else { return nil }
+    let cacheKey = "\(Self.mlsProfileCacheKeyPrefix)\(did.lowercased())"
+    guard let data = defaults.data(forKey: cacheKey) else { return nil }
+    return try? JSONDecoder().decode(MLSCachedProfile.self, from: data)
+  }
+
+  private func getMLSConversationTitle(convoId: String, recipientDid: String) async -> String? {
+    do {
+      let database = try await CatbirdMLSCore.MLSGRDBManager.shared.getEphemeralDatabasePool(for: recipientDid)
+      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+      let conversation = try await database.read { db in
+        try CatbirdMLSCore.MLSConversationModel
+              .filter(CatbirdMLSCore.MLSConversationModel.Columns.conversationID == convoId)
+              .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == normalizedRecipientDid)
+          .fetchOne(db)
+      }
+
+      return conversation?.title
+    } catch {
+      return nil
+    }
+  }
+
+  private func getMLSSenderDID(messageId: String, recipientDid: String) async -> String? {
+    do {
+      let database = try await CatbirdMLSCore.MLSGRDBManager.shared.getEphemeralDatabasePool(for: recipientDid)
+      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+      let message = try await database.read { db in
+        try CatbirdMLSCore.MLSMessageModel
+              .filter(CatbirdMLSCore.MLSMessageModel.Columns.messageID == messageId)
+              .filter(CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
+          .fetchOne(db)
+      }
+
+      guard let senderID = message?.senderID, !senderID.isEmpty, senderID != "unknown" else { return nil }
+      return senderID
+    } catch {
+      return nil
+    }
+  }
+
+  private func getMLSMemberInfo(
+    senderDid: String,
+    convoId: String,
+    recipientDid: String
+  ) async -> (displayName: String?, handle: String?)? {
+    do {
+      let database = try await CatbirdMLSCore.MLSGRDBManager.shared.getEphemeralDatabasePool(for: recipientDid)
+      let normalizedSenderDid = senderDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+      let member = try await database.read { db in
+        try CatbirdMLSCore.MLSMemberModel
+              .filter(CatbirdMLSCore.MLSMemberModel.Columns.did == normalizedSenderDid)
+              .filter(CatbirdMLSCore.MLSMemberModel.Columns.conversationID == convoId)
+              .filter(CatbirdMLSCore.MLSMemberModel.Columns.currentUserDID == normalizedRecipientDid)
+          .fetchOne(db)
+      }
+
+      guard let member else { return nil }
+      return (displayName: member.displayName, handle: member.handle)
+    } catch {
+      return nil
+    }
+  }
+
+  private func attachProfilePhoto(to content: UNMutableNotificationContent, from url: URL) async {
+    do {
+      let (data, response) = try await URLSession.shared.data(from: url)
+      guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
+
+      let mimeType = httpResponse.mimeType ?? "image/jpeg"
+      let fileExtension: String
+      switch mimeType {
+      case "image/png": fileExtension = "png"
+      case "image/gif": fileExtension = "gif"
+      default: fileExtension = "jpg"
+      }
+
+      let tempDir = FileManager.default.temporaryDirectory
+      let fileURL = tempDir.appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
+      try data.write(to: fileURL)
+
+      let attachment = try UNNotificationAttachment(
+        identifier: "avatar",
+        url: fileURL,
+        options: [UNNotificationAttachmentOptionsTypeHintKey: mimeType]
+      )
+
+      content.attachments = [attachment]
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  private func formatShortDID(_ did: String) -> String {
+    let components = did.split(separator: ":")
+    guard let lastPart = components.last else { return did }
+    let identifier = String(lastPart.prefix(8))
+    return identifier.isEmpty ? did : "\(identifier)..."
   }
 
   /// Handle user interaction with the notification
@@ -3488,6 +3963,30 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     let targetDid = userInfo["did"] as? String
     let uriString = userInfo["uri"] as? String
     let typeString = userInfo["type"] as? String
+    
+    // Handle MLS message notifications (from NSE)
+    if let type = typeString, type == "mls_message" || type == "mls_message_decrypted" {
+      let recipientDid = userInfo["recipient_did"] as? String
+      let convoId = userInfo["convo_id"] as? String
+      
+      Task {
+        // Switch to correct account if needed
+        if let did = recipientDid {
+          await ensureActiveAccount(for: did)
+        }
+        
+        // Navigate to MLS conversation
+        if let convoId = convoId {
+          notificationLogger.info("MLS notification tapped - navigating to conversation: \(convoId.prefix(16))...")
+          await handleMLSNotificationNavigation(convoId)
+        }
+        
+        await MainActor.run {
+          completionHandler()
+        }
+      }
+      return
+    }
 
     if targetDid != nil || (uriString != nil && typeString != nil) {
       Task {
@@ -3698,6 +4197,12 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       await handleChatNotificationNavigation(uriString)
       return
     }
+    
+    // Handle MLS chat notifications
+    if type == "mls_message" || type == "mls_message_decrypted" {
+      await handleMLSNotificationNavigation(uriString)
+      return
+    }
 
     // Determine navigation destination based on notification type
     do {
@@ -3714,6 +4219,58 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         "Failed to create navigation destination: \(error.localizedDescription)")
     }
   }
+  
+  /// Handle navigation from an MLS message notification tap
+  private func handleMLSNotificationNavigation(_ convoId: String) async {
+    guard let appState = appState else {
+      notificationLogger.error("Cannot navigate to MLS conversation - appState not configured")
+      return
+    }
+
+    // Wait for MLS service to be ready (up to 5 seconds) after potential account switch
+    let maxWaitTime: TimeInterval = 5.0
+    let checkInterval: TimeInterval = 0.2
+    var elapsed: TimeInterval = 0
+    var shouldWait = true
+    
+    while shouldWait && elapsed < maxWaitTime {
+      let status = await MainActor.run { appState.mlsServiceState.status }
+      switch status {
+      case .ready:
+        notificationLogger.info("MLS service ready, proceeding with navigation")
+        shouldWait = false
+      case .failed, .databaseFailed:
+        notificationLogger.warning("MLS service in failed state, proceeding with navigation anyway (view will handle error)")
+        shouldWait = false
+      case .initializing, .notStarted, .retrying:
+        // Still initializing, wait a bit
+        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+        elapsed += checkInterval
+      }
+    }
+    
+    if elapsed >= maxWaitTime {
+      notificationLogger.warning("MLS service did not become ready within \(maxWaitTime)s, proceeding with navigation anyway")
+    }
+
+    await MainActor.run {
+      // Switch the chat mode to MLS so the correct view is shown
+      // Using raw value directly: "Catbird Groups" is ChatTabView.ChatMode.mls.rawValue
+      UserDefaults.standard.set("Catbird Groups", forKey: "chatMode")
+      
+      // Switch to chat tab using the tab selection callback (this actually changes the tab)
+      if let tabSelection = appState.navigationManager.tabSelection {
+        tabSelection(4)  // Switch to chat tab
+      }
+      appState.navigationManager.updateCurrentTab(4)
+
+      // Navigate to the specific MLS conversation
+      let destination = NavigationDestination.mlsConversation(convoId)
+      appState.navigationManager.navigate(to: destination, in: 4)
+
+      notificationLogger.info("Successfully navigated to MLS conversation \(convoId.prefix(16))...")
+    }
+  }
 
   /// Handle navigation from a chat notification tap
   private func handleChatNotificationNavigation(_ uriString: String) async {
@@ -3726,8 +4283,15 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     let conversationID = uriString
 
     await MainActor.run {
-      // Navigate to the chat tab (index 4) and open the conversation
-      appState.navigationManager.updateCurrentTab(4)  // Switch to chat tab
+      // Switch the chat mode to Bluesky DMs so the correct view is shown
+      // Using raw value directly: "Bluesky DMs" is ChatTabView.ChatMode.bluesky.rawValue
+      UserDefaults.standard.set("Bluesky DMs", forKey: "chatMode")
+      
+      // Switch to chat tab using the tab selection callback (this actually changes the tab)
+      if let tabSelection = appState.navigationManager.tabSelection {
+        tabSelection(4)  // Switch to chat tab
+      }
+      appState.navigationManager.updateCurrentTab(4)
 
       // Navigate to the specific conversation
       let destination = NavigationDestination.conversation(conversationID)

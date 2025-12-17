@@ -76,6 +76,22 @@ extension PostComposerViewUIKit {
           set: { vm.selectedLabels = $0 }
         ))
       }
+      .sheet(isPresented: $showingOutlineTagsEditor) {
+        NavigationStack {
+          OutlineTagsView(tags: Binding(
+            get: { vm.outlineTags },
+            set: { vm.outlineTags = $0 }
+          ))
+          .navigationTitle("Outline Hashtags")
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Done") { showingOutlineTagsEditor = false }
+            }
+          }
+          .padding(.horizontal, 16)
+        }
+      }
 
     
     let draftsSheetContent = otherSheetsContent

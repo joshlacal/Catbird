@@ -24,7 +24,6 @@ struct MLSNewConversationView: View {
     @State private var searchResults: [MLSParticipantViewModel] = []
     @State private var isSearching = false
     @State private var currentStep: CreationStep = .selectParticipants
-    @State private var isSearchPresented = false
     @State private var searchTask: Task<Void, Never>?
     @State private var participantOptInStatus: [String: Bool] = [:]  // Track which participants have opted into MLS
     let onConversationCreated: (@Sendable () async -> Void)?
@@ -101,16 +100,9 @@ struct MLSNewConversationView: View {
         .textInputAutocapitalization(.never)
         .searchable(
             text: $searchText,
-            isPresented: $isSearchPresented,
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Search by name or handle"
         )
-        .onAppear {
-            // Delay search bar presentation to avoid layout loop on appear
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isSearchPresented = true
-            }
-        }
     }
     
     // MARK: - Content Views
@@ -191,7 +183,7 @@ struct MLSNewConversationView: View {
                 }
                 
                 Section {
-                    TextField("Group Name (optional)", text: $conversationName)
+                    TextField("Group Name (required)", text: $conversationName)
                         .designBody()
                         .textFieldStyle(.plain)
                         .autocorrectionDisabled()

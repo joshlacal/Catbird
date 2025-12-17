@@ -1,3 +1,4 @@
+import AuthenticationServices
 import OSLog
 import Petrel
 import SwiftUI
@@ -5,10 +6,15 @@ import SwiftUI
 struct ContentView: View {
   @Environment(AppState.self) private var appState
   @Environment(AppStateManager.self) private var appStateManager
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
   @State private var selectedTab = 0
   @State private var lastTappedTab: Int?
   @State private var hasRestoredState = false
   @State private var showingComposerFromAccountSwitch = false
+  @State private var isAutoReauthenticating = false
+  @State private var hasTriggeredAutoReauth = false
+
+  private let logger = Logger(subsystem: "blue.catbird", category: "ContentView")
 
   var body: some View {
     mainContent
@@ -28,11 +34,100 @@ struct ContentView: View {
           .zIndex(1)
           .ignoresSafeArea()
       }
+      
+      // Show loading overlay during auto-reauthentication
+      if isAutoReauthenticating {
+        ContentViewLoadingView(message: "Signing in...")
+          .transition(.opacity)
+          .zIndex(2)
+          .ignoresSafeArea()
+      }
     }
     .modifier(ContentViewModifiers(
       appStateManager: appStateManager,
       showingComposerFromAccountSwitch: $showingComposerFromAccountSwitch
     ))
+    .task {
+      // Auto-trigger re-authentication when we have an expired account
+      await checkAndTriggerAutoReauth()
+    }
+    .onChange(of: appStateManager.authentication.expiredAccountInfo?.did) { oldDID, newDID in
+      // React to expiredAccountInfo changes - trigger re-authentication when it's newly set
+      if newDID != nil && oldDID == nil {
+        logger.info("🔐 [AUTO-REAUTH] expiredAccountInfo newly set, triggering auto-reauth")
+        Task {
+          await checkAndTriggerAutoReauth()
+        }
+      }
+    }
+  }
+  
+  /// Check if we should auto-trigger re-authentication and do so
+  private func checkAndTriggerAutoReauth() async {
+    // Only proceed if:
+    // 1. We have an expired account
+    // 2. We haven't already triggered auto-reauth
+    // 3. We're not currently authenticating
+    // 4. We're in unauthenticated state
+    guard let expiredAccount = appStateManager.authentication.expiredAccountInfo,
+          !hasTriggeredAutoReauth,
+          !isAutoReauthenticating,
+          !appStateManager.authentication.state.isAuthenticating,
+          case .unauthenticated = appStateManager.lifecycle else {
+      return
+    }
+    
+    logger.info("🔐 [AUTO-REAUTH] Starting automatic re-authentication for: \(expiredAccount.handle ?? expiredAccount.did)")
+    
+    hasTriggeredAutoReauth = true
+    isAutoReauthenticating = true
+    
+    do {
+      // Get auth URL for the expired account
+      guard let authURL = try await appStateManager.authentication.startOAuthFlowForExpiredAccount() else {
+        logger.error("🔐 [AUTO-REAUTH] Failed to get auth URL")
+        isAutoReauthenticating = false
+        return
+      }
+      
+      logger.info("🔐 [AUTO-REAUTH] Got auth URL, opening browser")
+      
+      // Open web authentication session
+      let callbackURL: URL
+      if #available(iOS 17.4, *) {
+        callbackURL = try await webAuthenticationSession.authenticate(
+          using: authURL,
+          callback: .https(host: "catbird.blue", path: "/oauth/callback"),
+          preferredBrowserSession: .shared,
+          additionalHeaderFields: [:]
+        )
+      } else {
+        callbackURL = try await webAuthenticationSession.authenticate(
+          using: authURL,
+          callbackURLScheme: "catbird",
+          preferredBrowserSession: .shared
+        )
+      }
+      
+      logger.info("🔐 [AUTO-REAUTH] Got callback, processing")
+      
+      // Process callback
+      try await appStateManager.authentication.handleCallback(callbackURL)
+      
+      logger.info("✅ [AUTO-REAUTH] Re-authentication successful")
+      
+    } catch let error as ASWebAuthenticationSessionError {
+      // User cancelled - clear expired account info to prevent retry loop
+      logger.notice("🔐 [AUTO-REAUTH] User cancelled re-authentication")
+      await appStateManager.authentication.clearExpiredAccountInfo()
+      hasTriggeredAutoReauth = false  // Allow retry if they try again later
+    } catch {
+      // Other errors - log but don't clear expired account info so user can retry manually
+      logger.error("🔐 [AUTO-REAUTH] Error: \(error.localizedDescription)")
+      hasTriggeredAutoReauth = false  // Allow retry on error
+    }
+    
+    isAutoReauthenticating = false
   }
 }
 
@@ -119,8 +214,8 @@ private extension ContentView {
 
 struct ContentViewLoadingView: View {
   let message: String
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(AppState.self) private var appState: AppState?
 
   init(message: String) {
     self.message = message
@@ -129,8 +224,14 @@ struct ContentViewLoadingView: View {
   var body: some View {
     ZStack {
       // Full-screen themed background - no gaps
+      // Use themed background if appState available, otherwise use system background
+      if let appState = appState {
         Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
-        .ignoresSafeArea()
+          .ignoresSafeArea()
+      } else {
+        Color(uiColor: .systemBackground)
+          .ignoresSafeArea()
+      }
 
       VStack(spacing: 20) {
         ProgressView()
