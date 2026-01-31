@@ -1,6 +1,7 @@
 import SwiftUI
 import OSLog
 import Petrel
+import CatbirdMLSService
 #if os(iOS)
 //import MCEmojiPicker
 #endif
@@ -46,8 +47,7 @@ struct ConversationView: View {
   }
 
   var body: some View {
-    Group {
-      if #available(iOS 16.0, *) {
+      Group {
         chatContent
           .task {
             // Initialize data source before loading
@@ -57,11 +57,6 @@ struct ConversationView: View {
             }
             isInitialized = true
           }
-      } else {
-        // Fallback for iOS 15
-        Text("Chat requires iOS 16 or later")
-          .foregroundStyle(.secondary)
-      }
     }
     .frame(maxWidth: 600)
     .navigationTitle(conversationTitle)
@@ -108,7 +103,7 @@ struct ConversationView: View {
   
   // MARK: - Chat Content
   
-  @available(iOS 16.0, *)
+
   @ViewBuilder
   private var chatContent: some View {
     if let dataSource = unifiedDataSource {
@@ -139,9 +134,13 @@ struct ConversationView: View {
           }
         }
         
-        // Input bar at bottom with keyboard avoidance
-        blueskyInputBar(dataSource: dataSource)
-      }
+          // Input bar at bottom with keyboard avoidance (hidden for deleted accounts)
+          if isOtherMemberDeleted {
+            deletedAccountBanner
+          } else {
+            blueskyInputBar(dataSource: dataSource)
+          }
+        }
       .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
         selectedEmoji = emoji
       }
@@ -154,20 +153,38 @@ struct ConversationView: View {
   
   // MARK: - Input Bar
   
-  @available(iOS 16.0, *)
+
   @ViewBuilder
   private func blueskyInputBar(dataSource: BlueskyConversationDataSource) -> some View {
-    UnifiedInputBar(
+      MLSMessageComposerView(
       text: Binding(
         get: { dataSource.draftText },
         set: { dataSource.draftText = $0 }
       ),
-      onSend: { text in
+        attachedEmbed: .constant(nil),
+        conversationId: convoId,
+        onSend: { text, _ in
         Task { await dataSource.sendMessage(text: text) }
+        },
+        supportsEmbeds: false,
+        showsAttachmentMenu: false,
+        dismissKeyboardOnSend: false
+      )
+    }
+
+    // MARK: - Deleted Account Banner
+
+    private var deletedAccountBanner: some View {
+      HStack(spacing: 8) {
+        Image(systemName: "person.slash")
+          .foregroundStyle(.secondary)
+        Text("This account has been deleted")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
       }
-    )
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 16)
+      .background(Color(.systemBackground))
   }
   
   // MARK: - Message Actions
@@ -181,6 +198,18 @@ struct ConversationView: View {
     messageToDelete = message.id
   }
 
+    // Check if the other member's account has been deleted
+    private var isOtherMemberDeleted: Bool {
+      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
+        return false
+      }
+      let clientDid = appState.userDID
+      if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
+        return otherMember.handle.description == "missing.invalid"
+      }
+      return false
+    }
+
   // Compute conversation title based on the other member
   private var conversationTitle: String {
     guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
@@ -190,6 +219,10 @@ struct ConversationView: View {
     let clientDid = appState.userDID
 
     if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
+        // Show "Deleted Account" for deleted users
+        if otherMember.handle.description == "missing.invalid" {
+          return "Deleted Account"
+        }
       return otherMember.displayName ?? "@\(otherMember.handle.description)"
     }
 
@@ -236,7 +269,8 @@ struct ConversationView: View {
           onRequestEmojiPicker: { messageID in
             emojiPickerMessageID = messageID
             showingEmojiPicker = true
-          }
+            },
+            isOtherMemberDeleted: isOtherMemberDeleted
         )
         .task {
           await dataSource.loadMessages()
@@ -265,12 +299,28 @@ struct ConversationView: View {
     }
   }
 
+    // Check if the other member's account has been deleted
+    private var isOtherMemberDeleted: Bool {
+      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
+        return false
+      }
+      let clientDid = appState.userDID
+      if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
+        return otherMember.handle.description == "missing.invalid"
+      }
+      return false
+    }
+
   private var conversationTitle: String {
     guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
       return "Chat"
     }
     let clientDid = appState.userDID
     if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
+        // Show "Deleted Account" for deleted users
+        if otherMember.handle.description == "missing.invalid" {
+          return "Deleted Account"
+        }
       return otherMember.displayName ?? "@\(otherMember.handle.description)"
     }
     return convo.members.first?.displayName ?? "Chat"

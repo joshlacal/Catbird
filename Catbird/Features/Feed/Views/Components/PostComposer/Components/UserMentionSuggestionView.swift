@@ -40,7 +40,8 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
       labels: profile.labels,
       createdAt: profile.createdAt,
       verification: profile.verification,
-      status: profile.status
+      status: profile.status,
+      debug: nil
     )
     self.init(profile: basic)
   }
@@ -56,7 +57,8 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
       labels: profile.labels,
       createdAt: profile.createdAt,
       verification: profile.verification,
-      status: profile.status
+      status: profile.status,
+      debug: nil
     )
     self.init(profile: basic)
   }

@@ -163,7 +163,7 @@ actor MLSMessageBuffer {
 ## Message Reactions Infrastructure
 
 ### Discovery
-Found `BlueCatbirdMlsStreamConvoEvents.ReactionEvent` in Petrel:
+Found `BlueCatbirdMlsSubscribeConvoEvents.ReactionEvent` in Petrel:
 ```swift
 public struct ReactionEvent {
     public let messageId: String

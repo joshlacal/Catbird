@@ -1,5 +1,6 @@
 import Petrel
 import SwiftUI
+import CatbirdMLSService
 
 /// Utility for handling navigation destination resolution throughout the app
 struct NavigationHandler {

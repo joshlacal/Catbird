@@ -483,7 +483,9 @@ var id: String {
           labels: nil,
           createdAt: nil,
           verification: nil,
-          status: nil
+          status: nil,
+          debug: nil
+
         )
       case .notFound, .parseError, .permissionDenied:
         // Generic placeholder for deleted/not found posts
@@ -499,7 +501,8 @@ var id: String {
           labels: nil,
           createdAt: nil,
           verification: nil,
-          status: nil
+          status: nil,
+          debug: nil
         )
       }
     }
@@ -609,7 +612,11 @@ var id: String {
 
           await MainActor.run {
             let cleaned = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleaned.isEmpty {
+            let squashed = cleaned
+              .lowercased()
+              .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+
+            if cleaned.isEmpty || squashed.range(of: #"^(null)+$"#, options: .regularExpression) != nil {
               self.threadSummaryError = "The model couldn't generate a summary for this thread."
               self.isThreadSummaryLoading = false
               self.canRetryThreadSummary = true
@@ -647,8 +654,17 @@ var id: String {
         return ("Thread summarization isn't available on this device.", false)
       case .invalidThreadURI(let value):
         return ("The thread identifier \(value) is invalid.", false)
-      case .emptyResult:
-        return ("There isn't enough conversation to summarize yet.", false)
+      case .emptyResult(let context):
+        if context.contains("post may be deleted") {
+          return ("That post isn’t available anymore, so this thread can’t be summarized.", false)
+        }
+        if context.hasPrefix("thread fetch") || context.contains("thread (no data") || context.contains("thread (empty") {
+          return ("Couldn’t load this thread to summarize. Try again.", true)
+        }
+        if context.contains("no valid posts") {
+          return ("There isn't enough conversation to summarize yet.", false)
+        }
+        return ("Couldn’t generate a summary for this thread. Try again.", true)
       case .underlying(let underlying):
         let message = (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription
         return (message, true)

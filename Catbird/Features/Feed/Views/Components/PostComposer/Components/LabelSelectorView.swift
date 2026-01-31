@@ -59,7 +59,11 @@ struct LabelSelectorView: View {
       .navigationTitle("Content Labels")
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "checkmark")
+            }
         }
       }
       .overlay(alignment: .bottomLeading) {

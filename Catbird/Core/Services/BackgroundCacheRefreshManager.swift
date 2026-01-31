@@ -45,9 +45,9 @@ enum BackgroundCacheRefreshManager {
   }
 
   static func schedule() {
-    guard didRegister else {
-      logger.debug("Skipping cache BGTask schedule because registration has not run")
-      return
+      if !didRegister {
+        logger.info("Lazily registering cache BGTask before scheduling")
+        registerIfNeeded()
     }
 
     let now = Date()

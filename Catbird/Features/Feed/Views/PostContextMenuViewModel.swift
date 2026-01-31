@@ -47,6 +47,17 @@ final class PostContextMenuViewModel {
             let responseCode = try await appState.atProtoClient?.com.atproto.repo.deleteRecord(input: input).responseCode
             if responseCode == 200 {
                 logger.debug("Post deleted successfully")
+                
+                // Show deletion toast
+                await MainActor.run {
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: "Post deleted",
+                            icon: "trash.fill",
+                            duration: 2.5
+                        )
+                    )
+                }
             }
         } catch {
             logger.debug("Error deleting post: \(error)")
@@ -68,6 +79,17 @@ final class PostContextMenuViewModel {
                 if responseCode == 200 {
                     
                     logger.debug("User blocked successfully")
+                    
+                    // Show block toast
+                    await MainActor.run {
+                        appState.toastManager.show(
+                            ToastItem(
+                                message: "User blocked",
+                                icon: "hand.raised.fill",
+                                duration: 2.5
+                            )
+                        )
+                    }
                 }
             }
         } catch {
@@ -82,6 +104,17 @@ final class PostContextMenuViewModel {
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteActor(input: input)
             if responseCode == 200 {
                 logger.debug("User muted successfully")
+                
+                // Show mute toast
+                await MainActor.run {
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: "User muted",
+                            icon: "speaker.slash.fill",
+                            duration: 2.5
+                        )
+                    )
+                }
             }
         } catch {
             logger.debug("Error muting user: \(error)")
@@ -94,6 +127,17 @@ final class PostContextMenuViewModel {
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)
             if responseCode == 200 {
                 logger.debug("Thread muted successfully")
+                
+                // Show thread mute toast
+                await MainActor.run {
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: "Thread muted",
+                            icon: "bell.slash.fill",
+                            duration: 2.5
+                        )
+                    )
+                }
                 
                 // Also mute the thread in push notifications
                 let threadRootURI: String

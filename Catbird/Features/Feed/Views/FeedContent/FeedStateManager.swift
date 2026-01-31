@@ -327,8 +327,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
     func loadInitialData() async {
         guard case .idle = loadingState else { return }
 
-        // If we already have posts (likely from cache restoration), avoid a disruptive reload unless the cache is stale
-        if !posts.isEmpty && !isUserInitiatedAction {
+        // If we already have posts (likely from cache restoration), check if cache needs refresh
+        // Only skip refresh if this manager has previously refreshed successfully (lastRefreshTime != distantPast)
+        // For fresh managers after account switch, lastRefreshTime is distantPast, so we'll check freshness
+        if !posts.isEmpty && !isUserInitiatedAction && feedModel.lastRefreshTime != Date.distantPast {
             let shouldRefresh = await PersistentFeedStateManager.shared.shouldRefreshFeed(
                 feedIdentifier: feedCacheIdentifier,
                 lastUserRefresh: nil,
@@ -351,9 +353,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
             return
         }
 
-        // Only load if posts are empty or this is a user-initiated action
-        guard posts.isEmpty || isUserInitiatedAction else {
-            logger.debug("Skipping initial load - posts exist and not user-initiated")
+        // Allow loading for fresh managers (no previous refresh) even if posts exist from cache
+        if !posts.isEmpty && !isUserInitiatedAction {
+            logger.debug("Skipping initial load - posts exist (\(self.posts.count)) and not user-initiated")
             return
         }
 

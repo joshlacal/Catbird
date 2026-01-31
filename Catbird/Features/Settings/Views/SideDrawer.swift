@@ -143,6 +143,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   @Binding private var isRootView: Bool
   @State private var dragOffset: CGFloat = 0
   @State private var bounceOffset: CGFloat = 0
+  
+  // Notch-based haptic feedback (fires on state transitions, not continuous)
+  @State private var dragNotch: Int = 0
 
   // Device detection
   private let isIPad = PlatformDeviceInfo.isIPad
@@ -154,11 +157,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   private var dragThreshold: CGFloat { isIPad ? 0.2 : 0.3 }
   private var velocityThreshold: CGFloat { isIPad ? 150 : 100 }
 
-  // Haptics
-#if os(iOS)
-  let softHaptic = UIImpactFeedbackGenerator(style: .soft)
-  let rigidHaptic = UIImpactFeedbackGenerator(style: .rigid)
-#endif
+
 
   init(
     selectedTab: Binding<Int>,
@@ -194,33 +193,22 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
 
   private var canOpen: Bool {
     // Only check if we can open if on home tab and root view
-    guard selectedTab == 0 && isRootView else { return false }
-
-    let wasOpen = isDrawerOpen
-    isDrawerOpen = true
-    let canBeOpened = isDrawerOpen
-    isDrawerOpen = wasOpen
-    return canBeOpened
+    selectedTab == 0 && isRootView
   }
 
   var body: some View {
     GeometryReader { geometry in
       let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width * 0.8)
+      // Cache effectiveOffset calculation once per render for performance
+      let currentOffset = effectiveOffset(drawerWidth: adaptiveDrawerWidth)
+      let scrimOpacity = min(0.3, currentOffset / adaptiveDrawerWidth * 0.3)
 
       ZStack(alignment: .leading) {
         content
-          .offset(x: max(0, effectiveOffset(drawerWidth: adaptiveDrawerWidth) + bounceOffset))
+          .offset(x: max(0, currentOffset + bounceOffset))
           .animation(
             .interpolatingSpring(stiffness: springStiffness, damping: springDamping),
             value: isOpen
-          )
-          .animation(
-            .interpolatingSpring(stiffness: springStiffness, damping: springDamping),
-            value: dragOffset
-          )
-          .animation(
-            .interpolatingSpring(stiffness: springStiffness * 2, damping: springDamping),
-            value: bounceOffset
           )
           .accessibilityAction(named: "Open Feeds Menu") {
             if !isDrawerOpen && canOpen {
@@ -232,18 +220,12 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
 
         if isOpen {
           Color.black
-            .opacity(
-              min(
-                0.3, effectiveOffset(drawerWidth: adaptiveDrawerWidth) / adaptiveDrawerWidth * 0.3)
-            )
+            .opacity(scrimOpacity)
             .ignoresSafeArea(.all)
             .onTapGesture {
               withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
                 isDrawerOpen = false
               }
-#if os(iOS)
-              rigidHaptic.impactOccurred()
-#endif
             }
             .accessibilityAction(named: "Close Feeds Menu") {
               withAnimation {
@@ -252,12 +234,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             }
             .accessibilityLabel("Close drawer background")
             .accessibilityAddTraits(.isButton)
-        } else if effectiveOffset(drawerWidth: adaptiveDrawerWidth) > 0 {
+        } else if currentOffset > 0 {
           Color.black
-            .opacity(
-              min(
-                0.3, effectiveOffset(drawerWidth: adaptiveDrawerWidth) / adaptiveDrawerWidth * 0.3)
-            )
+            .opacity(scrimOpacity)
             .ignoresSafeArea(.all)
             .allowsHitTesting(false)
         }
@@ -267,20 +246,12 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           .offset(
             x: min(
               0,
-              effectiveOffset(drawerWidth: adaptiveDrawerWidth) - adaptiveDrawerWidth + bounceOffset
+              currentOffset - adaptiveDrawerWidth + bounceOffset
             )
           )
           .animation(
             .interpolatingSpring(stiffness: springStiffness, damping: springDamping),
             value: isOpen
-          )
-          .animation(
-            .interpolatingSpring(stiffness: springStiffness, damping: springDamping),
-            value: dragOffset
-          )
-          .animation(
-            .interpolatingSpring(stiffness: springStiffness * 2, damping: springDamping),
-            value: bounceOffset
           )
           .accessibilityAction(named: "Close Feeds Menu") {
             withAnimation {
@@ -302,11 +273,12 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
               dragOffset = max(0, translation)
             }
 
-            let translationInt = Int(abs(translation))
-            if translationInt % 50 < 2 {
-#if os(iOS)
-              softHaptic.impactOccurred(intensity: 0.3)
-#endif
+            // Notch-based haptic: only fires when crossing a threshold
+            let step: CGFloat = 80
+            let progress = abs(translation)
+            let notch = Int(progress / step)
+            if notch != dragNotch {
+              dragNotch = notch
             }
           },
           onEnded: { translation, velocity in
@@ -334,10 +306,6 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
                   bounceOffset = 0
                 }
               }
-
-#if os(iOS)
-              rigidHaptic.impactOccurred(intensity: velocityFactor)
-#endif
             }
 
             withAnimation(.spring(response: 0.3, dampingFraction: 0.99)) {
@@ -349,10 +317,15 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           isDrawerOpen: { isOpen }
         )
       )
+      .onAppear {
+        // Reset notch on appear
+        dragNotch = 0
+      }
       .onChange(of: isOpen) { _, newValue in
         if !newValue {
           dragOffset = 0
           bounceOffset = 0
+          dragNotch = 0
         } else {
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             UIAccessibility.post(notification: .screenChanged, argument: nil)
@@ -364,6 +337,8 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         defaults.set(newValue, forKey: "drawer_was_open")
       }
       .hoverEffect(.lift)
+      .sensoryFeedback(.selection, trigger: dragNotch)
+      .sensoryFeedback(.impact(weight: .medium), trigger: isOpen)
       .accessibilityElement(children: .contain)
     }
   }

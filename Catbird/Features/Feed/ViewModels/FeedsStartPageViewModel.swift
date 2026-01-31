@@ -42,8 +42,8 @@ final class FeedsStartPageViewModel {
   private var hasLoadedFeedsAtLeastOnce = false
   private var hasAttemptedPreferencesRepair = false
 
-  private let maxGeneratorRetryAttempts = 2
-  private let generatorRetryDelay: UInt64 = 300_000_000 // 0.3 seconds
+  private let maxGeneratorRetryAttempts = 4
+  private let generatorRetryDelayBase: UInt64 = 500_000_000 // 0.5 seconds base delay
 
   // logger
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedsStartPageViewModel")
@@ -251,32 +251,47 @@ final class FeedsStartPageViewModel {
       
       // Safely unwrap the client
       guard let client = appState.atProtoClient else {
-        errorMessage = "ATProto client is not initialized"
-        logger.error("ATProto client not available for feed generator fetch")
+        // Client not ready yet - retry with backoff
+        if attempt < maxGeneratorRetryAttempts {
+          let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff
+          logger.info("ATProto client not ready, retrying in \(Double(delay) / 1_000_000_000)s (attempt \(attempt + 1)/\(self.maxGeneratorRetryAttempts))")
+          try? await Task.sleep(nanoseconds: delay)
+          await fetchFeedGenerators(attempt: attempt + 1)
+        } else {
+          logger.error("ATProto client not available after \(self.maxGeneratorRetryAttempts) attempts")
+        }
         return
       }
       
-      logger.info("Attempting to fetch \(feedURIs.count) feed generators")
+      logger.info("Attempting to fetch \(feedURIs.count) feed generators (attempt \(attempt + 1))")
       let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
       let (responseCode, output) = try await client.app.bsky.feed.getFeedGenerators(input: input)
       
       if responseCode == 200, let generators = output?.feeds {
-        logger.info("Successfully fetched \(generators.count) feed generators")
+        logger.info("✅ Successfully fetched \(generators.count) feed generators")
         // IMPORTANT: Don't completely replace feedGenerators - update it
         for generator in generators {
           feedGenerators[generator.uri] = generator
         }
       } else if responseCode == 401 {
-        logger.warning("Unauthorized when fetching feed generators (attempt \(attempt)); scheduling retry")
-        feedGenerators.removeAll()
+        // Don't clear existing generators on auth failure - keep stale data for better UX
+        logger.warning("Unauthorized when fetching feed generators (attempt \(attempt + 1)); scheduling retry")
         if attempt < maxGeneratorRetryAttempts {
-          try? await Task.sleep(nanoseconds: generatorRetryDelay * UInt64(attempt + 1))
+          let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff: 0.5s, 1s, 2s, 4s
+          try? await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
+        } else {
+          logger.error("Feed generator fetch unauthorized after \(self.maxGeneratorRetryAttempts) attempts")
         }
         return
       } else {
-        errorMessage = "Failed to fetch feed generators. Response code: \(responseCode)"
         logger.error("Feed generator fetch failed with code: \(responseCode)")
+        // Retry on other failures too
+        if attempt < maxGeneratorRetryAttempts {
+          let delay = generatorRetryDelayBase * UInt64(1 << attempt)
+          try? await Task.sleep(nanoseconds: delay)
+          await fetchFeedGenerators(attempt: attempt + 1)
+        }
       }
     } catch {
       // Check if it's a cancellation error
@@ -288,17 +303,17 @@ final class FeedsStartPageViewModel {
       }
 
       if attempt < maxGeneratorRetryAttempts {
-        logger.debug("Transient error fetching feed generators (\(error.localizedDescription)); retrying attempt \(attempt + 1)")
-        try? await Task.sleep(nanoseconds: generatorRetryDelay * UInt64(attempt + 1))
+        let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff
+        logger.info("Transient error fetching feed generators (\(error.localizedDescription)); retrying in \(Double(delay) / 1_000_000_000)s (attempt \(attempt + 1)/\(self.maxGeneratorRetryAttempts))")
+        try? await Task.sleep(nanoseconds: delay)
         await fetchFeedGenerators(attempt: attempt + 1)
         return
       }
 
-      errorMessage = "Error fetching feed generators: \(error.localizedDescription)"
-      logger.error("Exception in fetchFeedGenerators: \(error.localizedDescription)")
+      logger.error("Feed generator fetch failed after \(self.maxGeneratorRetryAttempts) attempts: \(error.localizedDescription)")
     }
   }
-      // Only set error message for non-cancellation errors
+
   func fetchListDetails() async {
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
@@ -309,15 +324,37 @@ final class FeedsStartPageViewModel {
 
       guard !listURIs.isEmpty else { return }
 
-      for uri in listURIs {
-        let uriString = uri.uriString()
-        do {
-          let details = try await appState.listManager.getListDetails(uriString)
-          listDetails[uri] = details
-        } catch {
-          logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
+      // Track batch operation for Instruments visibility
+      let signpostId = PerformanceSignposts.beginBatchOperation("list-details-fetch", count: listURIs.count)
+      var successCount = 0
+      var failureCount = 0
+
+      // Fetch all list details in parallel instead of sequentially (fixes N+1)
+      await withTaskGroup(of: (ATProtocolURI, AppBskyGraphDefs.ListView?).self) { group in
+        for uri in listURIs {
+          group.addTask {
+            let uriString = uri.uriString()
+            do {
+              let details = try await self.appState.listManager.getListDetails(uriString)
+              return (uri, details)
+            } catch {
+              self.logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
+              return (uri, nil)
+            }
+          }
+        }
+
+        for await (uri, details) in group {
+          if let details = details {
+            self.listDetails[uri] = details
+            successCount += 1
+          } else {
+            failureCount += 1
+          }
         }
       }
+
+      PerformanceSignposts.endBatchOperation(id: signpostId, successCount: successCount, failureCount: failureCount)
 
       // After fetching, update widget mapping
       await updateWidgetFeedPreferences()

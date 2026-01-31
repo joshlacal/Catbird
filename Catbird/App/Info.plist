@@ -9,6 +9,19 @@
 		<string>blue.catbird.cache.refresh</string>
 		<string>blue.catbird.key-package-refresh</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>blue.catbird</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>blue.catbird</string>
+			</array>
+		</dict>
+	</array>
 	<key>DCAppAttestService</key>
 	<dict>
 		<key>Enabled</key>

@@ -117,7 +117,7 @@ actor BlueskyIntelligenceAgent {
                         return
                     }
                     
-                    let session = try await ensureSession(using: client)
+                        let session = try await ensureSummarizationSession(using: client)
                     
                     let parents = posts.filter { $0.isParent }
                     let mainPost = posts.first { $0.isMain }
@@ -180,6 +180,17 @@ actor BlueskyIntelligenceAgent {
         }
     }
     
+        private static func isMeaningfulModelOutput(_ text: String) -> Bool {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return false }
+            switch trimmed.lowercased() {
+            case "null", "nil":
+                return false
+            default:
+                return true
+            }
+        }
+
     private func summarizeBatch(
         posts: [FormattedThreadPost],
         context: String?,
@@ -217,11 +228,11 @@ actor BlueskyIntelligenceAgent {
             do {
                 let response = try await session.respond(to: Prompt(prompt), options: options)
                 let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                if !content.isEmpty {
+
+                    if Self.isMeaningfulModelOutput(content) {
                     return content
                 }
-                
+
                 logger.warning("Batch summarization attempt \(attempt) returned empty content")
                 lastError = BlueskyAgentError.emptyResult("batch summary (attempt \(attempt))")
                 
@@ -287,17 +298,22 @@ actor BlueskyIntelligenceAgent {
                     // Only yield the new delta
                     if latestContent.count > previousContent.count {
                         let delta = String(latestContent.dropFirst(previousContent.count))
-                        continuation.yield(delta)
+                            if !(previousContent.isEmpty
+                                && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .lowercased() == "null")
+                            {
+                                continuation.yield(delta)
+                            }
                         previousContent = latestContent
                     }
                 }
-                
+
                 let content = latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                if !content.isEmpty {
+
+                    if Self.isMeaningfulModelOutput(content) {
                     return content
                 }
-                
+
                 logger.warning("Batch summarization attempt \(attempt) returned empty content")
                 lastError = BlueskyAgentError.emptyResult("batch summary (attempt \(attempt))")
                 
@@ -340,11 +356,11 @@ actor BlueskyIntelligenceAgent {
             do {
                 let response = try await session.respond(to: Prompt(prompt), options: options)
                 let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                if !content.isEmpty {
+
+                    if Self.isMeaningfulModelOutput(content) {
                     return content
                 }
-                
+
                 logger.warning("Polish attempt \(attempt) returned empty content")
                 lastError = BlueskyAgentError.emptyResult("polish (attempt \(attempt))")
                 
@@ -396,17 +412,22 @@ actor BlueskyIntelligenceAgent {
                     // Only yield the new delta
                     if latestContent.count > previousContent.count {
                         let delta = String(latestContent.dropFirst(previousContent.count))
-                        continuation.yield(delta)
+                            if !(previousContent.isEmpty
+                                && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .lowercased() == "null")
+                            {
+                                continuation.yield(delta)
+                            }
                         previousContent = latestContent
                     }
                 }
-                
+
                 let content = latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                if !content.isEmpty {
+
+                    if Self.isMeaningfulModelOutput(content) {
                     return content
                 }
-                
+
                 logger.warning("Polish attempt \(attempt) returned empty content")
                 lastError = BlueskyAgentError.emptyResult("polish (attempt \(attempt))")
                 
@@ -433,7 +454,7 @@ actor BlueskyIntelligenceAgent {
         let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
             anchor: uri,
             above: true,
-            below: 1000
+                below: 20
         )
         
         logger.debug("Fetching full thread for URI: \(uri.uriString())")
@@ -468,7 +489,10 @@ actor BlueskyIntelligenceAgent {
                 continue
             }
             
-            guard let formatted = ToolFormatter.summarize(post: threadItemPost.post, depth: 0, prefix: nil) else {
+                guard
+                    let formatted = ToolFormatter.summarize(
+                        post: threadItemPost.post, depth: item.depth, prefix: nil)
+                else {
                 continue
             }
             
@@ -505,6 +529,29 @@ actor BlueskyIntelligenceAgent {
         session = newSession
         return newSession
     }
+    
+        /// Creates or returns a session strictly for text processing without tools
+        /// This prevents the model from hallucinating tool calls during summarization loops
+        private func ensureSummarizationSession(using client: ATProtoClient) async throws
+            -> LanguageModelSession
+        {
+            // We don't cache this session in the main `session` property to avoid overwriting the general-purpose one
+            // but we could cache it separately if needed. For now, we'll create it on demand or check if the main session
+            // is already strictly configured (which it usually isn't).
+
+            guard let model = prepareModel() else {
+                throw BlueskyAgentError.modelUnavailable
+            }
+
+            // No tools for summarization to prevent 502 errors from redundant fetch_thread calls
+            let newSession = LanguageModelSession(
+                model: model,
+                tools: [],  // Explicitly empty tools
+                instructions: { Instructions { Self.summarizationInstructionsText } }
+            )
+
+            return newSession
+        }
 
     private func prepareModel() -> SystemLanguageModel? {
         if let model { return model }
@@ -551,6 +598,19 @@ actor BlueskyIntelligenceAgent {
     - For requested summaries, keep within the requested sentence count and emphasise what was actually said.
     - Clearly separate analysis from raw excerpts when helpful.
     """
+    
+        private static let summarizationInstructionsText = """
+            Role: You are a text summarization assistant for Catbird.
+
+            Task: Summarize the provided Bluesky social media posts efficiently and accurately.
+
+            Constraints:
+            - Do NOT use any tools.
+            - Do NOT attempt to fetch more data.
+            - Rely ONLY on the text provided in the prompt.
+            - Reference users by their @handle.
+            - Be concise and factual.
+            """
 }
 
 // MARK: - Tool infrastructure

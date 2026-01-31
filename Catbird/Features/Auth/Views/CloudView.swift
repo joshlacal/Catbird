@@ -11,12 +11,14 @@ import AppKit
 struct CloudView: UIViewRepresentable {
     @State private var renderer = CloudRenderer()
     @Environment(\.colorScheme) var colorScheme
-    
+
     var opacity: Float = 0.9
     var cloudScale: Float = 2.0
     var animationSpeed: Float = 1.0
     var shaderMode: CloudRenderer.ShaderMode = .advanced
-    
+    /// Resolution scale factor (0.5 = half resolution, 1.0 = full). Lower = faster but blurrier.
+    var resolutionScale: CGFloat = 0.75
+
     func makeUIView(context: Context) -> MTKView {
         let mtkView = MTKView()
         mtkView.device = MTLCreateSystemDefaultDevice()
@@ -27,18 +29,22 @@ struct CloudView: UIViewRepresentable {
         mtkView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
-        
-        // High framerate for hyperrealistic cloud animation
-        mtkView.preferredFramesPerSecond = 120
-        
+
+        // 60fps is sufficient for slow cloud animation - saves 50% GPU work
+        mtkView.preferredFramesPerSecond = 60
+
+        // Render at reduced resolution for performance (clouds are soft/blurry anyway)
+        let screenScale = UIScreen.main.scale
+        mtkView.contentScaleFactor = screenScale * resolutionScale
+
         // Configure renderer
         renderer.opacity = opacity
         renderer.cloudScale = cloudScale
         renderer.animationSpeed = animationSpeed
         renderer.shaderMode = shaderMode
         renderer.updateColorScheme(isDark: colorScheme == .dark)
-        
-        
+
+
         return mtkView
     }
     
@@ -93,12 +99,14 @@ struct CloudView: UIViewRepresentable {
 struct CloudView: NSViewRepresentable {
     @State private var renderer = CloudRenderer()
     @Environment(\.colorScheme) var colorScheme
-    
+
     var opacity: Float = 0.9
     var cloudScale: Float = 2.0
     var animationSpeed: Float = 1.0
     var shaderMode: CloudRenderer.ShaderMode = .advanced
-    
+    /// Resolution scale factor (0.5 = half resolution, 1.0 = full). Lower = faster but blurrier.
+    var resolutionScale: CGFloat = 0.75
+
     func makeNSView(context: Context) -> MTKView {
         let mtkView = MTKView()
         mtkView.device = MTLCreateSystemDefaultDevice()
@@ -109,18 +117,23 @@ struct CloudView: NSViewRepresentable {
         mtkView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
-        
-        // High framerate for smooth cloud animation
-        mtkView.preferredFramesPerSecond = 120
-        
+
+        // 60fps is sufficient for slow cloud animation - saves 50% GPU work
+        mtkView.preferredFramesPerSecond = 60
+
+        // Render at reduced resolution for performance (clouds are soft/blurry anyway)
+        if let screen = NSScreen.main {
+            mtkView.layer?.contentsScale = screen.backingScaleFactor * resolutionScale
+        }
+
         // Configure renderer
         renderer.opacity = opacity
         renderer.cloudScale = cloudScale
         renderer.animationSpeed = animationSpeed
         renderer.shaderMode = shaderMode
         renderer.updateColorScheme(isDark: colorScheme == .dark)
-        
-        
+
+
         return mtkView
     }
     

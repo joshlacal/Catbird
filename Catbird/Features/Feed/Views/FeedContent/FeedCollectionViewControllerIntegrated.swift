@@ -338,6 +338,10 @@ import os
         collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
       ])
+      
+      // Fix 5: scrollsToTop
+      // Ensure this is the primary scroll view for status bar tapping
+      collectionView.scrollsToTop = true
     }
 
     private func createLayout() -> UICollectionViewLayout {
@@ -436,6 +440,9 @@ import os
       // Registration for post cells
       let postRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
         [weak self] cell, indexPath, postId in
+        let signpostId = PerformanceSignposts.beginCellConfiguration(postId: postId)
+        defer { PerformanceSignposts.endCellConfiguration(id: signpostId) }
+        
         guard let self = self,
           let post = self.stateManager.posts.first(where: { $0.id == postId })
         else {
@@ -690,12 +697,38 @@ import os
     private func scrollToTopAnimated() {
       guard let collectionView = collectionView else { return }
       
+      // Fix 3: Force Layout Calculation
+      // If cells vary in height, estimates might be wrong. Force reconciliation.
+      collectionView.layoutIfNeeded()
+      // Fix 4: Invalidate layout to clear bad estimates if needed (optional, but good for truly dynamic content)
+      // collectionView.collectionViewLayout.invalidateLayout()
+
+      // Fix 2: Disable Paging During Scroll
+      // If paging is enabled, it can snag the scroll.
+      let wasPagingEnabled = collectionView.isPagingEnabled
+      if wasPagingEnabled {
+        collectionView.isPagingEnabled = false
+      }
+
       // Scroll to the very top, respecting adjusted content insets (for large title nav bar)
+      // Fix 1: Scroll to Offset, Not Item
       let minOffsetY = -collectionView.adjustedContentInset.top
       let minOffsetX = -collectionView.adjustedContentInset.left
       
-      controllerLogger.debug("🔝 Scrolling to top (animated)")
-      collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: true)
+      controllerLogger.debug("🔝 Scrolling to top (animated) to y=\(minOffsetY)")
+
+      // Use UIView animation to ensure we can restore paging in completion
+      UIView.animate(
+        withDuration: 0.3,
+        animations: {
+          collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: true)
+        }
+      ) { _ in
+        // Restore paging if it was enabled
+        if wasPagingEnabled {
+          collectionView.isPagingEnabled = true
+        }
+      }
     }
     
     /// Scrolls to top and refreshes to get the latest posts
@@ -736,10 +769,9 @@ import os
     }
 
     private func scrollToTop() {
-      guard !stateManager.posts.isEmpty else { return }
-
-      let indexPath = IndexPath(item: 0, section: 0)
-      collectionView.scrollToItem(at: indexPath, at: .top, animated: true)
+      // Fix 1: Scroll to Offset, Not the Item
+      // Relying on scrollToItem is unreliable with dynamic layouts.
+      scrollToTopAnimated()
     }
 
     // MARK: - Scroll Position Management
@@ -935,13 +967,16 @@ import os
   extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
-      // Prefetch content for upcoming cells
-      for indexPath in indexPaths {
-        if indexPath.item < stateManager.posts.count {
-          let post = stateManager.posts[indexPath.item]
-          // Prefetch images or other content if needed
-          _ = post  // Use post for prefetching
-        }
+      // Prefetch images for upcoming cells
+      let posts = indexPaths.compactMap { indexPath -> CachedFeedViewPost? in
+        guard indexPath.item < stateManager.posts.count else { return nil }
+        return stateManager.posts[indexPath.item]
+      }
+      
+      guard !posts.isEmpty else { return }
+      
+      Task {
+        await FeedPrefetchingManager.shared.prefetchAssets(for: posts)
       }
     }
   }

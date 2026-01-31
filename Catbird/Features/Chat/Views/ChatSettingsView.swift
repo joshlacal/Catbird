@@ -20,6 +20,7 @@ struct ChatSettingsView: View {
   @State private var isOptedIn = false
   @State private var isLoadingOptInStatus = true  // Start as true to prevent onChange during init
   @State private var isTogglingOptIn = false
+  @State private var hasLoadedInitialState = false  // Track if we've completed initial load
   @State private var hasAdminAccess = false
   @State private var isCheckingAdminAccess = true
 
@@ -42,11 +43,28 @@ struct ChatSettingsView: View {
               ProgressView()
                 .scaleEffect(0.8)
             } else {
-              Toggle("", isOn: $isOptedIn)
-                .labelsHidden()
-                .onChange(of: isOptedIn) { oldValue, newValue in
+              Toggle("", isOn: Binding(
+                get: { isOptedIn },
+                set: { newValue in
+                  // Only process if we've loaded initial state and value actually changed
+                  guard hasLoadedInitialState, newValue != isOptedIn else { return }
                   toggleOptInStatus(newValue)
                 }
+              ))
+                .labelsHidden()
+            }
+          }
+          
+          // Show MLS privacy settings link when opted in
+          if isOptedIn && !isLoadingOptInStatus {
+            NavigationLink {
+              MLSChatSettingsView()
+            } label: {
+              HStack {
+                Image(systemName: "lock.shield")
+                  .foregroundColor(.blue)
+                Text("MLS Privacy Settings")
+              }
             }
           }
         } header: {
@@ -189,6 +207,15 @@ struct ChatSettingsView: View {
         await loadOptInStatus()
         await refreshAdminAccess()
       }
+      .onAppear {
+        // Refresh opt-in status when returning from MLSChatSettingsView (user may have opted out)
+        if hasLoadedInitialState {
+          let currentStatus = ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+          if currentStatus != isOptedIn {
+            isOptedIn = currentStatus
+          }
+        }
+      }
     }
   }
 
@@ -199,13 +226,14 @@ struct ChatSettingsView: View {
       // Load from local per-account setting
       isOptedIn = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
       isLoadingOptInStatus = false
+      hasLoadedInitialState = true
     }
   }
 
   private func toggleOptInStatus(_ optIn: Bool) {
-    // Prevent re-entrancy: if already toggling or still loading, ignore the change
-    guard !isTogglingOptIn && !isLoadingOptInStatus else {
-      logger.debug("Ignoring toggle - already in progress or still loading")
+    // Prevent re-entrancy: if already toggling, ignore the change
+    guard !isTogglingOptIn else {
+      logger.debug("Ignoring toggle - already in progress")
       return
     }
     
@@ -216,7 +244,6 @@ struct ChatSettingsView: View {
         logger.error("MLS client not available")
         await MainActor.run {
           errorMessage = "MLS chat is not available"
-          isOptedIn = !optIn // Revert
         }
         return
       }
@@ -251,12 +278,13 @@ struct ChatSettingsView: View {
           logger.info("Successfully opted out of MLS chat for account: \(userDID.prefix(20))...")
         }
         await MainActor.run {
+          isOptedIn = optIn  // Update state to reflect successful change
           isTogglingOptIn = false
         }
       } catch {
         logger.error("Failed to toggle opt-in status: \(error.localizedDescription)")
         await MainActor.run {
-          isOptedIn = !optIn // Revert the toggle
+          // State remains unchanged since we didn't update isOptedIn during the toggle
           isTogglingOptIn = false
           errorMessage = "Failed to update MLS chat settings: \(error.localizedDescription)"
         }

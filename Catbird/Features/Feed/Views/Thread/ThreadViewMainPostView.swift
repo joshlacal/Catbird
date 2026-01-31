@@ -93,30 +93,26 @@ struct ThreadViewMainPostView: View, Equatable {
                                 authorAvatarColumn
                                 
                                 VStack(alignment: .leading, spacing: 0) {
-                                    Text((post.author.displayName ?? post.author.handle.description).truncated(to: 30))
+                                    Text(post.author.displayName ?? post.author.handle.description)
                                         .lineLimit(1, reservesSpace: true)
+                                        .truncationMode(.tail)
                                         .appHeadline()
                                         .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
-                                        .truncationMode(.tail)
                                         .allowsTightening(true)
-                                        .fixedSize(horizontal: true, vertical: false)
                                         .padding(.bottom, 1)
                                         .transaction { $0.animation = nil }
                                         .contentTransition(.identity)
-                                    
-                                    Text("@\(post.author.handle)".truncated(to: 30))
+
+                                    Text(verbatim: "@\(post.author.handle)")
                                         .appSubheadline()
                                         .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
                                         .lineLimit(1)
                                         .truncationMode(.tail)
                                         .allowsTightening(true)
-                                        .fixedSize(horizontal: true, vertical: false)
                                         .padding(.bottom, 1)
                                         .transaction { $0.animation = nil }
                                         .contentTransition(.identity)
-                                    
-                                }
-                                .padding(.leading, 3)
+                                }                                .padding(.leading, 3)
                                 .padding(.bottom, 4)
                                 .onTapGesture {
                                     

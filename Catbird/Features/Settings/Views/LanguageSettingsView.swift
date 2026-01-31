@@ -670,8 +670,10 @@ struct EnhancedContentLanguagesView: View {
                 }
                 
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Done") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
                     .fontWeight(.semibold)
                 }

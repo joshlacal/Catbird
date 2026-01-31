@@ -232,6 +232,49 @@ enum NavigationFontConfig {
         applyFonts(to: appearance, fontManager: FontManager())
     }
     
+    // MARK: - Early Initialization
+    
+    /// Apply navigation bar appearance proxy early at app launch to prevent font flicker.
+    /// This reads font settings directly from UserDefaults (synchronous) and sets
+    /// UINavigationBar.appearance() before any views are rendered.
+    /// Call this from CatbirdApp.init() for best results.
+    static func applyEarlyNavigationBarAppearance() {
+        // Read font settings directly from UserDefaults (fast, synchronous)
+        let defaults = UserDefaults.standard
+        let fontStyle = defaults.string(forKey: "fontStyle") ?? "system"
+        let fontSize = defaults.string(forKey: "fontSize") ?? "default"
+        let dynamicTypeEnabled = defaults.object(forKey: "dynamicTypeEnabled") != nil 
+            ? defaults.bool(forKey: "dynamicTypeEnabled") 
+            : true
+        let maxDynamicTypeSize = defaults.string(forKey: "maxDynamicTypeSize") ?? "accessibility1"
+        
+        // Create a FontManager with these settings
+        let fontManager = FontManager()
+        fontManager.fontStyle = fontStyle
+        fontManager.fontSize = fontSize
+        fontManager.dynamicTypeEnabled = dynamicTypeEnabled
+        fontManager.maxDynamicTypeSize = maxDynamicTypeSize
+        
+        // Create and configure appearances
+        let standardAppearance = UINavigationBarAppearance()
+        let scrollEdgeAppearance = UINavigationBarAppearance()
+        let compactAppearance = UINavigationBarAppearance()
+        
+        standardAppearance.configureWithDefaultBackground()
+        scrollEdgeAppearance.configureWithDefaultBackground()
+        compactAppearance.configureWithOpaqueBackground()
+        
+        // Apply custom fonts to all appearances
+        applyFonts(to: standardAppearance, fontManager: fontManager)
+        applyFonts(to: scrollEdgeAppearance, fontManager: fontManager)
+        applyFonts(to: compactAppearance, fontManager: fontManager)
+        
+        // Set the appearance proxy (affects all future navigation bars)
+        UINavigationBar.appearance().standardAppearance = standardAppearance
+        UINavigationBar.appearance().scrollEdgeAppearance = scrollEdgeAppearance
+        UINavigationBar.appearance().compactAppearance = compactAppearance
+    }
+    
     /// Force apply fonts to all current navigation bars in the app with FontManager integration
     /// Call this after theme changes to ensure fonts are respected
     static func forceApplyToAllNavigationBars(fontManager: FontManager) {

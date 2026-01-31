@@ -306,7 +306,9 @@ actor PostShadowManager {
             indexedAt: post.indexedAt,
             viewer: viewerState,
             labels: post.labels,
-            threadgate: post.threadgate
+            threadgate: post.threadgate,
+            debug: nil
+
         )
     }
     

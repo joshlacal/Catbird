@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  ShareToChatActivity.swift
 //  Catbird
@@ -834,9 +835,11 @@
         #endif
         .toolbar {
           ToolbarItem(placement: .primaryAction) {
-            Button("Done") {
-              dismiss()
-            }
+              Button {
+                  dismiss()
+              } label: {
+                  Image(systemName: "checkmark")
+              }
           }
         }
       }
@@ -1167,12 +1170,9 @@
        let userDID = appState.userDID
 
       do {
-        let db = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
-
-        // Single batch query for conversations AND members (eliminates N+1)
-        let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembers(
-          currentUserDID: userDID,
-          database: db
+        // Use smart routing - auto-routes to lightweight Queue if needed
+        let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembersUsingSmartRouting(
+          currentUserDID: userDID
         )
 
         conversations = loadedConversations

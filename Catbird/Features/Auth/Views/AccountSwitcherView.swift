@@ -65,119 +65,142 @@ struct AccountSwitcherView: View {
 
   var body: some View {
     NavigationStack {
-      ZStack {
-        if isLoading {
-          ProgressView("Loading accounts...")
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          accountsContentView
+      contentView
+        .navigationTitle("Accounts")
+        .modifier(ToolbarTitleModifier())
+        .toolbar { toolbarContent }
+        .sheet(isPresented: $isAddingAccount) {
+          LoginView(isAddingNewAccount: true)
+            .environment(appStateManager)
         }
-      }
-      .navigationTitle("Accounts")
-      #if os(iOS)
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
-    #endif
-      #endif
-      .toolbar {
-        #if os(iOS)
-        if showsDismissButton {
-          ToolbarItem(placement: .cancellationAction) {
-            Button("Done") {
-              dismiss()
-            }
-          }
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-          EditButton()
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-          Button {
-            isAddingAccount = true
-          } label: {
-            Image(systemName: "plus")
-          }
-        }
-        #elseif os(macOS)
-        if showsDismissButton {
-          ToolbarItem(placement: .cancellationAction) {
-            Button("Done") {
-              dismiss()
-            }
-          }
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-          Button {
-            isAddingAccount = true
-          } label: {
-            Image(systemName: "plus")
-          }
-        }
-        #endif
-      }
-      .sheet(isPresented: $isAddingAccount) {
-        LoginView(isAddingNewAccount: true)
-              .environment(appStateManager)
-      }
-      .alert(
-        "Remove Account",
-        isPresented: .init(
-          get: { showConfirmRemove != nil },
-          set: { if !$0 { showConfirmRemove = nil } }
-        ),
-        presenting: showConfirmRemove
-      ) { account in
-        Button("Remove", role: .destructive) {
-          Task {
-            await removeAccount(account)
-          }
-        }
-        Button("Cancel", role: .cancel) {
-          showConfirmRemove = nil
-        }
-      } message: { account in
-        Text(
-          "Are you sure you want to remove the account '\(account.handle)'? You can add it again later."
+        .alert(
+          "Remove Account",
+          isPresented: showConfirmRemoveBinding,
+          presenting: showConfirmRemove,
+          actions: removeAccountAlertActions,
+          message: removeAccountAlertMessage
         )
+        .onChange(of: appStateManager.authentication.state, handleAuthStateChange)
+        .onChange(of: appStateManager.lifecycle.appState?.pendingReauthenticationRequest, handleReauthRequestChange)
+        .onChange(of: isAddingAccount, handleIsAddingAccountChange)
+        .task { await loadAccounts() }
+    }
+  }
+
+  // MARK: - Body Subviews
+
+  @ViewBuilder
+  private var contentView: some View {
+    ZStack {
+      if isLoading {
+        ProgressView("Loading accounts...")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        accountsContentView
       }
-      .onChange(of: appStateManager.authentication.state) { _, newValue in
-        if case .authenticated = newValue {
-          // Refresh account list when auth state changes to authenticated
-          Task {
-            await loadAccounts()
+    }
+  }
+
+  private var showConfirmRemoveBinding: Binding<Bool> {
+    Binding(
+      get: { showConfirmRemove != nil },
+      set: { if !$0 { showConfirmRemove = nil } }
+    )
+  }
+
+  @ToolbarContentBuilder
+  private var toolbarContent: some ToolbarContent {
+    #if os(iOS)
+    if showsDismissButton {
+      ToolbarItem(placement: .cancellationAction) {
+        Button {
+          dismiss()
+        } label: {
+          Image(systemName: "xmark")
+        }
+      }
+    }
+
+    ToolbarItem(placement: .primaryAction) {
+      EditButton()
+    }
+
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        isAddingAccount = true
+      } label: {
+        Image(systemName: "plus")
+      }
+    }
+    #elseif os(macOS)
+    if showsDismissButton {
+      ToolbarItem(placement: .cancellationAction) {
+          Button {
+              dismiss()
+          } label: {
+              Image(systemName: "xmark")
           }
-        }
       }
-      .onChange(of: appStateManager.lifecycle.appState?.pendingReauthenticationRequest) { oldRequest, newRequest in
-        Task { @MainActor in
-          logger.info("🔔 [REAUTH-ONCHANGE] pendingReauthenticationRequest onChange triggered")
-          logger.debug("🔔 [REAUTH-ONCHANGE] Old request: \(oldRequest?.handle ?? "nil") (DID: \(oldRequest?.did ?? "nil"))")
-          logger.debug("🔔 [REAUTH-ONCHANGE] New request: \(newRequest?.handle ?? "nil") (DID: \(newRequest?.did ?? "nil"))")
-          
-          if let request = newRequest {
-            // Automatically handle reauthentication when account switching fails
-            logger.info("🔔 [REAUTH-ONCHANGE] Detected new reauthentication request for \(request.handle)")
-            logger.info("🔔 [REAUTH-ONCHANGE] Starting handleReauthentication in Task")
-            Task {
-              await handleReauthentication(request)
-            }
-          } else {
-            logger.debug("🔔 [REAUTH-ONCHANGE] Request is nil, ignoring")
-          }
-        }
+    }
+
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        isAddingAccount = true
+      } label: {
+        Image(systemName: "plus")
       }
-      .onChange(of: isAddingAccount) { _, newValue in
-        if newValue {
-          // Clear any pending reauthentication when user explicitly adds a new account
-          appStateManager.lifecycle.appState?.pendingReauthenticationRequest = nil
-        }
+    }
+    #endif
+  }
+
+  @ViewBuilder
+  private func removeAccountAlertActions(_ account: AccountViewModel) -> some View {
+    Button("Remove", role: .destructive) {
+      Task {
+        await removeAccount(account)
       }
-      .task {
+    }
+    Button("Cancel", role: .cancel) {
+      showConfirmRemove = nil
+    }
+  }
+
+  @ViewBuilder
+  private func removeAccountAlertMessage(_ account: AccountViewModel) -> some View {
+    Text("Are you sure you want to remove the account '\(account.handle)'? You can add it again later.")
+  }
+
+  // MARK: - onChange Handlers
+
+  private func handleAuthStateChange(_ oldValue: AuthState, _ newValue: AuthState) {
+    if case .authenticated = newValue {
+      Task {
         await loadAccounts()
       }
+    }
+  }
+
+  private func handleReauthRequestChange(_ oldRequest: AppState.ReauthenticationRequest?, _ newRequest: AppState.ReauthenticationRequest?) {
+    Task { @MainActor in
+      logger.info("🔔 [REAUTH-ONCHANGE] pendingReauthenticationRequest onChange triggered")
+      logger.debug("🔔 [REAUTH-ONCHANGE] Old request: \(oldRequest?.handle ?? "nil") (DID: \(oldRequest?.did ?? "nil"))")
+      logger.debug("🔔 [REAUTH-ONCHANGE] New request: \(newRequest?.handle ?? "nil") (DID: \(newRequest?.did ?? "nil"))")
+
+      if let request = newRequest {
+        logger.info("🔔 [REAUTH-ONCHANGE] Detected new reauthentication request for \(request.handle)")
+        logger.info("🔔 [REAUTH-ONCHANGE] Starting handleReauthentication in Task")
+        Task {
+          await handleReauthentication(request)
+        }
+      } else {
+        logger.debug("🔔 [REAUTH-ONCHANGE] Request is nil, ignoring")
+      }
+    }
+  }
+
+  private func handleIsAddingAccountChange(_ oldValue: Bool, _ newValue: Bool) {
+    if newValue {
+      appStateManager.lifecycle.appState?.pendingReauthenticationRequest = nil
     }
   }
 
@@ -396,11 +419,9 @@ struct AccountSwitcherView: View {
 
         Spacer()
       }
-      #if os(iOS)
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-      #endif
+  #if os(iOS)
+      .toolbarTitleDisplayMode(.inline)
+  #endif
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
           Button("Cancel", systemImage: "xmark") {
@@ -511,9 +532,11 @@ struct AccountSwitcherView: View {
           logger.debug("🔐 [SWITCH] Account handle: \(handle)")
 
           do {
-            // Start OAuth flow for this account
-            logger.debug("🔐 [SWITCH] Calling authentication.addAccount(handle: \(handle))")
-            let authURL = try await appStateManager.authentication.addAccount(handle: handle)
+            // Start OAuth flow for this EXISTING account (reauthentication, not adding new)
+            // Using login() instead of addAccount() because the account already exists
+            // in Petrel's account list - it just needs a fresh OAuth session
+            logger.debug("🔐 [SWITCH] Calling authentication.login(handle: \(handle)) for reauthentication")
+            let authURL = try await appStateManager.authentication.login(handle: handle)
             logger.info("✅ [SWITCH] Got OAuth URL for reauthentication: \(authURL.absoluteString)")
 
             // Get the AppState if it exists
@@ -837,6 +860,18 @@ struct AccountSwitcherView: View {
       }
       isLoading = false
     }
+  }
+}
+
+// MARK: - Platform Modifiers
+
+private struct ToolbarTitleModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(.large)
+    #else
+    content
+    #endif
   }
 }
 

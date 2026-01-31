@@ -365,9 +365,16 @@ extension FeedStateStore {
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
     switch event {
     case .accountSwitched:
-      logger.debug("🔄 Account switched - clearing all feed state managers")
-      clearAllStateManagers()
-      await PersistentFeedStateManager.shared.clearAll()
+      // CRITICAL FIX: Do NOT clear persistent cache on account switch.
+      // Doing so wipes data for the account we just switched TO if it was previously cached,
+      // and prevents the previous account's data from being available if we switch back.
+      // Data is already namespaced by account DID in the cache keys/database.
+      logger.debug("🔄 Account switched - preserving feed state for seamless transition")
+
+    // We can optionally clear memory for accounts that are no longer active to save RAM,
+    // but we should NOT wipe the persistent store.
+    // For now, we keep managers in memory as AppState eviction handles the heavy lifting
+    // of cleaning up unused AppState instances, which naturally releases their resources.
       
     default:
       // Other events are handled by individual FeedStateManagers

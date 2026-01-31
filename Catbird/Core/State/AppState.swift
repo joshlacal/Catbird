@@ -9,6 +9,7 @@ import Petrel
 import SwiftData
 import SwiftUI
 import UserNotifications
+import CatbirdMLSService
 
 #if os(iOS)
 import UIKit
@@ -17,7 +18,8 @@ import UIKit
 // MARK: - MLS Service State
 
 /// Observable state tracking MLS service initialization with retry logic
-@Observable
+/// NOTE: Not marked @Observable to prevent SwiftUI observation loops when accessed
+/// through @ObservationIgnored properties. Views should poll or use explicit refresh.
 final class MLSServiceState {
   var status: MLSInitStatus = .notStarted
   var retryCount: Int = 0
@@ -136,7 +138,8 @@ final class AppState {
   let userDID: String
 
   /// Authenticated Petrel client (passed from AppStateManager)
-  let client: ATProtoClient
+  /// Note: This is a var to support E2E re-login with short-lived tokens
+  private(set) var client: ATProtoClient
 
   /// MLS database pool for encrypted messaging storage
   private(set) var mlsDatabase: DatabasePool?
@@ -293,6 +296,10 @@ final class AppState {
     @ObservationIgnored
     private var mlsAPIClientStorage: MLSAPIClient?
 
+    /// Tracks if the global WebSocket subscription has been started
+    @ObservationIgnored
+    private var mlsGlobalWebSocketSubscriptionStarted = false
+
     /// MLS conversation manager for group operations
     @ObservationIgnored
     private var mlsConversationManagerStorage: MLSConversationManager?
@@ -301,15 +308,15 @@ final class AppState {
     @ObservationIgnored
     private var mlsConversationManagerInitTask: Task<MLSConversationManager?, Never>?
 
-    /// MLS event stream manager for real-time messaging
+    /// MLS WebSocket manager for real-time messaging
     @ObservationIgnored
-    private var mlsEventStreamManagerStorage: MLSEventStreamManager?
+    private var mlsWebSocketManagerStorage: MLSWebSocketManager?
 
-    /// Persistent cursor storage for MLS SSE resume
+    /// Persistent cursor storage for MLS WebSocket resume
     @ObservationIgnored
     private var mlsCursorStoreContainerStorage: ModelContainer?
 
-    /// Cursor store for MLS SSE resume (scoped to this account)
+    /// Cursor store for MLS WebSocket resume (scoped to this account)
     @ObservationIgnored
     private var mlsCursorStoreStorage: CursorStore?
 
@@ -359,7 +366,6 @@ final class AppState {
     self.client = client
     logger.info("AppState initializing for account: \(userDID)")
 
-    let isFaultOrderingMode = ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1"
 
     self.urlHandler = URLHandler()
 
@@ -401,9 +407,7 @@ final class AppState {
     self.appAttestInfo = loadPersistedAppAttestInfo()
 
     // Configure notification manager with app state reference (skip for FaultOrdering)
-    if !isFaultOrderingMode {
       notificationManager.configure(with: self)
-    }
 
     // NOTE: Auth state observation removed in new architecture
     // Client is passed in already authenticated, no need to observe state changes
@@ -626,39 +630,30 @@ final class AppState {
 
       // Capture references for async cleanup
       let conversationManager = mlsConversationManagerStorage
-      let eventStreamManager = mlsEventStreamManagerStorage
+      let wsManager = mlsWebSocketManagerStorage
       let userDIDForCleanup = userDID
 
       // Clear references immediately to prevent new operations
       mlsConversationManagerStorage = nil
-      mlsEventStreamManagerStorage = nil
+      mlsWebSocketManagerStorage = nil
       mlsAPIClientStorage = nil
 
       // Perform async cleanup in background task
       Task {
-        // Stop all event stream subscriptions FIRST and WAIT for completion
-        // CRITICAL: SSE tasks may still be writing to the database
-        if let eventManager = eventStreamManager {
-          await eventManager.stopAllAndWait(timeout: 2.0)
+        // Stop all WebSocket subscriptions FIRST and WAIT for completion
+        // CRITICAL: WebSocket tasks may still be writing to the database
+        if let wsManager = wsManager {
+          await wsManager.stopAllAndWait(timeout: 2.0)
         }
 
-        // Shutdown conversation manager (cancels background tasks, drains DB queue)
+        // Shutdown conversation manager (cancels background tasks, uses MLSShutdownCoordinator)
         if let manager = conversationManager {
           await manager.shutdown()
         }
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // CRITICAL FIX (2024-12): Close MLS FFI context to flush ratchet state
-        // ═══════════════════════════════════════════════════════════════════════════
-        // The MLS FFI context (Rust layer) contains the cryptographic ratchet state.
-        // If not flushed before closing, the ratchet advancement is lost, causing
-        // SecretReuseError when the context is reopened.
-        // ═══════════════════════════════════════════════════════════════════════════
-        await MLSClient.shared.closeContext(for: userDIDForCleanup)
         
-        // Close the GRDB database pool to release connections
-        // CRITICAL FIX: Use closeDatabaseAndDrain to prevent WAL corruption
-        await MLSGRDBManager.shared.closeDatabaseAndDrain(for: userDIDForCleanup, timeout: 5.0)
+        // Note: MLSConversationManager.shutdown() already uses MLSShutdownCoordinator
+        // which handles: FFI context close → WAL checkpoint → DB close → 200ms delay
+        // No additional cleanup needed here.
       }
 
       logger.info("🧹 MLS cleanup initiated for user: \(self.userDID)")
@@ -736,19 +731,6 @@ final class AppState {
   func initialize() async {
     logger.info("🚀 Starting AppState.initialize() for user: \(self.userDID)")
 
-    // Fast path for FaultOrdering tests - skip expensive operations
-    let isFaultOrderingMode =
-      ProcessInfo.processInfo.environment["FAULT_ORDERING_ENABLE"] == "1"
-      || ProcessInfo.processInfo.environment["RUN_FAULT_ORDER"] == "1"
-      || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-
-    if isFaultOrderingMode {
-      logger.info("⚡ FaultOrdering mode - using minimal initialization")
-      // Skip ALL expensive operations
-      logger.info("🏁 AppState.initialize() completed (FaultOrdering mode)")
-      return
-    }
-
     // Normal initialization path
     // Configure Nuke image pipeline with GIF support
     configureImagePipeline()
@@ -779,13 +761,11 @@ final class AppState {
     #endif
 
     // Setup other components as needed (skip for FaultOrdering)
-    if !isFaultOrderingMode {
       startBackgroundPolling()
       setupNotifications()
       #if os(iOS)
         setupChatObservers()
       #endif
-    }
 
     // Apply current theme settings (this will now use SwiftData if available, UserDefaults fallback otherwise)
     _themeManager.applyTheme(
@@ -798,9 +778,11 @@ final class AppState {
       "Theme applied on startup: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode)"
     )
 
-    // Get accounts list if authenticated (skip for FaultOrdering)
-    if isAuthenticated && !isFaultOrderingMode {
+    if isAuthenticated {
       Task {
+        // Load current user profile for optimistic updates
+        await self.loadCurrentUserProfile(did: userDID)
+
         await AppStateManager.shared.authentication.refreshAvailableAccounts()
 
         // Synchronize server preferences with app settings
@@ -871,6 +853,13 @@ final class AppState {
     Task(priority: .userInitiated) { [weak self] in
       await self?.prewarmFollowingFeed()
     }
+    
+    // Trigger explicit feed data load for all active feeds
+    // This ensures that even if we preserved cache, we check for new content
+    // and that the UI has data to show if the cache was empty.
+    Task(priority: .userInitiated) {
+      await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
+    }
 
     await mlsDatabaseTask
     #if os(iOS)
@@ -910,14 +899,18 @@ final class AppState {
       mlsConversationManagerInitTask?.cancel()
       mlsConversationManagerInitTask = nil
       
-      // Step 2: Stop event stream subscriptions FIRST and WAIT for completion
-      // CRITICAL FIX: SSE tasks may still be writing to the database. We must wait
+      // CRITICAL FIX: Signal NSE to yield BEFORE stopping event streams
+      // This prevents new NSE decryption attempts during shutdown, avoiding race conditions
+      MLSAppActivityState.setShuttingDown(true, userDID: self.userDID)
+
+      // Step 2: Stop WebSocket subscriptions FIRST and WAIT for completion
+      // CRITICAL FIX: WebSocket tasks may still be writing to the database. We must wait
       // for them to fully complete, not just cancel them, to prevent WAL corruption.
-      if let eventManager = mlsEventStreamManagerStorage {
-        logger.info("MLS: Stopping event stream subscriptions and waiting for completion...")
-        await eventManager.stopAllAndWait(timeout: 2.0)
-        mlsEventStreamManagerStorage = nil
-        logger.info("MLS: ✅ Event streams fully stopped")
+      if let wsManager = mlsWebSocketManagerStorage {
+        logger.info("MLS: Stopping WebSocket subscriptions and waiting for completion...")
+        await wsManager.stopAllAndWait(timeout: 2.0)
+        mlsWebSocketManagerStorage = nil
+        logger.info("MLS: ✅ WebSocket streams fully stopped")
       }
       
       // Step 3: Shutdown conversation manager with STRICT timeout
@@ -933,9 +926,9 @@ final class AppState {
           // Task 1: Wait for graceful shutdown (do NOT run shutdown inside the group so we don't cancel it on timeout)
           group.addTask { await shutdownTask.value }
 
-          // Task 2: Timeout after 3 seconds
+          // Task 2: Timeout after 8 seconds (allows shutdown stages to complete)
           group.addTask {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
+            try? await Task.sleep(nanoseconds: 8_000_000_000)  // 8 seconds
             return nil
           }
 
@@ -949,7 +942,7 @@ final class AppState {
           mlsConversationManagerStorage = nil
         } else {
           if shutdownResult == nil {
-            logger.warning("⚠️ MLS: Shutdown still in progress after 3s")
+            logger.warning("⚠️ MLS: Shutdown still in progress after 8s")
           } else {
             logger.critical("🚨 MLS: Shutdown completed but was NOT safe")
           }
@@ -992,6 +985,9 @@ final class AppState {
       do {
         try await initializeMLS()
         logger.info("✅ MLS: Initialized successfully")
+        
+        // Clear shutdown flag after successful init - NSE can resume normal operations
+        MLSAppActivityState.setShuttingDown(false, userDID: self.userDID)
 
         // CRITICAL: Validate bundle state after account switch
         // This catches the desync where local storage shows 0 bundles but server has more
@@ -1165,17 +1161,47 @@ final class AppState {
     }
 
     /// Get or create MLS conversation manager (lazy initialization when first accessed)
+    /// - Parameter timeout: Maximum time to wait for initialization (default 30 seconds)
+    /// - Returns: The conversation manager, or nil if initialization fails or times out
     @MainActor
-    func getMLSConversationManager() async -> MLSConversationManager? {
+    func getMLSConversationManager(timeout: TimeInterval = 30.0) async -> MLSConversationManager? {
       // Use this AppState's userDID (AppState represents single authenticated account)
       let userDid = self.userDID
 
-      // CRITICAL FIX: Verify this AppState matches the currently active account
-      // This prevents using a stale AppState (and its manager) when the global auth has switched
-      // and prevents "Account mismatch" errors in MLS sync operations
-      if let activeDID = AppStateManager.shared.lifecycle.userDID, activeDID != userDid {
-        logger.warning("MLS: ❌ AppState userDID (\(userDid)) does not match active user (\(activeDID)) - aborting manager retrieval")
+      // NOTE: We intentionally do NOT check against AppStateManager.shared.lifecycle.userDID here.
+      // Each AppState manages its own MLS resources independently. The lifecycle check was causing
+      // false positives when push notifications for other accounts temporarily accessed MLS storage,
+      // making the active user's view think it was "stale" and blocking manager retrieval.
+      //
+      // Per-user isolation is already ensured by:
+      // 1. Each AppState has its own mlsConversationManagerStorage
+      // 2. MLSConversationManager is initialized with a specific userDid
+      // 3. MLSClient contexts are per-user isolated
+      //
+      // The isUserUnderStorageMaintenance check below handles actual account switching scenarios.
+
+      // CRITICAL FIX: Block manager access during account transition
+      // This prevents sync operations from grabbing a stale manager while switch is in progress.
+      // Without this guard, background sync can wake up with old manager after auth has switched.
+      if AppStateManager.shared.isTransitioning {
+        logger.warning("MLS: 🚫 Manager access blocked during account transition")
+        mlsServiceState.status = .failed("Account switch in progress")
+
+        // CRITICAL FIX: If switching, we MUST ensure the old manager is truly gone
+        // AND that we don't return nil forever. Wait for transition to complete.
+        // For now, returning nil is "safer" than zombification, but let's log loudly.
         return nil
+      }
+      
+      // CRITICAL FIX: Verify Shutdown Coordinator is idle before creating NEW manager
+      // This prevents "locking wars" between the old closing manager and new opening one
+      // for the same or different users on the same SQLCipher file (if path collision)
+      if await MLSShutdownCoordinator.shared.isShuttingDown {
+        logger.warning("MLS: 🚫 Creation blocked - Shutdown Coordinator is busy. Waiting...")
+        try? await Task.sleep(nanoseconds: 200_000_000)  // Brief wait
+        if await MLSShutdownCoordinator.shared.isShuttingDown {
+          return nil  // Fail fast if still busy, will retry via natural UI retry or polling
+        }
       }
 
       if AppStateManager.shared.isUserUnderStorageMaintenance(userDid) {
@@ -1190,23 +1216,66 @@ final class AppState {
       if let existing = mlsConversationManagerStorage {
         // Verify the manager is for the current user
         if existing.userDid == userDid {
-          logger.debug("MLS: ♻️ Reusing existing conversation manager for user: \(userDid)")
-          mlsServiceState.status = .ready
-          return existing
+          // CRITICAL FIX: Verify generation matches global coordination store
+          // If generation has bumped (e.g. from a background switch or re-auth), this manager is stale
+          let globalGen = MLSCoordinationStore.shared.currentGeneration
+          if existing.currentCoordinationGeneration == globalGen {
+            logger.debug("MLS: ♻️ Reusing existing conversation manager for user: \(userDid)")
+            mlsServiceState.status = .ready
+            return existing
+          } else {
+            logger.warning(
+              "MLS: ⚠️ Existing manager generation \(existing.currentCoordinationGeneration) mismatch with global \(globalGen). Discarding stale manager."
+            )
+            // Fall through to cleanup and creation
+            mlsConversationManagerStorage = nil
+          }
         } else {
           logger.warning(
             "MLS: Existing conversation manager is for different user (\(existing.userDid ?? "nil")), creating new one"
           )
           mlsConversationManagerStorage = nil
+        }
+
+        // If we invalidated the storage above, ensure we cancel any hanging init tasks
+        if mlsConversationManagerStorage == nil {
           mlsConversationManagerInitTask?.cancel()
           mlsConversationManagerInitTask = nil
         }
       }
 
-      // Check if initialization is already in progress
+      // Check if initialization is already in progress - add timeout to prevent indefinite hang
       if let existingTask = mlsConversationManagerInitTask {
-        logger.info("MLS: ⏳ Waiting for existing initialization task to complete...")
-        return await existingTask.value
+        logger.info(
+          "MLS: ⏳ Waiting for existing initialization task to complete (timeout: \(timeout)s)...")
+
+        // CRITICAL FIX: Add timeout to prevent indefinite hang during account switching
+        // Race the existing task against a timeout task
+        let result = await withTaskGroup(of: MLSConversationManager?.self) { group in
+          group.addTask { @MainActor in
+            return await existingTask.value
+          }
+          group.addTask { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            return nil
+          }
+
+          // Return first completed result
+          let first = await group.next()
+          group.cancelAll()
+          return first ?? nil
+        }
+
+        if result == nil {
+          logger.warning(
+            "MLS: ⏰ Initialization task timed out after \(timeout)s - cancelling and clearing stale task"
+          )
+          existingTask.cancel()  // CRITICAL FIX: Cancel the stuck task to release locks/resources
+          mlsConversationManagerInitTask = nil
+          mlsServiceState.status = .failed("Initialization timed out. Please tap retry.")
+        }
+
+        return result
       }
 
       // Update status to initializing
@@ -1260,11 +1329,16 @@ final class AppState {
         }
 
         logger.info("MLS: Creating new conversation manager for user: \(userDid)")
+        
+        // Create trust checker to determine if incoming conversations are requests
+        let trustChecker = FollowingTrustChecker(client: atProtoClient, currentUserDID: userDid)
+        
         let manager = MLSConversationManager(
           apiClient: apiClient,
           database: database,
           userDid: userDid,
-          atProtoClient: atProtoClient
+          atProtoClient: atProtoClient,
+          trustChecker: trustChecker
         )
 
         // Initialize the manager before storing and returning it
@@ -1289,7 +1363,31 @@ final class AppState {
       }
 
       mlsConversationManagerInitTask = initTask
-      return await initTask.value
+      
+      // CRITICAL FIX: Apply timeout to NEW task creation (not just existing task wait)
+      // Without this, the init task can block indefinitely if FFI permit acquisition hangs
+      let result = await withTaskGroup(of: MLSConversationManager?.self) { group in
+        group.addTask { @MainActor in
+          return await initTask.value
+        }
+        group.addTask { @MainActor in
+          try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+          return nil
+        }
+
+        let first = await group.next()
+        group.cancelAll()
+        return first ?? nil
+      }
+
+      if result == nil {
+        logger.warning("MLS: ⏰ New initialization task timed out after \(timeout)s")
+        initTask.cancel()
+        mlsConversationManagerInitTask = nil
+        mlsServiceState.status = .failed("Initialization timed out. Please tap retry.")
+      }
+
+      return result
     }
 
     /// Retry MLS initialization with exponential backoff
@@ -1327,30 +1425,30 @@ final class AppState {
       }
     }
 
-    /// Get or create MLS event stream manager
+    /// Get or create MLS WebSocket manager
     @MainActor
-    func getMLSEventStreamManager() async -> MLSEventStreamManager? {
+    func getMLSWebSocketManager() async -> MLSWebSocketManager? {
       guard let apiClient = await getMLSAPIClient() else {
-        logger.error("MLS: Cannot create event stream manager - failed to get API client")
+        logger.error("MLS: Cannot create WebSocket manager - failed to get API client")
         return nil
       }
 
-      if let existing = mlsEventStreamManagerStorage {
-        logger.debug("MLS: Reusing existing event stream manager")
+      if let existing = mlsWebSocketManagerStorage {
+        logger.debug("MLS: Reusing existing WebSocket manager")
         await configureMLSCursorStoreIfNeeded(for: existing)
         return existing
       }
 
-      logger.info("MLS: Creating new event stream manager")
-      let manager = MLSEventStreamManager(apiClient: apiClient)
+      logger.info("MLS: Creating new WebSocket manager")
+      let manager = MLSWebSocketManager(apiClient: apiClient)
       await configureMLSCursorStoreIfNeeded(for: manager)
-      mlsEventStreamManagerStorage = manager
-      logger.info("MLS: Event stream manager created successfully")
+      mlsWebSocketManagerStorage = manager
+      logger.info("MLS: WebSocket manager created successfully")
       return manager
     }
 
     @MainActor
-    private func configureMLSCursorStoreIfNeeded(for manager: MLSEventStreamManager) async {
+    private func configureMLSCursorStoreIfNeeded(for manager: MLSWebSocketManager) async {
       if mlsCursorStoreStorage == nil {
         do {
           let container = try CursorStore.createContainer()
@@ -1359,7 +1457,7 @@ final class AppState {
             modelContext: container.mainContext,
             currentUserDID: userDID
           )
-          logger.info("MLS: CursorStore initialized for SSE resume")
+          logger.info("MLS: CursorStore initialized for WebSocket resume")
         } catch {
           logger.warning("MLS: Failed to initialize CursorStore: \(error.localizedDescription)")
         }
@@ -1376,22 +1474,32 @@ final class AppState {
     @MainActor
     func prepareMLSStorageReset() async {
       logger.info("MLS: Preparing AppState \(self.userDID) for storage reset")
-      
+
       // Step 1: Cancel any pending initialization to prevent new operations
       mlsConversationManagerInitTask?.cancel()
       mlsConversationManagerInitTask = nil
 
-      // Step 2: Stop SSE event streams FIRST and WAIT for completion
-      // CRITICAL FIX: SSE streams can write to the database, so they must fully complete
+      // ═══════════════════════════════════════════════════════════════════════════
+      // CRITICAL FIX: Force-release any stuck permits BEFORE proceeding
+      // ═══════════════════════════════════════════════════════════════════════════
+      // If mlsConversationManagerStorage is nil (MLS never initialized), we still need
+      // to release any permits that might be held by orphaned tasks from previous operations.
+      // Without this, closeContext() hangs forever waiting to acquire a permit.
+      // ═══════════════════════════════════════════════════════════════════════════
+      logger.info("MLS: 🔓 Force-releasing all permits for shutdown")
+      await MLSUserOperationCoordinator.shared.forceReleaseAll(for: self.userDID)
+
+      // Step 2: Stop WebSocket streams FIRST and WAIT for completion
+      // CRITICAL FIX: WebSocket streams can write to the database, so they must fully complete
       // BEFORE we try to close the database to prevent "database locked" and WAL corruption
-      if let eventManager = mlsEventStreamManagerStorage {
-        logger.info("MLS: Stopping event stream subscriptions and waiting...")
-        await eventManager.stopAllAndWait(timeout: 2.0)
-        mlsEventStreamManagerStorage = nil
-        logger.info("MLS: ✅ Event streams fully stopped")
+      if let wsManager = mlsWebSocketManagerStorage {
+        logger.info("MLS: Stopping WebSocket subscriptions and waiting...")
+        await wsManager.stopAllAndWait(timeout: 2.0)
+        mlsWebSocketManagerStorage = nil
+        logger.info("MLS: ✅ WebSocket streams fully stopped")
       }
 
-      // Step 3: Shutdown conversation manager (cancels background tasks, drains DB queue)
+      // Step 3: Shutdown conversation manager (uses MLSShutdownCoordinator)
       if let manager = mlsConversationManagerStorage {
         logger.info("MLS: Shutting down conversation manager...")
         await manager.prepareForStorageReset()
@@ -1399,24 +1507,24 @@ final class AppState {
         logger.info("MLS: Conversation manager shutdown complete")
       }
 
-      // Step 4: Wait a short moment for any in-flight operations to complete
-      // This gives cancelled tasks time to actually wind down
-      try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+      // Note: MLSConversationManager.prepareForStorageReset() already uses MLSShutdownCoordinator
+      // which handles: FFI context close → WAL checkpoint → DB close → 200ms delay
+      // The app-layer MLSClient context should also be closed for belt-and-suspenders safety.
+      await MLSClient.shared.closeContext(for: self.userDID)
 
-      // Step 5: Close database with drain to ensure all operations are flushed
-      // CRITICAL FIX: Use closeDatabaseAndDrain to prevent race conditions during account switch
-      if mlsDatabase != nil {
-        logger.info("MLS: Closing database with drain for user: \(self.userDID)")
-        let drainSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: userDID, timeout: 5.0)
-        if !drainSuccess {
-          logger.critical("MLS: 🚨 Database drain failed - storage reset is unsafe; user should restart")
-          mlsServiceState.markDatabaseFailed(message: "MLS database couldn’t be safely closed. Please restart the app.")
-        }
-        mlsDatabase = nil
-        logger.info("MLS: Database close attempt complete")
-      }
+      // Clear local reference
+      mlsDatabase = nil
       
       logger.info("MLS: ✅ Storage reset preparation complete for \(self.userDID)")
+    }
+
+    /// Stop all MLS network streams immediately (sync, polling, etc.)
+    /// Safe to call even if manager is not initialized
+    @MainActor
+    func stopMLSStreams() {
+      if let manager = mlsConversationManagerStorage {
+        manager.stopAllStreams()
+      }
     }
   #endif
 
@@ -1436,6 +1544,12 @@ final class AppState {
     }
 
     do {
+      // CRITICAL: Set this user as active BEFORE getting the database pool.
+      // This prevents the OOM-blocking from rejecting the request.
+      // This is safe because this method is only called when setting up the
+      // database for the user that IS becoming active (during login/switch).
+      await MLSGRDBManager.shared.setActiveUser(userDID)
+
       // Get database asynchronously (non-blocking)
       let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
 
@@ -1456,11 +1570,29 @@ final class AppState {
         logger.error("   The database will be retried after the switch completes")
         self.mlsDatabase = nil
         mlsServiceState.status = .failed("Account switching in progress - please wait")
-        
+
+      case .needsUserAction(let reason):
+        // SAFE RECOVERY: Database needs manual reset via Diagnostics
+        logger.critical("🔧 MLS database needs user action: \(reason)")
+        self.mlsDatabase = nil
+        mlsServiceState.markDatabaseFailed(message: reason)
+
       default:
         logger.error("❌ Failed to setup MLS database: \(error.localizedDescription)")
         self.mlsDatabase = nil
         
+        // SAFE RECOVERY: Check if hard reset is needed, but DON'T auto-perform it.
+        // The MLSGRDBManager now uses a recovery ladder that requires user confirmation.
+        if await MLSGRDBManager.shared.needsHardReset(for: userDID) {
+          logger.critical("🔥 [Recovery] Database needs hard reset - user action required")
+          logger.critical("   Use Settings ▸ Diagnostics ▸ Reset MLS Storage to recover")
+
+          // Show user-friendly error in the service state
+          mlsServiceState.markDatabaseFailed(
+            message: "MLS storage needs repair. Go to Settings → Diagnostics → Reset MLS Storage."
+          )
+        }
+
         // Check if database is in a severely failed state
         if await MLSGRDBManager.shared.isInFailedState(for: userDID) {
           mlsServiceState.markDatabaseFailed(message: "Database severely corrupted. Please restart the app.")
@@ -1470,6 +1602,16 @@ final class AppState {
       logger.error("❌ Failed to setup MLS database: \(error.localizedDescription)")
       self.mlsDatabase = nil
       
+      // SAFE RECOVERY: Check if hard reset is needed, but DON'T auto-perform it.
+      if await MLSGRDBManager.shared.needsHardReset(for: userDID) {
+        logger.critical("🔥 [Recovery] Database needs hard reset - user action required")
+        logger.critical("   Use Settings ▸ Diagnostics ▸ Reset MLS Storage to recover")
+
+        mlsServiceState.markDatabaseFailed(
+          message: "MLS storage needs repair. Go to Settings → Diagnostics → Reset MLS Storage."
+        )
+      }
+
       // Check if database is in a severely failed state
       if await MLSGRDBManager.shared.isInFailedState(for: userDID) {
           mlsServiceState.markDatabaseFailed(message: "Database severely corrupted. Please restart the app.")
@@ -1482,14 +1624,30 @@ final class AppState {
   private func clearMLSDatabase(for userDID: String) async {
     logger.info("🔒 Closing MLS database for user: \(userDID)")
 
+    // CRITICAL FIX: Stop observing Darwin notifications from NSE before shutdown
+    // This prevents stale notifications from User A's NSE from triggering
+    // state reloads when we've switched to User B
+    MLSStateChangeNotifier.shared.stopObserving()
+    logger.info("🔕 [MLS] Stopped Darwin notification observer during shutdown")
+
     // Clear local reference first to prevent any new operations
     self.mlsDatabase = nil
 
-    // CRITICAL FIX: Use closeDatabaseAndDrain to ensure all operations complete
-    // before closing. This prevents WAL/HMAC corruption during account switching.
-    await MLSGRDBManager.shared.closeDatabaseAndDrain(for: userDID, timeout: 5.0)
+    // Use MLSShutdownCoordinator for proper close sequence
+    // This handles: FFI context close → WAL checkpoint → DB close → 200ms delay
+    let result = await MLSShutdownCoordinator.shared.shutdown(
+      for: userDID, databaseManager: .shared, timeout: 8.0)
 
-    logger.info("✅ MLS database closed for user: \(userDID)")
+    switch result {
+    case .success(let durationMs):
+      logger.info("✅ MLS database closed in \(durationMs)ms for user: \(userDID)")
+    case .successWithWarnings(let durationMs, _):
+      logger.warning("⚠️ MLS database closed in \(durationMs)ms with warnings for user: \(userDID)")
+    case .timedOut(let durationMs, let phase):
+      logger.critical("🚨 MLS database close timed out at \(phase.rawValue) after \(durationMs)ms")
+    case .failed(let error):
+      logger.critical("🚨 MLS database close failed: \(error.localizedDescription)")
+    }
   }
 
   /// Flush MLS storage to release file locks before app suspension
@@ -1535,27 +1693,33 @@ final class AppState {
     }
 
     // Also checkpoint the GRDB database pool
-    // CRITICAL FIX (2024-12): Don't use cached mlsDatabase reference - it may be closed
-    // After pool.close() is called (during account switching or cleanup), the cached
-    // reference becomes a "zombie" that throws "Connection is closed" on any operation.
-    // Instead, check if the database is open in MLSGRDBManager and use that.
+    // CRITICAL FIX (2025-01): Use safeCheckpointForSuspension instead of direct checkpoint
+    // The direct checkpoint(.truncate) fails with SQLite error 6 (SQLITE_LOCKED) when
+    // concurrent operations are still running (MLS sync, TopicSummary, etc.).
+    // The new method uses PASSIVE mode with retries - it won't block and handles busy DB gracefully.
     if await MLSGRDBManager.shared.isDatabaseOpen(for: userDID) {
-      do {
-        // Get a fresh reference from the manager - this ensures we use an open pool
-        let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
-        try await database.writeWithoutTransaction { db in
-          try db.checkpoint(.truncate)
-        }
-        logger.info("✅ MLS GRDB checkpoint completed")
-      } catch {
-        // "Connection is closed" errors are expected during account switching
-        // Log as warning, not error, to avoid confusion
-        let errorDesc = error.localizedDescription.lowercased()
-        if errorDesc.contains("closed") || errorDesc.contains("sqlite error 21") {
-          logger.warning("⚠️ MLS GRDB checkpoint skipped - database was closed (account switching?)")
-        } else {
-          logger.error("⚠️ MLS GRDB checkpoint failed: \(error.localizedDescription)")
-        }
+      let checkpointResult = await MLSGRDBManager.shared.safeCheckpointForSuspension(for: userDID)
+      
+      switch checkpointResult {
+      case .success(let checkpointed, let total):
+        logger.info("✅ MLS GRDB checkpoint completed (\(checkpointed)/\(total) pages)")
+      case .partial(let checkpointed, let total):
+        logger.info("⚠️ MLS GRDB partial checkpoint (\(checkpointed)/\(total) pages) - safe for suspension")
+      case .skipped(let reason):
+        logger.debug("⏭️ MLS GRDB checkpoint skipped: \(reason)")
+      case .failed(let error):
+        // Checkpoint failure is logged but not fatal - the app can still suspend
+        // PASSIVE mode failures are rare and usually indicate severe contention
+        logger.warning("⚠️ MLS GRDB checkpoint failed: \(error.localizedDescription)")
+      }
+      
+      // CRITICAL FIX: Release all advisory locks before suspension
+      // Holding file locks while suspended causes 0xdead10cc termination
+      MLSAdvisoryLockCoordinator.shared.releaseAllLocks()
+      MLSGroupLockCoordinator.shared.releaseAllLocks()
+      
+      if checkpointResult.isSafeForSuspension {
+        logger.info("✅ MLS storage checkpointed and locks released")
       }
     } else {
       logger.debug("⏭️ Skipping GRDB checkpoint - database not open for user")
@@ -1696,7 +1860,8 @@ final class AppState {
           labels: profile.labels,
           createdAt: profile.createdAt,
           verification: profile.verification,
-          status: profile.status
+          status: profile.status,
+          debug: nil
         )
 
       } else {
@@ -2018,16 +2183,18 @@ final class AppState {
     func updateMLSUnreadCount() {
       Task {
         do {
-          let db = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
-          let unreadCounts = try await MLSStorageHelpers.getUnreadCountsForAllConversations(
-            from: db,
-            currentUserDID: userDID
-          )
+          // Use smart routing - auto-routes to lightweight Queue if needed
+          let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+            try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
+              from: db,
+              currentUserDID: self.userDID
+            )
+          }
           let newCount = unreadCounts.values.reduce(0, +)
           await MainActor.run {
-            if mlsUnreadCount != newCount {
-              mlsUnreadCount = newCount
-              logger.debug("MLS unread count updated: \(newCount)")
+            if self.mlsUnreadCount != newCount {
+              self.mlsUnreadCount = newCount
+              self.logger.debug("MLS unread count updated: \(newCount)")
             }
           }
         } catch {
@@ -2051,6 +2218,25 @@ final class AppState {
       // Initialize the MLS crypto context
       try await manager.initialize()
       
+      // CRITICAL FIX: Start global WebSocket subscription for group info updates
+      // This ensures we receive groupInfoRefresh events even if no conversation is open
+      if !mlsGlobalWebSocketSubscriptionStarted {
+        if let wsManager = await getMLSWebSocketManager() {
+          logger.info("MLS: Starting global WebSocket subscription")
+          // Subscribe to "all" (nil conversation ID) to receive global events
+          let handler = MLSWebSocketManager.EventHandler(
+            onGroupInfoRefreshRequested: { [weak self] event in
+              guard let self else { return }
+              if let manager = await self.getMLSConversationManager() {
+                await manager.handleGroupInfoRefreshRequest(convoId: event.convoId)
+              }
+            }
+          )
+          await wsManager.subscribe(to: nil, handler: handler)
+          mlsGlobalWebSocketSubscriptionStarted = true
+        }
+      }
+      
       // ═══════════════════════════════════════════════════════════════════════════
       // CRITICAL FIX (2024-12): Observe Darwin notifications from NSE
       // ═══════════════════════════════════════════════════════════════════════════
@@ -2066,12 +2252,12 @@ final class AppState {
       // the app is already in foreground.
       //
       // ═══════════════════════════════════════════════════════════════════════════
-      MLSStateChangeNotifier.shared.observeWithAsyncHandler { [weak self] in
+        MLSStateChangeNotifier.shared.observeWithAsyncHandler({ [weak self] in
         guard let self = self else { return }
         self.logger.info("📥 [MLS] Received state change notification from NSE")
         self.logger.info("   NSE advanced the ratchet - reloading state from disk")
         await self.reloadMLSStateFromDisk()
-      }
+      })
       logger.info("🔔 MLS: Observing for NSE state change notifications")
       
       // ═══════════════════════════════════════════════════════════════════════════
@@ -2083,8 +2269,8 @@ final class AppState {
       // during the TRUNCATE checkpoint. After releasing, we acknowledge so NSE can proceed.
       //
       // ═══════════════════════════════════════════════════════════════════════════
-      MLSStateChangeNotifier.shared.observeNSEWillCloseWithAsyncHandler { [weak self] in
-        guard let self = self else { return }
+      MLSStateChangeNotifier.shared.observeNSEWillCloseWithAsyncHandler { [weak self] _ in
+        guard let self = self else { return false }
         self.logger.info("📥 [Handshake] App received nseWillClose, releasing readers")
         
         // Release database readers by closing our cached connection
@@ -2092,12 +2278,12 @@ final class AppState {
         let released = await self.releaseMLSDatabaseReaders()
         
         if released {
-          // Acknowledge so NSE can proceed with checkpoint
-          MLSStateChangeNotifier.postAppAcknowledged()
-          self.logger.info("📤 [Handshake] App posted appAcknowledged")
+          self.logger.info("📤 [Handshake] App acknowledged nseWillClose")
         } else {
           self.logger.warning("🚫 [Handshake] Did not release DB readers in time; not acknowledging")
         }
+        
+        return released
       }
       logger.info("🔔 MLS: Observing for NSE nseWillClose handshake notifications")
 
@@ -2147,17 +2333,16 @@ final class AppState {
         // Sync with server to get latest conversations
         try await manager.syncWithServer()
 
-        // Fetch unread counts from local database
+        // Fetch unread counts from local database using smart routing
+        // This auto-routes to lightweight Queue if this isn't the active user
         var unreadCounts: [String: Int] = [:]
-        if let database = try? await MLSGRDBManager.shared.getDatabasePool(for: userDID) {
-          for (convoId, _) in manager.conversations {
-            if let count = try? await MLSStorageHelpers.getUnreadCount(
-              from: database,
-              conversationID: convoId,
-              currentUserDID: userDID
-            ) {
-              unreadCounts[convoId] = count
-            }
+        let conversationIDs = Array(manager.conversations.keys)
+        if !conversationIDs.isEmpty {
+          unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+            try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
+              from: db,
+              currentUserDID: self.userDID
+            )
           }
         }
 
@@ -2414,6 +2599,52 @@ final class AppState {
     if isAuthenticated {
       await refreshAfterAccountSwitch()
     }
+  }
+  
+  /// Updates the client reference when reusing a cached AppState or after E2E re-login
+  /// This ensures all managers use the current authenticated client, not a stale one
+  /// CRITICAL: Must be called when transitioning to a cached AppState to prevent API failures
+  @MainActor
+  func updateClient(_ newClient: ATProtoClient) {
+    logger.info("Updating AppState client reference for user: \(self.userDID)")
+    self.client = newClient
+
+    // Update all managers that hold client references
+    postManager.updateClient(newClient)
+    preferencesManager.updateClient(newClient)
+    graphManager = GraphManager(atProtoClient: newClient)
+    listManager.updateClient(newClient)
+
+    // Update notification manager (async operation)
+    Task {
+      await notificationManager.updateClient(newClient)
+    }
+
+    #if os(iOS)
+    // Update chat manager (async operation)
+    Task {
+      await chatManager.updateClient(newClient)
+    }
+    #endif
+
+    // Clear MLS caches so they will be recreated with the new client
+    // This is critical when switching accounts or after token refresh
+    #if os(iOS)
+      logger.info("Clearing MLS API client cache for fresh token propagation")
+      mlsAPIClientStorage = nil
+      // Clear conversation manager storage since it caches the old apiClient
+      mlsConversationManagerStorage = nil
+      mlsConversationManagerInitTask?.cancel()
+      mlsConversationManagerInitTask = nil
+
+      // Also invalidate MLSClient.shared's cached clients for this user
+      // This ensures the singleton's apiClients dictionary uses the new client
+      Task {
+        await MLSClient.shared.invalidateCachedClient(for: userDID)
+      }
+    #endif
+
+    logger.info("✅ Client reference updated for all managers")
   }
 
   // MARK: - Social Graph Methods

@@ -219,21 +219,25 @@ struct GifVideoView: View {
     
     /// Calculate aspect ratio from Tenor's media format dimensions
     private var aspectRatio: CGFloat {
-        // Try to get dimensions from the best available video format
-        if let mp4 = gif.media_formats.mp4, mp4.dims.count >= 2 {
-            let width = CGFloat(mp4.dims[0])
-            let height = CGFloat(mp4.dims[1])
-            return width / height
-        } else if let loopedMP4 = gif.media_formats.loopedmp4, loopedMP4.dims.count >= 2 {
-            let width = CGFloat(loopedMP4.dims[0])
-            let height = CGFloat(loopedMP4.dims[1])
-            return width / height
-        } else if let tinyMP4 = gif.media_formats.tinymp4, tinyMP4.dims.count >= 2 {
-            let width = CGFloat(tinyMP4.dims[0])
-            let height = CGFloat(tinyMP4.dims[1])
-            return width / height
+        func safeRatio(_ dims: [Int]) -> CGFloat? {
+            guard dims.count >= 2 else { return nil }
+            let width = CGFloat(dims[0])
+            let height = CGFloat(dims[1])
+            guard width > 0, height > 0 else { return nil }
+            let ratio = width / height
+            return (ratio.isFinite && ratio > 0) ? ratio : nil
         }
-        // Default to square aspect ratio if no dimensions available
+
+        // Try to get dimensions from the best available video format
+        if let mp4 = gif.media_formats.mp4, let ratio = safeRatio(mp4.dims) {
+            return ratio
+        } else if let loopedMP4 = gif.media_formats.loopedmp4, let ratio = safeRatio(loopedMP4.dims) {
+            return ratio
+        } else if let tinyMP4 = gif.media_formats.tinymp4, let ratio = safeRatio(tinyMP4.dims) {
+            return ratio
+        }
+
+        // Default to square aspect ratio if no/invalid dimensions available
         return 1.0
     }
 }

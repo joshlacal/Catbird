@@ -1,6 +1,7 @@
 import SwiftUI
 import OSLog
 import Petrel
+import CatbirdMLSService
 
 #if os(iOS)
 
@@ -194,6 +195,7 @@ struct ChatTabView: View {
               .foregroundStyle(.secondary)
               .multilineTextAlignment(.center)
               .padding(.horizontal, 32)
+              .lineLimit(nil)
           }
           .padding(.vertical)
           
@@ -201,19 +203,27 @@ struct ChatTabView: View {
             get: { mlsChatEnabledForCurrentAccount },
             set: { newValue in
               if newValue {
-                // CRITICAL FIX: Initialize MLS and call optIn before enabling locally
-                // This ensures device registration and key packages are uploaded
+                // Optimistically enable locally so the toggle reflects immediately
+                ExperimentalSettings.shared.enableMLSChat(for: appState.userDID)
+                mlsSettingsRefreshTrigger.toggle()
+
                 Task {
+                  // Perform server opt-in; if it fails, revert the local setting
                   await optInToMLS()
+                  // After attempting opt-in, verify the effective state; if still not enabled, revert
+                  if !ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) {
+                    ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
+                    mlsSettingsRefreshTrigger.toggle()
+                  }
                 }
               } else {
+                // Immediately reflect off state locally, then inform server
                 ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
+                mlsSettingsRefreshTrigger.toggle()
                 Task {
                   await optOutFromMLS()
                 }
               }
-              // Toggle refresh trigger to force SwiftUI to re-evaluate computed property
-              mlsSettingsRefreshTrigger.toggle()
             }
           )) {
             Text("Enable Catbird Groups")
@@ -602,3 +612,4 @@ private struct ConditionalSwipeActions: ViewModifier {
 }
 
 #endif
+

@@ -19,11 +19,17 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// The thread data once loaded
   var threadData: AppBskyUnspeccedGetPostThreadV2.Output?
 
+  /// Hidden/other replies loaded via getPostThreadOtherV2
+  var hiddenReplies: [AppBskyUnspeccedGetPostThreadOtherV2.ThreadItem] = []
+
   /// Loading state indicator
   var isLoading: Bool = false
 
   /// Loading state for additional parent posts
   var isLoadingMoreParents: Bool = false
+
+  /// Loading state for hidden replies
+  var isLoadingHiddenReplies: Bool = false
 
   /// Any error that occurred during loading
   var error: Error?
@@ -44,7 +50,6 @@ final class ThreadManager: StateInvalidationSubscriber {
 
   /// The ATPROTO client for API calls
   private var client: ATProtoClient? {
-    // Safe handling to prevent fatalError during FaultOrdering
     return appState.atProtoClient
   }
 
@@ -165,6 +170,46 @@ final class ThreadManager: StateInvalidationSubscriber {
     }
 
     isLoading = false
+  }
+
+  /// Load hidden replies for a thread using getPostThreadOtherV2
+  /// This fetches replies that are hidden by threadgate settings
+  /// - Parameter uri: The anchor post URI to load hidden replies for
+  @MainActor
+  func loadHiddenReplies(uri: ATProtocolURI) async {
+    guard !isLoadingHiddenReplies else {
+      logger.debug("Already loading hidden replies, skipping request.")
+      return
+    }
+
+    isLoadingHiddenReplies = true
+    defer { isLoadingHiddenReplies = false }
+
+    logger.debug("Loading hidden replies for thread: \(uri.uriString())")
+
+    do {
+      guard let client = client else {
+        logger.error("Network client unavailable for loading hidden replies")
+        return
+      }
+
+      let params = AppBskyUnspeccedGetPostThreadOtherV2.Parameters(
+        anchor: uri
+      )
+
+      let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadOtherV2(input: params)
+
+      if responseCode == 200, let output = output {
+        logger.debug("Loaded \(output.thread.count) hidden replies for thread: \(uri.uriString())")
+        self.hiddenReplies = output.thread
+      } else {
+        logger.warning("Failed to load hidden replies, response code: \(responseCode)")
+        self.hiddenReplies = []
+      }
+    } catch {
+      logger.error("Error loading hidden replies: \(error.localizedDescription)")
+      self.hiddenReplies = []
+    }
   }
 
   /// Load more parent posts for a thread and integrate them into the existing thread structure
@@ -409,10 +454,12 @@ final class ThreadManager: StateInvalidationSubscriber {
   @MainActor
   private func clearThreadData() async {
     threadData = nil
+    hiddenReplies = []
     currentThreadURI = nil
     error = nil
     isLoading = false
     isLoadingMoreParents = false
+    isLoadingHiddenReplies = false
   }
 }
 

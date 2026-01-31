@@ -414,10 +414,19 @@ struct FeedDiscoveryCardsView: View {
   }
   
   private func loadSubscriptionStatuses() async {
-    for feed in feeds {
-      let status = await isSubscribedToFeed(feed.uri)
-      await MainActor.run {
-        subscriptionStatus[feed.uri.uriString()] = status
+    // Fetch all subscription statuses in parallel instead of sequentially (fixes N+1)
+    await withTaskGroup(of: (String, Bool).self) { group in
+      for feed in feeds {
+        group.addTask {
+          let status = await self.isSubscribedToFeed(feed.uri)
+          return (feed.uri.uriString(), status)
+        }
+      }
+
+      for await (uriString, status) in group {
+        await MainActor.run {
+          self.subscriptionStatus[uriString] = status
+        }
       }
     }
   }

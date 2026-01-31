@@ -363,7 +363,8 @@ struct EnhancedFeedPost: View, Equatable {
       labels: nil,
       createdAt: nil,
       verification: nil,
-      status: nil
+      status: nil,
+      debug: nil
     )
   }
 
@@ -382,7 +383,9 @@ struct EnhancedFeedPost: View, Equatable {
       labels: nil,
       createdAt: nil,
       verification: nil,
-      status: nil
+      status: nil,
+      debug: nil
+
     )
   }
 }

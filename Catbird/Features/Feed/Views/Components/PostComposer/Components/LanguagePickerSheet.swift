@@ -42,7 +42,13 @@ struct LanguagePickerSheet: View {
       .searchable(text: $searchText)
       .navigationTitle("Add Language")
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+        ToolbarItem(placement: .cancellationAction) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "checkmark")
+            }
+        }
       }
     }
   }

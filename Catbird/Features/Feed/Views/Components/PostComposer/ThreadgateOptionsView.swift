@@ -229,10 +229,14 @@ struct ThreadgateOptionsView: View {
         }
 
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
-            updateSettings()
-            dismiss()
-          }
+            Button {
+                updateSettings()
+
+                dismiss()
+            } label: {
+                Image(systemName: "checkmark")
+            }
+
         }
       }
       .task {

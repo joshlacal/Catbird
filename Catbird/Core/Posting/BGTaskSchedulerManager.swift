@@ -42,9 +42,9 @@ enum BGTaskSchedulerManager {
 
   static func schedule() {
     // Only schedule if we successfully registered
-    guard didRegister else {
-      logger.warning("BGTask scheduling skipped - not registered")
-      return
+    if !didRegister {
+      logger.info("BGTask scheduling - lazily registering task")
+      registerIfNeeded()
     }
     
     // Throttle scheduling to avoid too frequent submissions

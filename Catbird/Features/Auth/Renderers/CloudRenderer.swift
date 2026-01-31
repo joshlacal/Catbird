@@ -22,6 +22,7 @@ class CloudRenderer: NSObject {
     var cloudScale: Float = 1.0
     var animationSpeed: Float = 1.0
     var shaderMode: ShaderMode = .improved // Default to improved shader
+    var resolutionScale: Float = 0.75 // Render at 75% resolution for performance
     
     enum ShaderMode {
         case basic
@@ -225,7 +226,7 @@ class CloudRenderer: NSObject {
     }
     
     private func updateUniforms(resolution: simd_float2) {
-        var uniforms = CloudUniforms(
+        let uniforms = CloudUniforms(
             time: time,
             resolution: resolution,
             opacity: opacity,

@@ -65,16 +65,16 @@ struct FeedView: View {
         logger.debug("Initializing stateManager synchronously on appear")
         stateManager = feedStateStore.stateManager(for: fetch, appState: appState)
         currentFetch = fetch
-        
-        // CRITICAL: Trigger initial data load immediately after creating stateManager
-        // This ensures data loading happens even if .task already ran before stateManager existed
-        if !hasAttemptedInitialLoad, !appState.isTransitioningAccounts {
+      }
+      
+      // CRITICAL: Always ensure we attempt to load data when the view appears
+      // This handles fresh views after account switch where transition may have already completed
+      if let manager = stateManager, !appState.isTransitioningAccounts {
+        if manager.posts.isEmpty, !hasAttemptedInitialLoad {
+          hasAttemptedInitialLoad = true
           Task { @MainActor in
-            if let manager = stateManager, manager.posts.isEmpty {
-              hasAttemptedInitialLoad = true
-              logger.debug("Loading initial data immediately after stateManager creation")
-              await manager.loadInitialData()
-            }
+            logger.debug("Loading initial data on appear for feed: \(fetch.identifier)")
+            await manager.loadInitialData()
           }
         }
       }

@@ -1,4 +1,5 @@
 import CatbirdMLSCore
+import CatbirdMLSService
 import Foundation
 import OSLog
 import SwiftData
@@ -78,18 +79,103 @@ final class AppStateManager {
   
   /// Tracks if state restoration has been performed
   var hasRestoredState: Bool = false
+  
+  /// E2E test mode flag (detected from launch arguments)
+  var isE2EMode: Bool = false
+  
+  /// E2E run ID (from launch arguments)
+  var e2eRunId: String?
+  
+  /// E2E user credentials (from launch arguments)
+  private var e2eUser: String?
+  private var e2ePass: String?
+  
+  /// E2E PDS URL (optional, for custom domains)
+  private var e2ePdsURL: String?
 
   // MARK: - Initialization
 
   private init() {
     logger.info("AppStateManager initialized")
+    
+    // Detect E2E mode from launch arguments
+    let args = ProcessInfo.processInfo.arguments
+    
+    // Log argument count (always, for E2E debugging)
+    logger.info("[E2E-DEBUG] Launch arguments count: \(args.count)")
+    for (index, arg) in args.enumerated() {
+      // Log ALL args but redact potential passwords
+      if arg.lowercased().contains("pass") || arg.lowercased().contains("secret") {
+        logger.info("[E2E-DEBUG] arg[\(index)]: [REDACTED]")
+      } else {
+        logger.info("[E2E-DEBUG] arg[\(index)]: \(arg)")
+      }
+    }
+    
+    if args.contains("--e2e-mode") {
+      isE2EMode = true
+      // Extract run ID
+      if let runIdArg = args.first(where: { $0.hasPrefix("--run-id=") }) {
+        e2eRunId = String(runIdArg.dropFirst("--run-id=".count))
+      }
+      // Extract E2E user
+      if let userArg = args.first(where: { $0.hasPrefix("--e2e-user=") }) {
+        e2eUser = String(userArg.dropFirst("--e2e-user=".count))
+      }
+      // Extract E2E password
+      if let passArg = args.first(where: { $0.hasPrefix("--e2e-pass=") }) {
+        e2ePass = String(passArg.dropFirst("--e2e-pass=".count))
+      }
+      // Extract E2E PDS URL (optional, for custom domains)
+      if let pdsArg = args.first(where: { $0.hasPrefix("--e2e-pds=") }) {
+        e2ePdsURL = String(pdsArg.dropFirst("--e2e-pds=".count))
+      }
+      let runIdStr = self.e2eRunId ?? "unknown"
+      let userStr = self.e2eUser ?? "none"
+      let pdsStr = self.e2ePdsURL ?? "default"
+      logger.info("[E2E] E2E mode detected, run_id=\(runIdStr), user=\(userStr), pds=\(pdsStr)")
+    } else {
+      logger.info("[E2E-DEBUG] E2E mode not detected (--e2e-mode not in args)")
+    }
+    
+    Task { await MLSClient.shared.setStorageMaintenanceCoordinator(self) }
   }
 
   /// Initialize the app - check for saved session and transition to appropriate state
   func initialize() async {
     logger.info("🚀 Initializing AppStateManager")
+    
+    // Log E2E mode startup if enabled
+    if isE2EMode, let runId = e2eRunId {
+      MLSDiagnosticLogger.shared.logE2EModeStarted(runId: runId)
+    }
 
-    // Initialize auth manager (checks for saved session, attempts token refresh)
+    // E2E mode with credentials: prioritize fresh login over saved sessions
+    // This ensures deterministic test behavior regardless of keychain state
+    if isE2EMode, let user = e2eUser, let pass = e2ePass {
+      logger.info("[E2E] E2E mode with credentials - performing fresh login for: \(user)")
+      do {
+        // Pass PDS URL if specified (for custom domains)
+        let pdsURL = e2ePdsURL.flatMap { URL(string: $0) }
+        try await authManager.loginWithPasswordForE2E(identifier: user, password: pass, pdsURL: pdsURL)
+        if case .authenticated(let userDID) = authManager.state {
+          logger.info("[E2E] Auto-login successful for: \(userDID)")
+          await transitionToAuthenticated(userDID: userDID)
+          MLSDiagnosticLogger.shared.logMLSReady(userDID: userDID)
+        } else {
+          logger.error("[E2E] Login completed but auth state is not authenticated")
+          lifecycle = .unauthenticated
+        }
+      } catch {
+        logger.error("[E2E] Auto-login failed: \(error)")
+        lifecycle = .unauthenticated
+      }
+      
+      startAuthStateObservationIfNeeded()
+      return
+    }
+
+    // Normal mode: Initialize auth manager (checks for saved session, attempts token refresh)
     await authManager.initialize()
 
     // Check if we have an authenticated session
@@ -145,7 +231,14 @@ final class AppStateManager {
   func transitionToAuthenticated(userDID: String) async {
     logger.info("🔐 Transitioning to authenticated state for: \(userDID)")
 
+    // Guard against re-entrancy - prevents duplicate calls from racing
+    guard !isTransitioning else {
+      logger.warning("⚠️ Already transitioning - skipping duplicate call for: \(userDID)")
+      return
+    }
+
     // Set transition flag to prevent operations during switch
+    // Using defer ensures cleanup on ALL exit paths (normal return, early return, throw)
     isTransitioning = true
     defer { isTransitioning = false }
 
@@ -159,7 +252,26 @@ final class AppStateManager {
       
       // Prepare the previous AppState for storage reset if it exists
       if let previousAppState = authenticatedStates[previousUserDID] {
-        await previousAppState.prepareMLSStorageReset()
+        // FIX #5: Stop all streams and pause sync BEFORE database closure
+        previousAppState.stopMLSStreams()
+
+        // DEFENSIVE TIMEOUT: Wrap MLS shutdown in 5-second timeout
+        let shutdownOk = await withTaskGroup(of: Bool.self) { group in
+          group.addTask {
+            await previousAppState.prepareMLSStorageReset()
+            return true
+          }
+          group.addTask {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            return false
+          }
+          let result = await group.next() ?? false
+          group.cancelAll()
+          return result
+        }
+        if !shutdownOk {
+          logger.critical("🚨 [transitionToAuthenticated] MLS shutdown timed out - forcing ahead")
+        }
       }
       
       // Ensure the database is fully closed and checkpointed
@@ -200,12 +312,18 @@ final class AppStateManager {
     let isCachedAccount: Bool
 
     if let existing = authenticatedStates[userDID] {
-      // Reuse existing AppState (it already has the correct client from when it was created)
+      // Reuse existing AppState
       logger.debug("♻️ Using existing AppState for: \(userDID)")
       appState = existing
       isCachedAccount = true
       updateAccessOrder(userDID)
-      
+
+      // CRITICAL FIX: Update client reference to ensure cached state uses current client
+      // After account switching, AuthManager may have a new client instance. The cached
+      // AppState must use this updated client, otherwise API calls will fail with stale tokens.
+      logger.debug("♻️ Updating cached AppState client reference")
+      appState.updateClient(client)
+
       // Ensure model context is set (might not be if AppState was created before container was ready)
       if case .ready(let container) = modelContainerState {
         appState.composerDraftManager.setModelContext(container.mainContext)
@@ -329,11 +447,13 @@ final class AppStateManager {
   }
 
   /// Log out the current user and transition to unauthenticated state
-  func logout() async {
-    logger.info("🚪 Logging out")
+  /// - Parameter isManual: If true, this is a user-initiated logout (from Settings).
+  ///   This prevents auto-triggering re-authentication on the login screen.
+  func logout(isManual: Bool = true) async {
+    logger.info("🚪 Logging out (isManual: \(isManual))")
 
-    // Clear auth manager session
-    await authManager.logout()
+    // Clear auth manager session - pass isManual to control re-auth behavior
+    await authManager.logout(isManual: isManual)
 
     // Transition to unauthenticated
     lifecycle = .unauthenticated
@@ -349,6 +469,28 @@ final class AppStateManager {
   ///   - draft: Optional composer draft to transfer
   func switchAccount(to userDID: String, withDraft draft: PostComposerDraft? = nil) async {
     logger.info("🔄 Switching to account: \(userDID)")
+    
+    let previousUserDID = lifecycle.userDID
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX: Signal account switch FIRST, before ANY other work
+    // ═══════════════════════════════════════════════════════════════════════════
+    // This tells the NSE to skip decryption for BOTH the old and new user during
+    // the entire switch window. Without this, the NSE can race in and access
+    // the database with the wrong encryption key, causing HMAC check failures.
+    // ═══════════════════════════════════════════════════════════════════════════
+    MLSAppActivityState.beginAccountSwitch(from: previousUserDID, to: userDID)
+    MLSCoordinationStore.shared.updatePhase(.switching)
+    MLSCoordinationStore.shared.incrementGeneration(for: userDID)
+    if let previousUserDID = previousUserDID {
+      MLSCoordinationStore.shared.incrementGeneration(for: previousUserDID)
+    }
+    
+    // Ensure we clear the switch state even if we fail
+    defer {
+      MLSAppActivityState.endAccountSwitch()
+      MLSCoordinationStore.shared.updatePhase(.active)
+    }
 
     // Set transition flag to prevent operations during switch
     isTransitioning = true
@@ -359,7 +501,7 @@ final class AppStateManager {
     // 2. Race conditions where old managers continue polling with wrong account
     // 3. Account mismatch errors in MLS sync operations
     // 4. HMAC check failures from using wrong encryption key
-    if let oldUserDID = lifecycle.userDID, oldUserDID != userDID {
+    if let oldUserDID = previousUserDID, oldUserDID != userDID {
       logger.info("MLS: 🛑 Preparing to shutdown MLS for previous user \(oldUserDID)")
       
       #if os(iOS)
@@ -371,8 +513,34 @@ final class AppStateManager {
         // Get the old AppState and properly shutdown its MLS resources
         if let oldState = authenticatedStates[oldUserDID] {
           logger.info("MLS: Initiating graceful shutdown for previous account")
-          await oldState.prepareMLSStorageReset()
-          logger.info("MLS: ✅ Previous account MLS shutdown complete")
+
+          // DEFENSIVE TIMEOUT: Wrap MLS shutdown in 5-second timeout to prevent account switch hangs
+          // If prepareMLSStorageReset() never completes, we proceed anyway - better a degraded MLS
+          // state than a frozen app. The user can restart if MLS is broken.
+          let shutdownCompleted = await withTaskGroup(of: Bool.self) { group in
+            group.addTask { @MainActor in
+              // FIX #5: Stop all streams and pause sync BEFORE database closure
+              // This prevents new events from hitting the closing database
+              self.logger.info("MLS: 🛑 Stopping all network streams for old account")
+              oldState.stopMLSStreams()
+
+              await oldState.prepareMLSStorageReset()
+              return true
+            }
+            group.addTask {
+              try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+              return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+          }
+
+          if shutdownCompleted {
+            logger.info("MLS: ✅ Previous account MLS shutdown complete")
+          } else {
+            logger.critical("🚨 MLS shutdown timed out after 5s - forcing ahead with account switch")
+          }
         }
       #endif
       
@@ -385,10 +553,12 @@ final class AppStateManager {
       logger.info("📝 Stored composer draft for transfer - Text length: \(draft.postText.count)")
     }
 
-    // Clear transition flag BEFORE calling transitionToAuthenticated 
-    // (which sets it again and manages its own lifecycle)
+    // CRITICAL: Clear isTransitioning BEFORE calling transitionToAuthenticated.
+    // transitionToAuthenticated has a guard `!isTransitioning` that returns early if true.
+    // The MLS shutdown work above is complete, so it's safe to clear the flag now.
+    // transitionToAuthenticated will set its own isTransitioning flag with a defer to clear it.
     isTransitioning = false
-    
+
     // Transition to the authenticated account
     await transitionToAuthenticated(userDID: userDID)
   }
@@ -535,6 +705,43 @@ final class AppStateManager {
     logger.debug("Clearing pending composer draft")
     pendingComposerDraft = nil
   }
+  
+  // MARK: - E2E Re-login
+  
+  /// Perform a fresh login for E2E mode when tokens have expired
+  /// This is needed for PDSs with very short token lifetimes where refresh tokens also expire
+  /// - Returns: true if re-login succeeded, false otherwise
+  func e2eRelogin() async -> Bool {
+    guard isE2EMode, let user = e2eUser, let pass = e2ePass else {
+      logger.error("[E2E-RELOGIN] Not in E2E mode or missing credentials")
+      return false
+    }
+    
+    logger.info("[E2E-RELOGIN] Performing fresh login for: \(user) (token refresh only, no state transition)")
+    do {
+      let pdsURL = e2ePdsURL.flatMap { URL(string: $0) }
+      try await authManager.loginWithPasswordForE2E(identifier: user, password: pass, pdsURL: pdsURL)
+      
+      if case .authenticated(let userDID) = authManager.state {
+        logger.info("[E2E-RELOGIN] Re-login successful for: \(userDID)")
+        
+        // CRITICAL: Update the cached AppState's client with the fresh one from authManager
+        // This ensures subsequent API calls use the new session tokens
+        if let cachedAppState = authenticatedStates[userDID], let freshClient = authManager.client {
+          cachedAppState.updateClient(freshClient)
+          logger.info("[E2E-RELOGIN] Updated cached AppState with fresh client")
+        }
+        
+        return true
+      } else {
+        logger.error("[E2E-RELOGIN] Re-login completed but auth state is not authenticated")
+        return false
+      }
+    } catch {
+      logger.error("[E2E-RELOGIN] Re-login failed: \(error)")
+      return false
+    }
+  }
 
   // MARK: - Debugging
 
@@ -548,3 +755,5 @@ final class AppStateManager {
     """
   }
 }
+
+extension AppStateManager: MLSStorageMaintenanceCoordinating {}

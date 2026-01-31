@@ -62,6 +62,7 @@ final class AppSettingsModel {
     var threadSortOrder: String = "hot"
     var prioritizeFollowedUsers: Bool = true
     var threadedReplies: Bool = false
+    var showHiddenPosts: Bool = false  // Auto-load posts hidden by threadgate (otherwise shows button)
     
     // Local Feed Preferences (used in addition to server preferences)
     var showSavedFeedSamples: Bool = false
@@ -184,6 +185,7 @@ final class AppSettingsModel {
         if let value = defaults.string(forKey: "threadSortOrder") { threadSortOrder = value }
         prioritizeFollowedUsers = defaults.bool(forKey: "prioritizeFollowedUsers")
         threadedReplies = defaults.bool(forKey: "threadedReplies")
+        showHiddenPosts = defaults.bool(forKey: "showHiddenPosts")
         
         // Feed Preferences
         showSavedFeedSamples = defaults.bool(forKey: "showSavedFeedSamples")
@@ -291,6 +293,7 @@ final class AppSettingsModel {
         threadSortOrder = "hot"
         prioritizeFollowedUsers = true
         threadedReplies = false
+        showHiddenPosts = false
         
         // Feed Preferences
         showSavedFeedSamples = false

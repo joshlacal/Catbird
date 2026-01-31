@@ -281,8 +281,8 @@ final class MLSChatModerationUITests: XCTestCase {
     let reportsButton = app.buttons["Pending Reports"]
     XCTAssertTrue(reportsButton.waitForExistence(timeout: 3))
 
-    // Check badge showing count
-    let reportBadge = reportsButton.badges.firstMatch
+    // Check badge showing count (use staticTexts to find badge label)
+    let reportBadge = reportsButton.staticTexts.element(boundBy: 1)
     if reportBadge.exists {
       let badgeValue = reportBadge.label
       XCTAssertFalse(badgeValue.isEmpty, "Badge should show report count")

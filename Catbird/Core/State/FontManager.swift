@@ -25,9 +25,19 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     case accessibilityExtraExtraExtraLarge = "accessibilityExtraExtraExtraLarge"
     
     /// Get current system content size category
+    /// Note: This may be called before UIApplication.shared is available (e.g., during App.init()).
+    /// In that case, we return a safe default.
     static var current: CrossPlatformContentSizeCategory {
         #if os(iOS)
-        return CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
+        // Guard against early access before UIApplication is available
+        // During CatbirdApp.init(), UIApplication.shared may not exist yet
+        // Use the safer approach of checking if we can access the shared instance
+        // through reflection to avoid the crash
+        guard let app = UIApplication.value(forKeyPath: "sharedApplication") as? UIApplication else {
+            // UIApplication not ready yet (during App.init() or very early launch)
+            return .large  // Safe default - matches iOS system default
+        }
+        return CrossPlatformContentSizeCategory(from: app.preferredContentSizeCategory)
         #elseif os(macOS)
         // On macOS and Mac Catalyst, check if we're running as Catalyst
         if ProcessInfo.processInfo.isiOSAppOnMac {
@@ -241,7 +251,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
         // Apply additional scaling for Mac Catalyst
         #if targetEnvironment(macCatalyst)
-        let catalystScale = baseScale * 1.1
+        let catalystScale = baseScale
         return catalystScale
         #endif
 

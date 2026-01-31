@@ -133,7 +133,8 @@ struct FeedSliceItem: Identifiable, Sendable, Codable {
 
 /// Swift equivalent of React Native's FeedTuner
 /// Processes raw feed posts into slices by extracting embedded thread context
-final class FeedTuner {
+/// Actor isolation ensures thread-safe access to mutable deduplication state
+actor FeedTuner {
   private let logger = Logger(subsystem: "blue.catbird.app", category: "FeedTuner")
   
   // Deduplication tracking (like React Native)

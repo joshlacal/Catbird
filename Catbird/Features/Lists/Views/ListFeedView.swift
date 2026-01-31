@@ -291,9 +291,12 @@ struct ListFeedView: View {
     #endif
     .toolbar {
       ToolbarItem(placement: .cancellationAction) {
-        Button("Done") {
-          viewModel.showingMembersList = false
-        }
+          Button {
+              viewModel.showingMembersList = false
+          } label: {
+              Image(systemName: "xmark")
+          }
+
       }
     }
   }

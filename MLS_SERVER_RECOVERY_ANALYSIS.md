@@ -28,7 +28,7 @@
 
 **Implementation**: Lines 113-171
 **Features**:
-- ✅ Real-time message delivery via `streamConvoEvents()`
+- ✅ Real-time message delivery via `subscribeConvoEvents()`
 - ✅ Automatic reconnection on errors (5 attempts, exponential backoff)
 - ✅ Event processing for messages, reactions, typing indicators
 - ✅ Connection state tracking
@@ -36,7 +36,7 @@
 **Code**:
 ```swift
 // MLSEventStreamManager.swift:121-129
-let eventStream = try await apiClient.streamConvoEvents(
+let eventStream = try await apiClient.subscribeConvoEvents(
     convoId: convoId,
     cursor: cursor  // ← Supports cursor-based resumption
 )
@@ -128,7 +128,7 @@ if await messageBuffer.hasGapTimeout(conversationID: conversationID) {
 
 ### 1. SSE Event Stream
 
-**Endpoint**: `blue.catbird.mls.streamConvoEvents`
+**Endpoint**: `blue.catbird.mls.subscribeConvoEvents`
 **Features**:
 - Real-time delivery of messages, reactions, typing indicators
 - Cursor-based resumption (survives reconnects)
@@ -136,7 +136,7 @@ if await messageBuffer.hasGapTimeout(conversationID: conversationID) {
 
 **Parameters**:
 ```swift
-BlueCatbirdMlsStreamConvoEvents.Parameters(
+BlueCatbirdMlsSubscribeConvoEvents.Parameters(
     cursor: String?,  // Resume from this cursor
     convoId: String   // Conversation ID to stream
 )

@@ -7,9 +7,9 @@ This guide provides prescriptive, production-focused instructions for AI agents 
 ### Efficiency & Workflow
 - **NO timeline estimates**: Don't predict how long things will take - timelines are consistently inaccurate
 - **NO dates in documentation**: Avoid date-based references that become stale immediately
-- **NO unnecessary builds**: Only build when explicitly requested by user - syntax checks are faster
-- **Prefer syntax checks**: Use `swift -frontend -parse` for validation instead of full builds
-- **Trust user feedback**: If user reports Xcode errors, work directly with that information
+- **BUILD FREELY**: Builds take ~20 seconds on M4 Max - just do it
+- **Verify with real builds**: Use XcodeBuildMCP for actual compilation, not just syntax checks
+- **Full verification loop**: Build → Run → describe_ui → Screenshot → Test
 - **Use MCP servers extensively**: Always verify against Apple docs via MCP, use xcodebuild-mcp, leverage all available MCP tools
 - **Work continuously**: No artificial session boundaries - complete tasks fully without stopping prematurely
 - **Maximize parallelism**: Use parallel tool calls aggressively for all independent operations
@@ -1204,12 +1204,8 @@ The project includes automated quality checks:
 
 ### Development Workflow
 - **ALWAYS** use sequential-thinking for complex tasks (feature planning, bug diagnosis, optimization)
-- **ALWAYS** run syntax checks before committing: `./swift-check.sh`
 - **ALWAYS** use `describe_ui()` before UI automation (never guess coordinates)
 - **Prefer MCP servers** over manual commands for consistency
-- **DO NOT BUILD** unless explicitly instructed by the user
-- **Use syntax checks** (`swift -frontend -parse`) to validate code changes
-- **Full builds** only when user requests or for release preparation
 - **Test on both platforms** when making UI changes (if instructed)
 
 ## Testing Guidelines
@@ -1225,6 +1221,36 @@ The project includes automated quality checks:
 - Test critical user flows (login, post, navigate)
 - Use accessibility identifiers for reliable element selection
 - Simulator automation via MCP tools
+
+### Parallel Testing (M4 Max)
+
+Run tests across multiple targets simultaneously. See `~/Developer/.claude/AGENTS.md` for full parallel testing documentation.
+
+**Quick Reference - Available Targets:**
+| Target | Simulator ID | Notes |
+|--------|--------------|-------|
+| iPhone 17 Pro | `40111BBE-8709-40D0-9016-A27448486A80` | Default |
+| iPhone 17 Pro Max | `B53B2875-BFF5-4127-B56A-50529F7813CB` | Large screen |
+| iPad Pro 13-inch | `56D76971-EC63-4C7C-B2D8-A6D0C3FD07B0` | Tablet layout |
+| macOS | N/A | Native build |
+| Physical iPhone | `6AFBE06D-301D-5F38-80D6-06B26ED62A2C` | Real device |
+
+**Parallel Test Command (example):**
+```python
+# Execute in parallel (single message):
+XcodeBuildMCP_test_sim(simulatorId="40111BBE...")  # iPhone
+XcodeBuildMCP_test_sim(simulatorId="56D76971...")  # iPad
+XcodeBuildMCP_test_macos()                          # macOS
+```
+
+**Tab Bar Navigation (coordinates):**
+```python
+# Tab bar y=832 on iPhone (center of 791-874)
+tap(x=50, y=832)   # Home
+tap(x=140, y=832)  # Notifications
+tap(x=230, y=832)  # Messages
+tap(x=320, y=832)  # Search
+```
 
 ### Testing Commands
 
@@ -1323,7 +1349,7 @@ The app should be modified to always be in a production-ready state with all maj
 - **Sequential-thinking mandatory** for complex tasks (3+ steps)
 - **Never guess UI coordinates** - always use `describe_ui()`
 - **Prefer MCP over manual** for consistency and automation
-- **DO NOT BUILD unless instructed** - use syntax checks instead
+- **BUILD FREELY** - builds take ~20 seconds on M4 Max
 - Production quality only: no placeholders, no TODOs, no temporary code
 - Maintain strict compiler warnings-free builds (when building)
 

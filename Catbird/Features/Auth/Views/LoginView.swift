@@ -416,6 +416,12 @@ struct LoginView: View {
                !isAddingNewAccount,
                !appStateManager.authentication.state.isAuthenticating {
                 logger.info("Expired account detected, automatically starting re-authentication")
+                
+                // Prefill handle field with the stored handle (not DID) for better iOS autofill matching
+                if let storedHandle = expiredAccount.handle, !storedHandle.isEmpty {
+                    handle = storedHandle
+                }
+                
                 hasStartedReAuthentication = true
                 await startReAuthenticationForExpiredAccount(expiredAccount)
             }
@@ -434,6 +440,12 @@ struct LoginView: View {
             }
             
             logger.info("Expired account info changed (DID: \(newDID)), automatically starting re-authentication")
+            
+            // Prefill handle field with the stored handle (not DID) for better iOS autofill matching
+            if let storedHandle = expiredAccount.handle, !storedHandle.isEmpty {
+                handle = storedHandle
+            }
+            
             hasStartedReAuthentication = true
             Task {
                 await startReAuthenticationForExpiredAccount(expiredAccount)
@@ -1120,12 +1132,12 @@ struct LoginView: View {
                         callbackURL = try await webAuthenticationSession.authenticate(
                           using: authURL,
                           callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                          preferredBrowserSession: .shared,
+                          preferredBrowserSession: .ephemeral,
                           additionalHeaderFields: [:]
                         )
                     } else {
                         // Fallback on earlier versions
-                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
+                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .ephemeral
                           )
                     }
 
@@ -1236,12 +1248,12 @@ struct LoginView: View {
                         callbackURL = try await webAuthenticationSession.authenticate(
                           using: authURL,
                           callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                          preferredBrowserSession: .shared,
+                          preferredBrowserSession: .ephemeral,
                           additionalHeaderFields: [:]
                         )
                     } else {
                         // Fallback on earlier versions
-                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
+                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .ephemeral
                           )
                     }
 
@@ -1352,7 +1364,7 @@ struct LoginView: View {
                     let callbackURL = try await webAuthenticationSession.authenticate(
                         using: authURL,
                         callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                        preferredBrowserSession: .shared, additionalHeaderFields: [:]
+                        preferredBrowserSession: .ephemeral, additionalHeaderFields: [:]
                     )
 
                     // Check for cancellation after web authentication

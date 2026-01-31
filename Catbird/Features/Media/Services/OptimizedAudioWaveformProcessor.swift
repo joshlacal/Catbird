@@ -73,7 +73,7 @@ final class OptimizedAudioWaveformProcessor {
     at url: URL,
     targetPoints: Int = ProcessingConfig.defaultWaveformPoints
   ) async throws -> CompactWaveformData {
-    let clampedPoints = min(targetPoints, ProcessingConfig.maxWaveformPoints)
+    let clampedPoints = max(1, min(targetPoints, ProcessingConfig.maxWaveformPoints))
     
     let asset = AVAsset(url: url)
     guard let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else {
@@ -81,7 +81,8 @@ final class OptimizedAudioWaveformProcessor {
     }
     
     let duration = try await asset.load(.duration)
-    let durationSeconds = Float(CMTimeGetSeconds(duration))
+    let rawDurationSeconds = Float(CMTimeGetSeconds(duration))
+    let durationSeconds = rawDurationSeconds.isFinite ? max(0, rawDurationSeconds) : 0
     
     // Set up optimized audio reader
     let assetReader = try AVAssetReader(asset: asset)

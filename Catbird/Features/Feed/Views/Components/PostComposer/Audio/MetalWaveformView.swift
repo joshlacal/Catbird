@@ -99,7 +99,11 @@ struct MetalWaveformView: View {
     case .bars:
       drawBarsWaveform(in: context, size: size, centerY: centerY, maxAmplitude: maxAmplitude)
     case .continuous:
-      drawContinuousWaveform(in: context, size: size, centerY: centerY, maxAmplitude: maxAmplitude)
+      if waveformData.pointCount > 1 {
+        drawContinuousWaveform(in: context, size: size, centerY: centerY, maxAmplitude: maxAmplitude)
+      } else {
+        drawBarsWaveform(in: context, size: size, centerY: centerY, maxAmplitude: maxAmplitude)
+      }
     case .frequency:
       drawFrequencyBars(in: context, size: size)
     case .hybrid:
@@ -110,14 +114,19 @@ struct MetalWaveformView: View {
   }
   
   private func drawBarsWaveform(in context: GraphicsContext, size: CGSize, centerY: CGFloat, maxAmplitude: CGFloat) {
-    guard let waveformData = waveformData else { return }
+    guard let waveformData = waveformData, waveformData.pointCount > 0 else { return }
+    
+    let duration = max(TimeInterval(waveformData.duration), 0.000_001)
+    let playProgressRaw = currentTime / duration
+    let playProgress = CGFloat(playProgressRaw.isFinite ? min(max(playProgressRaw, 0), 1) : 0)
     
     let barWidth = size.width / CGFloat(waveformData.pointCount)
     let barSpacing: CGFloat = 1.0
     let actualBarWidth = max(1.0, barWidth - barSpacing)
     
     for i in 0..<waveformData.pointCount {
-      let amplitude = CGFloat(waveformData.amplitudes[i]) * maxAmplitude
+      let amp = waveformData.amplitudes[i]
+      let amplitude = (amp.isFinite ? CGFloat(max(0, amp)) : 0) * maxAmplitude
       let x = CGFloat(i) * barWidth + barSpacing / 2
       
       let rect = CGRect(
@@ -128,20 +137,21 @@ struct MetalWaveformView: View {
       )
       
       let progress = CGFloat(i) / CGFloat(waveformData.pointCount)
-      let playProgress = CGFloat(currentTime / TimeInterval(waveformData.duration))
-      
       let color = progress <= playProgress ? accentColor : accentColor.opacity(0.3)
       context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
     }
   }
   
   private func drawContinuousWaveform(in context: GraphicsContext, size: CGSize, centerY: CGFloat, maxAmplitude: CGFloat) {
-    guard let waveformData = waveformData else { return }
+    guard let waveformData = waveformData, waveformData.pointCount > 1 else { return }
+    
+    let duration = max(TimeInterval(waveformData.duration), 0.000_001)
+    let playProgressRaw = currentTime / duration
+    let playProgress = CGFloat(playProgressRaw.isFinite ? min(max(playProgressRaw, 0), 1) : 0)
     
     var path = Path()
     var playedPath = Path()
     let pointWidth = size.width / CGFloat(waveformData.pointCount - 1)
-    let playProgress = CGFloat(currentTime / TimeInterval(waveformData.duration))
     let playX = size.width * playProgress
     
     for i in 0..<waveformData.pointCount {
@@ -210,7 +220,8 @@ struct MetalWaveformView: View {
   private func drawPlayhead(in context: GraphicsContext, size: CGSize) {
     guard let waveformData = waveformData, waveformData.duration > 0 else { return }
     
-    let progress = CGFloat(currentTime / TimeInterval(waveformData.duration))
+    let progressRaw = currentTime / TimeInterval(waveformData.duration)
+    let progress = CGFloat(progressRaw.isFinite ? min(max(progressRaw, 0), 1) : 0)
     let playheadX = size.width * progress
     
     let playheadPath = Path { path in
@@ -333,6 +344,8 @@ private class MetalWaveformRenderer {
     context: GraphicsContext,
     size: CGSize
   ) {
+    guard waveformData.pointCount > 1 else { return }
+    
     // Optimized Metal-backed drawing using GraphicsContext
     let centerY = size.height / 2
     let maxAmplitude = size.height * 0.4

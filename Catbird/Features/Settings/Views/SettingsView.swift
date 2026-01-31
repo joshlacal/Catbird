@@ -10,15 +10,6 @@ struct SettingsView: View {
   @State private var isShowingAccountSwitcher = false
   @State private var availableAccounts: Int = 0
 
-  // Account recovery state
-  @State private var isRetrying = false
-  @State private var retryResult: RetryResult?
-
-  private enum RetryResult {
-    case success
-    case failure(String)
-  }
-  
   // Profile management
   @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
   @State private var isLoadingProfile = false
@@ -260,49 +251,6 @@ struct SettingsView: View {
           #endif
         }
         
-        Section("Account Recovery") {
-          Button {
-            Task {
-              await retryAuthentication()
-            }
-          } label: {
-            HStack {
-              Label {
-                VStack(alignment: .leading, spacing: 2) {
-                  Text("Retry Authentication")
-                  Text("Attempt to refresh your session")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "arrow.clockwise")
-                  .foregroundStyle(.blue)
-              }
-
-              Spacer()
-
-              if isRetrying {
-                ProgressView()
-                  .scaleEffect(0.8)
-              }
-            }
-          }
-          .disabled(isRetrying)
-
-          if let result = retryResult {
-            switch result {
-            case .success:
-              Label("Session refreshed successfully", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .appFont(AppTextRole.caption)
-            case .failure(let message):
-              Label(message, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .appFont(AppTextRole.caption)
-            }
-          }
-        }
-
         Section("Experimental") {
           Toggle(isOn: Binding(
             get: { 
@@ -353,7 +301,8 @@ struct SettingsView: View {
           Button {
             dismiss()
           } label: {
-            Text("Done")
+            Image(systemName: "xmark")
+              
           }
         }
       }
@@ -471,47 +420,6 @@ struct SettingsView: View {
   private func isAuthenticationError(_ error: Error) -> Bool {
     let (_, _, requiresReAuth) = AuthenticationErrorHandler.categorizeError(error)
     return requiresReAuth
-  }
-
-  /// Attempts to retry authentication by resetting circuit breakers and refreshing the session.
-  /// This is useful when the user is locked out due to temporary authentication failures.
-  private func retryAuthentication() async {
-    isRetrying = true
-    retryResult = nil
-    defer { isRetrying = false }
-
-    guard let client = appState.atProtoClient else {
-      retryResult = .failure("No active session")
-      return
-    }
-
-    do {
-      // First, attempt recovery from server failures (resets circuit breakers)
-      try await client.attemptRecoveryFromServerFailures(for: appState.userDID)
-
-      // Then force a token refresh
-      let refreshed = try await client.refreshToken()
-
-      if refreshed {
-        retryResult = .success
-      } else {
-        // Token was still valid, session is fine
-        retryResult = .success
-      }
-
-      // Clear the result after a delay so the user sees the feedback
-      Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
-        retryResult = nil
-      }
-    } catch {
-      let (_, userMessage, requiresReAuth) = AuthenticationErrorHandler.categorizeError(error)
-      if requiresReAuth {
-        retryResult = .failure("Session expired. Please sign out and sign in again.")
-      } else {
-        retryResult = .failure(userMessage)
-      }
-    }
   }
 
   // MARK: - Logout

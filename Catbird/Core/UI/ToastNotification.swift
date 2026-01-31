@@ -6,25 +6,45 @@
 //
 
 import SwiftUI
+import OSLog
 
 // MARK: - Toast Model
 
 @Observable
 final class ToastManager {
+  private let logger = Logger(subsystem: "blue.catbird", category: "Toast")
+  
   var currentToast: ToastItem?
+  private var dismissTask: Task<Void, Never>?
   
   func show(_ toast: ToastItem) {
-    currentToast = toast
+    // Cancel any existing dismiss task
+    dismissTask?.cancel()
     
-    Task { @MainActor in
+    // Check for duplicate - if the message and icon are the same, don't show again
+    if let current = currentToast,
+       current.message == toast.message,
+       current.icon == toast.icon {
+      logger.debug("🍞 Skipping duplicate toast: \(toast.message)")
+      return
+    }
+    
+    logger.debug("🍞 ToastManager.show() called: \(toast.message)")
+    currentToast = toast
+    logger.debug("🍞 currentToast set, value: \(String(describing: self.currentToast?.message))")
+    
+    dismissTask = Task { @MainActor in
       try? await Task.sleep(for: .seconds(toast.duration))
       if currentToast?.id == toast.id {
         currentToast = nil
+        logger.debug("🍞 Toast auto-dismissed")
       }
     }
   }
   
   func dismiss() {
+    dismissTask?.cancel()
+    dismissTask = nil
     currentToast = nil
   }
 }

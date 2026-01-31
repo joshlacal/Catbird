@@ -258,7 +258,11 @@ struct ListMemberManagementView: View {
 #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Done") { dismiss() }
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+            }
             .keyboardShortcut(.escape, modifiers: [])
         }
       }

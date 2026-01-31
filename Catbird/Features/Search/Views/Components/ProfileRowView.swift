@@ -7,6 +7,14 @@ struct ProfileRowView: View {
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     @State private var currentUserDid: String?
+    @State private var viewerStatus: ViewerStatus = .unknown
+    
+    private enum ViewerStatus {
+        case unknown
+        case notFollowing
+        case following
+        case blocking
+    }
     
     var body: some View {
         Button(action: {
@@ -78,57 +86,87 @@ struct ProfileRowView: View {
         .task {
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()
+            
+            // Initialize viewer status
+            if viewerStatus == .unknown {
+                viewerStatus = getInitialViewerStatus()
+            }
+        }
+        .onChange(of: profile.did) { _, _ in
+            viewerStatus = getInitialViewerStatus()
         }
     }
     
     // Follow button with appropriate state
     @ViewBuilder
     private func followButton() -> some View {
-        // Determine button state from profile
-        Group {
-            if let profileView = profile as? AppBskyActorDefs.ProfileView,
-               let viewer = profileView.viewer {
-                buttonForViewerState(viewer)
-            } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic,
-                      let viewer = profileViewBasic.viewer {
-                buttonForViewerState(viewer)
-            } else {
-                // Default Follow button
-                Button {
-                    // Follow action when no viewer info
-                } label: {
-                    buttonLabel("Follow", color: .white, backgroundColor: .accentColor)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    // Helper function to generate the appropriate button based on viewer state
-    @ViewBuilder
-    private func buttonForViewerState(_ viewer: AppBskyActorDefs.ViewerState) -> some View {
-        if viewer.blocking != nil {
+        switch viewerStatus {
+        case .blocking:
             Button {
-                // Unblock action
+                Task {
+                    let previous = viewerStatus
+                    viewerStatus = .notFollowing
+                    do {
+                        _ = try await appState.unblock(did: profile.did.didString())
+                    } catch {
+                        viewerStatus = previous
+                    }
+                }
             } label: {
                 buttonLabel("Blocked", color: .white, backgroundColor: .red)
             }
             .buttonStyle(.plain)
-        } else if viewer.following != nil {
+            
+        case .following:
             Button {
-                // Unfollow action
+                Task {
+                    let previous = viewerStatus
+                    viewerStatus = .notFollowing
+                    do {
+                        _ = try await appState.unfollow(did: profile.did.didString())
+                    } catch {
+                        viewerStatus = previous
+                    }
+                }
             } label: {
                 buttonLabel("Following", color: .accentColor, backgroundColor: .clear, outlined: true)
             }
             .buttonStyle(.plain)
-        } else {
+            
+        case .notFollowing, .unknown:
             Button {
-                // Follow action
+                Task {
+                    let previous = viewerStatus
+                    viewerStatus = .following
+                    do {
+                        _ = try await appState.follow(did: profile.did.didString())
+                    } catch {
+                        viewerStatus = previous
+                    }
+                }
             } label: {
                 buttonLabel("Follow", color: .white, backgroundColor: .accentColor)
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private func getInitialViewerStatus() -> ViewerStatus {
+        var viewer: AppBskyActorDefs.ViewerState?
+        
+        if let profileView = profile as? AppBskyActorDefs.ProfileView {
+            viewer = profileView.viewer
+        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
+            viewer = profileViewBasic.viewer
+        } else if let profileViewDetailed = profile as? AppBskyActorDefs.ProfileViewDetailed {
+            viewer = profileViewDetailed.viewer
+        }
+        
+        guard let viewer = viewer else { return .notFollowing }
+        
+        if viewer.blocking != nil { return .blocking }
+        if viewer.following != nil { return .following }
+        return .notFollowing
     }
     
     // Reusable button label

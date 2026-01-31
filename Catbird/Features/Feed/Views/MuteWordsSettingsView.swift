@@ -333,10 +333,24 @@ struct MuteWordsSettingsView: View {
   }
   
   private func deleteMuteWords(at offsets: IndexSet) {
+    let idsToDelete = offsets.map { muteWords[$0].id }
+    
     withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-      for index in offsets {
-        let word = muteWords[index]
-        removeMuteWord(word.id)
+      muteWords.remove(atOffsets: offsets)
+      filterMuteWords()
+    }
+    
+    Task {
+      for id in idsToDelete {
+        do {
+          try await appState.preferencesManager.removeMutedWord(id: id)
+          updateMuteWordFilter()
+        } catch {
+          await MainActor.run {
+            errorMessage = "Failed to remove mute word: \(error.localizedDescription)"
+          }
+          await loadMuteWords()
+        }
       }
     }
   }
@@ -351,7 +365,9 @@ struct MuteWordsSettingsView: View {
       let preferences = try await appState.preferencesManager.getPreferences()
       
       withAnimation(.easeInOut(duration: DesignTokens.Duration.normal)) {
-        muteWords = preferences.mutedWords
+        // Dedup words by ID to prevent ForEach crashes
+        var seen = Set<String>()
+        muteWords = preferences.mutedWords.filter { seen.insert($0.id).inserted }
         isLoading = false
       }
       

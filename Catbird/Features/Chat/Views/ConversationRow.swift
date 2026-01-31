@@ -130,8 +130,14 @@ struct ConversationRow: View {
       return
     }
 
-    displayName = profile.displayName ?? ""  // Use empty string if nil
-    handle = "@\(profile.handle.description)"
+    // Check if the account has been deleted (Bluesky uses "missing.invalid" for deleted accounts)
+    if profile.handle.description == "missing.invalid" {
+      displayName = "Deleted Account"
+      handle = ""
+    } else {
+      displayName = profile.displayName ?? ""  // Use empty string if nil
+      handle = "@\(profile.handle.description)"
+    }
   }
 
   // Date formatting helper

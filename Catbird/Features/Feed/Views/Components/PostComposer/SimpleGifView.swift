@@ -81,21 +81,25 @@ struct SimpleGifView: View {
     
     /// Calculate aspect ratio from Tenor's media format dimensions
     private var aspectRatio: CGFloat {
-        // Try to get dimensions from the best available format
-        if let gif = gif.media_formats.gif, gif.dims.count >= 2 {
-            let width = CGFloat(gif.dims[0])
-            let height = CGFloat(gif.dims[1])
-            return width / height
-        } else if let mediumgif = gif.media_formats.mediumgif, mediumgif.dims.count >= 2 {
-            let width = CGFloat(mediumgif.dims[0])
-            let height = CGFloat(mediumgif.dims[1])
-            return width / height
-        } else if let tinygif = gif.media_formats.tinygif, tinygif.dims.count >= 2 {
-            let width = CGFloat(tinygif.dims[0])
-            let height = CGFloat(tinygif.dims[1])
-            return width / height
+        func safeRatio(_ dims: [Int]) -> CGFloat? {
+            guard dims.count >= 2 else { return nil }
+            let width = CGFloat(dims[0])
+            let height = CGFloat(dims[1])
+            guard width > 0, height > 0 else { return nil }
+            let ratio = width / height
+            return (ratio.isFinite && ratio > 0) ? ratio : nil
         }
-        // Default to square aspect ratio if no dimensions available
+
+        // Try to get dimensions from the best available format
+        if let gif = gif.media_formats.gif, let ratio = safeRatio(gif.dims) {
+            return ratio
+        } else if let mediumgif = gif.media_formats.mediumgif, let ratio = safeRatio(mediumgif.dims) {
+            return ratio
+        } else if let tinygif = gif.media_formats.tinygif, let ratio = safeRatio(tinygif.dims) {
+            return ratio
+        }
+
+        // Default to square aspect ratio if no/invalid dimensions available
         return 1.0
     }
 }

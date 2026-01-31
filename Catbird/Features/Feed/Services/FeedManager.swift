@@ -25,17 +25,31 @@ final class FeedManager {
             throw FeedError.clientNotAvailable
         }
         
-        switch fetchType {
-        case .timeline:
-            return try await fetchTimeline(client: client, cursor: cursor)
-        case .list(let listUri):
-            return try await fetchListFeed(client: client, listUri: listUri, cursor: cursor)
-        case .feed(let generatorUri):
-            return try await fetchCustomFeed(client: client, generatorUri: generatorUri, cursor: cursor)
-        case .author(let did):
-            return try await fetchAuthorFeed(client: client, did: did, cursor: cursor)
-        case .likes(let did):
-            return try await fetchAuthorLikes(client: client, did: did, cursor: cursor)
+        let feedName = fetchType.displayName
+        await MetricKitSignposts.beginFeedLoad(feedName: feedName)
+        let perfSignpostId = PerformanceSignposts.beginFeedLoad(feedName: feedName)
+        
+        do {
+            let result: ([AppBskyFeedDefs.FeedViewPost], String?)
+            switch fetchType {
+            case .timeline:
+                result = try await fetchTimeline(client: client, cursor: cursor)
+            case .list(let listUri):
+                result = try await fetchListFeed(client: client, listUri: listUri, cursor: cursor)
+            case .feed(let generatorUri):
+                result = try await fetchCustomFeed(client: client, generatorUri: generatorUri, cursor: cursor)
+            case .author(let did):
+                result = try await fetchAuthorFeed(client: client, did: did, cursor: cursor)
+            case .likes(let did):
+                result = try await fetchAuthorLikes(client: client, did: did, cursor: cursor)
+            }
+            await MetricKitSignposts.endFeedLoad(feedName: feedName, postCount: result.0.count, success: true)
+            PerformanceSignposts.endFeedLoad(id: perfSignpostId, postCount: result.0.count, success: true)
+            return result
+        } catch {
+            await MetricKitSignposts.endFeedLoad(feedName: feedName, success: false)
+            PerformanceSignposts.endFeedLoad(id: perfSignpostId, postCount: 0, success: false)
+            throw error
         }
     }
     

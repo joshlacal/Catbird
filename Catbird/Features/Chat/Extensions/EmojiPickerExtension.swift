@@ -45,21 +45,52 @@ private struct EmojiKitPickerSheet: View {
   @State private var query = ""
   @State private var selection = Emoji.GridSelection()
 
+  private var categories: [EmojiCategory] {
+    [.recent, .frequent] + .standard
+  }
+
+  private var categoryStripItems: [EmojiCategory] {
+    categories.filter { !$0.emojis.isEmpty }
+  }
+
   var body: some View {
     NavigationStack {
-      EmojiGridScrollView(
-        axis: .vertical,
-        categories: [.frequent] + .standard,
-        query: query,
-        selection: $selection,
-        registerSelectionFor: [.frequent],
-        action: { emoji in
-          onEmojiSelected(emoji.char)
-          dismiss()
-        },
-        sectionTitle: { $0.view },
-        gridItem: { $0.view }
-      )
+      GeometryReader { geo in
+        ScrollViewReader { proxy in
+          VStack(spacing: 0) {
+            if query.isEmpty, !categoryStripItems.isEmpty {
+              categoryStrip(proxy: proxy)
+              Divider()
+            }
+
+            ScrollView(.vertical) {
+              EmojiGrid(
+                axis: .vertical,
+                categories: categories,
+                query: query,
+                selection: $selection,
+                registerSelectionFor: [.recent, .frequent],
+                geometryProxy: geo,
+                action: { emoji in
+                  onEmojiSelected(emoji.char)
+                  dismiss()
+                },
+                sectionTitle: { $0.view },
+                gridItem: { $0.view }
+              )
+            }
+            .onAppear {
+              Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                proxy.scrollTo(selection)
+              }
+            }
+            .onChange(of: selection) { newValue in
+              proxy.scrollTo(newValue)
+            }
+          }
+        }
+      }
       .navigationTitle(title)
       .navigationBarTitleDisplayMode(.inline)
       .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
@@ -70,6 +101,47 @@ private struct EmojiKitPickerSheet: View {
       }
     }
     .emojiGridStyle(.standard)
+  }
+
+  private func categoryStrip(proxy: ScrollViewProxy) -> some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 12) {
+        ForEach(categoryStripItems, id: \.id) { category in
+          Button {
+            selection = Emoji.GridSelection(category: category)
+            withAnimation(.easeInOut(duration: 0.2)) {
+              proxy.scrollTo(category)
+            }
+          } label: {
+            categoryIcon(for: category)
+              .font(.system(size: 14, weight: .semibold))
+              .foregroundStyle(isCategorySelected(category) ? Color.primary : Color.secondary)
+              .frame(width: 32, height: 32)
+              .background(
+                Circle()
+                  .fill(isCategorySelected(category) ? Color.secondary.opacity(0.2) : Color.clear)
+              )
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel(Text(category.localizedName))
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+    }
+  }
+
+  private func categoryIcon(for category: EmojiCategory) -> Image {
+    switch category.id {
+    case EmojiCategory.Persisted.frequent.id:
+      return Image(systemName: "flame")
+    default:
+      return category.symbolIcon
+    }
+  }
+
+  private func isCategorySelected(_ category: EmojiCategory) -> Bool {
+    selection.category?.id == category.id
   }
 }
 

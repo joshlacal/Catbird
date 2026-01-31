@@ -65,9 +65,11 @@ struct ChatAccountSettingsView: View {
     #endif
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
-          Button("Done") {
-            dismiss()
-          }
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+            }
         }
       }
       .confirmationDialog("Export Chat Data", isPresented: $showingExportConfirmation) {

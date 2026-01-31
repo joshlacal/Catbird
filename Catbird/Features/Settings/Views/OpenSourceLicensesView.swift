@@ -13,22 +13,7 @@ struct OpenSourceLicensesView: View {
           }
           
           Section("Dependencies") {
-            LicenseRow(
-              name: "Chat",
-              author: "exyte",
-              version: "2.6.3",
-              url: "https://github.com/exyte/Chat.git",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "FaultOrdering",
-              author: "getsentry",
-              version: "1.0.0",
-              url: "https://github.com/getsentry/FaultOrdering",
-              license: "MIT"
-            )
-            
+                        
             LicenseRow(
               name: "LazyPager",
               author: "gh123man",
@@ -54,10 +39,10 @@ struct OpenSourceLicensesView: View {
             )
 
             LicenseRow(
-              name: "MCEmojiPicker",
-              author: "izyumkin",
-              version: "1.2.3",
-              url: "https://github.com/izyumkin/MCEmojiPicker",
+              name: "EmojiKit",
+              author: "Daniel Saidi",
+              version: "2.2.1",
+              url: "https://github.com/danielsaidi/EmojiKit",
               license: "MIT"
             )
             

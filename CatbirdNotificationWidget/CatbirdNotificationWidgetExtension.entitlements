@@ -6,5 +6,9 @@
 	<array>
 		<string>group.blue.catbird.shared</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)blue.catbird.shared</string>
+	</array>
 </dict>
 </plist>

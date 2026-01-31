@@ -3,6 +3,7 @@ import Petrel
 import LocalAuthentication
 import OSLog
 import CatbirdMLSCore
+import CatbirdMLSService
 
 // MARK: - Protocols
 
@@ -144,6 +145,21 @@ struct PrivacySecuritySettingsView: View {
             }
 
             Section("MLS Encrypted Chat") {
+                NavigationLink {
+                    MLSChatSettingsView()
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Chat Privacy")
+                                .fontWeight(.medium)
+                            Text("Who can message you, request expiration")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+
                 Picker("Message Retention", selection: Binding(
                     get: {
                         let days = appState.appSettings.mlsMessageRetentionDays
@@ -734,9 +750,12 @@ struct CreateAppPasswordView: View {
             })
         }
         .alert("App Password Created", isPresented: $showGeneratedPassword) {
-            Button("Done") {
+            Button {
                 dismiss()
+            } label: {
+                Image(systemName: "xmark")
             }
+            
         } message: {
             Text("Your app password has been created successfully. Make sure to copy it from above - you won't be able to see it again.")
         }

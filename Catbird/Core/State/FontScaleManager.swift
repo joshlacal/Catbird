@@ -39,7 +39,7 @@ import OSLog
 
         // Apply additional scaling for Mac Catalyst
         #if targetEnvironment(macCatalyst)
-        let catalystScale = baseScale * 1.2
+        let catalystScale = baseScale
         return catalystScale
         #endif
 

@@ -570,8 +570,10 @@ struct FeedsStartPage: View {
         if SystemFeedTypes.isTimelineFeed(feed) {
           // Special handling for Timeline feed
           timelineFeedLink(feedURI: feed, category: category)
+
         } else if let uri = try? ATProtocolURI(uriString: feed) {
           feedLink(for: uri, feedURI: feed, category: category)
+
         }
       }
     }
@@ -784,7 +786,6 @@ struct FeedsStartPage: View {
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
     }
     .buttonStyle(PlainButtonStyle())
-    .interactiveGlass()
     .onDrag {
       draggedFeedItem = feedURI
       isDragging = true
@@ -1398,8 +1399,11 @@ private extension View {
                 Task { await viewModel.updateCaches() }
             }
             .task {
-                try? await Task.sleep(for: .seconds(2))
-                await viewModel.fetchFeedGenerators()
+                // Retry fetching generators if we don't have them after initial load
+                try? await Task.sleep(for: .seconds(1))
+                if viewModel.feedGenerators.isEmpty {
+                    await viewModel.fetchFeedGenerators()
+                }
             }
             .onChange(of: viewModel.feedGenerators) { _, _ in
                 Task { await viewModel.updateCaches() }

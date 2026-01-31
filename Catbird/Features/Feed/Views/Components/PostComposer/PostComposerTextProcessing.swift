@@ -483,7 +483,9 @@ extension PostComposerViewModel {
                         labels: profileView.labels,
                         createdAt: profileView.createdAt,
                         verification: profileView.verification,
-                        status: profileView.status
+                        status: profileView.status,
+                        debug: nil
+
                     )
                 }
                 logger.debug("PostComposerTextProcessing: Converted to \(self.mentionSuggestions.count) ProfileViewBasic")

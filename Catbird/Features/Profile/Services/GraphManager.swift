@@ -233,7 +233,7 @@ final class GraphManager {
 
       let follow = AppBskyGraphFollow(
         subject: subjectDID,
-        createdAt: ATProtocolDate(date: Date())
+        createdAt: ATProtocolDate(date: Date()), via: nil
       )
 
       // Wrap the follow in a value container

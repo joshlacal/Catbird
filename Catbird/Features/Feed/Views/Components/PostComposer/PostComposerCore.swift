@@ -522,6 +522,9 @@ extension PostComposerViewModel {
         isPosting = true
         defer { isPosting = false }
         
+        // Start MetricKit tracking for post composition
+        await MetricKitSignposts.beginPostComposition()
+        
         logger.info("Creating post with text: \(self.postText)")
         
         let postManager = appState.postManager
@@ -533,22 +536,49 @@ extension PostComposerViewModel {
         
         // Create embed if needed
         var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
-        if let gif = selectedGif {
+
+        // Check if we have both a quoted post AND media - this requires recordWithMedia
+        if let quotedPost = quotedPost {
+            let strongRef = ComAtprotoRepoStrongRef(
+                uri: quotedPost.uri,
+                cid: quotedPost.cid
+            )
+            let record = AppBskyEmbedRecord(record: strongRef)
+
+            if let gif = selectedGif {
+                logger.debug("Creating recordWithMedia embed (quote + GIF)")
+                if let gifEmbed = try await createGifEmbed(gif),
+                   case .appBskyEmbedExternal(let external) = gifEmbed {
+                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedExternal(external)
+                    embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                }
+            } else if !mediaItems.isEmpty {
+                logger.debug("Creating recordWithMedia embed (quote + \(self.mediaItems.count) images)")
+                if let imagesEmbed = try await createImagesEmbed(),
+                   case .appBskyEmbedImages(let images) = imagesEmbed {
+                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedImages(images)
+                    embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                }
+            } else if videoItem != nil {
+                logger.debug("Creating recordWithMedia embed (quote + video)")
+                if let videoEmbed = try await createVideoEmbed(),
+                   case .appBskyEmbedVideo(let video) = videoEmbed {
+                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedVideo(video)
+                    embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                }
+            } else {
+                logger.debug("Creating quote post embed")
+                embed = .appBskyEmbedRecord(record)
+            }
+        } else if let gif = selectedGif {
             logger.debug("Creating GIF embed")
-            // Handle GIF embed
             embed = try await createGifEmbed(gif)
         } else if !mediaItems.isEmpty {
             logger.debug("Creating images embed for \(self.mediaItems.count) images")
-            // Handle image embeds
             embed = try await createImagesEmbed()
         } else if videoItem != nil {
             logger.debug("Creating video embed")
-            // Handle video embed
             embed = try await createVideoEmbed()
-        } else if let quotedPost = quotedPost {
-            logger.debug("Creating quote post embed")
-            // Handle quote post embed
-            embed = createQuoteEmbed(quotedPost)
         } else if let embedURL = selectedEmbedURL, let urlCard = urlCards[embedURL] {
             logger.debug("Creating external link embed for selected URL: \(embedURL)")
             embed = await createExternalEmbedWithThumbnail(urlCard)
@@ -595,13 +625,18 @@ extension PostComposerViewModel {
                 ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
                 appState.composerDraftManager.clearDraft()
                 logger.info("Post queued offline")
+                await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
                 return
             }
+            await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
             throw error
         }
         
         // Clear draft on successful post creation
         appState.composerDraftManager.clearDraft()
+        
+        // End MetricKit tracking for successful post
+        await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
         
         logger.info("Post created successfully")
     }
@@ -1156,7 +1191,9 @@ extension PostComposerViewModel {
                         labels: profile.labels,
                         createdAt: profile.createdAt,
                         verification: profile.verification,
-                        status: profile.status
+                        status: profile.status,
+                        debug: nil
+
                     )
                     
                     await MainActor.run {
