@@ -6,6 +6,7 @@
 //
 
 import BackgroundTasks
+import CatbirdMLSService
 import Foundation
 import OSLog
 
@@ -54,9 +55,9 @@ actor MLSBackgroundRefreshManager {
   /// Schedule the next background refresh
   /// - Parameter delay: Time interval until next run (default: 24 hours)
   func scheduleBackgroundRefresh(delay: TimeInterval = 24 * 60 * 60) {
-    guard isRegistered else {
-      logger.debug("Skipping schedule - background task not yet registered")
-      return
+    if !isRegistered {
+      logger.info("Lazily registering background task before scheduling")
+      registerBackgroundTask()
     }
     
     let request = BGProcessingTaskRequest(identifier: taskIdentifier)

@@ -1,6 +1,8 @@
 import OSLog
 import Petrel
 import SwiftUI
+import CatbirdMLSService
+import CatbirdMLSCore
 
 #if os(iOS)
 
@@ -44,12 +46,17 @@ struct MLSChatRequestsView: View {
 
   let onAcceptedConversation: (@Sendable (String) async -> Void)?
 
-  @State private var requests: [BlueCatbirdMlsListChatRequests.ChatRequest] = []
+  @State private var requests: [MLSConversationModel] = []
   @State private var senderProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
+  @State private var membersByConvo: [String: [String]] = [:]  // convoId -> member DIDs
   @State private var isLoading = false
-  @State private var processingRequestIDs: Set<String> = []
+  @State private var processingConvoIDs: Set<String> = []
   @State private var errorMessage: String?
   @State private var showingErrorAlert = false
+
+  // Block sheet state
+  @State private var requestToBlock: MLSConversationModel?
+  @State private var showingBlockSheet = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSChatRequests")
 
@@ -68,16 +75,24 @@ struct MLSChatRequestsView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           List {
-            ForEach(requests, id: \.id) { request in
+            ForEach(requests, id: \.conversationID) { request in
+              let members = membersByConvo[request.conversationID] ?? []
+              let senderDID = members.first(where: { $0 != appState.userDID }) ?? ""
+              
               MLSChatRequestRow(
                 request: request,
-                senderProfile: senderProfiles[request.senderDid],
-                isProcessing: processingRequestIDs.contains(request.id),
+                senderDID: senderDID,
+                senderProfile: senderProfiles[senderDID],
+                isProcessing: processingConvoIDs.contains(request.conversationID),
                 onAccept: {
                   Task { await accept(request) }
                 },
                 onDecline: {
                   Task { await decline(request) }
+                },
+                onBlock: {
+                  requestToBlock = request
+                  showingBlockSheet = true
                 }
               )
               .listRowSeparator(.visible)
@@ -90,11 +105,15 @@ struct MLSChatRequestsView: View {
       .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Done") { dismiss() }
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+            }
         }
         ToolbarItem(placement: .primaryAction) {
           Button {
-            Task { await loadRequests(refresh: true) }
+            Task { await loadRequests() }
           } label: {
             Image(systemName: "arrow.clockwise")
           }
@@ -103,35 +122,60 @@ struct MLSChatRequestsView: View {
         }
       }
       .refreshable {
-        await loadRequests(refresh: true)
+        await loadRequests()
       }
       .task {
-        await loadRequests(refresh: true)
+        await loadRequests()
       }
       .alert("Chat Requests", isPresented: $showingErrorAlert) {
         Button("OK", role: .cancel) {}
       } message: {
         Text(errorMessage ?? "An unknown error occurred.")
       }
+      .sheet(isPresented: $showingBlockSheet) {
+        if let request = requestToBlock {
+          let members = membersByConvo[request.conversationID] ?? []
+          let senderDID = members.first(where: { $0 != appState.userDID }) ?? ""
+          let profile = senderProfiles[senderDID]
+          BlockChatSenderSheet(
+            senderDid: senderDID,
+            senderHandle: profile?.handle,
+            senderDisplayName: profile?.displayName,
+            requestId: request.conversationID,
+            onBlocked: {
+              Task { await loadRequests() }
+            }
+          )
+        }
+      }
     }
   }
 
   @MainActor
-  private func loadRequests(refresh: Bool) async {
+  private func loadRequests() async {
     guard !isLoading else { return }
 
     isLoading = true
     defer { isLoading = false }
 
     do {
-      guard let apiClient = await appState.getMLSAPIClient() else {
+      guard let manager = await appState.getMLSConversationManager() else {
         throw MLSAPIError.serverUnavailable
       }
 
-      let response = try await apiClient.listChatRequests(limit: 50, cursor: nil, status: "pending")
-      requests = response.requests.sorted { $0.createdAt.date > $1.createdAt.date }
+      // Fetch pending request conversations from local storage
+      requests = try await manager.fetchPendingRequestConversations()
+        .sorted { $0.createdAt > $1.createdAt }
 
-      let senderDIDs = Array(Set(requests.map(\.senderDid)))
+      // Load members for each conversation to get sender DIDs
+      for request in requests {
+        if let convoMembers = try? await manager.fetchConversationMembers(convoId: request.conversationID) {
+          membersByConvo[request.conversationID] = convoMembers.map(\.did)
+        }
+      }
+
+      // Get all unique sender DIDs (non-current user members)
+      let senderDIDs = Array(Set(membersByConvo.values.flatMap { $0 }.filter { $0 != appState.userDID }))
       senderProfiles = await appState.mlsProfileEnricher.ensureProfiles(
         for: senderDIDs,
         using: appState.client,
@@ -146,21 +190,20 @@ struct MLSChatRequestsView: View {
   }
 
   @MainActor
-  private func accept(_ request: BlueCatbirdMlsListChatRequests.ChatRequest) async {
-    guard processingRequestIDs.insert(request.id).inserted else { return }
-    defer { processingRequestIDs.remove(request.id) }
+  private func accept(_ request: MLSConversationModel) async {
+    guard processingConvoIDs.insert(request.conversationID).inserted else { return }
+    defer { processingConvoIDs.remove(request.conversationID) }
 
     do {
-      guard let apiClient = await appState.getMLSAPIClient() else {
+      guard let manager = await appState.getMLSConversationManager() else {
         throw MLSAPIError.serverUnavailable
       }
 
-      let result = try await apiClient.acceptChatRequest(requestId: request.id)
+      // Accept is local-only - just update the requestState
+      try await manager.acceptConversationRequest(convoId: request.conversationID)
 
       if let onAcceptedConversation {
-        await onAcceptedConversation(result.convoId)
-      } else if let manager = await appState.getMLSConversationManager() {
-        try? await manager.syncWithServer()
+        await onAcceptedConversation(request.conversationID)
       }
 
       dismiss()
@@ -172,17 +215,18 @@ struct MLSChatRequestsView: View {
   }
 
   @MainActor
-  private func decline(_ request: BlueCatbirdMlsListChatRequests.ChatRequest) async {
-    guard processingRequestIDs.insert(request.id).inserted else { return }
-    defer { processingRequestIDs.remove(request.id) }
+  private func decline(_ request: MLSConversationModel) async {
+    guard processingConvoIDs.insert(request.conversationID).inserted else { return }
+    defer { processingConvoIDs.remove(request.conversationID) }
 
     do {
-      guard let apiClient = await appState.getMLSAPIClient() else {
+      guard let manager = await appState.getMLSConversationManager() else {
         throw MLSAPIError.serverUnavailable
       }
 
-      _ = try await apiClient.declineChatRequest(requestId: request.id)
-      await loadRequests(refresh: true)
+      // Decline leaves the MLS group on server and deletes local data
+      try await manager.declineConversationRequest(convoId: request.conversationID)
+      await loadRequests()
     } catch {
       logger.error("Failed to decline chat request: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
@@ -192,11 +236,13 @@ struct MLSChatRequestsView: View {
 }
 
 private struct MLSChatRequestRow: View {
-  let request: BlueCatbirdMlsListChatRequests.ChatRequest
+  let request: MLSConversationModel
+  let senderDID: String
   let senderProfile: MLSProfileEnricher.ProfileData?
   let isProcessing: Bool
   let onAccept: () -> Void
   let onDecline: () -> Void
+  let onBlock: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -214,27 +260,17 @@ private struct MLSChatRequestRow: View {
             .foregroundColor(.secondary)
             .lineLimit(1)
 
-          if let preview = request.previewText, !preview.isEmpty {
-            Text(preview)
+          if let title = request.title, !title.isEmpty {
+            Text(title)
               .designFootnote()
               .foregroundColor(.secondary)
               .lineLimit(3)
           }
 
           HStack(spacing: 8) {
-            if let messageCount = request.messageCount, messageCount > 0 {
-              Label("\(messageCount)", systemImage: "envelope")
-                .labelStyle(.titleAndIcon)
-            }
-
-            if request.isGroupInvite == true {
-              Label("Group invite", systemImage: "person.3")
-                .labelStyle(.titleAndIcon)
-            }
-
             Spacer()
 
-            Text(request.createdAt.date.formatted(date: .abbreviated, time: .shortened))
+            Text(request.createdAt.formatted(date: .abbreviated, time: .shortened))
               .designCaption()
               .foregroundColor(.secondary)
           }
@@ -257,12 +293,21 @@ private struct MLSChatRequestRow: View {
         .buttonStyle(.bordered)
         .disabled(isProcessing)
 
+        Button(role: .destructive, action: onBlock) {
+          Text("Block")
+        }
+        .buttonStyle(.bordered)
+        .tint(.red)
+        .disabled(isProcessing)
+
+        Spacer()
+
         Button(action: onAccept) {
           if isProcessing {
             ProgressView()
               .tint(.white)
           } else {
-            Text(acceptTitle)
+            Text("Accept")
           }
         }
         .buttonStyle(.borderedProminent)
@@ -276,18 +321,14 @@ private struct MLSChatRequestRow: View {
     if let profile = senderProfile {
       return profile.displayName ?? "@\(profile.handle)"
     }
-    return shortDID(request.senderDid)
+    return shortDID(senderDID)
   }
 
   private var handleText: String {
     if let profile = senderProfile {
       return "@\(profile.handle)"
     }
-    return shortDID(request.senderDid)
-  }
-
-  private var acceptTitle: String {
-    request.isGroupInvite == true ? "Join" : "Accept"
+    return shortDID(senderDID)
   }
 
   private func shortDID(_ did: String) -> String {

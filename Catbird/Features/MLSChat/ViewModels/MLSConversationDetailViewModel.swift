@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSConversationDetailViewModel.swift
 //  Catbird
@@ -73,9 +74,6 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
     /// Draft message text
     var draftMessage = ""
 
-    /// Whether user is typing (for typing indicators)
-    private(set) var isTyping = false
-
     // MARK: - Dependencies
 
     private let database: MLSDatabase
@@ -89,7 +87,6 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
     private let messagesSubject = PassthroughSubject<[BlueCatbirdMlsDefs.MessageView], Never>()
     private let conversationSubject = PassthroughSubject<BlueCatbirdMlsDefs.ConvoView, Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
-    private var typingTimer: Timer?
 
     /// Publisher for message updates
     var messagesPublisher: AnyPublisher<[BlueCatbirdMlsDefs.MessageView], Never> {
@@ -119,6 +116,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         self.apiClient = apiClient
         self.conversationManager = conversationManager
         logger.debug("MLSConversationDetailViewModel initialized for conversation: \(conversationId)")
+        
+        setupNotificationObservers()
     }
 
     // MARK: - Public Methods
@@ -176,10 +175,15 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
                 logger.debug("Conversation not in cache, syncing with server...")
 
                 // Move database operations off main thread to prevent priority inversion
+                let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+                try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
                 let manager = conversationManager
                 try await Task.detached(priority: .userInitiated) {
                     try await manager.syncWithServer()
                 }.value
+
+                try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
                 if let syncedConvo = conversationManager.conversations[conversationId] {
                     conversation = syncedConvo
@@ -190,6 +194,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
                     throw MLSError.conversationNotFound
                 }
             }
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("loadConversationDetails cancelled (account switch)")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -206,11 +212,16 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         isLoadingMessages = true
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             let (messageViews, lastSeq, gapInfo) = try await apiClient.getMessages(
                 convoId: conversationId,
                 limit: 50,
                 sinceSeq: nil
             )
+
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
             // Server guarantees messages are already sorted by (epoch ASC, seq ASC)
             // No need to reverse - server returns in correct chronological order
@@ -229,6 +240,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
             removeDuplicateOptimisticMessages()
 
             logger.debug("Loaded \(self.messages.count) messages, lastSeq: \(lastSeq?.description ?? "nil")")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("loadMessages cancelled (account switch)")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -246,11 +259,16 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         isLoadingMessages = true
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             let (messageViews, lastSeq, gapInfo) = try await apiClient.getMessages(
                 convoId: conversationId,
                 limit: 50,
                 sinceSeq: sinceSeq
             )
+
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
             // Server returns messages in (epoch ASC, seq ASC) order
             // Append newer messages to the end
@@ -269,6 +287,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
             removeDuplicateOptimisticMessages()
 
             logger.debug("Loaded \(messageViews.count) more messages, lastSeq: \(lastSeq?.description ?? "nil")")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("loadMoreMessages cancelled (account switch)")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -312,6 +332,9 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         logger.debug("sendMessage start: len=\(plaintext.count), embed=\(embed != nil ? "yes" : "no")")
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             // CRITICAL: Move FFI work OFF main thread to prevent UI blocking
             // Capture values for detached task
             let convoId = conversationId
@@ -327,6 +350,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
                 return msgId
             }.value
 
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             // Back on @MainActor for UI updates
             // Remove optimistic message
             optimisticMessages.removeAll { $0.id == optimisticMessage.id }
@@ -338,6 +363,10 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
             draftMessage = ""
 
             logger.debug("Sent message \(messageId) to conversation \(self.conversationId) in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            // Account switched mid-send; don't surface as failure.
+            optimisticMessages.removeAll { $0.id == optimisticMessage.id }
+            logger.info("sendMessage cancelled (account switch)")
         } catch {
             // Mark optimistic message as failed
             if let index = optimisticMessages.firstIndex(where: { $0.id == optimisticMessage.id }) {
@@ -368,9 +397,16 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         error = nil
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             // Use the conversation manager to properly clean up MLS group and database
             try await conversationManager.leaveConversation(convoId: conversationId)
+
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
             logger.debug("Left conversation \(self.conversationId)")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("leaveConversation cancelled (account switch)")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -382,24 +418,7 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         isLeavingConversation = false
     }
 
-    /// Update typing status
-    @MainActor
-    func setTyping(_ typing: Bool) {
-        isTyping = typing
-
-        if typing {
-            // Reset typing timer
-            typingTimer?.invalidate()
-            typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    self?.isTyping = false
-                }
-            }
-        } else {
-            typingTimer?.invalidate()
-            typingTimer = nil
-        }
-    }
+    // Typing indicator functionality has been removed.
 
     /// Refresh conversation and messages
     @MainActor
@@ -428,6 +447,9 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
         logger.debug("Retrying message: len=\(message.text.count)")
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             // CRITICAL: Move FFI work OFF main thread to prevent UI blocking
             // Capture values for detached task
             let convoId = conversationId
@@ -443,6 +465,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
                 return msgId
             }.value
 
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             // Back on @MainActor for UI updates
             // Remove optimistic message on success
             optimisticMessages.removeAll { $0.id == optimisticId }
@@ -451,6 +475,8 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
             await loadMessages()
 
             logger.debug("Retry successful for message \(messageId) in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("retryMessage cancelled (account switch)")
         } catch {
             // Mark as failed again
             if let idx = optimisticMessages.firstIndex(where: { $0.id == optimisticId }) {
@@ -475,15 +501,54 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
     /// or when messages are loaded from cache/server and display is refreshed.
     @MainActor
     private func removeDuplicateOptimisticMessages() {
-        // MessageView doesn't contain plaintext - deduplication happens via messageId matching
-        // when messages are successfully sent (see sendMessage and retryMessage functions)
-        // This function is kept for potential future enhancements with cache-based matching
+        // Simple deduplication: if we have confirmed messages, we can check if any optimistic messages
+        // are redundant. But without a shared ID, it's hard.
+        // However, `sendMessage` handles the removal on success.
+        // This method is kept as a hook for potential specific checks.
     }
+
+    // MARK: - Notification Handling
+
+    private func setupNotificationObservers() {
+        NotificationCenter.default.publisher(for: Notification.Name("MLSMessageSaved"))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                self?.handleMessageSaved(notification)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleMessageSaved(_ notification: Notification) {
+        // Verify this notification is for our conversation
+        guard let userInfo = notification.userInfo,
+            let savedConvoId = userInfo["conversationID"] as? String,
+            savedConvoId == self.conversationId
+        else {
+            return
+        }
+
+        // Log receipt
+        if let messageId = userInfo["messageID"] as? String {
+            logger.debug(
+                "📩 [Realtime] Received message saved notification for msg \(messageId) in \(savedConvoId)"
+            )
+        }
+
+        // Trigger reload to fetch the new message from API (which now has it, or we have it locally and API should return it?)
+        // Note: API client mimics server behavior. If we saved it locally (via NSE/SSE),
+        // the API client might not know about it if it's purely remote.
+        // BUT `MLSAPIClient` usually interacts with the same backend/store.
+        // If `apiClient` hits the network, we assume the server pushed it to us (SSE) AND we saved it.
+        // So server has it.
+        Task {
+            await self.loadMessages()
+        }
+    }
+
 
     // MARK: - Deinitialization
 
     deinit {
-        typingTimer?.invalidate()
         cancellables.forEach { $0.cancel() }
     }
 }

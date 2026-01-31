@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSGroupedMember.swift
 //  Catbird

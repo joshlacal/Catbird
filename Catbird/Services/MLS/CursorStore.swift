@@ -6,6 +6,7 @@
 //  Supports resumable subscriptions per MLS_HYBRID_MESSAGING_PLAN.md
 //
 
+import CatbirdMLSService
 import Foundation
 import SwiftData
 import OSLog
@@ -46,7 +47,7 @@ final class ConversationCursor {
 
 /// Cursor store for managing subscription resume points
 @MainActor
-public final class CursorStore {
+public final class CursorStore: MLSEventCursorStore {
     
     // MARK: - Properties
     

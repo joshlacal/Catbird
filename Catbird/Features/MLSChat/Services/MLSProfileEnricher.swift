@@ -2,6 +2,7 @@ import Foundation
 import Petrel
 import OSLog
 import CatbirdMLSCore
+import CatbirdMLSService
 
 #if os(iOS)
 
@@ -216,13 +217,14 @@ actor MLSProfileEnricher {
     currentUserDID: String
   ) async {
     do {
-      let database = try await MLSGRDBManager.shared.getDatabasePool(for: currentUserDID)
-      
-      let updatedCount = try await MLSStorageHelpers.batchUpdateMemberProfiles(
-        in: database,
-        profiles: profiles,
-        currentUserDID: currentUserDID
-      )
+      // Use smart routing - auto-routes to lightweight Queue if needed
+      let updatedCount = try await MLSGRDBManager.shared.write(for: currentUserDID) { db in
+        try MLSStorageHelpers.batchUpdateMemberProfilesSync(
+          in: db,
+          profiles: profiles,
+          currentUserDID: currentUserDID
+        )
+      }
       
       if updatedCount > 0 {
         logger.info("📝 Persisted \(updatedCount) profile(s) to MLS member table for NSE access")

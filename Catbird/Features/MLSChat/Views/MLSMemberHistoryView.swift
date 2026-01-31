@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSMemberHistoryView.swift
 //  Catbird
@@ -94,8 +95,10 @@ struct MLSMemberHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Done") {
+                Button {
                     dismiss()
+                } label: {
+                    Image(systemName: "xmark")
                 }
             }
         }
@@ -331,6 +334,8 @@ private struct MembershipEventRow: View {
             return "person.fill.xmark"
         case .roleChanged:
             return "person.badge.shield.checkmark"
+        case .deviceRemoved:
+            return "iphone.slash"
         }
     }
 
@@ -338,7 +343,7 @@ private struct MembershipEventRow: View {
         switch event.eventType {
         case .joined, .deviceAdded:
             return .green
-        case .removed, .left, .kicked:
+        case .removed, .left, .kicked, .deviceRemoved:
             return .red
         case .roleChanged:
             return .blue
@@ -365,6 +370,8 @@ private struct MembershipEventRow: View {
             return "Kicked from the group"
         case .roleChanged:
             return "Role changed"
+        case .deviceRemoved:
+            return "Device removed"
         }
     }
 

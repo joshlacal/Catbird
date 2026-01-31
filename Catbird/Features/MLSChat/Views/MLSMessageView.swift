@@ -1,5 +1,6 @@
 import SwiftUI
 import CatbirdMLSCore
+import CatbirdMLSService
 
 #if os(iOS)
 
@@ -188,9 +189,12 @@ struct MLSMessageView: View {
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
-            showingErrorDetails = false
-          }
+            Button {
+                showingErrorDetails = false
+            } label: {
+                Image(systemName: "checkmark")
+            }
+
         }
       }
     }

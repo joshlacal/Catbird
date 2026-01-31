@@ -1206,7 +1206,7 @@ The API follows lexicon definitions located at:
 - `blue.catbird.mls.requestRejoin` - Request to rejoin after state loss
 
 #### Real-time Events
-- `blue.catbird.mls.streamConvoEvents` - Stream conversation events (SSE)
+- `blue.catbird.mls.subscribeConvoEvents` - Stream conversation events (SSE)
 
 ## Contributing
 

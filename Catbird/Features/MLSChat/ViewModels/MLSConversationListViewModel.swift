@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSConversationListViewModel.swift
 //  Catbird
@@ -121,6 +122,9 @@ final class MLSConversationListViewModel {
         error = nil
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             let result = try await Task.detached(priority: .userInitiated) { [apiClient] in
                 try await apiClient.getConversations(
                     limit: 50,
@@ -128,12 +132,16 @@ final class MLSConversationListViewModel {
                 )
             }.value
 
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             conversations = result.convos
             cursor = result.cursor
             hasMore = result.cursor != nil
 
             conversationsSubject.send(conversations)
             logger.debug("Loaded \(self.conversations.count) conversations")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("loadConversations cancelled (account switch)")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -151,6 +159,9 @@ final class MLSConversationListViewModel {
         isLoading = true
 
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             let result = try await Task.detached(priority: .userInitiated) { [apiClient, cursor] in
                 try await apiClient.getConversations(
                     limit: 50,
@@ -158,12 +169,16 @@ final class MLSConversationListViewModel {
                 )
             }.value
 
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             conversations.append(contentsOf: result.convos)
             self.cursor = result.cursor
             hasMore = result.cursor != nil
 
             conversationsSubject.send(conversations)
             logger.debug("Loaded \(result.convos.count) more conversations")
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("loadMoreConversations cancelled (account switch)")
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -271,14 +286,21 @@ final class MLSConversationListViewModel {
     private func refreshSpecificConversation(_ convoId: String) async {
         // Refresh a specific conversation from the server
         do {
+            let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
             let result = try await Task.detached(priority: .userInitiated) { [apiClient] in
                 try await apiClient.getConversations(limit: 100, cursor: nil)
             }.value
+
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
             if let updatedConvo = result.convos.first(where: { $0.groupId == convoId }) {
                 updateConversation(updatedConvo)
                 logger.debug("Refreshed conversation \(convoId) after state change")
             }
+        } catch is MLSCoordinationAwareTask.GenerationStaleError {
+            logger.info("refreshSpecificConversation cancelled (account switch)")
         } catch {
             logger.error("Failed to refresh conversation \(convoId): \(error.localizedDescription)")
         }

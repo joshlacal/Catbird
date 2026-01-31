@@ -8,6 +8,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
   @Bindable var dataSource: DataSource
   @Binding var navigationPath: NavigationPath
   var onRequestEmojiPicker: ((String) -> Void)? = nil
+  var isOtherMemberDeleted: Bool = false
 
   @State private var scrollProxy: ScrollViewProxy?
   @State private var reactionOverlay: (messageID: String, bubbleGlobalFrame: CGRect, isFromCurrentUser: Bool)?
@@ -95,19 +96,32 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
       }
     }
     .safeAreaInset(edge: .bottom) {
-      UnifiedInputBar(
-        text: Binding(
-          get: { dataSource.draftText },
-          set: { dataSource.draftText = $0 }
-        ),
-        onSend: { text in
-          Task {
-            await dataSource.sendMessage(text: text)
-          }
+      if isOtherMemberDeleted {
+        HStack(spacing: 8) {
+          Image(systemName: "person.slash")
+            .foregroundStyle(.secondary)
+          Text("This account has been deleted")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         }
-      )
-      .padding(.horizontal, 16)
-      .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(Color(nsColor: .windowBackgroundColor))
+      } else {
+        UnifiedInputBar(
+          text: Binding(
+            get: { dataSource.draftText },
+            set: { dataSource.draftText = $0 }
+          ),
+          onSend: { text in
+            Task {
+              await dataSource.sendMessage(text: text)
+            }
+          }
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+      }
     }
     .task {
       await dataSource.loadMessages()

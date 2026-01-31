@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import Foundation
 import Petrel
+import CatbirdMLSService
 
 #if os(iOS)
 
@@ -75,12 +76,12 @@ import Petrel
       payload.messageType == .text
     }
 
-    /// Whether this is a control message (reaction, read receipt, typing)
+    /// Whether this is a control message (reaction)
     var isControlMessage: Bool {
       switch payload.messageType {
-      case .reaction, .readReceipt, .typing:
+      case .reaction:
         return true
-      case .text, .adminRoster, .adminAction:
+      case .text, .readReceipt, .typing, .adminRoster, .adminAction:
         return false
       }
     }
@@ -100,15 +101,7 @@ import Petrel
       payload.reaction
     }
 
-    /// Read receipt payload (for read receipt messages)
-    var readReceipt: MLSReadReceiptPayload? {
-      payload.readReceipt
-    }
-
-    /// Typing payload (for typing indicator messages)
-    var typing: MLSTypingPayload? {
-      payload.typing
-    }
+    // Read receipt and typing payload properties have been removed.
 
     /// Check if message is from specific sender
     func isFrom(_ did: String) -> Bool {

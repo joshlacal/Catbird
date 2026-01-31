@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSMemberActionsSheet.swift
 //  Catbird
@@ -281,7 +282,7 @@ struct MLSMemberActionsSheet: View {
 
             case .promote:
                 try await conversationManager.promoteAdmin(
-                    in: conversationId,
+                    convoId: conversationId,
                     memberDid: member.did.description
                 )
                 logger.info("Successfully promoted member to admin: \(self.member.did.description)")
@@ -289,7 +290,7 @@ struct MLSMemberActionsSheet: View {
 
             case .demote:
                 try await conversationManager.demoteAdmin(
-                    in: conversationId,
+                    convoId: conversationId,
                     memberDid: member.did.description
                 )
                 logger.info("Successfully demoted admin: \(self.member.did.description)")

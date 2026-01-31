@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSNewConversationViewModel.swift
 //  Catbird

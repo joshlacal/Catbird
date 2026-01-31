@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import Foundation
 import Petrel
+import CatbirdMLSService
 
 /// Adapter that conforms MLS messages to UnifiedChatMessage
 struct MLSMessageAdapter: UnifiedChatMessage {
@@ -190,6 +191,13 @@ struct MLSMessageAdapter: UnifiedChatMessage {
 
   var validationFailureReason: String? {
     metadata.validationFailureReason
+  }
+
+  /// True if the message has valid decrypted content and is not a placeholder/error state
+  /// Used by UI to suppress reaction display for undecryptable messages
+  var isDecryptedAndValid: Bool {
+    // A message is valid if it has non-empty text and no processing errors
+    !text.isEmpty && processingError == nil && validationFailureReason == nil
   }
 
   var debugInfo: MLSMessageDebugInfo? {

@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSMessageRowView.swift
 //  Catbird
@@ -19,7 +20,7 @@ import SwiftUI
     let message: Message
     let conversationID: String
     let reactions: [MLSMessageReaction]
-    let readByCount: Int
+
     let currentUserDID: String?
     let participantProfiles: [String: MLSProfileEnricher.ProfileData]
     let onAddReaction: (String, String) -> Void  // (messageId, emoji)
@@ -160,18 +161,7 @@ import SwiftUI
           reactionsView
         }
 
-        // Read receipt indicator (only for sent messages from current user)
-        if message.user.isCurrentUser && readByCount > 0 {
-          HStack(spacing: 4) {
-            Image(systemName: "checkmark.circle.fill")
-              .font(.caption2)
-              .foregroundColor(.blue)
-            Text(readByCount == 1 ? "Read" : "Read by \(readByCount)")
-              .font(.caption2)
-              .foregroundColor(.secondary)
-          }
-          .frame(maxWidth: 280, alignment: .trailing)
-        }
+
       }
     }
 
@@ -266,7 +256,7 @@ import SwiftUI
           MLSMessageReaction(messageId: "1", reaction: "👍", senderDID: "did:plc:user2"),
           MLSMessageReaction(messageId: "1", reaction: "❤️", senderDID: "did:plc:user1"),
         ],
-        readByCount: 0,
+
         currentUserDID: "did:plc:user1",
         participantProfiles: [:],
         onAddReaction: { _, _ in },
@@ -286,7 +276,7 @@ import SwiftUI
         ),
         conversationID: "test-convo",
         reactions: [],
-        readByCount: 2,
+
         currentUserDID: "did:plc:me",
         participantProfiles: [:],
         onAddReaction: { _, _ in },

@@ -1,6 +1,7 @@
 import Foundation
 import Petrel
 import CatbirdMLSCore
+import CatbirdMLSService
 
 #if os(iOS)
 

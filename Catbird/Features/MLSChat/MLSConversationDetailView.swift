@@ -1,4 +1,5 @@
 import CatbirdMLSCore
+import CatbirdMLSService
 import GRDB
 import OSLog
 import Petrel
@@ -49,13 +50,13 @@ struct MLSConversationDetailView: View {
   @State private var isSendingMessage = false
   @State private var showingMemberManagement = false
   @State private var showingEncryptionInfo = false
-  @State private var eventStreamManager: MLSEventStreamManager?
-  @State private var stateObserver: MLSStateObserver?  // Observer for encrypted MLS events (reactions, read receipts, typing)
-  @State private var typingUsers: Set<String> = []
+  @State private var webSocketManager: MLSWebSocketManager?
+  @State private var stateObserver: MLSStateObserver?  // Observer for encrypted MLS events (reactions)
   @State private var serverError: String?
   @State private var hasStartedSubscription = false
   @State var sendError: String?
   @State var showingSendError = false
+  @State private var pipelineError: String?
   @State private var showingLeaveConfirmation = false
   @State private var showingAdminDashboard = false
   @State private var showingReportsView = false
@@ -79,7 +80,7 @@ struct MLSConversationDetailView: View {
   @State private var embedsMap: [String: MLSEmbedData] = [:]
   @State private var messageErrorsMap: [String: MessageErrorInfo] = [:]
   @State private var messageReactionsMap: [String: [MLSMessageReaction]] = [:]
-  @State private var messageReadByMap: [String: Set<String>] = [:]  // messageId -> set of DIDs who read it
+
   @State private var isLoadingMoreMessages = false
   @State private var hasMoreMessages = true
 
@@ -118,6 +119,15 @@ struct MLSConversationDetailView: View {
   // Use that shared path so embeds can navigate to posts/threads.
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
+  }
+
+  private var isChatTabActive: Bool {
+    appState.navigationManager.currentTabIndex == 4
+  }
+
+  /// Whether this conversation is a pending chat request that needs acceptance
+  private var isPendingRequest: Bool {
+    conversationModel?.requestState == .pendingInbound
   }
 
   private var mainContent: some View {
@@ -182,6 +192,34 @@ struct MLSConversationDetailView: View {
           .clipShape(RoundedRectangle(cornerRadius: 10))
       }
 
+      if let pipelineError, !isLoadingMessages {
+        VStack(spacing: 12) {
+          Text("Couldn't load messages")
+            .font(.headline)
+
+          Text(pipelineError)
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+
+          HStack(spacing: 12) {
+            Button("Retry") {
+              retryConversationPipeline()
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button("Dismiss") {
+              self.pipelineError = nil
+            }
+            .buttonStyle(.bordered)
+          }
+        }
+        .padding()
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding()
+      }
+
       // Show initialization overlay when conversation is initializing
       if let state = viewModel?.conversationState, case .initializing(let progress) = state {
         initializationOverlay(progress: progress)
@@ -235,27 +273,27 @@ struct MLSConversationDetailView: View {
   @available(iOS 16.0, *)
   @ViewBuilder
   private var mlsInputBar: some View {
-    MLSMessageComposerView(
-      text: Binding(
-        get: { unifiedDataSource?.draftText ?? "" },
-        set: { unifiedDataSource?.draftText = $0 }
-      ),
-      attachedEmbed: Binding(
-        get: { unifiedDataSource?.attachedEmbed },
-        set: { unifiedDataSource?.attachedEmbed = $0 }
-      ),
-      conversationId: conversationId,
-      onSend: { text, embed in
-        Task {
-          if let dataSource = unifiedDataSource {
-            dataSource.attachedEmbed = embed
-            await dataSource.sendMessage(text: text)
+    if isChatTabActive {
+      MLSMessageComposerView(
+        text: Binding(
+          get: { unifiedDataSource?.draftText ?? "" },
+          set: { unifiedDataSource?.draftText = $0 }
+        ),
+        attachedEmbed: Binding(
+          get: { unifiedDataSource?.attachedEmbed },
+          set: { unifiedDataSource?.attachedEmbed = $0 }
+        ),
+        conversationId: conversationId,
+        onSend: { text, embed in
+          Task {
+            if let dataSource = unifiedDataSource {
+              dataSource.attachedEmbed = embed
+              await dataSource.sendMessage(text: text)
+            }
           }
         }
-      }
-    )
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+      )
+    }
   }
 
   // MARK: - Message Long Press Handler
@@ -292,8 +330,7 @@ struct MLSConversationDetailView: View {
               message: message,
               conversationID: conversationId,
               reactions: messageReactionsMap[message.id] ?? [],
-              readByCount: message.user.isCurrentUser
-                ? messageReadByMap[message.id]?.count ?? 0 : 0,
+
               currentUserDID: appState.userDID,
               participantProfiles: participantProfiles,
               onAddReaction: { messageId, emoji in
@@ -321,76 +358,33 @@ struct MLSConversationDetailView: View {
       }
     }
     .safeAreaInset(edge: .bottom) {
-      VStack(spacing: 0) {
-        // Typing indicator
-        if !typingUsers.isEmpty {
-          typingIndicatorView
-        }
-
-        MLSMessageComposerView(
-          text: $composerText,
-          attachedEmbed: $attachedEmbed,
-          conversationId: conversationId,
-          onSend: { text, embed in
-            Task { await sendMLSMessage(text: text, embed: embed) }
+      if isChatTabActive {
+        VStack(spacing: 0) {
+          if isPendingRequest {
+            // Show accept/decline buttons for pending chat requests
+            ChatRequestActionBar(
+              conversationId: conversationId,
+              onAccept: {
+                Task { await acceptChatRequest() }
+              },
+              onDecline: {
+                Task { await declineChatRequest() }
+              }
+            )
+          } else {
+            MLSMessageComposerView(
+              text: $composerText,
+              attachedEmbed: $attachedEmbed,
+              conversationId: conversationId,
+              onSend: { text, embed in
+                Task { await sendMLSMessage(text: text, embed: embed) }
+              }
+            )
           }
-        )
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        }
       }
     }
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-  }
-
-  /// Typing indicator view showing which users are currently typing
-  @ViewBuilder
-  private var typingIndicatorView: some View {
-    let typingNames =
-      typingUsers
-      .filter { $0 != appState.userDID }  // Don't show self typing
-      .compactMap { did -> String? in
-        participantProfiles[did]?.displayName ?? participantProfiles[did]?.handle
-      }
-
-    if !typingNames.isEmpty {
-      HStack(spacing: DesignTokens.Spacing.xs) {
-        // Animated dots
-        HStack(spacing: 3) {
-          ForEach(0..<3, id: \.self) { index in
-            Circle()
-              .fill(Color.secondary)
-              .frame(width: 6, height: 6)
-              .opacity(0.7)
-              .animation(
-                .easeInOut(duration: 0.5)
-                  .repeatForever(autoreverses: true)
-                  .delay(Double(index) * 0.15),
-                value: typingUsers.count
-              )
-          }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-          RoundedRectangle(cornerRadius: 12)
-            .fill(Color.gray.opacity(0.2))
-        )
-
-        Text(
-          typingNames.count == 1
-            ? "\(typingNames[0]) is typing..."
-            : "\(typingNames.count) people are typing..."
-        )
-        .designCaption()
-        .foregroundColor(.secondary)
-
-        Spacer()
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 4)
-      .transition(.move(edge: .bottom).combined(with: .opacity))
-      .animation(.easeInOut(duration: 0.2), value: typingUsers.count)
-    }
   }
 
   // MARK: - Reaction Handling
@@ -402,9 +396,9 @@ struct MLSConversationDetailView: View {
       do {
         // Use encrypted reaction (E2EE via MLS)
         _ = try await manager.sendEncryptedReaction(
+          convoId: conversationId,
+          messageId: messageId,
           emoji: emoji,
-          to: messageId,
-          in: conversationId,
           action: .add
         )
 
@@ -438,9 +432,9 @@ struct MLSConversationDetailView: View {
       do {
         // Use encrypted reaction removal (E2EE via MLS)
         _ = try await manager.sendEncryptedReaction(
+          convoId: conversationId,
+          messageId: messageId,
           emoji: emoji,
-          to: messageId,
-          in: conversationId,
           action: .remove
         )
 
@@ -481,6 +475,8 @@ struct MLSConversationDetailView: View {
     .padding(32)
     .background(.ultraThinMaterial)
     .clipShape(RoundedRectangle(cornerRadius: 16))
+    .accessibilityElement(children: .combine)
+    .accessibilityIdentifier("mls.conversation.initializationOverlay")
   }
 
   @ViewBuilder
@@ -771,7 +767,7 @@ struct MLSConversationDetailView: View {
 
     stateObserver = observer
     manager.addObserver(observer)
-    logger.info("📡 Registered MLS state observer for encrypted reactions/read receipts/typing")
+    logger.info("📡 Registered MLS state observer for encrypted reactions")
   }
 
   /// Handle encrypted MLS state events (reactions, read receipts, typing indicators)
@@ -784,8 +780,21 @@ struct MLSConversationDetailView: View {
       // Only handle events for this conversation
       guard eventConvoId == convoId else { return }
 
-      // Skip our own reactions (already handled optimistically)
-      if senderDID == userDID { return }
+      // SAFETY: Check if parent message is decrypted/valid before displaying in legacy path
+      let parentMessage = unifiedDataSource?.message(for: messageId)
+      guard parentMessage?.isDecryptedAndValid == true else {
+        logger.warning(
+          "⚠️ [REACTION-SAFETY] Suppressing reaction display for undecryptable message: \(messageId.prefix(16))"
+        )
+        // Still forward to data source for caching (it has its own safety check)
+        unifiedDataSource?.applyReactionEvent(
+          messageID: messageId,
+          emoji: emoji,
+          senderDID: senderDID,
+          action: action
+        )
+        return
+      }
 
       logger.debug(
         "📬 Received encrypted reaction: \(emoji) on \(messageId) from \(senderDID) action=\(action)"
@@ -823,26 +832,15 @@ struct MLSConversationDetailView: View {
         }
       }
 
-    case .readReceiptReceived(let eventConvoId, let messageId, let senderDID):
-      // Only handle events for this conversation
-      guard eventConvoId == convoId else { return }
+      // Keep the unified chat data source in sync so reactions render immediately.
+      unifiedDataSource?.applyReactionEvent(
+        messageID: messageId,
+        emoji: emoji,
+        senderDID: senderDID,
+        action: action
+      )
 
-      // Skip our own read receipts
-      if senderDID == userDID { return }
-
-      logger.debug("📬 Received encrypted read receipt for \(messageId) from \(senderDID)")
-
-      // Update read-by map for the message
-      var readers = messageReadByMap[messageId] ?? []
-      readers.insert(senderDID)
-      messageReadByMap[messageId] = readers
-
-    case .typingChanged(let eventConvoId, let typingUsersList):
-      // Only handle events for this conversation
-      guard eventConvoId == convoId else { return }
-
-      // Update typing users (excluding self)
-      typingUsers = Set(typingUsersList.filter { $0 != userDID })
+    // Read receipts and typing indicators have been removed
 
     default:
       // Ignore other events
@@ -942,6 +940,11 @@ struct MLSConversationDetailView: View {
 
   @MainActor
   private func loadPendingReportsCount() async {
+    // TODO: Re-enable when reports feature is implemented on server
+    pendingReportsCount = 0
+    return
+    
+    /* Reports disabled - uncomment when ready
     guard isCurrentUserAdmin,
       let conversationManager = viewModel?.conversationManager
     else {
@@ -961,6 +964,7 @@ struct MLSConversationDetailView: View {
       logger.error("Failed to load pending reports count: \(error.localizedDescription)")
       pendingReportsCount = 0
     }
+    */
   }
 
   // MARK: - Encryption Status Header
@@ -985,8 +989,8 @@ struct MLSConversationDetailView: View {
 
         // Show partial history note when user joined via External Commit at epoch > 1
         if let model = conversationModel,
-           model.joinMethod == .externalCommit,
-           model.joinEpoch > 1
+          model.joinMethod == .externalCommit,
+          model.joinEpoch > 1
         {
           HStack(spacing: 4) {
             Image(systemName: "clock.arrow.circlepath")
@@ -1057,9 +1061,12 @@ struct MLSConversationDetailView: View {
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
-            showingEncryptionInfo = false
-          }
+            Button {
+                showingEncryptionInfo = false
+            } label: {
+                Image(systemName: "checkmark")
+            }
+
         }
       }
     }
@@ -1216,6 +1223,81 @@ struct MLSConversationDetailView: View {
 
   // MARK: - Actions
 
+  private struct PipelineTimeoutError: LocalizedError {
+    let operation: String
+    let seconds: TimeInterval
+
+    var errorDescription: String? {
+      let rounded = Int(seconds.rounded())
+      return "Timed out after \(rounded)s while \(operation)."
+    }
+  }
+
+  private final class TimeoutResumeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResolve = false
+
+    func tryResolve() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      if didResolve { return false }
+      didResolve = true
+      return true
+    }
+  }
+
+  private func withTimeout<T>(
+    seconds: TimeInterval,
+    operationName: String,
+    operation: @escaping @Sendable () async throws -> T
+  ) async throws -> T {
+    let gate = TimeoutResumeGate()
+
+    return try await withCheckedThrowingContinuation { continuation in
+      let operationTask = Task.detached(priority: .userInitiated) {
+        do {
+          let value = try await operation()
+          if gate.tryResolve() {
+            continuation.resume(returning: value)
+          }
+        } catch {
+          if gate.tryResolve() {
+            continuation.resume(throwing: error)
+          }
+        }
+      }
+
+      Task.detached(priority: .userInitiated) {
+        do {
+          try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+          if gate.tryResolve() {
+            operationTask.cancel()
+            continuation.resume(
+              throwing: PipelineTimeoutError(operation: operationName, seconds: seconds)
+            )
+          }
+        } catch {
+          // Ignore cancellation: if the operation completes first, the timeout is irrelevant.
+        }
+      }
+    }
+  }
+
+  @MainActor
+  private func showPipelineError(_ message: String) {
+    pipelineError = message
+  }
+
+  private func retryConversationPipeline() {
+    Task { @MainActor in
+      pipelineError = nil
+    }
+
+    Task.detached(priority: .userInitiated) { [self] in
+      await self.runConversationPipeline()
+    }
+  }
+
   /// MLS conversation pipeline that runs independently of view lifecycle
   /// This function is called from a detached task to ensure MLS state updates
   /// complete even if the user navigates away from the view
@@ -1244,6 +1326,7 @@ struct MLSConversationDetailView: View {
 
     // PHASE 1: Fetch and decrypt new messages from server
     await MainActor.run {
+      pipelineError = nil
       isLoadingMessages = true
     }
     defer {
@@ -1252,15 +1335,26 @@ struct MLSConversationDetailView: View {
       }
     }
 
+    let groupInitializationTimeoutSeconds: TimeInterval = 20
+    let fetchMessagesTimeoutSeconds: TimeInterval = 20
+    let processMessagesTimeoutSeconds: TimeInterval = 30
+
     guard let manager = await appState.getMLSConversationManager() else {
       logger.error("Failed to get MLS conversation manager")
+      await showPipelineError("MLS service unavailable. Please try again.")
       return
     }
 
     // Ensure the MLS group is initialized for this conversation
     do {
-      try await manager.ensureGroupInitialized(for: conversationId)
+      try await withTimeout(seconds: groupInitializationTimeoutSeconds, operationName: "initializing secure messaging") {
+        try await manager.ensureGroupInitialized(for: conversationId)
+      }
       logger.info("MLS group initialized for conversation \(conversationId)")
+    } catch is PipelineTimeoutError {
+      logger.error("⏱️ [PIPELINE] Timed out initializing MLS group for \(conversationId)")
+      await showPipelineError("Timed out initializing secure messaging. Tap Retry to try again.")
+      return
     } catch let error as MLSConversationError {
       if case .keyPackageDesyncRecoveryInitiated = error {
         await MainActor.run {
@@ -1272,10 +1366,7 @@ struct MLSConversationDetailView: View {
       logger.error(
         "❌ Failed to initialize MLS group for \(conversationId): MLSConversationError - \(error.localizedDescription)"
       )
-      await MainActor.run {
-        sendError = "Failed to initialize secure messaging. Please try again."
-        showingSendError = true
-      }
+      await showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
       return
     } catch let error as MLSAPIError {
       logger.error(
@@ -1284,19 +1375,13 @@ struct MLSConversationDetailView: View {
       if case .invalidResponse(let message) = error {
         logger.error("  → Invalid response details: \(message)")
       }
-      await MainActor.run {
-        sendError = "Failed to initialize secure messaging. Please try again."
-        showingSendError = true
-      }
+      await showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
       return
     } catch {
       logger.error(
         "❌ Failed to initialize MLS group for \(conversationId): Unexpected error - \(type(of: error)) - \(error.localizedDescription)"
       )
-      await MainActor.run {
-        sendError = "Failed to initialize secure messaging. Please try again."
-        showingSendError = true
-      }
+      await showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
       return
     }
 
@@ -1306,45 +1391,96 @@ struct MLSConversationDetailView: View {
         let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
       else {
         logger.error("Cannot load messages: currentUserDID not available")
+        await showPipelineError("Cannot load messages: user not available. Please try again.")
         return
       }
 
       // Query database for last cached sequence number
       guard let database = appState.mlsDatabase else {
         logger.error("MLS database not available")
+        await showPipelineError("Cannot load messages: database unavailable. Please try again.")
         return
       }
 
-      // Use MLSStorage helper method (avoids direct db.read on main thread)
-      let lastCachedCursor = try? await MLSStorage.shared.fetchLastMessageCursor(
-        conversationID: conversationId,
-        currentUserDID: currentUserDID,
-        database: database
-      )
+            // Use MLSStorage helper method (avoids direct db.read on main thread)
 
-      if let cursor = lastCachedCursor {
-        logger.debug(
-          "📍 Last cached message epoch=\(cursor.epoch), seq=\(cursor.seq), will fetch messages after this"
-        )
-      } else {
-        logger.debug("📍 No cached messages, will fetch all from server")
-      }
+            let lastCachedCursor = try? await withTimeout(seconds: 5.0, operationName: "checking cache") {
 
-      let lastCachedSeq = lastCachedCursor.map { Int($0.seq) }
+              try await MLSStorage.shared.fetchLastMessageCursor(
 
-      // Fetch messages from server
-      let apiClient = await appState.getMLSAPIClient()
-      guard let apiClient = apiClient else {
-        logger.error("Failed to get MLS API client")
-        return
-      }
+                conversationID: conversationId,
 
-      // Only fetch NEW messages after last cached message
-      let (messageViews, lastSeq, gapInfo) = try await apiClient.getMessages(
-        convoId: conversationId,
-        limit: 50,
-        sinceSeq: lastCachedSeq.map { Int($0) }
-      )
+                currentUserDID: currentUserDID,
+
+                database: database
+
+              )
+
+            }
+
+      
+
+            if let cursor = lastCachedCursor {
+
+              logger.debug(
+
+                "📍 Last cached message epoch=\(cursor.epoch), seq=\(cursor.seq), will fetch messages after this"
+
+              )
+
+            } else {
+
+              logger.debug(
+
+                "📍 No cached messages, will fetch all from server"
+
+              )
+
+            }
+
+      
+
+            let lastCachedSeq = lastCachedCursor.map { Int($0.seq) }
+
+      
+
+            // Fetch messages from server
+
+            let apiClient = await appState.getMLSAPIClient()
+
+            guard let apiClient = apiClient else {
+
+              logger.error("Failed to get MLS API client")
+
+              await showPipelineError("Cannot load messages: server client unavailable. Please try again.")
+
+              return
+
+            }
+
+      
+
+            // Only fetch NEW messages after last cached message
+
+            let (messageViews, lastSeq, gapInfo) = try await withTimeout(
+
+              seconds: fetchMessagesTimeoutSeconds,
+
+              operationName: "fetching messages"
+
+            ) {
+
+              try await apiClient.getMessages(
+
+                convoId: conversationId,
+
+                limit: 50,
+
+                sinceSeq: lastCachedSeq.map { Int($0) }
+
+              )
+
+            }
 
       if messageViews.isEmpty {
         logger.info("✅ No new messages from server since seq=\(lastCachedSeq ?? 0)")
@@ -1394,14 +1530,26 @@ struct MLSConversationDetailView: View {
 
       // Process messages in correct order - this handles sorting, buffering, and decryption
       do {
-        _ = try await manager.processMessagesInOrder(
-          messages: messageViews,
-          conversationID: conversationId
-        )
+        _ = try await withTimeout(
+          seconds: processMessagesTimeoutSeconds,
+          operationName: "decrypting messages"
+        ) {
+          try await manager.processMessagesInOrder(
+            messages: messageViews,
+            conversationID: conversationId,
+            source: "manual-fetch"
+          )
+        }
         logger.info("✅ Phase 1 complete: All messages decrypted and cached in order")
 
         // Notify unified data source to refresh from storage
         await unifiedDataSource?.onMessagesDecrypted()
+      } catch is PipelineTimeoutError {
+        logger.error(
+          "⏱️ [PIPELINE] Timed out processing/decrypting messages for \(conversationId)"
+        )
+        await showPipelineError("Timed out decrypting messages. Tap Retry to try again.")
+        return
       } catch let error as MLSError {
         if case .ratchetStateDesync(let message) = error {
           logger.error("🔴 RATCHET STATE DESYNC in manual fetch: \(message)")
@@ -1418,9 +1566,13 @@ struct MLSConversationDetailView: View {
           return
         } else {
           logger.error("❌ Failed to process messages in order: \(error.localizedDescription)")
+          await showPipelineError("Failed to decrypt messages. Tap Retry to try again.")
+          return
         }
       } catch {
         logger.error("❌ Failed to process messages in order: \(error.localizedDescription)")
+        await showPipelineError("Failed to decrypt messages. Tap Retry to try again.")
+        return
       }
 
       // PHASE 2: Build UI Message objects from cached data
@@ -1481,11 +1633,13 @@ struct MLSConversationDetailView: View {
             continue
           }
 
-          // Skip control messages (reactions, read receipts, typing indicators, etc.)
-          // These are cached with sentinel plaintext like "[control:reaction]"
-          if let plaintext = plaintextResult, plaintext.hasPrefix("[control:") {
+          // Skip control messages (reactions, etc.)
+          if let plaintext = plaintextResult,
+            let parsed = Self.parseDisplayText(from: plaintext),
+            parsed.isControlMessage
+          {
             logger.debug(
-              "ℹ️ Message \(messageView.id) is a control message (\(plaintext.prefix(30))) - not displayed in UI"
+              "ℹ️ Message \(messageView.id) is a control message - not displayed in UI"
             )
             continue
           }
@@ -1506,7 +1660,14 @@ struct MLSConversationDetailView: View {
           var embed: MLSEmbedData?
 
           if let storedPlaintext = plaintextResult {
-            displayText = storedPlaintext
+            // Parse the plaintext to extract display text and check if it's a control message
+            if let parsed = Self.parseDisplayText(from: storedPlaintext), !parsed.isControlMessage {
+              displayText = parsed.text
+            } else {
+              logger.debug(
+                "Skipping control message \(messageView.id): \(storedPlaintext.prefix(30))")
+              continue
+            }
             embed = try? await storage.fetchEmbedForMessage(
               messageView.id, currentUserDID: currentUserDID, database: database)
             logger.debug(
@@ -1586,6 +1747,10 @@ struct MLSConversationDetailView: View {
 
       logger.info("Loaded and decrypted \(decryptedMessages.count) messages")
 
+      // CRITICAL: Reload reactions after message processing
+      // Orphaned reactions may have been adopted when their parent messages were saved
+      await loadCachedReactions()
+
       // Start live updates after initial load
       await MainActor.run {
         if isViewActive && !hasStartedSubscription {
@@ -1594,8 +1759,30 @@ struct MLSConversationDetailView: View {
         }
       }
 
+    } catch let error as PipelineTimeoutError {
+      logger.error("⏱️ [PIPELINE] \(error.localizedDescription)")
+      await showPipelineError("Timed out loading messages. Tap Retry to try again.")
+
+      // Fallback: Attempt to connect WebSocket even if REST fetch fails
+      // This ensures real-time updates work even if the initial sync hits a 500 error
+      await MainActor.run {
+        if isViewActive && !hasStartedSubscription {
+          startMessagePolling()
+          hasStartedSubscription = true
+        }
+      }
     } catch {
       logger.error("Failed to load messages: \(error.localizedDescription)")
+      await showPipelineError("Failed to load messages. Tap Retry to try again.")
+
+      // Fallback: Attempt to connect WebSocket even if REST fetch fails
+      // This ensures real-time updates work even if the initial sync hits a 500 error
+      await MainActor.run {
+        if isViewActive && !hasStartedSubscription {
+          startMessagePolling()
+          hasStartedSubscription = true
+        }
+      }
     }
   }
 
@@ -1786,7 +1973,8 @@ struct MLSConversationDetailView: View {
         do {
           _ = try await manager.processMessagesInOrder(
             messages: messageViews,
-            conversationID: conversationId
+            conversationID: conversationId,
+            source: "manual-fetch"
           )
           logger.info("✅ Phase 1 complete: All messages decrypted and cached in order")
 
@@ -1833,12 +2021,17 @@ struct MLSConversationDetailView: View {
 
       // PHASE 2: Build UI Message objects from cached data
       logger.info("📊 Phase 2: Building UI Message objects from cached data")
-      var decryptedMessages: [Message] = []
-      var orderUpdates: [String: MessageOrderKey] = [:]
 
-      // Server guarantees messages are returned in (epoch ASC, seq ASC) order
-      // No client-side sorting needed - use messageViews directly
-      for messageView in messageViews {
+      let (decryptedMessages, orderUpdates): ([Message], [String: MessageOrderKey]) = try await withTimeout(
+        seconds: 15.0,
+        operationName: "processing messages"
+      ) {
+        var decryptedMessages: [Message] = []
+        var orderUpdates: [String: MessageOrderKey] = [:]
+
+        // Server guarantees messages are returned in (epoch ASC, seq ASC) order
+        // No client-side sorting needed - use messageViews directly
+        for messageView in messageViews {
         // PHASE 2 FIX: Check for cancellation at start of each message iteration
         // Exit gracefully if view is dismissed during UI building
         do {
@@ -1929,7 +2122,14 @@ struct MLSConversationDetailView: View {
           var embed: MLSEmbedData?
 
           if let storedPlaintext = plaintextResult {
-            displayText = storedPlaintext
+            // Parse the plaintext to extract display text and check if it's a control message
+            if let parsed = Self.parseDisplayText(from: storedPlaintext), !parsed.isControlMessage {
+              displayText = parsed.text
+            } else {
+              logger.debug(
+                "Skipping control message \(messageView.id): \(storedPlaintext.prefix(30))")
+              continue
+            }
             embed = try? await storage.fetchEmbedForMessage(
               messageView.id, currentUserDID: currentUserDID, database: database)
             logger.debug(
@@ -1994,6 +2194,8 @@ struct MLSConversationDetailView: View {
             "Failed to build UI for message \(messageView.id): \(error.localizedDescription)")
         }
       }
+      return (decryptedMessages, orderUpdates)
+    }
 
       await MainActor.run {
         applyMessageOrderUpdates(orderUpdates)
@@ -2009,6 +2211,10 @@ struct MLSConversationDetailView: View {
       ensureProfilesLoaded(for: decryptedMessages.map { $0.user.id })
 
       logger.info("Loaded and decrypted \(decryptedMessages.count) messages")
+
+      // CRITICAL: Reload reactions after message processing
+      // Orphaned reactions may have been adopted when their parent messages were saved
+      await loadCachedReactions()
       // Start live updates after initial load
       await MainActor.run {
         if isViewActive && !hasStartedSubscription {
@@ -2064,24 +2270,35 @@ struct MLSConversationDetailView: View {
 
       for model in cachedModels {
         // Note: We don't filter by message_type here because the database query
-        // doesn't include that field. Commits are filtered out during message processing
-        // before they're stored in the database with plaintext.
+        // doesn't include that field. Control/commit payloads are stored but skipped
+        // below because we only display .text messages.
 
-        guard let plaintext = model.plaintext, !model.plaintextExpired else {
-          // Skip messages without plaintext or with expired plaintext
+        guard let payload = model.parsedPayload, !model.payloadExpired else {
+          // Skip messages without payload or with expired payload
           // This includes messages that failed to decrypt due to forward secrecy
           logger.debug(
-            "Skipping message \(model.messageID): no plaintext or expired (forward secrecy or expired)"
+            "Skipping message \(model.messageID): no payload or expired (forward secrecy or expired)"
           )
           continue
         }
 
-        // Skip control messages (reactions, read receipts, typing indicators, etc.)
-        // These are cached with sentinel plaintext like "[control:reaction]"
-        if plaintext.hasPrefix("[control:") {
+        // Check if it's a control message (reaction, read receipt, typing)
+        guard payload.messageType == .text else {
           logger.debug(
-            "Skipping control message \(model.messageID): \(plaintext.prefix(30))"
+            "Skipping control message \(model.messageID): type=\(payload.messageType.rawValue)"
           )
+          continue
+        }
+
+        // SAFETY: Skip placeholder error messages that shouldn't be displayed
+        // These are created when messages fail to decrypt (e.g., reactions, self-messages)
+        let text = payload.text ?? ""
+        let isPlaceholderError =
+          model.processingError != nil
+          && (text.isEmpty || text.contains("Message unavailable")
+            || text.contains("Decryption Failed") || text.contains("Self-sent message"))
+        if isPlaceholderError {
+          logger.debug("Skipping placeholder error message: \(model.messageID)")
           continue
         }
 
@@ -2092,7 +2309,7 @@ struct MLSConversationDetailView: View {
           user: makeUser(for: model.senderID, isCurrentUser: isCurrentUser),
           status: .sent,
           createdAt: model.timestamp,
-          text: plaintext
+          text: payload.text ?? ""
         )
 
         if model.processingError != nil || model.validationFailureReason != nil {
@@ -2219,8 +2436,27 @@ struct MLSConversationDetailView: View {
       var orderUpdates: [String: MessageOrderKey] = [:]
 
       for model in olderModels {
-        guard let plaintext = model.plaintext, !model.plaintextExpired else {
-          logger.debug("Skipping older message \(model.messageID): no plaintext or expired")
+        guard let payload = model.parsedPayload, !model.payloadExpired else {
+          logger.debug("Skipping older message \(model.messageID): no payload or expired")
+          continue
+        }
+
+        // Check if it's a control message
+        guard payload.messageType == .text else {
+          logger.debug(
+            "Skipping older control message \(model.messageID): type=\(payload.messageType.rawValue)"
+          )
+          continue
+        }
+
+        // SAFETY: Skip placeholder error messages (same as loadCachedMessages)
+        let text = payload.text ?? ""
+        let isPlaceholderError =
+          model.processingError != nil
+          && (text.isEmpty || text.contains("Message unavailable")
+            || text.contains("Decryption Failed") || text.contains("Self-sent message"))
+        if isPlaceholderError {
+          logger.debug("Skipping placeholder error in pagination: \(model.messageID)")
           continue
         }
 
@@ -2231,7 +2467,7 @@ struct MLSConversationDetailView: View {
           user: makeUser(for: model.senderID, isCurrentUser: isCurrentUser),
           status: .sent,
           createdAt: model.timestamp,
-          text: plaintext
+          text: payload.text ?? ""
         )
 
         olderMessages.append(message)
@@ -2242,7 +2478,7 @@ struct MLSConversationDetailView: View {
         )
 
         // Store embed in map if available
-        if let embed = model.parsedEmbed {
+        if let embed = payload.embed {
           await MainActor.run {
             embedsMap[model.messageID] = embed
           }
@@ -2342,6 +2578,9 @@ struct MLSConversationDetailView: View {
 
       await MainActor.run {
         mergeParticipantProfiles(with: profiles)
+
+        // IMPROVEMENT: Pass profiles to unified data source so messages show names immediately
+        unifiedDataSource?.preloadProfiles(profiles)
       }
 
       logger.info(
@@ -2364,6 +2603,7 @@ struct MLSConversationDetailView: View {
 
   /// Load cached reactions from SQLite for this conversation
   /// Called on conversation open to restore reactions from previous sessions
+  /// Includes retry logic for transient database errors (SQLite OOM, busy, etc.)
   private func loadCachedReactions() async {
     guard
       let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
@@ -2377,6 +2617,110 @@ struct MLSConversationDetailView: View {
       return
     }
 
+    // CRITICAL FIX: First, try to adopt any orphaned reactions for this conversation
+    // This handles the race condition where reactions arrived before their parent messages
+    // were visible to the database (cross-process WAL visibility).
+    await adoptOrphanedReactionsForConversation(
+      conversationID: conversationId,
+      currentUserDID: currentUserDID,
+      database: database
+    )
+
+    // Retry up to 3 times for transient database errors
+    let maxRetries = 3
+    var lastError: Error?
+
+    for attempt in 1...maxRetries {
+      do {
+        let cachedReactions = try await storage.fetchReactionsForConversation(
+          conversationId,
+          currentUserDID: currentUserDID,
+          database: database
+        )
+
+        // Convert MLSReactionModel to MLSMessageReaction for UI
+        await MainActor.run {
+          // Get set of displayable message IDs for safety filter
+          let displayableMessageIDs = Set(messages.map { $0.id })
+
+          for (messageId, models) in cachedReactions {
+            // SAFETY: Only display reactions for messages that are actually displayable
+            // This filters out reactions for messages with processing errors or missing payloads
+            guard displayableMessageIDs.contains(messageId) else {
+              logger.debug(
+                "⚠️ [REACTION-SAFETY] Skipping cached reactions for non-displayable message: \(messageId.prefix(16))"
+              )
+              continue
+            }
+
+            // De-dupe in case we replayed the same reaction event multiple times across reconnects.
+            var seen = Set<String>()
+            let mlsReactions = models.compactMap { model -> MLSMessageReaction? in
+              let key = "\(model.actorDID)|\(model.emoji)"
+              guard seen.insert(key).inserted else { return nil }
+              return MLSMessageReaction(
+                messageId: model.messageID,
+                reaction: model.emoji,
+                senderDID: model.actorDID,
+                reactedAt: model.timestamp
+              )
+            }
+            messageReactionsMap[messageId] = mlsReactions
+          }
+        }
+
+        logger.info(
+          "Loaded \(cachedReactions.values.flatMap { $0 }.count) cached reactions for conversation \(conversationId)"
+        )
+        return  // Success - exit the retry loop
+
+      } catch {
+        lastError = error
+        let errorDesc = error.localizedDescription
+
+        // Check if this is a retryable SQLite error (OOM, busy, locked)
+        let isRetryable =
+          errorDesc.contains("out of memory") || errorDesc.contains("database is locked")
+          || errorDesc.contains("busy") || errorDesc.contains("SQLITE_BUSY")
+          || errorDesc.contains("error 7") || errorDesc.contains("error 5")
+          || errorDesc.contains("error 6")
+
+        if isRetryable && attempt < maxRetries {
+          logger.warning(
+            "⚠️ Transient DB error loading reactions (attempt \(attempt)/\(maxRetries)): \(errorDesc)"
+          )
+          // Exponential backoff: 100ms, 200ms, 400ms
+          let delayMs = UInt64(100 * (1 << (attempt - 1)))
+          try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+          continue
+        }
+
+        // Non-retryable or exhausted retries
+        logger.error("Failed to load cached reactions after \(attempt) attempt(s): \(errorDesc)")
+        break
+      }
+    }
+
+    // If we get here, all retries failed - schedule a delayed retry
+    if lastError != nil {
+      logger.info("📋 Scheduling delayed reaction reload in 2 seconds...")
+      Task {
+        try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
+        await loadCachedReactionsDelayed()
+      }
+    }
+  }
+
+  /// Delayed reload of reactions after initial failure
+  /// This gives the database time to recover from transient issues
+  private func loadCachedReactionsDelayed() async {
+    guard
+      let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID,
+      let database = appState.mlsDatabase
+    else {
+      return
+    }
+
     do {
       let cachedReactions = try await storage.fetchReactionsForConversation(
         conversationId,
@@ -2384,26 +2728,42 @@ struct MLSConversationDetailView: View {
         database: database
       )
 
-      // Convert MLSReactionModel to MLSMessageReaction for UI
       await MainActor.run {
         for (messageId, models) in cachedReactions {
-          let mlsReactions = models.map { model in
-            MLSMessageReaction(
+          var seen = Set<String>()
+          let mlsReactions = models.compactMap { model -> MLSMessageReaction? in
+            let key = "\(model.actorDID)|\(model.emoji)"
+            guard seen.insert(key).inserted else { return nil }
+            return MLSMessageReaction(
               messageId: model.messageID,
               reaction: model.emoji,
               senderDID: model.actorDID,
               reactedAt: model.timestamp
             )
           }
-          messageReactionsMap[messageId] = mlsReactions
+          // Merge with existing reactions (don't overwrite)
+          if messageReactionsMap[messageId] == nil {
+            messageReactionsMap[messageId] = mlsReactions
+          } else {
+            // Merge new reactions with existing
+            var existing = messageReactionsMap[messageId] ?? []
+            let existingKeys = Set(existing.map { "\($0.senderDID)|\($0.reaction)" })
+            for reaction in mlsReactions {
+              let key = "\(reaction.senderDID)|\(reaction.reaction)"
+              if !existingKeys.contains(key) {
+                existing.append(reaction)
+              }
+            }
+            messageReactionsMap[messageId] = existing
+          }
         }
       }
 
       logger.info(
-        "Loaded \(cachedReactions.values.flatMap { $0 }.count) cached reactions for conversation \(conversationId)"
+        "✅ Delayed reload: Loaded \(cachedReactions.values.flatMap { $0 }.count) cached reactions"
       )
     } catch {
-      logger.error("Failed to load cached reactions: \(error.localizedDescription)")
+      logger.error("Delayed reaction reload also failed: \(error.localizedDescription)")
     }
   }
 
@@ -2422,31 +2782,123 @@ struct MLSConversationDetailView: View {
     }
 
     Task {
-      do {
-        if action == "add" {
-          let reactionModel = MLSReactionModel(
-            messageID: messageId,
-            conversationID: conversationId,
-            currentUserDID: currentUserDID,
-            actorDID: actorDID,
-            emoji: emoji,
-            action: action
-          )
-          try await storage.saveReaction(reactionModel, database: database)
-          logger.debug("Persisted reaction: \(emoji) on \(messageId) by \(actorDID)")
-        } else if action == "remove" {
-          try await storage.deleteReaction(
-            messageID: messageId,
-            actorDID: actorDID,
-            emoji: emoji,
+      // Retry logic for transient database errors
+      var lastError: Error?
+      for attempt in 1...3 {
+        do {
+          if action == "add" {
+            let reactionModel = MLSReactionModel(
+              messageID: messageId,
+              conversationID: conversationId,
+              currentUserDID: currentUserDID,
+              actorDID: actorDID,
+              emoji: emoji,
+              action: action
+            )
+            try await storage.saveReaction(reactionModel, database: database)
+            logger.debug("Persisted reaction: \(emoji) on \(messageId) by \(actorDID)")
+          } else if action == "remove" {
+            try await storage.deleteReaction(
+              messageID: messageId,
+              actorDID: actorDID,
+              emoji: emoji,
+              currentUserDID: currentUserDID,
+              database: database
+            )
+            logger.debug("Deleted persisted reaction: \(emoji) on \(messageId) by \(actorDID)")
+          }
+          return  // Success
+        } catch {
+          lastError = error
+          let desc = error.localizedDescription
+          // Check for retryable SQLite errors
+          if (desc.contains("out of memory") || desc.contains("busy") || desc.contains("locked")
+            || desc.contains("error 7") || desc.contains("error 5") || desc.contains("error 6"))
+            && attempt < 3
+          {
+            logger.warning("⚠️ Transient error persisting reaction (attempt \(attempt)): \(desc)")
+            try? await Task.sleep(nanoseconds: UInt64(100 * attempt) * 1_000_000)
+            continue
+          }
+          break
+        }
+      }
+      if let error = lastError {
+        logger.error("Failed to persist reaction after retries: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Adopt orphaned reactions for this conversation
+  /// This handles the race condition where reactions arrived before their parent messages
+  private func adoptOrphanedReactionsForConversation(
+    conversationID: String,
+    currentUserDID: String,
+    database: CatbirdMLSCore.MLSDatabase
+  ) async {
+    do {
+      // Get orphan stats for this conversation
+      let orphanStats = try await storage.fetchOrphanedReactionStats(
+        for: conversationID,
+        currentUserDID: currentUserDID,
+        limit: 50,
+        database: database
+      )
+
+      guard !orphanStats.isEmpty else { return }
+
+      logger.info(
+        "[ORPHAN-UI] Found \(orphanStats.count) orphaned parent messages in conversation - attempting adoption"
+      )
+
+      var totalAdopted = 0
+      for (messageID, count) in orphanStats {
+        // Check if parent message now exists
+        if (try? await storage.fetchMessage(
+          messageID: messageID,
+          currentUserDID: currentUserDID,
+          database: database
+        )) != nil {
+          // Parent exists, adopt orphans
+          let adopted = try await storage.adoptOrphansForMessage(
+            messageID,
             currentUserDID: currentUserDID,
             database: database
           )
-          logger.debug("Deleted persisted reaction: \(emoji) on \(messageId) by \(actorDID)")
+
+          // Add adopted reactions to the UI map
+          for reaction in adopted {
+            let mlsReaction = MLSMessageReaction(
+              messageId: reaction.messageID,
+              reaction: reaction.emoji,
+              senderDID: reaction.actorDID,
+              reactedAt: Date()
+            )
+
+            await MainActor.run {
+              var reactions = messageReactionsMap[reaction.messageID] ?? []
+              // Check for duplicate
+              let key = "\(reaction.actorDID)|\(reaction.emoji)"
+              let existingKeys = Set(reactions.map { "\($0.senderDID)|\($0.reaction)" })
+              if !existingKeys.contains(key) {
+                reactions.append(mlsReaction)
+                messageReactionsMap[reaction.messageID] = reactions
+              }
+            }
+
+            totalAdopted += 1
+          }
+
+          logger.info(
+            "[ORPHAN-UI] Adopted \(adopted.count) orphan(s) for message \(messageID.prefix(16))")
         }
-      } catch {
-        logger.error("Failed to persist reaction: \(error.localizedDescription)")
       }
+
+      if totalAdopted > 0 {
+        logger.info("[ORPHAN-UI] Total adopted \(totalAdopted) orphaned reactions for conversation")
+      }
+    } catch {
+      logger.error("[ORPHAN-UI] Failed to adopt orphans: \(error.localizedDescription)")
     }
   }
 
@@ -2645,28 +3097,28 @@ struct MLSConversationDetailView: View {
           }
         }
 
-        // Now save the plaintext (can't decrypt own messages in MLS, so we cache on send)
+        // Now save the payload (can't decrypt own messages in MLS, so we cache on send)
         do {
-          try await storage.savePlaintextForMessage(
+          let payload = CatbirdMLSCore.MLSMessagePayload.text(trimmed, embed: embed)
+          try await storage.savePayloadForMessage(
             messageID: messageId,
             conversationID: conversationId,
-            plaintext: trimmed,
+            payload: payload,
             senderID: senderDID,  // ← Sender DID (who sent the message)
             currentUserDID: appState.userDID ?? senderDID,  // ← Current user's DID (owner of this storage context)
-            embed: embed,
             epoch: epoch,  // ✅ Use real epoch from server
             sequenceNumber: seq,  // ✅ Use real sequence number from server
             timestamp: receivedAt.date,  // ✅ Use server timestamp
             database: database
           )
           logger.info(
-            "✅ Saved plaintext under sender DID: \(senderDID) for message: \(messageId) with seq=\(seq), epoch=\(epoch)"
+            "✅ Saved payload under sender DID: \(senderDID) for message: \(messageId) with seq=\(seq), epoch=\(epoch)"
           )
         } catch {
-          logger.error("Failed to save sent message plaintext: \(error.localizedDescription)")
+          logger.error("Failed to save sent message payload: \(error.localizedDescription)")
         }
       } else {
-        logger.error("Cannot save plaintext: database not available")
+        logger.error("Cannot save payload: database not available")
       }
 
       await MainActor.run {
@@ -2715,6 +3167,56 @@ struct MLSConversationDetailView: View {
     }
   }
 
+  // MARK: - Chat Request Actions
+  
+  /// Accept a pending chat request, moving it to the main inbox
+  private func acceptChatRequest() async {
+    guard let manager = await appState.getMLSConversationManager() else {
+      logger.error("Cannot accept: no conversation manager")
+      return
+    }
+    
+    do {
+      try await manager.acceptConversationRequest(convoId: conversationId)
+      
+      // Update local state
+      await MainActor.run {
+        if var model = conversationModel {
+          conversationModel = model.withRequestState(.none)
+        }
+      }
+      
+      logger.info("✅ Accepted chat request: \(conversationId.prefix(16))...")
+    } catch {
+      logger.error("Failed to accept chat request: \(error.localizedDescription)")
+      sendError = "Failed to accept: \(error.localizedDescription)"
+      showingSendError = true
+    }
+  }
+  
+  /// Decline a pending chat request, leaving the conversation
+  private func declineChatRequest() async {
+    guard let manager = await appState.getMLSConversationManager() else {
+      logger.error("Cannot decline: no conversation manager")
+      return
+    }
+    
+    do {
+      try await manager.declineConversationRequest(convoId: conversationId)
+      
+      // Navigate back since the conversation is now deleted
+      await MainActor.run {
+        dismiss()
+      }
+      
+      logger.info("❌ Declined chat request: \(conversationId.prefix(16))...")
+    } catch {
+      logger.error("Failed to decline chat request: \(error.localizedDescription)")
+      sendError = "Failed to decline: \(error.localizedDescription)"
+      showingSendError = true
+    }
+  }
+
   // MARK: - Real-Time Events
 
   // MARK: - Polling Fallback
@@ -2754,7 +3256,8 @@ struct MLSConversationDetailView: View {
         // Process them using the manager (handles decryption and ordering)
         _ = try await manager.processMessagesInOrder(
           messages: messageViews,
-          conversationID: conversationId
+          conversationID: conversationId,
+          source: "polling"
         )
 
         // Reload messages to update UI
@@ -2769,77 +3272,69 @@ struct MLSConversationDetailView: View {
   }
 
   private func startMessagePolling() {
-    logger.info("📡 SSE: startMessagePolling() called for convoId: \(conversationId)")
+    logger.info("📡 WS: startMessagePolling() called for convoId: \(conversationId)")
 
     Task {
-      // Use centralized event stream manager from AppState
-      logger.info("📡 SSE: Getting event stream manager from AppState...")
-      guard let streamManager = await appState.getMLSEventStreamManager() else {
-        logger.error("📡 SSE: Failed to get MLS event stream manager - ABORTING")
+      // Use centralized WebSocket manager from AppState
+      logger.info("📡 WS: Getting WebSocket manager from AppState...")
+      guard let wsManager = await appState.getMLSWebSocketManager() else {
+        logger.error("📡 WS: Failed to get MLS WebSocket manager - ABORTING")
         return
       }
-      logger.info("📡 SSE: Got event stream manager, storing reference...")
+      logger.info("📡 WS: Got WebSocket manager, storing reference...")
 
       // Store reference for local cleanup
       await MainActor.run {
-        eventStreamManager = streamManager
+        webSocketManager = wsManager
       }
 
-      logger.info("📡 SSE: Calling subscribe() for convoId: \(conversationId)")
+      logger.info("📡 WS: Calling subscribe() for convoId: \(conversationId)")
 
       // Subscribe to conversation events
       // CRITICAL FIX: Use proper @MainActor async closures that synchronously await handlers
       // Previous pattern used fire-and-forget Tasks which could be delayed by Swift's scheduler
-      await streamManager.subscribe(
+      await wsManager.subscribe(
         to: conversationId,
-        handler: MLSEventStreamManager.EventHandler(
+        handler: MLSWebSocketManager.EventHandler(
           onMessage: { @MainActor messageEvent in
             self.logger.info(
-              "📡 SSE: onMessage handler called for message: \(messageEvent.message.id)")
+              "📡 WS: onMessage handler called for message: \(messageEvent.message.id)")
             await self.handleNewMessage(messageEvent)
           },
           onReaction: { @MainActor reactionEvent in
-            self.logger.info("📡 SSE: onReaction handler called")
+            self.logger.info("📡 WS: onReaction handler called")
             await self.handleReaction(reactionEvent)
           },
-          onTyping: { @MainActor typingEvent in
-            self.logger.info("📡 SSE: onTyping handler called for did: \(typingEvent.did)")
-            await self.handleTypingIndicator(typingEvent)
-          },
           onInfo: { @MainActor infoEvent in
-            self.logger.info("📡 SSE: onInfo handler called")
+            self.logger.info("📡 WS: onInfo handler called")
             await self.handleInfoEvent(infoEvent)
           },
           onNewDevice: { @MainActor newDeviceEvent in
-            self.logger.info("📡 SSE: onNewDevice handler called")
+            self.logger.info("📡 WS: onNewDevice handler called")
             await self.handleNewDeviceEvent(newDeviceEvent)
           },
           onGroupInfoRefreshRequested: { @MainActor refreshEvent in
-            self.logger.info("📡 SSE: onGroupInfoRefreshRequested handler called")
+            self.logger.info("📡 WS: onGroupInfoRefreshRequested handler called")
             await self.handleGroupInfoRefreshRequested(refreshEvent)
           },
           onReadditionRequested: { @MainActor readditionEvent in
-            self.logger.info("📡 SSE: onReadditionRequested handler called")
+            self.logger.info("📡 WS: onReadditionRequested handler called")
             await self.handleReadditionRequested(readditionEvent)
           },
-          onRead: { @MainActor readEvent in
-            self.logger.info(
-              "📡 SSE: onRead handler called for message: \(readEvent.messageId ?? "all")")
-            await self.handleReadReceipt(readEvent)
-          },
           onMembershipChanged: { @MainActor convoId, did, action in
-            self.logger.info("📡 SSE: onMembershipChanged handler called")
+            self.logger.info("📡 WS: onMembershipChanged handler called")
             await self.handleMembershipChanged(convoId: convoId, did: did, action: action)
           },
           onKickedFromConversation: { @MainActor convoId, byDID, reason in
-            self.logger.info("📡 SSE: onKickedFromConversation handler called")
+            self.logger.info("📡 WS: onKickedFromConversation handler called")
             await self.handleKickedFromConversation(convoId: convoId, byDID: byDID, reason: reason)
           },
+          onConversationNeedsRecovery: nil,
           onError: { @MainActor error in
-            self.logger.error("📡 SSE: onError handler called: \(error.localizedDescription)")
+            self.logger.error("📡 WS: onError handler called: \(error.localizedDescription)")
           },
           onReconnected: { @MainActor [weak appState] in
-            self.logger.info("📡 SSE: onReconnected handler called - triggering catchup")
+            self.logger.info("📡 WS: onReconnected handler called - triggering catchup")
             guard let appState = appState,
               let manager = await appState.getMLSConversationManager()
             else {
@@ -2850,24 +3345,24 @@ struct MLSConversationDetailView: View {
           }
         )
       )
-      logger.info("📡 SSE: subscribe() returned for convoId: \(conversationId)")
+      logger.info("📡 WS: subscribe() returned for convoId: \(conversationId)")
     }
   }
 
   private func stopMessagePolling() {
-    logger.debug("Stopping SSE subscription for conversation: \(conversationId)")
+    logger.debug("Stopping WebSocket subscription for conversation: \(conversationId)")
     // Stop subscription for this conversation
     // Note: Manager is owned by AppState and shared across views
     // We only stop the subscription for THIS conversation, not all subscriptions
     Task {
-      await eventStreamManager?.stop(conversationId)
+      await webSocketManager?.stop(conversationId)
     }
     hasStartedSubscription = false
-    // Don't nil out eventStreamManager - it's shared and owned by AppState
+    // Don't nil out webSocketManager - it's shared and owned by AppState
   }
 
   @MainActor
-  private func handleNewMessage(_ event: BlueCatbirdMlsStreamConvoEvents.MessageEvent) async {
+  private func handleNewMessage(_ event: BlueCatbirdMlsSubscribeConvoEvents.MessageEvent) async {
     logger.debug("🔍 MLS_OWNERSHIP: ====== Processing SSE message \(event.message.id) ======")
 
     _ = await ensureConversationMetadata()
@@ -2929,23 +3424,42 @@ struct MLSConversationDetailView: View {
       // CRITICAL: Move I/O and FFI work OFF main thread to prevent UI blocking
       let messageId = event.message.id
       let storageRef = storage
-      let (senderDID, displayText, embed): (String, String, MLSEmbedData?) =
-        try await Task.detached(priority: .userInitiated) {
-          if let storedSender = try? await storageRef.fetchSenderForMessage(
-            messageId, currentUserDID: currentUserDID, database: database),
-            let storedPlaintext = try? await storageRef.fetchPlaintextForMessage(
-              messageId, currentUserDID: currentUserDID, database: database)
-          {
-            // Already decrypted and cached
-            let embed = try? await storageRef.fetchEmbedForMessage(
-              messageId, currentUserDID: currentUserDID, database: database)
-            return (storedSender, storedPlaintext, embed)
-          } else {
-            // Need to decrypt - this extracts sender from MLS credentials (heavy FFI work)
-            let decryptedMessage = try await manager.decryptMessage(event.message)
-            return (decryptedMessage.senderDID, decryptedMessage.text ?? "", decryptedMessage.embed)
-          }
-        }.value
+      let result:
+        (senderDID: String, displayText: String, embed: MLSEmbedData?, isControlMessage: Bool) =
+          try await Task.detached(priority: .userInitiated) {
+            if let storedSender = try? await storageRef.fetchSenderForMessage(
+              messageId, currentUserDID: currentUserDID, database: database),
+              let storedPlaintext = try? await storageRef.fetchPlaintextForMessage(
+                messageId, currentUserDID: currentUserDID, database: database)
+            {
+              // Already decrypted and cached - parse to extract display text
+              let embed = try? await storageRef.fetchEmbedForMessage(
+                messageId, currentUserDID: currentUserDID, database: database)
+
+              // Parse the plaintext to check if it's a control message
+              if let parsed = MLSConversationDetailView.parseDisplayText(from: storedPlaintext) {
+                return (storedSender, parsed.text, embed, parsed.isControlMessage)
+              }
+              return (storedSender, storedPlaintext, embed, false)
+            } else {
+              // Need to decrypt - this extracts sender from MLS credentials (heavy FFI work)
+              let decryptedMessage = try await manager.decryptMessage(event.message, source: "sse")
+              return (
+                decryptedMessage.senderDID, decryptedMessage.text ?? "", decryptedMessage.embed,
+                false
+              )
+            }
+          }.value
+
+      // Skip control messages (reactions, etc.) - they don't appear in message list
+      if result.isControlMessage {
+        logger.debug("Skipping SSE control message \(event.message.id)")
+        return
+      }
+
+      let senderDID = result.senderDID
+      let displayText = result.displayText
+      let embed = result.embed
 
       logger.debug(
         "Processed SSE message \(event.message.id) from \(senderDID) (hasEmbed: \(embed != nil))")
@@ -3037,7 +3551,7 @@ struct MLSConversationDetailView: View {
   }
 
   @MainActor
-  private func handleReaction(_ event: BlueCatbirdMlsStreamConvoEvents.ReactionEvent) async {
+  private func handleReaction(_ event: BlueCatbirdMlsSubscribeConvoEvents.ReactionEvent) async {
     logger.debug(
       "Received reaction via SSE: \(event.action) \(event.reaction) on \(event.messageId)")
 
@@ -3095,24 +3609,12 @@ struct MLSConversationDetailView: View {
     )
   }
 
-  @MainActor
-  private func handleTypingIndicator(_ event: BlueCatbirdMlsStreamConvoEvents.TypingEvent) async {
-    let did = event.did.description
-
-    if event.isTyping {
-      typingUsers.insert(did)
-      logger.debug("User started typing: \(did)")
-    } else {
-      typingUsers.remove(did)
-      logger.debug("User stopped typing: \(did)")
-    }
-    // Typing indicator is displayed via typingIndicatorView above the composer
-  }
-
   /// Handle new device events from SSE stream
   /// Forwards to MLSDeviceSyncManager for processing multi-device additions
   @MainActor
-  private func handleNewDeviceEvent(_ event: BlueCatbirdMlsStreamConvoEvents.NewDeviceEvent) async {
+  private func handleNewDeviceEvent(_ event: BlueCatbirdMlsSubscribeConvoEvents.NewDeviceEvent)
+    async
+  {
     logger.info(
       "📱 [NewDeviceEvent] Received for convo \(conversationId) - user: \(event.userDid), device: \(event.deviceId)"
     )
@@ -3132,7 +3634,7 @@ struct MLSConversationDetailView: View {
   /// didn't make this request ourselves, we export and upload fresh GroupInfo.
   @MainActor
   private func handleGroupInfoRefreshRequested(
-    _ event: BlueCatbirdMlsStreamConvoEvents.GroupInfoRefreshRequestedEvent
+    _ event: BlueCatbirdMlsSubscribeConvoEvents.GroupInfoRefreshRequestedEvent
   ) async {
     logger.info(
       "🔄 [GroupInfoRefresh] Received request for convo \(event.convoId) from \(event.requestedBy)")
@@ -3167,7 +3669,7 @@ struct MLSConversationDetailView: View {
   /// active members to re-add them. If we're an active member, we re-add the user.
   @MainActor
   private func handleReadditionRequested(
-    _ event: BlueCatbirdMlsStreamConvoEvents.ReadditionRequestedEvent
+    _ event: BlueCatbirdMlsSubscribeConvoEvents.ReadditionRequestedEvent
   ) async {
     logger.info(
       "🆘 [Readdition] Received request for user \(event.userDid.didString().prefix(20))... in convo \(event.convoId)"
@@ -3201,43 +3703,10 @@ struct MLSConversationDetailView: View {
 
   /// Handle info events from SSE stream
   @MainActor
-  private func handleInfoEvent(_ event: BlueCatbirdMlsStreamConvoEvents.InfoEvent) async {
+  private func handleInfoEvent(_ event: BlueCatbirdMlsSubscribeConvoEvents.InfoEvent) async {
     logger.info("ℹ️ [InfoEvent] Received for convo \(conversationId)")
     // Handle any informational events from the server
     // Currently a no-op, but can be extended for server-side announcements
-  }
-
-  /// Handle read receipt events from SSE stream
-  @MainActor
-  private func handleReadReceipt(_ event: BlueCatbirdMlsStreamConvoEvents.ReadEvent) async {
-    let readerDID = event.did.description
-
-    // Don't track our own read receipts
-    guard readerDID != appState.userDID else {
-      logger.debug("📬 [READ_RECEIPTS] Ignoring own read receipt")
-      return
-    }
-
-    if let messageId = event.messageId {
-      // Specific message was read
-      logger.info("📬 [READ_RECEIPTS] User \(readerDID.prefix(20))... read message \(messageId)")
-
-      var readers = messageReadByMap[messageId] ?? Set<String>()
-      readers.insert(readerDID)
-      messageReadByMap[messageId] = readers
-
-      logger.debug("📬 [READ_RECEIPTS] Message \(messageId) now read by \(readers.count) users")
-    } else {
-      // All messages were marked as read by this user
-      logger.info("📬 [READ_RECEIPTS] User \(readerDID.prefix(20))... read all messages")
-
-      // Mark all messages from current user as read by this reader
-      for message in messages where message.user.isCurrentUser {
-        var readers = messageReadByMap[message.id] ?? Set<String>()
-        readers.insert(readerDID)
-        messageReadByMap[message.id] = readers
-      }
-    }
   }
 
   /// Handle membership changed events from SSE stream
@@ -3275,8 +3744,10 @@ struct MLSConversationDetailView: View {
     case .copy:
       UIPasteboard.general.string = message.text
     case .report:
-      messageToReport = message
-      showingReportSheet = true
+      // MLS member reporting is disabled until moderation backend is implemented.
+      // The report sheet would show an error anyway, but we skip it entirely for better UX.
+      // TODO: Re-enable when MLS moderation infrastructure is ready.
+      break
     case .deleteForMe:
       messageToDelete = message
       showingDeleteAlert = true
@@ -3311,9 +3782,13 @@ struct MLSConversationDetailView: View {
           // Remove conversation from AppState
           appState.mlsConversations.removeAll { $0.id == conversationId }
 
-          // Navigate back to conversation list
-          // Try dismissing as a sheet first, then fall back to popping navigation
-          appState.navigationManager.navigate(to: .chatTab)
+          // Clear any stacked navigation and notify list to clear selection
+          appState.navigationManager.clearPath(for: 4)
+          NotificationCenter.default.post(
+            name: Notification.Name("MLSConversationLeft"),
+            object: conversationId
+          )
+          dismiss()
         }
       } catch {
         await MainActor.run {
@@ -3587,16 +4062,146 @@ struct MLSConversationDetailView: View {
   private func formatMessageTime(_ date: Date) -> String {
     date.formatted(date: .omitted, time: .shortened)
   }
+
+  // MARK: - Plaintext Parsing Helpers
+
+  /// Parse cached plaintext and extract display text for the message list.
+  /// Parses JSON payloads to extract text content and detect control messages.
+  /// - Returns: A tuple of (displayText, isControlMessage) or nil if parsing fails
+  private static func parseDisplayText(from plaintext: String) -> (
+    text: String, isControlMessage: Bool
+  )? {
+    // Check for legacy control message sentinel format
+    // These are stored by cacheControlMessageEnvelope and should not be displayed
+    if plaintext.hasPrefix("[control:") {
+      return (plaintext, true)
+    }
+
+    // Try parsing as JSON payload
+    if plaintext.hasPrefix("{"),
+      let data = plaintext.data(using: .utf8),
+      let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(data)
+    {
+
+      switch payload.messageType {
+      case .text:
+        // Text messages are displayable
+        return (payload.text ?? "New Message", false)
+      case .reaction, .readReceipt, .typing:
+        // Control messages should not be displayed in the message list
+        return (plaintext, true)
+      case .adminRoster, .adminAction:
+        // Admin messages could be shown as system messages, but skip for now
+        return (plaintext, true)
+      }
+    }
+
+    // Plain text (non-JSON text messages)
+    return (plaintext, false)
+  }
 }
 
 // MARK: - Custom Message Menu Action
 
 // MARK: - Preview
 
-#Preview {
-  @Previewable @Environment(AppState.self) var appState
-  NavigationStack {
-    MLSConversationDetailView(conversationId: "test-conversation-id")
-      .environment(AppStateManager.shared)
+#Preview("Conversation Detail") {
+  MLSConversationDetailPreview()
+}
+
+private struct MLSConversationDetailPreview: View {
+  var body: some View {
+    NavigationStack {
+      Group {
+        if let appState = AppStateManager.shared.lifecycle.appState {
+          MLSConversationDetailView(conversationId: "preview-conversation-id")
+            .environment(appState)
+        } else {
+          // Placeholder when no authenticated AppState is available
+          VStack(spacing: 16) {
+            Image(systemName: "lock.shield.fill")
+              .font(.system(size: 48))
+              .foregroundColor(.green)
+
+            Text("MLS Conversation Detail")
+              .font(.headline)
+
+            Text("End-to-End Encrypted Chat")
+              .font(.subheadline)
+              .foregroundColor(.secondary)
+
+            Text("Sign in to preview this view")
+              .font(.caption)
+              .foregroundColor(.secondary)
+              .padding(.top, 8)
+          }
+          .padding()
+          .navigationTitle("Secure Chat")
+        }
+      }
+    }
+  }
+}
+
+// MARK: - Chat Request Action Bar
+
+/// Action bar shown at the bottom of a conversation detail view when the conversation
+/// is a pending inbound chat request that needs acceptance.
+private struct ChatRequestActionBar: View {
+  let conversationId: String
+  let onAccept: () -> Void
+  let onDecline: () -> Void
+  
+  @State private var isProcessing = false
+  
+  var body: some View {
+    VStack(spacing: 0) {
+      Divider()
+      
+      VStack(spacing: 12) {
+        Text("This is a message request")
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+        
+        Text("Accept to continue the conversation")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        
+        HStack(spacing: 16) {
+          Button(role: .destructive) {
+            isProcessing = true
+            onDecline()
+          } label: {
+            HStack {
+              Image(systemName: "xmark")
+              Text("Decline")
+            }
+            .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.bordered)
+          .disabled(isProcessing)
+          
+          Button {
+            isProcessing = true
+            onAccept()
+          } label: {
+            HStack {
+              if isProcessing {
+                ProgressView()
+                  .tint(.white)
+              } else {
+                Image(systemName: "checkmark")
+                Text("Accept")
+              }
+            }
+            .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(isProcessing)
+        }
+      }
+      .padding()
+      .background(.ultraThinMaterial)
+    }
   }
 }

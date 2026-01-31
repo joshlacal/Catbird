@@ -3,6 +3,7 @@ import GRDB
 import OSLog
 import Petrel
 import SwiftUI
+import CatbirdMLSService
 
 #if os(iOS)
 
@@ -34,11 +35,14 @@ struct MLSConversationListView: View {
     @State private var conversations: [MLSConversationModel] = []
     @State private var conversationParticipants: [String: [MLSParticipantViewModel]] = [:]
     @State private var conversationUnreadCounts: [String: Int] = [:]
-    @State private var profileEnricher = MLSProfileEnricher()
     @State private var pollingTask: Task<Void, Never>?
     @State private var recentMemberChanges: [String: MemberChangeInfo] = [:]
     @State private var pendingChatRequestCount: Int = 0
     @State private var pollCycleCount: Int = 0  // OOM FIX: Track poll cycles for periodic checkpoint
+    
+    // ACCOUNT SWITCH FIX: Track stale AppState after account switch
+    @State private var initialUserDID: String?  // Capture which user this view was created for
+    @State private var isAppStateStale = false  // True when AppState doesn't match active user
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationList")
     
@@ -86,6 +90,15 @@ struct MLSConversationListView: View {
             return false
         }
     }
+    
+    // ACCOUNT SWITCH FIX: Check if this view's AppState is stale (account switched)
+    // Only consider stale during explicit account transitions, NOT during ephemeral push notification access
+    private var isViewStale: Bool {
+        // If an explicit account switch is in progress and the lifecycle has a different user, view is stale
+        guard AppStateManager.shared.isTransitioning else { return false }
+        guard let activeDID = AppStateManager.shared.lifecycle.userDID else { return false }
+        return appState.userDID != activeDID
+    }
         
     private var shouldUseSplitView: Bool {
         DeviceInfo.isIPad || horizontalSizeClass == .regular
@@ -114,6 +127,8 @@ struct MLSConversationListView: View {
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         // Hide tab bar when viewing a conversation on iPhone
         .toolbar(selectedConvoId != nil && !shouldUseSplitView ? .hidden : .visible, for: .tabBar)
+        // On Catalyst, the FAB is shown in sidebarContent; on iOS show it here
+        #if !targetEnvironment(macCatalyst)
         .overlay(alignment: .bottomTrailing) {
             if shouldShowChatFAB {
                 ChatFAB(newMessageAction: {
@@ -123,6 +138,7 @@ struct MLSConversationListView: View {
                 .padding(.trailing, 20)
             }
         }
+        #endif
         .onChange(of: selectedConvoId) { oldValue, newValue in
             // On iPhone, manage column visibility based on selection
             if !shouldUseSplitView {
@@ -152,6 +168,10 @@ struct MLSConversationListView: View {
                 // Clear the target after setting to avoid repeated navigation
                 appState.navigationManager.targetMLSConversationId = nil
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("MLSConversationLeft"))) { _ in
+            // Ensure the split view detail clears when leaving a conversation
+            selectedConvoId = nil
         }
         .alert("Error", isPresented: $showingErrorAlert) {
             Button("OK", role: .cancel) {}
@@ -206,10 +226,58 @@ struct MLSConversationListView: View {
             .presentationDragIndicator(.visible)
         }
         .task {
+            // ACCOUNT SWITCH FIX: Capture initial user and check for stale state
+            if initialUserDID == nil {
+                initialUserDID = appState.userDID
+            }
+            
+            // Check if AppState is stale (account switched since view was created)
+            if isViewStale {
+                logger.warning("MLSConversationListView: AppState is stale (view has \(appState.userDID), active is \(AppStateManager.shared.lifecycle.userDID ?? "nil"))")
+                isAppStateStale = true
+                keyPackageStatus = .error("Account changed. Please go back and re-enter.")
+                stopPolling()
+                return
+            }
+            
             if viewModel == nil {
+                // NOTIFICATION FIX: If MLS is still initializing, wait for it to become ready
+                // instead of immediately showing an error. This handles account switching.
+                let maxWaitTime: TimeInterval = 10.0
+                let checkInterval: TimeInterval = 0.3
+                var elapsed: TimeInterval = 0
+                
+                // Wait for database to become available if MLS is initializing
+                // CRITICAL FIX: Use labeled loop so break exits the while loop, not just the switch
+                waitLoop: while appState.mlsDatabase == nil && elapsed < maxWaitTime {
+                    let status = appState.mlsServiceState.status
+                    switch status {
+                    case .notStarted, .initializing, .retrying:
+                        logger.debug("MLS service status: \(String(describing: status)), waiting...")
+                        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+                        elapsed += checkInterval
+                    case .ready:
+                        // Ready but database ref might be updating, give it a moment
+                        try? await Task.sleep(nanoseconds: 100_000_000)
+                        elapsed += 0.1
+                    case .failed, .databaseFailed:
+                        // Don't wait for a failed state - exit the loop immediately
+                        break waitLoop
+                    }
+                    
+                    // Also check for account switch during wait
+                    if isViewStale {
+                        logger.warning("Account changed while waiting for MLS")
+                        isAppStateStale = true
+                        keyPackageStatus = .error("Account changed. Please go back and re-enter.")
+                        stopPolling()
+                        return
+                    }
+                }
+                
                 guard let database = appState.mlsDatabase,
                       let apiClient = await appState.getMLSAPIClient() else {
-                    logger.error("Cannot initialize view: mlsDatabase or apiClient not available")
+                    logger.error("Cannot initialize view: mlsDatabase or apiClient not available after waiting")
 
                     // Check MLS service state and provide appropriate error message
                     switch appState.mlsServiceState.status {
@@ -218,7 +286,8 @@ struct MLSConversationListView: View {
                     case .failed(let message):
                         errorMessage = message
                     case .notStarted, .initializing:
-                        errorMessage = "MLS service is still initializing. Please wait..."
+                        // Still not ready after waiting - show a helpful message
+                        errorMessage = "MLS service is still initializing. Please try again in a moment."
                     default:
                         errorMessage = "MLS service not available"
                     }
@@ -236,9 +305,25 @@ struct MLSConversationListView: View {
             await initializeMLSAndLoadConversations()
             await loadRecentMemberChanges()
             await refreshChatRequestCount()
+            
+            // NOTIFICATION FIX: Check if there's a pending deep-link conversation to navigate to
+            // This handles the case where targetMLSConversationId was set before .task completed
+            if let pendingConvoId = appState.navigationManager.targetMLSConversationId {
+                logger.info("Found pending deep-link navigation to: \(pendingConvoId.prefix(16))...")
+                selectedConvoId = pendingConvoId
+                appState.navigationManager.targetMLSConversationId = nil
+            }
         }
         .onAppear {
             startPolling()
+            
+            // NOTIFICATION FIX: Also check for pending navigation on appear
+            // This catches cases where the view is re-appearing with a pending target
+            if let pendingConvoId = appState.navigationManager.targetMLSConversationId, selectedConvoId != pendingConvoId {
+                logger.info("Found pending deep-link navigation on appear: \(pendingConvoId.prefix(16))...")
+                selectedConvoId = pendingConvoId
+                appState.navigationManager.targetMLSConversationId = nil
+            }
         }
         .onDisappear {
             stopPolling()
@@ -256,6 +341,16 @@ struct MLSConversationListView: View {
                 try? await Task.sleep(nanoseconds: UInt64(pollingInterval * 1_000_000_000))
                 
                 guard !Task.isCancelled else { break }
+                
+                // ACCOUNT SWITCH FIX: Stop polling if AppState is stale
+                if isViewStale {
+                    logger.warning("⛔ Polling stopped - AppState is stale (account switched)")
+                    await MainActor.run {
+                        isAppStateStale = true
+                        keyPackageStatus = .error("Account changed. Please go back and re-enter.")
+                    }
+                    break
+                }
                 
                 // CIRCUIT BREAKER: Stop polling if database is in failed state
                 if appState.mlsServiceState.status.shouldStopPolling {
@@ -294,13 +389,57 @@ struct MLSConversationListView: View {
     // MARK: - Initialization
     
     private func initializeMLSAndLoadConversations() async {
+        // ACCOUNT SWITCH FIX: Early exit if view is stale
+        if isViewStale {
+            logger.warning("initializeMLSAndLoadConversations: Aborting - AppState is stale")
+            await MainActor.run {
+                isAppStateStale = true
+                keyPackageStatus = .error("Account changed. Please go back and re-enter.")
+                isInitializingMLS = false
+            }
+            stopPolling()
+            return
+        }
+        
         await MainActor.run {
             isInitializingMLS = true
             keyPackageStatus = .checking
         }
 
+        // CRITICAL FIX: Add timeout and proper error handling for account switching scenarios
         // Check if MLS is already initialized
-        if let manager = await appState.getMLSConversationManager(), manager.isInitialized {
+        guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
+            // Manager not available - check why and update UI accordingly
+            await MainActor.run {
+                isInitializingMLS = false
+                
+                // ACCOUNT SWITCH FIX: Check for stale state first
+                if isViewStale {
+                    isAppStateStale = true
+                    keyPackageStatus = .error("Account changed. Please go back and re-enter.")
+                    return
+                }
+                
+                // Check the service state for specific error messages
+                switch appState.mlsServiceState.status {
+                case .failed(let message):
+                    keyPackageStatus = .error(message)
+                    errorMessage = message
+                case .databaseFailed(let message):
+                    keyPackageStatus = .error(message)
+                    errorMessage = message
+                case .initializing:
+                    // Still initializing - leave in checking state but don't show as error
+                    keyPackageStatus = .checking
+                default:
+                    keyPackageStatus = .error("MLS service unavailable. Please try again.")
+                    errorMessage = "MLS service unavailable. This may happen during account switching. Please wait a moment and try again."
+                }
+            }
+            return
+        }
+        
+        if manager.isInitialized {
             await MainActor.run {
                 keyPackageStatus = .ready
             }
@@ -330,7 +469,7 @@ struct MLSConversationListView: View {
             try await appState.initializeMLS()
 
             // Sync conversations after initialization
-            if let manager = await appState.getMLSConversationManager() {
+            if let manager = await appState.getMLSConversationManager(timeout: 10.0) {
                 try? await manager.syncWithServer()
             }
 
@@ -355,31 +494,50 @@ struct MLSConversationListView: View {
     @ViewBuilder
     private var sidebarContent: some View {
         VStack(spacing: 0) {
-            // Key package status banner
-            if case .ready = keyPackageStatus {
-                // Don't show banner when ready
-            } else {
-                keyPackageStatusBanner
-            }
-            
-            ZStack {
-                conversationListContent
-                    .searchable(text: $searchText, prompt: "Search E2EE chats")
-
-                if isInitializingMLS || (isLoadingConversations && filteredConversations.isEmpty) {
-                    VStack(spacing: DesignTokens.Spacing.base) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text(loadingOverlayMessage)
-                            .designCallout()
-                            .foregroundColor(.secondary)
-                    }
+            // ACCOUNT SWITCH FIX: Show prominent stale state message
+            if isAppStateStale {
+                VStack(spacing: DesignTokens.Spacing.base) {
+                    Image(systemName: "person.crop.circle.badge.exclamationmark")
+                        .font(.system(size: 48))
+                        .foregroundColor(.orange)
+                    Text("Account Changed")
+                        .font(.headline)
+                    Text("The active account has changed. Please return to the chat list to continue.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(.systemBackground))
+            } else {
+                // Key package status banner
+                if case .ready = keyPackageStatus {
+                    // Don't show banner when ready
+                } else {
+                    keyPackageStatusBanner
+                }
+                
+                ZStack {
+                    conversationListContent
+                        .searchable(text: $searchText, prompt: "Search E2EE chats")
 
-                if shouldShowEmptyStateOverlay {
-                    if conversations.isEmpty {
-                        emptyStateView
-                    } else {
+                    if isInitializingMLS || (isLoadingConversations && filteredConversations.isEmpty) {
+                        VStack(spacing: DesignTokens.Spacing.base) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text(loadingOverlayMessage)
+                                .designCallout()
+                                .foregroundColor(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("mls.convoList.loadingOverlay")
+                    }
+
+                    if shouldShowEmptyStateOverlay {
+                        if conversations.isEmpty {
+                            emptyStateView
+                        } else {
                         noSearchResultsView
                     }
                 }
@@ -430,6 +588,7 @@ struct MLSConversationListView: View {
                     .padding()
                 }
             }
+            } // Close else block for isAppStateStale check
         }
         .navigationTitle("Messages")
         #if os(iOS)
@@ -443,28 +602,41 @@ struct MLSConversationListView: View {
                     showingChatRequests = true
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button {
-                        showingJoinConversation = true
-                    } label: {
-                        Label("Join via ID", systemImage: "link")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .accessibilityLabel("More options")
-                }
-                .disabled(!keyPackageStatus.isReady)
-            }
+//            ToolbarItem(placement: .primaryAction) {
+//                Menu {
+//                    Button {
+//                        showingJoinConversation = true
+//                    } label: {
+//                        Label("Join via ID", systemImage: "link")
+//                    }
+//                } label: {
+//                    Image(systemName: "ellipsis.circle")
+//                        .accessibilityLabel("More options")
+//                }
+//                .disabled(!keyPackageStatus.isReady)
+//            }
+// Disable for now, have to figure out ID joining
         }
         .refreshable {
             // Sync from server first, then reload from database
-            if let manager = await appState.getMLSConversationManager() {
+            if let manager = await appState.getMLSConversationManager(timeout: 10.0) {
                 try? await manager.syncWithServer()
             }
             await loadMLSConversations()
             await refreshChatRequestCount()
         }
+        // On Catalyst, show FAB in sidebar to keep it constrained to the sidebar column
+        #if targetEnvironment(macCatalyst)
+        .overlay(alignment: .bottomTrailing) {
+            if shouldShowChatFAB {
+                ChatFAB(newMessageAction: {
+                    showingNewConversation = true
+                })
+                .padding(.bottom, 20)
+                .padding(.trailing, 20)
+            }
+        }
+        #endif
     }
     
     @ViewBuilder
@@ -517,7 +689,7 @@ struct MLSConversationListView: View {
         keyPackageStatus = .publishing
 
         do {
-            guard let manager = await appState.getMLSConversationManager() else {
+            guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
                 throw MLSInitializationError.noConversationManager
             }
 
@@ -584,6 +756,7 @@ struct MLSConversationListView: View {
                     unreadCount: conversationUnreadCounts[conversation.conversationID] ?? 0
                 )
                     .tag(conversation.conversationID)
+                    .accessibilityIdentifier("mls.convoRow.\(accessibilitySafeIdPrefix(conversation.conversationID))")
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             deleteConversation(conversation)
@@ -611,6 +784,7 @@ struct MLSConversationListView: View {
         }
         .listStyle(.plain)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+        .accessibilityIdentifier("mls.conversationList")
     }
     
     // MARK: - Chat Mode Picker
@@ -657,12 +831,12 @@ struct MLSConversationListView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 
-                Button {
-                    showingJoinConversation = true
-                } label: {
-                    Label("Join via ID", systemImage: "link")
-                }
-                .buttonStyle(.bordered)
+//                Button {
+//                    showingJoinConversation = true
+//                } label: {
+//                    Label("Join via ID", systemImage: "link")
+//                }
+//                .buttonStyle(.bordered)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -727,11 +901,22 @@ struct MLSConversationListView: View {
         }
         return "Loading encrypted chats..."
     }
+
+    private func accessibilitySafeIdPrefix(_ value: String, maxLength: Int = 12) -> String {
+        let filtered = value.unicodeScalars.compactMap { scalar -> Character? in
+            guard scalar.isASCII else { return nil }
+            let v = scalar.value
+            let isAlphaNum = (v >= 48 && v <= 57) || (v >= 65 && v <= 90) || (v >= 97 && v <= 122)
+            return isAlphaNum ? Character(scalar) : nil
+        }
+        let prefix = String(filtered.prefix(maxLength))
+        return prefix.isEmpty ? "unknown" : prefix
+    }
     
     // MARK: - Actions
 
     private func loadRecentMemberChanges() async {
-        guard let manager = await appState.getMLSConversationManager()
+        guard let manager = await appState.getMLSConversationManager(timeout: 5.0)
                else { return }
         let storage = manager.storage
         let database = manager.database
@@ -777,23 +962,25 @@ struct MLSConversationListView: View {
         let userDID = appState.userDID
 
         do {
-            let db = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
-
-            // Single batch query for conversations AND members (eliminates N+1)
-            let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembers(
-                currentUserDID: userDID,
-                database: db
-            )
-            
-            // Batch query for unread counts (single query for all conversations)
-            let unreadCounts = try await MLSStorageHelpers.getUnreadCountsForAllConversations(
-                from: db,
+            // Use smart routing - auto-routes to lightweight Queue if needed
+            let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembersUsingSmartRouting(
                 currentUserDID: userDID
             )
+            
+            // Filter out pending chat requests - they should appear in the Requests view instead
+            let acceptedConversations = loadedConversations.filter { $0.requestState != .pendingInbound }
+            
+            // Batch query for unread counts (single query for all conversations)
+            let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+                try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
+                    from: db,
+                    currentUserDID: userDID
+                )
+            }
 
             await MainActor.run {
                 // Sort conversations: unread first, then by lastMessageAt
-                let sortedConversations = loadedConversations.sorted { lhs, rhs in
+                let sortedConversations = acceptedConversations.sorted { lhs, rhs in
                     let lhsUnread = unreadCounts[lhs.conversationID] ?? 0
                     let rhsUnread = unreadCounts[rhs.conversationID] ?? 0
                     
@@ -812,6 +999,9 @@ struct MLSConversationListView: View {
                 }
                 conversations = sortedConversations
                 conversationUnreadCounts = unreadCounts
+                if selectedConvoId != nil, !acceptedConversations.contains(where: { $0.conversationID == selectedConvoId }) {
+                    selectedConvoId = nil
+                }
             }
             logger.info("Loaded \(loadedConversations.count) conversations from encrypted database")
 
@@ -833,17 +1023,23 @@ struct MLSConversationListView: View {
             }
         }
 
-        // Fetch profiles from Bluesky (network call, not DB)
+        // IMPROVEMENT: Use centralized MLSProfileEnricher so profiles are cached
+        // This ensures profiles are already in cache when opening a conversation detail
         var profilesByDID: [String: MLSProfileEnricher.ProfileData] = [:]
         if let client = appState.atProtoClient {
-            profilesByDID = await fetchProfilesForDIDs(Array(allDIDs), client: client)
+            profilesByDID = await appState.mlsProfileEnricher.ensureProfiles(
+                for: Array(allDIDs),
+                using: client,
+                currentUserDID: userDID
+            )
         }
 
         // Convert members to participants with enriched profile data
         var updatedParticipants: [String: [MLSParticipantViewModel]] = [:]
         for (convoID, members) in membersByConvoID {
             let participants = members.map { member -> MLSParticipantViewModel in
-                let profile = profilesByDID[member.did]
+                let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
+                let profile = profilesByDID[canonicalDID] ?? profilesByDID[member.did]
                 return MLSParticipantViewModel(
                     id: member.did,
                     handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
@@ -858,53 +1054,6 @@ struct MLSConversationListView: View {
             conversationParticipants = updatedParticipants
         }
         logger.info("Loaded participants for \(membersByConvoID.count) conversations")
-    }
-
-    private func fetchProfilesForDIDs(_ dids: [String], client: ATProtoClient) async -> [String: MLSProfileEnricher.ProfileData] {
-        let uniqueDIDs = Array(Set(dids))
-        let canonicalByOriginal = Dictionary(uniqueKeysWithValues: uniqueDIDs.map { ($0, MLSProfileEnricher.canonicalDID($0)) })
-        let canonicalDIDs = Array(Set(canonicalByOriginal.values))
-
-        var profilesByCanonicalDID: [String: MLSProfileEnricher.ProfileData] = [:]
-
-        // Batch fetch profiles in chunks of 25 (AT Protocol limit)
-        let batchSize = 25
-        let batches = stride(from: 0, to: canonicalDIDs.count, by: batchSize).map {
-            Array(canonicalDIDs[$0..<min($0 + batchSize, canonicalDIDs.count)])
-        }
-
-        for batch in batches {
-            let actors = batch.compactMap { try? ATIdentifier(string: $0) }
-            guard !actors.isEmpty else { continue }
-
-            do {
-                let params = AppBskyActorGetProfiles.Parameters(actors: actors)
-                let (code, response) = try await client.app.bsky.actor.getProfiles(input: params)
-
-                guard code >= 200 && code < 300, let profiles = response?.profiles else {
-                    logger.warning("Profile fetch failed: HTTP \(code)")
-                    continue
-                }
-
-                for profile in profiles {
-                    let profileData = MLSProfileEnricher.ProfileData(from: profile)
-                    profilesByCanonicalDID[profileData.did] = profileData
-                }
-
-            } catch {
-                logger.error("Failed to fetch profile batch: \(error)")
-            }
-        }
-
-        var profilesByOriginalDID: [String: MLSProfileEnricher.ProfileData] = [:]
-        for (original, canonical) in canonicalByOriginal {
-            if let profile = profilesByCanonicalDID[canonical] {
-                profilesByOriginalDID[original] = profile
-            }
-        }
-
-        logger.info("Fetched \(profilesByOriginalDID.count) profiles from Bluesky")
-        return profilesByOriginalDID
     }
 
     private func deleteConversation(_ conversation: MLSConversationModel) {
@@ -929,15 +1078,15 @@ struct MLSConversationListView: View {
         
         Task {
             do {
-                let db = try await MLSGRDBManager.shared.getDatabasePool(for: appState.userDID)
-                
                 if currentUnread > 0 {
-                    // Mark all messages as read
-                    let markedCount = try await MLSStorageHelpers.markAllMessagesAsRead(
-                        in: db,
-                        conversationID: convoID,
-                        currentUserDID: appState.userDID
-                    )
+                    // Mark all messages as read using smart routing
+                    let markedCount = try await MLSGRDBManager.shared.write(for: appState.userDID) { db in
+                        try MLSStorageHelpers.markAllMessagesAsReadSync(
+                            in: db,
+                            conversationID: convoID,
+                            currentUserDID: appState.userDID
+                        )
+                    }
                     logger.info("Marked \(markedCount) messages as read in conversation \(convoID)")
                     
                     await MainActor.run {
@@ -964,7 +1113,7 @@ struct MLSConversationListView: View {
 
     private func refreshConversations() async {
         // Sync from server first
-        if let manager = await appState.getMLSConversationManager() {
+        if let manager = await appState.getMLSConversationManager(timeout: 10.0) {
             try? await manager.syncWithServer()
         }
         // Then reload from local database
@@ -973,10 +1122,11 @@ struct MLSConversationListView: View {
 
     @MainActor
     private func refreshChatRequestCount() async {
+        // Use local pending request count instead of server-side count
+        guard let manager = await appState.getMLSConversationManager() else { return }
         do {
-            guard let apiClient = await appState.getMLSAPIClient() else { return }
-            let output = try await apiClient.getChatRequestCount()
-            pendingChatRequestCount = output.pendingCount
+            let pendingRequests = try await manager.fetchPendingRequestConversations()
+            pendingChatRequestCount = pendingRequests.count
         } catch {
             logger.debug("Failed to refresh chat request count: \(error.localizedDescription)")
         }
@@ -1150,6 +1300,12 @@ struct MemberChangeInfo {
         text: "\(name) added device",
         icon: "laptopcomputer.and.iphone",
         color: .blue
+      )
+    case .deviceRemoved:
+      return MemberChangeInfo(
+        text: "\(name) removed device",
+        icon: "iphone.slash",
+        color: .orange
       )
     }
   }

@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSReportsViewModel.swift
 //  Catbird
@@ -65,6 +66,12 @@ final class MLSReportsViewModel {
     /// Load reports for the conversation
     @MainActor
     func loadReports(refresh: Bool = false) async {
+        // TODO: Re-enable when reports feature is implemented on server
+        isLoadingReports = false
+        hasMoreReports = false
+        return
+        
+        /* Reports disabled - uncomment when ready
         guard !isLoadingReports else { return }
 
         if refresh {
@@ -101,6 +108,7 @@ final class MLSReportsViewModel {
         }
 
         isLoadingReports = false
+        */
     }
 
     /// Load more reports (pagination)

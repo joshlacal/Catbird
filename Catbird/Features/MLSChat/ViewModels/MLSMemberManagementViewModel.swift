@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSMemberManagementViewModel.swift
 //  Catbird
@@ -406,7 +407,7 @@ final class MLSMemberManagementViewModel {
                     do {
                         let statuses = try await apiClient.getOptInStatus(dids: dids)
                         for status in statuses {
-                            participantOptInStatus[status.did] = status.optedIn
+                            participantOptInStatus[status.did.didString()] = status.optedIn
                         }
                         logger.info("Checked MLS opt-in status for \(statuses.count) users")
                     } catch {

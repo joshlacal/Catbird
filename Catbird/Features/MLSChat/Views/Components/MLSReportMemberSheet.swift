@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSReportMemberSheet.swift
 //  Catbird
@@ -245,6 +246,15 @@ struct MLSReportMemberSheet: View {
 
     @MainActor
     private func submitReport() async {
+        // MLS member reporting is not yet implemented on the backend.
+        // Early return to disable this functionality until the moderation
+        // infrastructure is in place. See: MLS_MODERATION_ADMIN_UI_COMPLETE.md
+        logger.info("Report submission disabled - MLS moderation not yet implemented")
+        errorMessage = "Reporting is not available yet. Please contact support if you need to report a member."
+        showingError = true
+        return
+
+        // --- Original implementation (disabled) ---
         guard let reason = selectedReason else { return }
 
         isSubmitting = true

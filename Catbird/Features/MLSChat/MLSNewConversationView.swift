@@ -1,6 +1,7 @@
 import SwiftUI
 import Petrel
 import OSLog
+import CatbirdMLSService
 
 #if os(iOS)
 
@@ -610,7 +611,7 @@ struct MLSNewConversationView: View {
                     do {
                         let statuses = try await apiClient.getOptInStatus(dids: dids)
                         for status in statuses {
-                            participantOptInStatus[status.did] = status.optedIn
+                            participantOptInStatus[status.did.didString()] = status.optedIn
                         }
                         logger.info("Checked MLS opt-in status for \(statuses.count) users")
                     } catch {

@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSAdminDashboardViewModel.swift
 //  Catbird
@@ -123,6 +124,12 @@ final class MLSAdminDashboardViewModel {
     /// Load pending reports count
     @MainActor
     private func loadPendingReportsCount() async {
+        // TODO: Re-enable when reports feature is implemented on server
+        pendingReportsCount = 0
+        isLoadingReports = false
+        return
+        
+        /* Reports disabled - uncomment when ready
         guard !isLoadingReports else { return }
 
         isLoadingReports = true
@@ -145,6 +152,7 @@ final class MLSAdminDashboardViewModel {
         }
 
         isLoadingReports = false
+        */
     }
 
     /// Refresh all data

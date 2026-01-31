@@ -1,5 +1,6 @@
 import SwiftUI
 import NukeUI
+import CatbirdMLSService
 
 enum UnifiedMessageGroupPosition: Sendable {
   case single
@@ -87,6 +88,11 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
   private let cornerRadius: CGFloat = 18
   private let maxBubbleWidth: CGFloat = 280
+
+  private var mlsMessageTextIdentifier: String? {
+    guard message is MLSMessageAdapter else { return nil }
+    return message.isFromCurrentUser ? "mls.messageText.outgoing" : "mls.messageText.incoming"
+  }
 
   var body: some View {
     HStack(alignment: .bottom, spacing: 8) {
@@ -209,7 +215,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   private var bubbleContent: some View {
     let mlsDebugInfo = (message as? MLSMessageAdapter)?.debugInfo
 
-    BubbleWidthLimiter(maxWidth: maxBubbleWidth) {
+    let bubble = BubbleWidthLimiter(maxWidth: maxBubbleWidth) {
       VStack(alignment: .leading, spacing: 8) {
         if mlsDebugInfo != nil {
           HStack(spacing: 6) {
@@ -235,11 +241,17 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
         // Message text
         if !message.text.isEmpty {
-          Text(message.text)
+          let messageTextView = Text(message.text)
             .font(.body)
             .foregroundStyle(message.isFromCurrentUser ? .white : .primary)
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
+
+          if let identifier = mlsMessageTextIdentifier {
+            messageTextView.accessibilityIdentifier(identifier)
+          } else {
+            messageTextView
+          }
         }
       }
       .padding(.horizontal, 14)
@@ -255,6 +267,12 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       if let info = mlsDebugInfo {
         MLSMessageErrorDetailsSheet(info: info)
       }
+    }
+
+    if message is MLSMessageAdapter {
+      bubble.accessibilityElement(children: .contain)
+    } else {
+      bubble
     }
   }
 

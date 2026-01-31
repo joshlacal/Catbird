@@ -1,3 +1,4 @@
+import CatbirdMLSService
 //
 //  MLSReactionDetailsSheet.swift
 //  Catbird
@@ -46,9 +47,11 @@ import SwiftUI
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
           ToolbarItem(placement: .confirmationAction) {
-            Button("Done") {
-              dismiss()
-            }
+              Button {
+                  dismiss()
+              } label: {
+                  Image(systemName: "checkmark")
+              }
           }
         }
       }

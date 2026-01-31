@@ -2,6 +2,7 @@ import Foundation
 import OSLog
 import Petrel
 import SwiftUI
+import CatbirdMLSService
 
 #if os(iOS)
   import CatbirdMLSCore
@@ -21,6 +22,12 @@ import SwiftUI
 
     // Profile cache for display names/avatars
     private var profileCache: [String: MLSProfileEnricher.ProfileData] = [:]
+    
+    // Member cache for fallback display names (from database)
+    private var memberCache: [String: (handle: String?, displayName: String?)] = [:]
+
+    // Flag to track if initial profiles have been loaded
+    private var hasLoadedInitialProfiles: Bool = false
 
     private(set) var messages: [MLSMessageAdapter] = []
     private(set) var isLoading: Bool = false
@@ -32,6 +39,7 @@ import SwiftUI
 
     // Local reactions cache for optimistic updates
     private var localReactions: [String: [MLSMessageReaction]] = [:]
+    private var reactionReloadTask: Task<Void, Never>?
 
     // Pagination tracking
     private var oldestLoadedEpoch: Int = Int.max
@@ -39,12 +47,300 @@ import SwiftUI
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDataSource")
 
+    // MARK: - Plaintext Parsing
+
+    /// Parse cached plaintext and extract display text for the message list.
+    /// Parses JSON payloads to extract text content and detect control messages.
+    /// - Returns: A tuple of (displayText, isControlMessage) or nil if parsing fails
+    private func parseDisplayText(from plaintext: String) -> (text: String, isControlMessage: Bool)?
+    {
+      // Check for legacy control message sentinel format
+      // These are stored by cacheControlMessageEnvelope and should not be displayed
+      if plaintext.hasPrefix("[control:") {
+        return (plaintext, true)
+      }
+
+      // Try parsing as JSON payload
+      if plaintext.hasPrefix("{"),
+        let data = plaintext.data(using: .utf8),
+        let payload = try? MLSMessagePayload.decodeFromJSON(data)
+      {
+
+        switch payload.messageType {
+        case .text:
+          // Text messages are displayable
+          return (payload.text ?? "New Message", false)
+        case .reaction, .readReceipt, .typing:
+          // Control messages should not be displayed in the message list
+          return (plaintext, true)
+        case .adminRoster, .adminAction:
+          // Admin messages could be shown as system messages, but skip for now
+          return (plaintext, true)
+        }
+      }
+
+      // Plain text (non-JSON text messages)
+      return (plaintext, false)
+    }
+
     // MARK: - Init
 
     init(conversationId: String, currentUserDID: String, appState: AppState?) {
       self.conversationId = conversationId
-      self.currentUserDID = currentUserDID
+      self.currentUserDID = MLSStorageHelpers.normalizeDID(currentUserDID)
       self.appState = appState
+    }
+    
+    /// Preload profiles for known participants before loading messages
+    /// Call this with participant data from the conversation list to avoid blank names
+    func preloadProfiles(_ profiles: [String: MLSProfileEnricher.ProfileData]) {
+      var newProfilesAdded = false
+      for (did, profile) in profiles {
+        let canonical = MLSProfileEnricher.canonicalDID(did)
+        if profileCache[canonical] == nil {
+          profileCache[canonical] = profile
+          newProfilesAdded = true
+        }
+      }
+      if !profiles.isEmpty {
+        hasLoadedInitialProfiles = true
+        logger.debug("Preloaded \(profiles.count) profiles for conversation \(self.conversationId)")
+
+        // If messages are already loaded, rebuild them with the new profile data
+        if newProfilesAdded && !messages.isEmpty {
+          rebuildMessagesWithProfiles()
+        }
+      }
+    }
+
+    /// Rebuild all messages with current profile cache data
+    private func rebuildMessagesWithProfiles() {
+      messages = messages.map { adapter in
+        let canonicalSenderDID = MLSProfileEnricher.canonicalDID(adapter.senderID)
+
+        // Try profile cache first, then member cache
+        let senderProfile: MLSMessageAdapter.MLSProfileData?
+        if let profile = profileCache[canonicalSenderDID] {
+          senderProfile = .init(
+            displayName: profile.displayName,
+            avatarURL: profile.avatarURL,
+            handle: profile.handle
+          )
+        } else if let memberData = memberCache[canonicalSenderDID],
+          (memberData.handle != nil || memberData.displayName != nil)
+        {
+          senderProfile = .init(
+            displayName: memberData.displayName,
+            avatarURL: nil,
+            handle: memberData.handle
+          )
+        } else {
+          senderProfile = adapter.mlsProfile
+        }
+
+        return MLSMessageAdapter(
+          id: adapter.id,
+          convoID: adapter.mlsConversationID,
+          text: adapter.text,
+          senderDID: adapter.senderID,
+          currentUserDID: currentUserDID,
+          sentAt: adapter.sentAt,
+          senderProfile: senderProfile,
+          reactions: localReactions[adapter.id] ?? [],
+          embed: adapter.mlsEmbed,
+          sendState: adapter.sendState,
+          epoch: adapter.mlsEpoch,
+          sequence: adapter.mlsSequence,
+          processingError: adapter.processingError,
+          processingAttempts: adapter.processingAttempts,
+          validationFailureReason: adapter.validationFailureReason
+        )
+      }
+      logger.debug("Rebuilt \(self.messages.count) messages with updated profile data")
+    }
+
+    private func adoptOrphanedReactionsIfNeeded(
+      messageIDs: Set<String>,
+      database: MLSDatabase
+    ) async -> Bool {
+      let storage = MLSStorage.shared
+
+      do {
+        let orphanStats = try await storage.fetchOrphanedReactionStats(
+          for: conversationId,
+          currentUserDID: currentUserDID,
+          limit: 50,
+          database: database
+        )
+
+        guard !orphanStats.isEmpty else { return false }
+
+        logger.info(
+          "[ORPHAN-UI] Found \(orphanStats.count) orphaned reaction parent(s) for \(self.conversationId.prefix(16))"
+        )
+
+        var adoptedAny = false
+        for (messageID, _) in orphanStats {
+          guard messageIDs.contains(messageID) else { continue }
+          _ = try await storage.adoptOrphansForMessage(
+            messageID,
+            currentUserDID: currentUserDID,
+            database: database
+          )
+          adoptedAny = true
+        }
+        return adoptedAny
+      } catch {
+        logger.error("Failed to adopt orphaned reactions: \(error.localizedDescription)")
+      }
+      return false
+    }
+
+    private func mergeCachedReactions(
+      _ cachedReactions: [String: [MLSReactionModel]],
+      replaceExisting: Bool
+    ) -> Bool {
+      var didUpdate = false
+
+      for (messageId, models) in cachedReactions {
+        var seen = Set<String>()
+        let reactions = models.compactMap { model -> MLSMessageReaction? in
+          let key = "\(model.actorDID)|\(model.emoji)"
+          guard seen.insert(key).inserted else { return nil }
+          return MLSMessageReaction(
+            messageId: model.messageID,
+            reaction: model.emoji,
+            senderDID: model.actorDID,
+            reactedAt: model.timestamp
+          )
+        }
+
+        if replaceExisting {
+          if reactions.isEmpty {
+            if localReactions.removeValue(forKey: messageId) != nil {
+              didUpdate = true
+            }
+          } else if localReactions[messageId] != reactions {
+            localReactions[messageId] = reactions
+            didUpdate = true
+          }
+        } else {
+          if reactions.isEmpty {
+            continue
+          }
+          if localReactions[messageId] == nil {
+            localReactions[messageId] = reactions
+            didUpdate = true
+          } else {
+            var existing = localReactions[messageId] ?? []
+            let existingKeys = Set(existing.map { "\($0.senderDID)|\($0.reaction)" })
+            for reaction in reactions {
+              let key = "\(reaction.senderDID)|\(reaction.reaction)"
+              if !existingKeys.contains(key) {
+                existing.append(reaction)
+                didUpdate = true
+              }
+            }
+            localReactions[messageId] = existing
+          }
+        }
+      }
+
+      return didUpdate
+    }
+
+    private func rebuildMessagesWithReactions() {
+      messages = messages.map { adapter in
+        // SAFETY: Don't attach reactions to undecryptable/error messages
+        let reactionsToShow =
+          adapter.isDecryptedAndValid
+          ? (localReactions[adapter.id] ?? [])
+          : []
+        return MLSMessageAdapter(
+          id: adapter.id,
+          convoID: adapter.mlsConversationID,
+          text: adapter.text,
+          senderDID: adapter.senderID,
+          currentUserDID: currentUserDID,
+          sentAt: adapter.sentAt,
+          senderProfile: adapter.mlsProfile,
+          reactions: reactionsToShow,
+          embed: adapter.mlsEmbed,
+          sendState: adapter.sendState,
+          epoch: adapter.mlsEpoch,
+          sequence: adapter.mlsSequence,
+          processingError: adapter.processingError,
+          processingAttempts: adapter.processingAttempts,
+          validationFailureReason: adapter.validationFailureReason
+        )
+      }
+    }
+
+    private func loadCachedReactions(
+      for messageIDs: [String],
+      database: MLSDatabase,
+      replaceExisting: Bool,
+      refreshMessages: Bool
+    ) async {
+      guard !messageIDs.isEmpty else { return }
+
+      let storage = MLSStorage.shared
+      let messageIDSet = Set(messageIDs)
+      _ = await adoptOrphanedReactionsIfNeeded(messageIDs: messageIDSet, database: database)
+
+      let maxRetries = 3
+      var lastError: Error?
+
+      for attempt in 1...maxRetries {
+        do {
+          let cachedReactions = try await storage.fetchReactionsForMessages(
+            messageIDs,
+            currentUserDID: currentUserDID,
+            database: database
+          )
+
+          if refreshMessages,
+            mergeCachedReactions(cachedReactions, replaceExisting: replaceExisting)
+          {
+            rebuildMessagesWithReactions()
+          } else {
+            _ = mergeCachedReactions(cachedReactions, replaceExisting: replaceExisting)
+          }
+          return
+        } catch {
+          lastError = error
+          let desc = error.localizedDescription
+          let isRetryable =
+            desc.contains("out of memory") || desc.contains("busy") || desc.contains("locked")
+            || desc.contains("error 7") || desc.contains("error 5") || desc.contains("error 6")
+
+          if isRetryable && attempt < maxRetries {
+            logger.warning("⚠️ [REACTION-FETCH] Transient error (attempt \(attempt)): \(desc)")
+            try? await Task.sleep(nanoseconds: UInt64(50 * attempt) * 1_000_000)
+            continue
+          }
+          break
+        }
+      }
+
+      if let error = lastError {
+        logger.error("Failed to load cached reactions after retries: \(error.localizedDescription)")
+      }
+    }
+
+    private func scheduleDelayedReactionReload(messageIDs: [String], database: MLSDatabase) {
+      reactionReloadTask?.cancel()
+      guard !messageIDs.isEmpty else { return }
+      reactionReloadTask = Task { @MainActor [weak self] in
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        guard let self, !Task.isCancelled else { return }
+        await self.loadCachedReactions(
+          for: messageIDs,
+          database: database,
+          replaceExisting: false,
+          refreshMessages: true
+        )
+      }
     }
 
     // MARK: - UnifiedChatDataSource
@@ -68,8 +364,26 @@ import SwiftUI
       }
 
       do {
-        // Fetch messages from local storage
         let storage = MLSStorage.shared
+
+        // IMPROVEMENT: Load member data from database first as fallback for display names
+        // This ensures we always have at least handle info even before network profile fetch
+        if memberCache.isEmpty {
+          let members = try await storage.fetchMembers(
+            conversationID: conversationId,
+            currentUserDID: currentUserDID,
+            database: database
+          )
+          for member in members {
+            memberCache[MLSProfileEnricher.canonicalDID(member.did)] = (
+              handle: member.handle,
+              displayName: member.displayName
+            )
+          }
+          logger.debug("Loaded \(members.count) members from database for fallback names")
+        }
+
+        // Fetch messages from local storage
         let messageModels = try await storage.fetchMessagesForConversation(
           conversationId,
           currentUserDID: currentUserDID,
@@ -77,56 +391,86 @@ import SwiftUI
           limit: 50
         )
 
-        // Also load cached reactions
-        let cachedReactions = try await storage.fetchReactionsForConversation(
-          conversationId,
-          currentUserDID: currentUserDID,
-          database: database
+        let messageIDs = messageModels.map(\.messageID)
+        await loadCachedReactions(
+          for: messageIDs,
+          database: database,
+          replaceExisting: true,
+          refreshMessages: false
         )
-
-        // Merge cached reactions into local cache
-        for (messageId, models) in cachedReactions {
-          let reactions = models.map { model in
-            MLSMessageReaction(
-              messageId: model.messageID,
-              reaction: model.emoji,
-              senderDID: model.actorDID,
-              reactedAt: model.timestamp
-            )
-          }
-          localReactions[messageId] = reactions
-        }
 
         // Convert to adapters
         var adapters: [MLSMessageAdapter] = []
+        var unknownDIDs: Set<String> = []
 
         for model in messageModels {
-          guard let plaintext = model.plaintext, !model.plaintextExpired else {
+          guard let payload = model.parsedPayload, !model.payloadExpired else {
             continue
           }
 
-          // Skip control messages (reactions, read receipts, typing indicators, etc.)
-          // These are cached with sentinel plaintext like "[control:reaction]"
-          if plaintext.hasPrefix("[control:") {
+          // Skip control messages (reactions, etc.)
+          guard payload.messageType == .text else {
             continue
           }
+
+          // SAFETY: Skip placeholder error messages that shouldn't be displayed
+          // These are created when messages fail to decrypt (e.g., reactions, self-messages)
+          // Check for known placeholder text patterns
+          let text = payload.text ?? ""
+          let isPlaceholderError =
+            model.processingError != nil
+            && (text.isEmpty || text.contains("Message unavailable")
+              || text.contains("Decryption Failed") || text.contains("Self-sent message"))
+          if isPlaceholderError {
+            logger.debug("Skipping placeholder error message: \(model.messageID)")
+            continue
+          }
+
+          let displayText = text
 
           let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
           let profile = profileCache[canonicalSenderDID]
-          let reactions = localReactions[model.messageID] ?? []
+          
+          // SAFETY: Don't attach reactions to messages with processing errors
+          // They will remain cached but not displayed on error bubbles
+          let hasError = model.processingError != nil || model.validationFailureReason != nil
+          let reactions = hasError ? [] : (localReactions[model.messageID] ?? [])
+
+          // Build profile data with fallbacks:
+          // 1. Use cached profile if available
+          // 2. Fall back to member database data (handle/displayName)
+          // 3. Track unknown DIDs for async profile fetch
+          let senderProfile: MLSMessageAdapter.MLSProfileData?
+          if let profile = profile {
+            senderProfile = .init(
+              displayName: profile.displayName,
+              avatarURL: profile.avatarURL,
+              handle: profile.handle
+            )
+          } else if let memberData = memberCache[canonicalSenderDID],
+            (memberData.handle != nil || memberData.displayName != nil)
+          {
+            // Use member database data as fallback
+            senderProfile = .init(
+              displayName: memberData.displayName,
+              avatarURL: nil,
+              handle: memberData.handle
+            )
+          } else {
+            senderProfile = nil
+            unknownDIDs.insert(canonicalSenderDID)
+          }
 
           let adapter = MLSMessageAdapter(
             id: model.messageID,
             convoID: conversationId,
-            text: plaintext,
+            text: displayText,
             senderDID: model.senderID,
             currentUserDID: currentUserDID,
             sentAt: model.timestamp,
-            senderProfile: profile.map {
-              .init(displayName: $0.displayName, avatarURL: $0.avatarURL, handle: $0.handle)
-            },
+            senderProfile: senderProfile,
             reactions: reactions,
-            embed: model.parsedEmbed,
+            embed: payload.embed,
             sendState: .sent,
             epoch: Int(model.epoch),
             sequence: Int(model.sequenceNumber),
@@ -145,10 +489,20 @@ import SwiftUI
           }
         }
 
-        // Sort by epoch/sequence
+        // Sort by epoch/sequence (MLS ordering is authoritative, not timestamps)
         adapters.sort { lhs, rhs in
-          // For now, sort by sentAt since we don't have direct epoch/seq on adapter
-          lhs.sentAt < rhs.sentAt
+          let lhsEpoch = lhs.mlsEpoch ?? Int.max
+          let rhsEpoch = rhs.mlsEpoch ?? Int.max
+          if lhsEpoch != rhsEpoch {
+            return lhsEpoch < rhsEpoch
+          }
+          let lhsSeq = lhs.mlsSequence ?? Int.max
+          let rhsSeq = rhs.mlsSequence ?? Int.max
+          if lhsSeq != rhsSeq {
+            return lhsSeq < rhsSeq
+          }
+          // Fallback to timestamp for messages without epoch/seq
+          return lhs.sentAt < rhs.sentAt
         }
 
         // Merge with existing messages instead of replacing
@@ -171,15 +525,36 @@ import SwiftUI
               merged.append(adapter)
             }
           }
-          // Re-sort after merge
-          merged.sort { $0.sentAt < $1.sentAt }
+          // Re-sort after merge using MLS ordering
+          merged.sort { lhs, rhs in
+            let lhsEpoch = lhs.mlsEpoch ?? Int.max
+            let rhsEpoch = rhs.mlsEpoch ?? Int.max
+            if lhsEpoch != rhsEpoch {
+              return lhsEpoch < rhsEpoch
+            }
+            let lhsSeq = lhs.mlsSequence ?? Int.max
+            let rhsSeq = rhs.mlsSequence ?? Int.max
+            if lhsSeq != rhsSeq {
+              return lhsSeq < rhsSeq
+            }
+            return lhs.sentAt < rhs.sentAt
+          }
           self.messages = merged
         }
 
         self.hasMoreMessages = messageModels.count >= 50
+        scheduleDelayedReactionReload(messageIDs: messageIDs, database: database)
 
-        // Load profiles for senders
-        await loadProfilesForMessages(adapters)
+        // IMPROVEMENT: Only fetch profiles for DIDs we don't have yet
+        // If no unknown DIDs, skip the network call entirely
+        if !unknownDIDs.isEmpty {
+          logger.debug("Fetching profiles for \(unknownDIDs.count) unknown sender DIDs")
+          await loadProfilesForMessages(adapters)
+        } else if !hasLoadedInitialProfiles {
+          // First load - ensure we try to fetch even if we have member fallbacks
+          await loadProfilesForMessages(adapters)
+          hasLoadedInitialProfiles = true
+        }
 
         logger.info("Loaded \(adapters.count) MLS messages")
 
@@ -217,34 +592,78 @@ import SwiftUI
           return
         }
 
+        let messageIDs = olderModels.map(\.messageID)
+        await loadCachedReactions(
+          for: messageIDs,
+          database: database,
+          replaceExisting: false,
+          refreshMessages: false
+        )
+
         var adapters: [MLSMessageAdapter] = []
+        var unknownDIDs: Set<String> = []
 
         for model in olderModels {
-          guard let plaintext = model.plaintext, !model.plaintextExpired else {
+          guard let payload = model.parsedPayload, !model.payloadExpired else {
             continue
           }
 
-          // Skip control messages (reactions, read receipts, typing indicators, etc.)
-          if plaintext.hasPrefix("[control:") {
+          // Skip control messages (reactions, etc.)
+          guard payload.messageType == .text else {
             continue
           }
+          
+          // SAFETY: Skip placeholder error messages (same as loadMessages)
+          let text = payload.text ?? ""
+          let isPlaceholderError =
+            model.processingError != nil
+            && (text.isEmpty || text.contains("Message unavailable")
+              || text.contains("Decryption Failed") || text.contains("Self-sent message"))
+          if isPlaceholderError {
+            logger.debug("Skipping placeholder error message in pagination: \(model.messageID)")
+            continue
+          }
+
+          let displayText = text
 
           let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
           let profile = profileCache[canonicalSenderDID]
-          let reactions = localReactions[model.messageID] ?? []
+          
+          // SAFETY: Don't attach reactions to messages with processing errors
+          let hasError = model.processingError != nil || model.validationFailureReason != nil
+          let reactions = hasError ? [] : (localReactions[model.messageID] ?? [])
+
+          // Build profile data with fallbacks (same as loadMessages)
+          let senderProfile: MLSMessageAdapter.MLSProfileData?
+          if let profile = profile {
+            senderProfile = .init(
+              displayName: profile.displayName,
+              avatarURL: profile.avatarURL,
+              handle: profile.handle
+            )
+          } else if let memberData = memberCache[canonicalSenderDID],
+            (memberData.handle != nil || memberData.displayName != nil)
+          {
+            senderProfile = .init(
+              displayName: memberData.displayName,
+              avatarURL: nil,
+              handle: memberData.handle
+            )
+          } else {
+            senderProfile = nil
+            unknownDIDs.insert(canonicalSenderDID)
+          }
 
           let adapter = MLSMessageAdapter(
             id: model.messageID,
             convoID: conversationId,
-            text: plaintext,
+            text: displayText,
             senderDID: model.senderID,
             currentUserDID: currentUserDID,
             sentAt: model.timestamp,
-            senderProfile: profile.map {
-              .init(displayName: $0.displayName, avatarURL: $0.avatarURL, handle: $0.handle)
-            },
+            senderProfile: senderProfile,
             reactions: reactions,
-            embed: model.parsedEmbed,
+            embed: payload.embed,
             sendState: .sent,
             epoch: Int(model.epoch),
             sequence: Int(model.sequenceNumber),
@@ -267,8 +686,10 @@ import SwiftUI
         self.messages = adapters + self.messages
         self.hasMoreMessages = olderModels.count >= 50
 
-        // Load profiles for any senders in the newly prepended messages
-        await loadProfilesForMessages(adapters)
+        // Only fetch profiles for unknown DIDs
+        if !unknownDIDs.isEmpty {
+          await loadProfilesForMessages(adapters)
+        }
 
         logger.info("Loaded \(adapters.count) older MLS messages")
 
@@ -350,29 +771,30 @@ import SwiftUI
           }
 
           if hasReaction {
-            // Use encrypted reaction removal (E2EE via MLS)
-            _ = try await manager.sendEncryptedReaction(
-              emoji: emoji,
-              to: messageID,
-              in: conversationId,
-              action: .remove
+            _ = try await manager.removeReaction(
+              convoId: conversationId,
+              messageId: messageID,
+              reaction: emoji
             )
-            localReactions[messageID] = currentReactions.filter {
+            let updated = currentReactions.filter {
               !($0.reaction == emoji && $0.senderDID == currentUserDID)
             }
+            if updated.isEmpty {
+              localReactions.removeValue(forKey: messageID)
+            } else {
+              localReactions[messageID] = updated
+            }
           } else {
-            // Use encrypted reaction (E2EE via MLS)
-            _ = try await manager.sendEncryptedReaction(
-              emoji: emoji,
-              to: messageID,
-              in: conversationId,
-              action: .add
+            let result = try await manager.addReaction(
+              convoId: conversationId,
+              messageId: messageID,
+              reaction: emoji
             )
             let newReaction = MLSMessageReaction(
               messageId: messageID,
               reaction: emoji,
               senderDID: currentUserDID,
-              reactedAt: Date()
+              reactedAt: result.reactedAt ?? Date()
             )
             var updated = currentReactions
             updated.append(newReaction)
@@ -431,19 +853,17 @@ import SwiftUI
             return
           }
 
-          // Use encrypted reaction (E2EE via MLS)
-          _ = try await manager.sendEncryptedReaction(
-            emoji: emoji,
-            to: messageID,
-            in: conversationId,
-            action: .add
+          let result = try await manager.addReaction(
+            convoId: conversationId,
+            messageId: messageID,
+            reaction: emoji
           )
 
           let newReaction = MLSMessageReaction(
             messageId: messageID,
             reaction: emoji,
             senderDID: currentUserDID,
-            reactedAt: Date()
+            reactedAt: result.reactedAt ?? Date()
           )
           var updated = currentReactions
           updated.append(newReaction)
@@ -480,12 +900,15 @@ import SwiftUI
 
     }
     /// Apply a reaction update received externally (e.g. via SSE) to the in-memory cache and adapters.
+    /// SAFETY: Reactions are persisted to cache but only displayed if parent message is decrypted and valid.
     func applyReactionEvent(messageID: String, emoji: String, senderDID: String, action: String) {
+      let normalizedSenderDID = MLSStorageHelpers.normalizeDID(senderDID)
       var reactions = localReactions[messageID] ?? []
 
       switch action {
       case "add":
-        guard !reactions.contains(where: { $0.reaction == emoji && $0.senderDID == senderDID })
+        guard
+          !reactions.contains(where: { $0.reaction == emoji && $0.senderDID == normalizedSenderDID })
         else {
           return
         }
@@ -493,14 +916,14 @@ import SwiftUI
           MLSMessageReaction(
             messageId: messageID,
             reaction: emoji,
-            senderDID: senderDID,
+            senderDID: normalizedSenderDID,
             reactedAt: Date()
           )
         )
         localReactions[messageID] = reactions
 
       case "remove":
-        reactions.removeAll { $0.reaction == emoji && $0.senderDID == senderDID }
+        reactions.removeAll { $0.reaction == emoji && $0.senderDID == normalizedSenderDID }
         if reactions.isEmpty {
           localReactions.removeValue(forKey: messageID)
         } else {
@@ -512,29 +935,43 @@ import SwiftUI
         return
       }
 
-      // Update the message adapter's reactions if it's currently loaded.
-      if let index = messages.firstIndex(where: { $0.id == messageID }) {
-        let oldAdapter = messages[index]
-        let newAdapter = MLSMessageAdapter(
-          id: oldAdapter.id,
-          convoID: oldAdapter.mlsConversationID,
-          text: oldAdapter.text,
-          senderDID: oldAdapter.senderID,
-          currentUserDID: currentUserDID,
-          sentAt: oldAdapter.sentAt,
-          senderProfile: oldAdapter.mlsProfile,
-          reactions: localReactions[messageID] ?? [],
-          embed: oldAdapter.mlsEmbed,
-          sendState: oldAdapter.sendState,
-          epoch: oldAdapter.mlsEpoch,
-          sequence: oldAdapter.mlsSequence,
-          processingError: oldAdapter.processingError,
-          processingAttempts: oldAdapter.processingAttempts,
-          validationFailureReason: oldAdapter.validationFailureReason
+      // SAFETY: Only update UI if parent message exists AND is decrypted/valid
+      // Reactions for undecryptable placeholders are cached but not displayed
+      guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
+        logger.debug(
+          "⚠️ [REACTION-SAFETY] Reaction cached but no message adapter found: \(messageID.prefix(16))"
         )
-        messages[index] = newAdapter
+        return
       }
+
+      let oldAdapter = messages[index]
+      guard oldAdapter.isDecryptedAndValid else {
+        logger.warning(
+          "⚠️ [REACTION-SAFETY] Suppressing reaction display for undecryptable message: \(messageID.prefix(16))"
+        )
+        return
+      }
+
+      let newAdapter = MLSMessageAdapter(
+        id: oldAdapter.id,
+        convoID: oldAdapter.mlsConversationID,
+        text: oldAdapter.text,
+        senderDID: oldAdapter.senderID,
+        currentUserDID: currentUserDID,
+        sentAt: oldAdapter.sentAt,
+        senderProfile: oldAdapter.mlsProfile,
+        reactions: localReactions[messageID] ?? [],
+        embed: oldAdapter.mlsEmbed,
+        sendState: oldAdapter.sendState,
+        epoch: oldAdapter.mlsEpoch,
+        sequence: oldAdapter.mlsSequence,
+        processingError: oldAdapter.processingError,
+        processingAttempts: oldAdapter.processingAttempts,
+        validationFailureReason: oldAdapter.validationFailureReason
+      )
+      messages[index] = newAdapter
     }
+
 
     func deleteMessage(messageID: String) async {
       // MLS doesn't support message deletion
