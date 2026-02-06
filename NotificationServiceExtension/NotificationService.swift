@@ -233,20 +233,8 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    // HARD GATE: Probe if advisory lock is available (without holding it).
-    // We use tryAcquireMLSCrossProcessStorageGate which acquires and immediately releases -
-    // just checking availability. The actual lock is acquired inside the Task with proper
-    // defer handling. This avoids a race condition where the outer defer releases the lock
-    // before the async Task can re-acquire it, allowing the main app to sneak in.
-    if !tryAcquireMLSCrossProcessStorageGate(userDID: recipientDid) {
-      logger.info("🔒 [NSE] Cannot acquire advisory lock - showing generic notification")
-      bestAttemptContent.title = "New Message"
-      bestAttemptContent.body = "New Encrypted Message"
-      contentHandler(bestAttemptContent)
-      return
-    }
-    // No defer needed - tryAcquireMLSCrossProcessStorageGate releases immediately after probing.
-    // The Task below acquires and holds the lock for the duration of its work.
+    // NOTE: Advisory lock removed - SQLite WAL handles concurrent access.
+    // Darwin notifications (MLSCrossProcess) coordinate cache invalidation across processes.
 
     // Decrypt using shared MLS core context
     // CRITICAL FIX: We must ensure the MLS context is for the correct recipient user.
@@ -280,50 +268,9 @@ class NotificationService: UNNotificationServiceExtension {
         if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
       }
 
-      // ═══════════════════════════════════════════════════════════════════════════
-      // CRITICAL FIX: Hold Advisory Lock During Decryption (2025-12-20)
-      // ═══════════════════════════════════════════════════════════════════════════
-      // We must hold the lock for the ENTIRE duration of the task.
-      // If we don't, the Main App can acquire the lock and open the database
-      // while we are writing to the WAL, causing race conditions and corruption.
-      // ═══════════════════════════════════════════════════════════════════════════
-
-      let shuttingDown = MLSAppActivityState.isShuttingDown(for: recipientDid)
-      let lockTimeout: TimeInterval = shuttingDown ? 0.5 : 2.0
-      let taskLockAcquired = await MLSAdvisoryLockCoordinator.shared.acquireExclusiveLock(
-        for: recipientDid, timeout: lockTimeout)
-
-      if !taskLockAcquired {
-        self.logger.warning(
-          "🔒 [NSE] Could not acquire lock for task - Main App likely active")
-
-        // If the main app is active, it may be decrypting + persisting right now.
-        // Give the cache a brief moment to populate before falling back.
-        for attempt in 0..<5 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: capturedBestAttemptContent,
-            contentHandler: capturedContentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
-          }
-          if attempt < 4 { try? await Task.sleep(nanoseconds: 150_000_000) }
-        }
-
-        capturedBestAttemptContent.title = "New Message"
-        capturedBestAttemptContent.body = "New Encrypted Message"
-        capturedContentHandler(capturedBestAttemptContent)
-        return
-      }
-
-      defer {
-        self.logger.info("🔓 [NSE] Releasing task lock")
-        MLSAdvisoryLockCoordinator.shared.releaseExclusiveLock(for: recipientDid)
-      }
+      // NOTE: Advisory lock removed (2026-02) - SQLite WAL handles concurrent access.
+      // Darwin notifications (MLSCrossProcess) coordinate cache invalidation across processes.
+      // No lock acquisition needed - WAL mode is designed for concurrent readers/writers.
 
       // Cross-process shutdown check: If main app signaled shutdown, skip decryption
       // This uses the shared App Group state
@@ -522,6 +469,9 @@ class NotificationService: UNNotificationServiceExtension {
         // ═══════════════════════════════════════════════════════════════════════════
         MLSAppActivityState.signalNSEProcessed(for: recipientDid)
         self.logger.info("📡 [NSE] Signaled foreground to reload MLS state")
+
+        // Notify main app via Darwin notifications that we've made changes
+        MLSCrossProcess.shared.notifyChanged()
 
         // ═══════════════════════════════════════════════════════════════════════════
         // 🛡️ READ-ONLY NSE (2024-12-24): Do not record epoch checkpoint

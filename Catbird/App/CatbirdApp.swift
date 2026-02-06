@@ -214,6 +214,13 @@ struct CatbirdApp: App {
   init() {
     logger.info("🚀 CatbirdApp initializing")
 
+    // Signal-style: TRUNCATE checkpoint at launch to clear any leftover WAL from previous session.
+    // If the previous session was terminated before budget checkpoints ran, WAL could be large.
+    // This is cheap (no-op if WAL is already empty) and prevents stale WAL accumulation.
+    if !ProcessInfo.processInfo.isLowPowerModeEnabled {
+      MLSGRDBManager.syncTruncatingCheckpointAtLaunch()
+    }
+
     // Bridge Petrel logs into Sentry (Sentry is initialized in AppDelegate)
     PetrelSentryBridge.enable()
     // Bridge Petrel auth incidents to UI to prevent silent auto-switching UX
@@ -266,100 +273,179 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     UserDefaults.standard.set(Self.currentSchemaVersion, forKey: "CatbirdSchemaVersion")
   }
 
+  // MARK: - SwiftData Store Configuration
+
+  /// App group identifier for shared storage (used by MLS databases and NSE, NOT SwiftData)
+  private static let appGroupIdentifier = "group.blue.catbird.shared"
+
+  /// SwiftData store in the app's PRIVATE Application Support directory.
+  /// NOT in App Group — SwiftData uses NSFileCoordinator internally when in App Group,
+  /// which holds system-level file coordination locks that trigger 0xdead10cc on suspension.
+  /// No extensions (NSE, widgets) need SwiftData access.
+  private static var swiftDataStoreDirectory: URL? {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+      .appendingPathComponent("swiftdata", isDirectory: true)
+  }
+
+  private static var swiftDataStoreURL: URL? {
+    swiftDataStoreDirectory?.appendingPathComponent("Catbird.store")
+  }
+
+  /// Old App Group location — used for one-time migration and cleanup only
+  private static var legacyAppGroupSwiftDataDirectory: URL? {
+    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
+      .appendingPathComponent("swiftdata", isDirectory: true)
+  }
+
+  /// Moves SwiftData files from the old App Group location to private Application Support.
+  /// Runs once — skips if already migrated or if no old files exist.
+  private static func migrateSwiftDataFromAppGroup() {
+    let migrationKey = "SwiftDataMigratedFromAppGroup"
+    guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+    let fm = FileManager.default
+    guard let oldDir = legacyAppGroupSwiftDataDirectory,
+          let newDir = swiftDataStoreDirectory else {
+      UserDefaults.standard.set(true, forKey: migrationKey)
+      return
+    }
+
+    // If old directory doesn't exist or is empty, nothing to migrate
+    guard fm.fileExists(atPath: oldDir.path),
+          let contents = try? fm.contentsOfDirectory(atPath: oldDir.path),
+          !contents.isEmpty else {
+      UserDefaults.standard.set(true, forKey: migrationKey)
+      return
+    }
+
+    // Ensure new directory exists
+    try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+
+    // Move all SwiftData files (main db, WAL, SHM)
+    for fileName in contents {
+      let oldFile = oldDir.appendingPathComponent(fileName)
+      let newFile = newDir.appendingPathComponent(fileName)
+
+      // Don't overwrite if new location already has data
+      if fm.fileExists(atPath: newFile.path) { continue }
+
+      do {
+        try fm.moveItem(at: oldFile, to: newFile)
+        logger.info("📦 Migrated SwiftData file: \(fileName)")
+      } catch {
+        logger.warning("⚠️ Failed to migrate \(fileName): \(error.localizedDescription)")
+      }
+    }
+
+    // Clean up old directory
+    try? fm.removeItem(at: oldDir)
+
+    UserDefaults.standard.set(true, forKey: migrationKey)
+    logger.info("✅ SwiftData migrated from App Group to private container")
+  }
+
+  /// Crash loop detection keys
+  private static let launchAttemptCountKey = "CatbirdLaunchAttemptCount"
+  private static let lastLaunchTimeKey = "CatbirdLastLaunchTime"
+  private static let crashLoopThreshold = 3
+  private static let crashLoopWindowSeconds: TimeInterval = 60  // 3 crashes in 60 seconds
+
   // MARK: - ModelContainer Async Initialization
 
   @MainActor
   private func initializeModelContainer() async {
     logger.info("📦 Starting async ModelContainer initialization")
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ONE-TIME MIGRATION: Move SwiftData from App Group to private container
+    // App Group + SwiftData = NSFileCoordinator during autosave = 0xdead10cc
+    // ═══════════════════════════════════════════════════════════════════════════
+    Self.migrateSwiftDataFromAppGroup()
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRASH LOOP DETECTION
+    // ═══════════════════════════════════════════════════════════════════════════
+    let crashLoopDetected = detectCrashLoop()
+    if crashLoopDetected {
+      logger.error("🔄 CRASH LOOP DETECTED - forcing safe mode recovery")
+      // Jump straight to in-memory fallback
+      if let container = try? makeInMemoryContainer() {
+        appStateManager.modelContainerState = .degraded(container, reason: "Crash loop detected - running in safe mode")
+        // Reset crash counter after successful safe mode entry
+        resetCrashLoopCounter()
+        return
+      }
+    }
+
     // Check for schema version mismatch and proactively reset if needed
     if shouldResetDatabase() {
       logger.warning("⚠️ Schema version mismatch detected, resetting database for clean migration")
-      if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-        deleteAllDatabaseFiles(in: docsURL)
-      }
+      quarantineSwiftDataStore(reason: "schema_mismatch")
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RECOVERY LADDER: Attempt A - Normal initialization
+    // ═══════════════════════════════════════════════════════════════════════════
     do {
-      guard let appDocumentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-        throw NSError(domain: "CatbirdApp", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to access documents directory"])
-      }
-
-      // Ensure app group container directories exist before SwiftData initialization
-      // SwiftData may try to use the app group container for storage
-      if let appGroupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared") {
-        let applicationSupportDir = appGroupContainer.appendingPathComponent("Library/Application Support", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: applicationSupportDir.path) {
-          do {
-            try FileManager.default.createDirectory(at: applicationSupportDir, withIntermediateDirectories: true)
-            logger.debug("✅ Created app group Application Support directory")
-          } catch {
-            logger.warning("⚠️ Failed to create app group Application Support directory: \(error.localizedDescription)")
-          }
-        }
-      }
-
-      let container: ModelContainer
-
-        // Full model container for normal use
-        container = try ModelContainer(
-          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration(cloudKitDatabase: .none)
-        )
-        logger.debug("✅ Model container initialized successfully")
-
-      // Save schema version on successful init
+      let container = try makeContainer()
       saveSchemaVersion()
       appStateManager.modelContainerState = .ready(container)
-
+      // Mark successful launch (resets crash counter after 30s stability)
+      scheduleStableLaunchMarker()
+      logger.info("✅ ModelContainer initialized successfully")
+      return
     } catch {
-      logger.error("❌ Could not initialize ModelContainer: \(error)")
-
-      // Try to recover
-      do {
-        let container = try await recoverModelContainer(error: error)
-        appStateManager.modelContainerState = .ready(container)
-      } catch {
-        logger.error("❌ Failed to recover ModelContainer: \(error)")
-        appStateManager.modelContainerState = .failed(error)
-      }
+      logger.error("❌ Attempt A (normal init) failed: \(Self.formatDatabaseError(error))")
     }
-  }
 
-  @MainActor
-  private func recoverModelContainer(error: Error) async throws -> ModelContainer {
-      // Try to recover by deleting corrupted database
-      let fileManager = FileManager.default
-      guard let appDocumentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
-        // Fallback to in-memory storage if documents directory is inaccessible
-        logger.warning("⚠️ Documents directory inaccessible, using in-memory storage")
-        let container = try ModelContainer(
-          for: CachedFeedViewPost.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-        )
-        return container
-      }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RECOVERY LADDER: Attempt B - Delete WAL/SHM sidecars only, retry
+    // A surprising number of "corruption" reports are just poisoned WAL files
+    // ═══════════════════════════════════════════════════════════════════════════
+    do {
+      logger.warning("🔧 Attempt B: Deleting WAL/SHM sidecars and retrying...")
+      deleteSwiftDataSidecarsOnly()
+      let container = try makeContainer()
+      saveSchemaVersion()
+      appStateManager.modelContainerState = .ready(container)
+      scheduleStableLaunchMarker()
+      logger.warning("✅ Recovered by deleting WAL/SHM sidecars")
+      return
+    } catch {
+      logger.error("❌ Attempt B (sidecar recovery) failed: \(Self.formatDatabaseError(error))")
+    }
 
-      // Delete ALL SQLite-related files (main database + journal files)
-      deleteAllDatabaseFiles(in: appDocumentsURL)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RECOVERY LADDER: Attempt C - Quarantine store and create fresh
+    // Move files to timestamped folder for potential diagnostics
+    // ═══════════════════════════════════════════════════════════════════════════
+    do {
+      logger.warning("🔧 Attempt C: Quarantining store and creating fresh database...")
+      quarantineSwiftDataStore(reason: "corruption_recovery")
+      let container = try makeContainer()
+      saveSchemaVersion()
+      appStateManager.modelContainerState = .ready(container)
+      scheduleStableLaunchMarker()
+      logger.warning("✅ Recovered by quarantining store and recreating")
+      return
+    } catch {
+      logger.error("❌ Attempt C (quarantine recovery) failed: \(Self.formatDatabaseError(error))")
+    }
 
-      // Retry initialization
-      do {
-        let container = try ModelContainer(
-          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration(cloudKitDatabase: .none)
-        )
-        logger.debug("✅ Model container recreated successfully after recovery")
-        return container
-      } catch {
-        // Final fallback to in-memory storage
-        logger.warning("⚠️ Using in-memory storage as fallback after recovery failed: \(error)")
-        let container = try ModelContainer(
-          for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self, FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-          configurations: ModelConfiguration("Catbird", isStoredInMemoryOnly: true)
-        )
-        return container
-      }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RECOVERY LADDER: Attempt D - In-memory fallback (LAST RESORT)
+    // ═══════════════════════════════════════════════════════════════════════════
+    do {
+      logger.error("⚠️ Attempt D: Falling back to in-memory storage...")
+      let container = try makeInMemoryContainer()
+      appStateManager.modelContainerState = .degraded(container, reason: "Database recovery failed - running in safe mode. Data will not persist.")
+      resetCrashLoopCounter()  // Prevent crash loop on next launch
+      logger.error("⚠️ Running in DEGRADED MODE - data will not persist across restarts")
+      return
+    } catch {
+      logger.error("❌ Attempt D (in-memory fallback) failed: \(Self.formatDatabaseError(error))")
+      appStateManager.modelContainerState = .failed(error)
+    }
   }
 
   /// Deletes all SQLite database files (main, WAL, SHM) to ensure clean recovery
@@ -400,6 +486,277 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         }
       }
     }
+  }
+
+  // MARK: - Database Recovery Helpers
+
+  /// Creates a ModelContainer with explicit store URL in private Application Support
+  private func makeContainer() throws -> ModelContainer {
+    // Ensure the swiftdata directory exists
+    if let storeDir = Self.swiftDataStoreDirectory {
+      try? FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
+    }
+
+    // Use explicit URL if available, otherwise fall back to default
+    let config: ModelConfiguration
+    if let storeURL = Self.swiftDataStoreURL {
+      config = ModelConfiguration(
+        "Catbird",
+        url: storeURL,
+        cloudKitDatabase: .none
+      )
+      logger.debug("📍 Using explicit store URL: \(storeURL.path)")
+    } else {
+      // Fallback to default location if app group is unavailable
+      config = ModelConfiguration(cloudKitDatabase: .none)
+      logger.warning("⚠️ App group unavailable, using default store location")
+    }
+
+    return try ModelContainer(
+      for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
+      FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+      configurations: config
+    )
+  }
+
+  /// Creates an in-memory ModelContainer for degraded mode
+  private func makeInMemoryContainer() throws -> ModelContainer {
+    let config = ModelConfiguration("Catbird-InMemory", isStoredInMemoryOnly: true)
+    return try ModelContainer(
+      for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
+      FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+      configurations: config
+    )
+  }
+
+  /// Deletes only WAL and SHM sidecar files, preserving the main database
+  /// Often fixes corruption caused by interrupted writes during backgrounding
+  private func deleteSwiftDataSidecarsOnly() {
+    let fileManager = FileManager.default
+    let sidecars = ["-wal", "-shm"]
+
+    // Delete from explicit store location
+    if let storeURL = Self.swiftDataStoreURL {
+      for suffix in sidecars {
+        let sidecarURL = URL(fileURLWithPath: storeURL.path + suffix)
+        if fileManager.fileExists(atPath: sidecarURL.path) {
+          do {
+            try fileManager.removeItem(at: sidecarURL)
+            logger.info("🔄 Removed sidecar: \(sidecarURL.lastPathComponent)")
+          } catch {
+            logger.warning("⚠️ Failed to remove sidecar \(sidecarURL.lastPathComponent): \(error.localizedDescription)")
+          }
+        }
+      }
+    }
+
+    // Also clean up legacy locations
+    let legacyFiles = [
+      "Catbird.store-wal", "Catbird.store-shm",
+      "Catbird.sqlite-wal", "Catbird.sqlite-shm",
+      "default.store-wal", "default.store-shm"
+    ]
+    for directory in Self.allDatabaseDirectories() {
+      for fileName in legacyFiles {
+        let fileURL = directory.appendingPathComponent(fileName)
+        if fileManager.fileExists(atPath: fileURL.path) {
+          try? fileManager.removeItem(at: fileURL)
+          logger.debug("🔄 Removed legacy sidecar: \(fileName)")
+        }
+      }
+    }
+  }
+
+  /// Moves the SwiftData store to a quarantine folder for potential diagnostics
+  /// Creates a timestamped backup that can be used for debugging or data recovery
+  private func quarantineSwiftDataStore(reason: String) {
+    let fileManager = FileManager.default
+    let dateFormatter = ISO8601DateFormatter()
+    dateFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+    let timestamp = dateFormatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+
+    guard let storeDir = Self.swiftDataStoreDirectory else {
+      logger.warning("⚠️ Cannot quarantine - store directory unavailable")
+      // Fall back to deleting all database files
+      Self.resetAllDatabaseFiles()
+      return
+    }
+
+    let quarantineDir = storeDir.deletingLastPathComponent()
+      .appendingPathComponent("quarantine/\(timestamp)_\(reason)", isDirectory: true)
+
+    do {
+      try fileManager.createDirectory(at: quarantineDir, withIntermediateDirectories: true)
+
+      // Move all store files to quarantine
+      let storeFiles = ["Catbird.store", "Catbird.store-wal", "Catbird.store-shm"]
+      for fileName in storeFiles {
+        let sourceURL = storeDir.appendingPathComponent(fileName)
+        if fileManager.fileExists(atPath: sourceURL.path) {
+          let destURL = quarantineDir.appendingPathComponent(fileName)
+          try fileManager.moveItem(at: sourceURL, to: destURL)
+          logger.info("📦 Quarantined: \(fileName) → \(quarantineDir.lastPathComponent)/")
+        }
+      }
+
+      // Write metadata file for debugging
+      let metadata: [String: Any] = [
+        "quarantine_reason": reason,
+        "timestamp": Date().timeIntervalSince1970,
+        "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+        "schema_version": Self.currentSchemaVersion
+      ]
+      if let metadataData = try? JSONSerialization.data(withJSONObject: metadata, options: .prettyPrinted) {
+        try metadataData.write(to: quarantineDir.appendingPathComponent("metadata.json"))
+      }
+
+      logger.info("✅ Database quarantined to: \(quarantineDir.path)")
+    } catch {
+      logger.error("❌ Quarantine failed: \(error.localizedDescription) - falling back to delete")
+      Self.resetAllDatabaseFiles()
+    }
+  }
+
+  /// Deletes all SwiftData database files from all possible locations
+  /// Called by ErrorRecoveryView's Reset button - works WITHOUT ModelContainer
+  static func resetAllDatabaseFiles() {
+    let resetLogger = Logger(subsystem: "blue.catbird", category: "DatabaseRecovery")
+    resetLogger.warning("🗑️ RESET: Deleting all SwiftData files")
+
+    let fileManager = FileManager.default
+    let allFiles = [
+      "Catbird.store", "Catbird.store-wal", "Catbird.store-shm",
+      "Catbird.sqlite", "Catbird.sqlite-wal", "Catbird.sqlite-shm",
+      "default.store", "default.store-wal", "default.store-shm"
+    ]
+
+    // Delete from all possible locations
+    for directory in allDatabaseDirectories() {
+      for fileName in allFiles {
+        let fileURL = directory.appendingPathComponent(fileName)
+        if fileManager.fileExists(atPath: fileURL.path) {
+          do {
+            try fileManager.removeItem(at: fileURL)
+            resetLogger.info("🗑️ Deleted: \(fileURL.path)")
+          } catch {
+            resetLogger.warning("⚠️ Failed to delete \(fileName): \(error.localizedDescription)")
+          }
+        }
+      }
+    }
+
+    // Delete the current swiftdata directory
+    if let storeDir = swiftDataStoreDirectory, fileManager.fileExists(atPath: storeDir.path) {
+      try? fileManager.removeItem(at: storeDir)
+      resetLogger.info("🗑️ Deleted swiftdata directory (private container)")
+    }
+
+    // Delete legacy App Group swiftdata directory if it still exists
+    if let legacyDir = legacyAppGroupSwiftDataDirectory, fileManager.fileExists(atPath: legacyDir.path) {
+      try? fileManager.removeItem(at: legacyDir)
+      resetLogger.info("🗑️ Deleted legacy swiftdata directory (App Group)")
+    }
+
+    // Reset schema version to force fresh init
+    UserDefaults.standard.removeObject(forKey: "CatbirdSchemaVersion")
+
+    // Reset crash loop counter
+    UserDefaults.standard.removeObject(forKey: launchAttemptCountKey)
+    UserDefaults.standard.removeObject(forKey: lastLaunchTimeKey)
+
+    resetLogger.info("✅ Database reset complete")
+  }
+
+  /// Returns all directories where database files might exist
+  private static func allDatabaseDirectories() -> [URL] {
+    var directories: [URL] = []
+
+    // Current private container swiftdata directory
+    if let storeDir = swiftDataStoreDirectory {
+      directories.append(storeDir)
+    }
+
+    // Legacy App Group swiftdata directory (pre-migration)
+    if let legacyDir = legacyAppGroupSwiftDataDirectory {
+      directories.append(legacyDir)
+    }
+
+    // App group root (for any stray files)
+    if let appGroup = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+      directories.append(appGroup)
+      directories.append(appGroup.appendingPathComponent("Library/Application Support"))
+    }
+
+    // Documents directory
+    if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+      directories.append(docs)
+    }
+
+    // Application Support
+    if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+      directories.append(appSupport)
+    }
+
+    return directories
+  }
+
+  // MARK: - Crash Loop Detection
+
+  /// Detects if the app is in a crash loop (multiple launches in quick succession)
+  private func detectCrashLoop() -> Bool {
+    let defaults = UserDefaults.standard
+    let now = Date().timeIntervalSince1970
+    let lastLaunch = defaults.double(forKey: Self.lastLaunchTimeKey)
+    let attemptCount = defaults.integer(forKey: Self.launchAttemptCountKey)
+
+    // Check if we're within the crash window
+    if now - lastLaunch < Self.crashLoopWindowSeconds {
+      let newCount = attemptCount + 1
+      defaults.set(newCount, forKey: Self.launchAttemptCountKey)
+      defaults.set(now, forKey: Self.lastLaunchTimeKey)
+
+      if newCount >= Self.crashLoopThreshold {
+        logger.error("🔄 Crash loop detected: \(newCount) launches in \(Int(now - lastLaunch))s")
+        return true
+      }
+    } else {
+      // Reset counter - we're outside the crash window
+      defaults.set(1, forKey: Self.launchAttemptCountKey)
+      defaults.set(now, forKey: Self.lastLaunchTimeKey)
+    }
+
+    return false
+  }
+
+  /// Resets the crash loop counter (called after successful recovery)
+  private func resetCrashLoopCounter() {
+    UserDefaults.standard.removeObject(forKey: Self.launchAttemptCountKey)
+    UserDefaults.standard.removeObject(forKey: Self.lastLaunchTimeKey)
+  }
+
+  /// Schedules a task to mark the launch as stable after 30 seconds
+  private func scheduleStableLaunchMarker() {
+    Task {
+      try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30 seconds
+      await MainActor.run {
+        resetCrashLoopCounter()
+        logger.debug("✅ Launch marked as stable (30s elapsed)")
+      }
+    }
+  }
+
+  /// Formats database errors for better diagnostics
+  private static func formatDatabaseError(_ error: Error) -> String {
+    var details = error.localizedDescription
+
+    if let nsError = error as NSError? {
+      details += " [domain: \(nsError.domain), code: \(nsError.code)]"
+      if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+        details += " underlying: \(underlying.localizedDescription)"
+      }
+    }
+
+    return details
   }
 
   // MARK: - Background Task Registration
@@ -508,6 +865,28 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             .task(priority: .background) {
               await registerBackgroundTasks()
             }
+
+        case .degraded(let container, let reason):
+          // Running in safe mode with in-memory database
+          VStack(spacing: 0) {
+            DegradedModeBanner(reason: reason)
+            sceneRoot()
+              .onAppear {
+                handleSceneAppear(container: container)
+              }
+          }
+          .environment(appStateManager)
+          .modelContainer(container)
+          .onChange(of: scenePhase) { oldPhase, newPhase in
+            handleScenePhaseChange(from: oldPhase, to: newPhase)
+          }
+          .modifier(BiometricAuthModifier(performCheck: performInitialBiometricCheck))
+          .task(priority: .high) {
+            await initializeApplicationIfNeeded()
+          }
+          .task(priority: .background) {
+            await registerBackgroundTasks()
+          }
 
         case .failed(let error):
           ErrorRecoveryView(error: error, retry: {
@@ -682,6 +1061,33 @@ private extension CatbirdApp {
   }
 
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL FIX (0xdead10cc): Cancel MLS tasks BEFORE GRDB suspension
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MLS initialization tasks (missingConversationsTask, groupInfoRefreshTask, etc.)
+    // continue running with open database connections when the user backgrounds the app.
+    // These tasks hold SQLite/SQLCipher file locks, which causes iOS to kill the app
+    // with 0xdead10cc (file locks held during suspension).
+    //
+    // We must cancel these tasks SYNCHRONOUSLY before GRDBSuspensionCoordinator starts
+    // rejecting database operations, so they stop cleanly rather than crashing.
+    // Using MainActor.assumeIsolated because onChange runs on main thread.
+    // ═══════════════════════════════════════════════════════════════════════════
+    if newPhase == .inactive || newPhase == .background {
+      if let appState = appStateManager.lifecycle.appState {
+        // SYNCHRONOUS cancellation - must happen before GRDB suspension
+        MainActor.assumeIsolated {
+          appState.mlsConversationManager?.suspendMLSOperations()
+        }
+      }
+    }
+
+    // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
+    GRDBSuspensionCoordinator.setLifecycleSuspended(
+      newPhase != .active,
+      reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
+    )
+
     // CRITICAL FIX: Synchronously acquire background task assertion
     // This bridges the gap between the synchronous onChange callback and the async Task execution.
     // Without this, aggressive OS suspension (especially in Release builds) can freeze the app 
@@ -717,28 +1123,38 @@ private extension CatbirdApp {
         MLSAppActivityState.setMainAppActive(newPhase == .active, activeUserDID: nil)
       }
 
-      // Flush as early as possible (active → inactive) while file access is still valid.
+      // ═══════════════════════════════════════════════════════════════════════════
+      // 0xdead10cc FIX: Close Rust FFI connections on background within RAII task.
+      // GRDB handles its own suspension via observesSuspensionNotifications.
+      // SwiftData autosave handles persistence. Only Rust FFI needs explicit close
+      // because it holds WAL locks in the App Group container with no suspension mechanism.
+      // ═══════════════════════════════════════════════════════════════════════════
       if oldPhase == .active, newPhase == .inactive {
-        // Signal MLS coordinator to break out of any blocking waits to prevent 0xdead10cc
-        MLSDatabaseCoordinator.shared.prepareForSuspension()
-        
-        if let appState = appStateManager.lifecycle.appState {
-          await appState.flushMLSStorageForSuspension()
-        }
+        // RAII background task protects the Rust close operation
+        let bgTask = CatbirdBackgroundTask(name: "MLSContextClose")
+        // Close Rust FFI connections — releases WAL locks in App Group
+        MLSCoreContext.emergencyCloseAllContexts()
+        bgTask.end()
+        logger.info("✅ [0xdead10cc-FIX] Rust FFI contexts closed for suspension")
       }
-      
-      // CRITICAL FIX (2024-12): Reload MLS state from disk when returning to foreground
+
+      // Reload MLS state from disk when returning to foreground.
       // The NSE may have advanced the MLS ratchet while the app was in background.
-      // Without this, the app's in-memory state is stale and will cause:
-      // - SecretReuseError (trying to use a nonce the NSE already consumed)
-      // - InvalidEpoch (app at epoch N but disk/server is at N+1)
-      // - DecryptionFailed (using old keys deleted by forward secrecy)
       if (oldPhase == .background || oldPhase == .inactive), newPhase == .active {
-        // Resume normal coordination operations
+        // CRITICAL: Clear suspension flag FIRST so getContext() works
+        MLSCoreContext.clearSuspensionFlag()
+
+        // Resume GRDB and coordination
         MLSDatabaseCoordinator.shared.resumeFromSuspension()
-        
+
         if let appState = appStateManager.lifecycle.appState {
+          // Creates fresh Rust connections on demand
           await appState.reloadMLSStateFromDisk()
+
+          // Resume MLS operations that were suspended during backgrounding
+          if let manager = await appState.getMLSConversationManager() {
+            await manager.resumeMLSOperations()
+          }
         }
       }
 #endif
@@ -751,20 +1167,7 @@ private extension CatbirdApp {
           BackgroundCacheRefreshManager.schedule()
           MLSBackgroundRefreshManager.scheduleInitialRefresh()
         }
-        
-        // ═══════════════════════════════════════════════════════════════════════════
-        // IDLE MAINTENANCE (2024-12): Perform database cleanup when entering background
-        // ═══════════════════════════════════════════════════════════════════════════
-        // This helps prevent WAL file growth and resource exhaustion by:
-        // 1. Checkpointing WAL files to merge changes into main DB
-        // 2. Closing inactive database connections
-        // 3. Logging health metrics for debugging
-        // ═══════════════════════════════════════════════════════════════════════════
-        // CRITICAL FIX: Disabled to prevent 0xdead10cc crashes (holding locks during suspension).
-        // The active user is already handled by flushMLSStorageForSuspension() in .inactive phase.
-        // Task(priority: .utility) {
-        //   await MLSGRDBManager.shared.performIdleMaintenance(aggressiveCheckpoint: false)
-        // }
+        logger.info("✅ Background scheduled - GRDB auto-suspended, Rust FFI closed")
 #endif
       }
     }
@@ -904,33 +1307,209 @@ private extension CatbirdApp {
     let error: Error
     let retry: () -> Void
 
-    var body: some View {
-      VStack(spacing: 20) {
-        Image(systemName: "exclamationmark.triangle")
-          .font(.system(size: 60))
-          .foregroundColor(.red)
+    @State private var showResetConfirmation = false
+    @State private var isResetting = false
 
+    var body: some View {
+      VStack(spacing: 24) {
+        // Error icon
+        Image(systemName: "exclamationmark.triangle.fill")
+          .font(.system(size: 60))
+          .foregroundStyle(.red, .red.opacity(0.2))
+
+        // Title
         Text("Database Error")
           .font(.title)
           .fontWeight(.bold)
 
-        Text(error.localizedDescription)
-          .font(.body)
+        // Error details (expandable)
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Unable to open app database")
+            .font(.body)
+            .foregroundColor(.secondary)
+
+          // Technical details
+          DisclosureGroup("Technical Details") {
+            Text(formatErrorDetails(error))
+              .font(.caption)
+              .foregroundColor(.secondary)
+              .textSelection(.enabled)
+              .padding(.top, 4)
+          }
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 32)
+
+        Spacer().frame(height: 20)
+
+        // Primary action - Try Again
+        Button(action: retry) {
+          HStack {
+            Image(systemName: "arrow.clockwise")
+            Text("Try Again")
+          }
+          .font(.headline)
+          .foregroundColor(.white)
+          .frame(maxWidth: .infinity)
+          .padding()
+          .background(Color.blue)
+          .cornerRadius(12)
+        }
+        .padding(.horizontal, 32)
+
+        // Secondary action - Reset Database (Recommended)
+        Button {
+          showResetConfirmation = true
+        } label: {
+          HStack {
+            Image(systemName: "trash")
+            Text("Reset Local Database")
+            Text("(Recommended)")
+              .font(.caption)
+              .foregroundColor(.orange)
+          }
+          .font(.headline)
+          .foregroundColor(.orange)
+          .frame(maxWidth: .infinity)
+          .padding()
+          .background(Color.orange.opacity(0.15))
+          .cornerRadius(12)
+        }
+        .padding(.horizontal, 32)
+        .disabled(isResetting)
+
+        // Help text
+        Text("Resetting clears cached data. Your account and posts are stored on the server and will not be affected.")
+          .font(.caption)
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
-          .padding(.horizontal)
+          .padding(.horizontal, 32)
 
-        Button(action: retry) {
-          Text("Try Again")
-            .font(.headline)
-            .foregroundColor(.white)
-            .padding()
-            .background(Color.blue)
-            .cornerRadius(10)
-        }
+        Spacer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.systemBackground)
+      .confirmationDialog(
+        "Reset Local Database?",
+        isPresented: $showResetConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Reset and Restart", role: .destructive) {
+          performReset()
+        }
+        Button("Cancel", role: .cancel) { }
+      } message: {
+        Text("This will delete all cached data including drafts. Your account, posts, and followers are stored on the server and will not be affected.")
+      }
+      .overlay {
+        if isResetting {
+          ZStack {
+            Color.black.opacity(0.5)
+            VStack(spacing: 16) {
+              ProgressView()
+                .scaleEffect(1.5)
+              Text("Resetting...")
+                .font(.headline)
+                .foregroundColor(.white)
+            }
+            .padding(32)
+            .background(Color(.systemGray6))
+            .cornerRadius(16)
+          }
+          .ignoresSafeArea()
+        }
+      }
+    }
+
+    private func formatErrorDetails(_ error: Error) -> String {
+      var details = [error.localizedDescription]
+
+      if let nsError = error as NSError? {
+        details.append("Domain: \(nsError.domain)")
+        details.append("Code: \(nsError.code)")
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+          details.append("Underlying: \(underlying.localizedDescription)")
+        }
+
+        // Include any file paths mentioned
+        for (key, value) in nsError.userInfo {
+          if let stringValue = value as? String, stringValue.contains("/") {
+            details.append("\(key): ....\(stringValue.suffix(50))")
+          }
+        }
+      }
+
+      return details.joined(separator: "\n")
+    }
+
+    private func performReset() {
+      isResetting = true
+
+      // CRITICAL: This works WITHOUT ModelContainer
+      // Direct file-level operations that can run even when SwiftData fails
+      CatbirdApp.resetAllDatabaseFiles()
+
+      // Give the UI a moment to show the progress indicator
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        isResetting = false
+        // Trigger retry which will reinitialize with clean database
+        retry()
+      }
+    }
+  }
+
+  /// Degraded mode banner shown when running in-memory
+  struct DegradedModeBanner: View {
+    let reason: String
+    @State private var isExpanded = false
+
+    var body: some View {
+      VStack(spacing: 0) {
+        Button {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            isExpanded.toggle()
+          }
+        } label: {
+          HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundColor(.orange)
+            Text("Safe Mode")
+              .fontWeight(.semibold)
+            Spacer()
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+              .font(.caption)
+          }
+          .foregroundColor(.primary)
+          .padding(.horizontal)
+          .padding(.vertical, 10)
+          .background(Color.orange.opacity(0.15))
+        }
+
+        if isExpanded {
+          VStack(alignment: .leading, spacing: 8) {
+            Text(reason)
+              .font(.caption)
+              .foregroundColor(.secondary)
+
+            Button {
+              CatbirdApp.resetAllDatabaseFiles()
+              // Force app restart by setting state to loading
+              AppStateManager.shared.modelContainerState = .loading
+            } label: {
+              Text("Reset Database & Restart")
+                .font(.caption)
+                .fontWeight(.medium)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+          }
+          .padding()
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(Color.orange.opacity(0.08))
+        }
+      }
     }
   }
 

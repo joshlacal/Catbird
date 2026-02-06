@@ -38,13 +38,18 @@ actor MLSBackgroundRefreshManager {
       forTaskWithIdentifier: taskIdentifier,
       using: nil
     ) { [weak self] task in
+      guard let processingTask = task as? BGProcessingTask else {
+        task.setTaskCompleted(success: false)
+        return
+      }
+
       guard let self = self else {
         task.setTaskCompleted(success: false)
         return
       }
 
       Task {
-        await self.handleBackgroundRefresh(task: task as! BGProcessingTask)
+        await self.handleBackgroundRefresh(task: processingTask)
       }
     }
 
@@ -85,58 +90,56 @@ actor MLSBackgroundRefreshManager {
   /// - Parameter task: BGProcessingTask provided by the system
   private func handleBackgroundRefresh(task: BGProcessingTask) async {
     logger.info("Background refresh starting")
+    defer { scheduleBackgroundRefresh() }
 
-    var backgroundTaskCompleted = false
+    // RAII background task assertion — auto-released on scope exit
+    let bgTask = CatbirdBackgroundTask(name: "MLS BGTask \(taskIdentifier)")
+    defer { bgTask.end() }
 
-    // Handle expiration - system may terminate us before we finish
-    task.expirationHandler = { [weak self] in
-      self?.logger.warning("Background task expired before completion")
-      backgroundTaskCompleted = true
+    // While running in background, ensure GRDB connections are resumed for the duration
+    // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
+    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "MLS BGTask \(taskIdentifier)")
+    defer {
+      GRDBSuspensionCoordinator.endBackgroundWork(reason: "MLS BGTask \(taskIdentifier)")
     }
 
-    do {
-      // Check if task was cancelled before we start
-      guard !backgroundTaskCompleted else {
-        logger.warning("Background task expired before MLS check")
-        task.setTaskCompleted(success: false)
-        return
-      }
+    let logger = self.logger
+    let refreshWork = Task<Bool, Never> { [weak self] in
+      guard let self else { return false }
 
-      // Get AppState to access MLS manager
-      guard let appState = await getAppState() else {
+      guard let appState = await self.getAppState() else {
         logger.error("Background refresh failed: AppState not available")
-        task.setTaskCompleted(success: false)
-        scheduleBackgroundRefresh()
-        return
+        return false
       }
 
       // Get MLS conversation manager
       guard let mlsManager = await appState.getMLSConversationManager() else {
         logger.warning("Background refresh skipped: MLS not initialized")
-        task.setTaskCompleted(success: true)
-        scheduleBackgroundRefresh()
-        return
+        return true
       }
 
-      // Check if task was cancelled before expensive operation
-      guard !backgroundTaskCompleted else {
-        logger.warning("Background task expired during initialization")
-        task.setTaskCompleted(success: false)
-        return
+      do {
+        try Task.checkCancellation()
+        try await mlsManager.smartRefreshKeyPackages()
+        try Task.checkCancellation()
+        logger.info("Background refresh completed successfully")
+        return true
+      } catch is CancellationError {
+        logger.warning("Background refresh canceled")
+        return false
+      } catch {
+        logger.error("Background refresh failed: \(error)")
+        return false
       }
-
-      // Execute key package refresh
-      try await mlsManager.smartRefreshKeyPackages()
-
-      logger.info("Background refresh completed successfully")
-      task.setTaskCompleted(success: true)
-    } catch {
-      logger.error("Background refresh failed: \(error)")
-      task.setTaskCompleted(success: false)
     }
 
-    // Always schedule next run, even if this one failed
-    scheduleBackgroundRefresh()
+    task.expirationHandler = {
+      logger.warning("Background task expired before completion; canceling refresh")
+      refreshWork.cancel()
+    }
+
+    let success = await refreshWork.value
+    task.setTaskCompleted(success: success)
   }
 
   // MARK: - Helper Methods

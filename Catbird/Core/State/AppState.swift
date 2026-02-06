@@ -304,6 +304,13 @@ final class AppState {
     @ObservationIgnored
     private var mlsConversationManagerStorage: MLSConversationManager?
 
+    /// Synchronous accessor for MLS conversation manager (returns nil if not yet initialized)
+    /// Use this for suspension handling where we can't await lazy initialization.
+    /// For normal access, use getMLSConversationManager() which handles initialization.
+    var mlsConversationManager: MLSConversationManager? {
+      mlsConversationManagerStorage
+    }
+
     /// Task for initializing MLS conversation manager (prevents concurrent initialization)
     @ObservationIgnored
     private var mlsConversationManagerInitTask: Task<MLSConversationManager?, Never>?
@@ -1652,78 +1659,16 @@ final class AppState {
 
   /// Flush MLS storage to release file locks before app suspension
   ///
-  /// This MUST be called when the app enters background to prevent iOS from
-  /// terminating the app with 0xdead10cc (file lock held during suspension).
-  /// The method checkpoints the SQLite WAL to release all file locks.
+  /// SIGNAL's APPROACH: This is now a no-op.
+  /// The previous implementation was acquiring locks during suspension (checkpoint, advisory lock
+  /// release, etc.) which actually CAUSED 0xdead10cc instead of preventing it.
+  /// WAL mode + budget-based checkpoints during normal operation = always safe to suspend.
   @MainActor
   func flushMLSStorageForSuspension() async {
-    if isMLSStorageFlushInProgress {
-      logger.debug("⏭️ Skipping MLS storage flush - already in progress")
-      return
-    }
-
-    isMLSStorageFlushInProgress = true
-    defer { isMLSStorageFlushInProgress = false }
-
-    logger.info("💾 Flushing MLS storage before app suspension...")
-
-#if os(iOS)
-    var bgTask: UIBackgroundTaskIdentifier = .invalid
-    bgTask = UIApplication.shared.beginBackgroundTask(withName: "MLSStorageFlush") {
-        self.logger.error("⏰ iOS background time expired during MLS storage flush")
-      if bgTask != .invalid {
-        UIApplication.shared.endBackgroundTask(bgTask)
-        bgTask = .invalid
-      }
-    }
-    defer {
-      if bgTask != .invalid {
-        UIApplication.shared.endBackgroundTask(bgTask)
-        bgTask = .invalid
-      }
-    }
-#endif
-
-    do {
-      try await MLSClient.shared.flushStorage(for: userDID)
-      logger.info("✅ MLS storage flushed - safe for suspension")
-    } catch {
-      // Log but don't throw - we want the app to suspend gracefully even if flush fails
-      logger.error("⚠️ MLS storage flush failed: \(error.localizedDescription)")
-    }
-
-    // Also checkpoint the GRDB database pool
-    // CRITICAL FIX (2025-01): Use safeCheckpointForSuspension instead of direct checkpoint
-    // The direct checkpoint(.truncate) fails with SQLite error 6 (SQLITE_LOCKED) when
-    // concurrent operations are still running (MLS sync, TopicSummary, etc.).
-    // The new method uses PASSIVE mode with retries - it won't block and handles busy DB gracefully.
-    if await MLSGRDBManager.shared.isDatabaseOpen(for: userDID) {
-      let checkpointResult = await MLSGRDBManager.shared.safeCheckpointForSuspension(for: userDID)
-      
-      switch checkpointResult {
-      case .success(let checkpointed, let total):
-        logger.info("✅ MLS GRDB checkpoint completed (\(checkpointed)/\(total) pages)")
-      case .partial(let checkpointed, let total):
-        logger.info("⚠️ MLS GRDB partial checkpoint (\(checkpointed)/\(total) pages) - safe for suspension")
-      case .skipped(let reason):
-        logger.debug("⏭️ MLS GRDB checkpoint skipped: \(reason)")
-      case .failed(let error):
-        // Checkpoint failure is logged but not fatal - the app can still suspend
-        // PASSIVE mode failures are rare and usually indicate severe contention
-        logger.warning("⚠️ MLS GRDB checkpoint failed: \(error.localizedDescription)")
-      }
-      
-      // CRITICAL FIX: Release all advisory locks before suspension
-      // Holding file locks while suspended causes 0xdead10cc termination
-      MLSAdvisoryLockCoordinator.shared.releaseAllLocks()
-      MLSGroupLockCoordinator.shared.releaseAllLocks()
-      
-      if checkpointResult.isSafeForSuspension {
-        logger.info("✅ MLS storage checkpointed and locks released")
-      }
-    } else {
-      logger.debug("⏭️ Skipping GRDB checkpoint - database not open for user")
-    }
+    // NO-OP: Signal doesn't close databases on suspension - WAL mode handles it.
+    // The emergency close/flush operations were acquiring locks during suspension,
+    // which caused 0xdead10cc. Budget-based checkpoints keep WAL small.
+    logger.debug("⏭️ flushMLSStorageForSuspension is now no-op - WAL handles suspension safely")
   }
   
   /// Reload MLS state from disk after returning from background

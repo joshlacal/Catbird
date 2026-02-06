@@ -11,7 +11,24 @@ import SwiftUI
 enum ModelContainerState {
   case loading
   case ready(ModelContainer)
+  case degraded(ModelContainer, reason: String)  // In-memory fallback mode
   case failed(Error)
+
+  /// Returns the container if available (either ready or degraded)
+  var container: ModelContainer? {
+    switch self {
+    case .ready(let container), .degraded(let container, _):
+      return container
+    case .loading, .failed:
+      return nil
+    }
+  }
+
+  /// Whether the app is running in degraded (in-memory) mode
+  var isDegraded: Bool {
+    if case .degraded = self { return true }
+    return false
+  }
 }
 
 /// Lightweight Sendable wrapper so we can hand AppState instances to async tasks safely
@@ -325,7 +342,7 @@ final class AppStateManager {
       appState.updateClient(client)
 
       // Ensure model context is set (might not be if AppState was created before container was ready)
-      if case .ready(let container) = modelContainerState {
+      if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
       }
@@ -347,7 +364,7 @@ final class AppStateManager {
       await evictLRUIfNeeded()
       
       // Initialize model context for draft persistence
-      if case .ready(let container) = modelContainerState {
+      if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
       }

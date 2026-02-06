@@ -2,6 +2,9 @@ import Foundation
 import BackgroundTasks
 import os
 
+#if os(iOS)
+import UIKit
+
 @available(iOS 13.0, *)
 enum BGTaskSchedulerManager {
   static let taskIdentifier = "blue.catbird.posting.retry"
@@ -69,31 +72,47 @@ enum BGTaskSchedulerManager {
 
   private static func handle(task: BGAppRefreshTask) {
     logger.info("BGTask started: \(task.identifier)")
-    
+
+    // While running in background, ensure GRDB connections are resumed for the duration
+    // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
+    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "Posting BGTask \(taskIdentifier)")
+
+    // RAII background task assertion — auto-released on scope exit.
+    let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
+
     // Schedule next execution
     schedule()
-    
-    // Set up expiration handler
-    task.expirationHandler = { [weak task] in
-      logger.warning("BGTask expired before completion")
-      task?.setTaskCompleted(success: false)
-    }
-    
-    // Process outbox items with timeout protection
-    Task {
-      do {
-        guard let activeState = await AppStateManager.shared.lifecycle.appState else {
-          logger.warning("BGTask - no active state available")
-          task.setTaskCompleted(success: false)
-          return
-        }
-        await ComposerOutbox.shared.processAll(appState: activeState)
-        logger.info("BGTask completed successfully")
-        task.setTaskCompleted(success: true)
-      } catch {
-        logger.error("BGTask failed with error: \(error.localizedDescription)")
-        task.setTaskCompleted(success: false)
+
+    // Process outbox items with bounded work and cancellation support.
+    let retryWork = Task<Bool, Never> {
+      guard let activeState = await AppStateManager.shared.lifecycle.appState else {
+        logger.warning("BGTask - no active state available")
+        return false
       }
+      if Task.isCancelled { return false }
+
+      // Signal-style background defense: keep batches small while backgrounded.
+      await ComposerOutbox.shared.processAll(appState: activeState, maxItems: 1)
+      if Task.isCancelled { return false }
+
+      logger.info("BGTask completed successfully")
+      return true
+    }
+
+    task.expirationHandler = {
+      logger.warning("BGTask expired before completion; canceling retry work")
+      retryWork.cancel()
+    }
+
+    Task {
+      defer {
+        bgTask.end()
+        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Posting BGTask \(taskIdentifier)")
+      }
+
+      let success = await retryWork.value
+      task.setTaskCompleted(success: success)
     }
   }
 }
+#endif

@@ -10,6 +10,7 @@ import BackgroundTasks
 import SwiftData
 import Petrel
 import OSLog
+import UIKit
 
 #if os(iOS)
 @available(iOS 13.0, *)
@@ -73,6 +74,13 @@ enum BackgroundCacheRefreshManager {
   private static func handle(task: BGAppRefreshTask) {
     logger.info("Cache BGTask started")
 
+    // While running in background, ensure GRDB connections are resumed for the duration
+    // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
+    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "Cache BGTask \(taskIdentifier)")
+
+    // RAII background task assertion — auto-released on scope exit
+    let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
+
     // Schedule next refresh
     schedule()
 
@@ -117,6 +125,11 @@ enum BackgroundCacheRefreshManager {
     }
 
     Task {
+      defer {
+        bgTask.end()
+        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Cache BGTask \(taskIdentifier)")
+      }
+
       let success = await refreshWork.value
       task.setTaskCompleted(success: success)
     }
@@ -170,7 +183,7 @@ enum BackgroundCacheRefreshManager {
 
       logger.info("Refreshing \(threadURIs.count) cached threads")
 
-      guard let client = await context.createClient() else {
+      guard await context.createClient() != nil else {
         logger.error("No AT Protocol client available")
         return
       }
@@ -181,6 +194,11 @@ enum BackgroundCacheRefreshManager {
         return
       }
 
+      // Reuse a single manager so each refresh is tracked and awaited.
+      let threadManager = ThreadManager(appState: appState)
+      threadManager.setModelContext(modelContext)
+      var refreshedCount = 0
+
       // Refresh each thread
       for uriString in threadURIs {
         if Task.isCancelled { break }
@@ -190,22 +208,14 @@ enum BackgroundCacheRefreshManager {
           continue
         }
 
-        // Create temporary ThreadManager to refresh
-        let threadManager = ThreadManager(appState: appState)
-        threadManager.setModelContext(modelContext)
-
-        await MainActor.run {
-          Task {
-            await threadManager.loadThread(uri: uri)
-            // loadThread already saves to cache via cacheThreadPosts()
-          }
-        }
+        await threadManager.loadThread(uri: uri)
+        refreshedCount += 1
 
         // Small delay between requests to avoid rate limiting
         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
       }
 
-      logger.info("✅ Refreshed \(threadURIs.count) cached threads")
+      logger.info("✅ Refreshed \(refreshedCount) cached threads")
     } catch {
       logger.error("Failed to refresh cached threads: \(error.localizedDescription)")
     }

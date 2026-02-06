@@ -1,6 +1,7 @@
 import Foundation
 import BackgroundTasks
 import OSLog
+import UIKit
 
 #if os(iOS)
 @available(iOS 13.0, *)
@@ -63,6 +64,13 @@ enum ChatBackgroundRefreshManager {
   private static func handle(task: BGAppRefreshTask) {
     logger.info("Chat BGTask started")
 
+    // While running in background, ensure GRDB connections are resumed for the duration
+    // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
+    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "Chat BGTask \(taskIdentifier)")
+
+    // RAII background task assertion — auto-released on scope exit
+    let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
+
     schedule()
 
     let refreshWork = Task<Bool, Never> {
@@ -94,6 +102,11 @@ enum ChatBackgroundRefreshManager {
     }
 
     Task {
+      defer {
+        bgTask.end()
+        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Chat BGTask \(taskIdentifier)")
+      }
+
       let success = await refreshWork.value
       task.setTaskCompleted(success: success)
     }

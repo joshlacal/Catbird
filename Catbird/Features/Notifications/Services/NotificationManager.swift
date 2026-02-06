@@ -3815,16 +3815,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       var capturedPlaintext: String? = nil
       var capturedServerMessageId: String? = nil
 
-      // Fail-closed: do not advance the MLS ratchet unless we can also persist plaintext.
-      let lockAcquired = await CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared
-        .acquireExclusiveLock(for: recipientDid, timeout: 5.0)
-      guard lockAcquired else {
-        notificationLogger.warning("🔒 [FG] Advisory lock busy - skipping group sync decryption")
-        return nil
-      }
-      defer {
-        CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.releaseExclusiveLock(for: recipientDid)
-      }
+      // No advisory lock needed - SQLite WAL handles concurrent access
+      // Cross-process coordination uses Darwin notifications (MLSCrossProcess)
 
       for message in result.messages {
         // ciphertext is already Bytes (Data)
@@ -3905,14 +3897,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                   (try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(plaintextData))
                   ?? CatbirdMLSCore.MLSMessagePayload.text(textContent, embed: nil)
 
-                // Use advisory lock for cross-process coordination with NSE
-                let lockAcquired = await CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.acquireExclusiveLock(
-                  for: recipientDid, timeout: 5.0)
-                guard lockAcquired else {
-                  notificationLogger.warning("⚠️ [FG] Advisory lock busy - skipping cache for \(message.id.prefix(8))")
-                  continue
-                }
-                defer { CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.releaseExclusiveLock(for: recipientDid) }
+                // No advisory lock needed - SQLite WAL handles concurrent access
+                // Cross-process coordination uses Darwin notifications (MLSCrossProcess)
 
                 try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) { db in
                   try CatbirdMLSCore.MLSStorageHelpers.savePayloadSync(
@@ -3987,14 +3973,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
             // CRITICAL RECOVERY: If message is already cached (SecretReuseError), validate calls to saveReaction missed by the throw
             do {
-              // Use advisory lock for cross-process coordination with NSE
-              let lockAcquired = await CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.acquireExclusiveLock(
-                for: recipientDid, timeout: 5.0)
-              guard lockAcquired else {
-                notificationLogger.warning("⚠️ [FG] Advisory lock busy - skipping recovery for \(message.id.prefix(8))")
-                continue
-              }
-              defer { CatbirdMLSCore.MLSAdvisoryLockCoordinator.shared.releaseExclusiveLock(for: recipientDid) }
+              // No advisory lock needed - SQLite WAL handles concurrent access
+              // Cross-process coordination uses Darwin notifications (MLSCrossProcess)
 
               try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) {
                 [self] db in
