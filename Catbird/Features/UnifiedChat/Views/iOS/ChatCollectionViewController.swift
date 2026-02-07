@@ -80,6 +80,9 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
+    if observationTask == nil {
+      setupObservation()
+    }
     Task { await dataSource.loadMessages() }
   }
 

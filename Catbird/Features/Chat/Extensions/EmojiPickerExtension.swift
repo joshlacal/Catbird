@@ -85,8 +85,8 @@ private struct EmojiKitPickerSheet: View {
                 proxy.scrollTo(selection)
               }
             }
-            .onChange(of: selection) { newValue in
-              proxy.scrollTo(newValue)
+            .onChange(of: selection) {
+              proxy.scrollTo(selection)
             }
           }
         }

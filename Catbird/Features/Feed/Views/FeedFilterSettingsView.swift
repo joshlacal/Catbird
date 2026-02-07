@@ -57,17 +57,19 @@ struct FeedFilterSettingsView: View {
       }
       
       Section(header: Text("Quick Filters"), footer: Text("These filters apply locally and do not sync.")) {
-        ForEach(appState.feedFilterSettings.filters.indices, id: \.self) { index in
+        ForEach(appState.feedFilterSettings.filters, id: \.id) { filter in
           Toggle(
             isOn: Binding(
-              get: { appState.feedFilterSettings.filters[index].isEnabled },
-              set: { _ in appState.feedFilterSettings.toggleFilter(id: appState.feedFilterSettings.filters[index].id) }
+              get: {
+                appState.feedFilterSettings.filters.first(where: { $0.id == filter.id })?.isEnabled ?? false
+              },
+              set: { _ in appState.feedFilterSettings.toggleFilter(id: filter.id) }
             )
           ) {
             VStack(alignment: .leading, spacing: 4) {
-              Text(appState.feedFilterSettings.filters[index].name)
+              Text(filter.name)
                 .appFont(AppTextRole.headline)
-              Text(appState.feedFilterSettings.filters[index].description)
+              Text(filter.description)
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }

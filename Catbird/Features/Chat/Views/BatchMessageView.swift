@@ -36,7 +36,7 @@ struct BatchMessageView: View {
   }
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       VStack(spacing: 0) {
         // Message input
         VStack(alignment: .leading, spacing: 8) {

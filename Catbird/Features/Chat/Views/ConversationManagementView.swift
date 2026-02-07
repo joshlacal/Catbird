@@ -18,7 +18,7 @@ struct ConversationManagementView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationManagementView")
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       List {
         // Conversation info section
         Section {

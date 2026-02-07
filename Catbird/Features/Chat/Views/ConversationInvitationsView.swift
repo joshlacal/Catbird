@@ -209,7 +209,7 @@ struct ConversationInvitationRow: View {
 
 #Preview {
     @Previewable @Environment(AppState.self) var appState
-  NavigationView {
+  NavigationStack {
     ConversationInvitationsView()
       .environment(AppStateManager.shared)
   }

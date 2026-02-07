@@ -149,7 +149,7 @@ struct AccountSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 if isLoading {
                     Section {

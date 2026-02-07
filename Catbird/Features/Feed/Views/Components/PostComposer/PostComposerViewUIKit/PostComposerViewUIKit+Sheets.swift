@@ -16,12 +16,12 @@ extension PostComposerViewUIKit {
   func sheetModifiers<Content: View>(vm: PostComposerViewModel, _ content: Content) -> some View {
     let photoPickerContent = content
       .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems, matching: .images, photoLibrary: .shared())
-      .onChange(of: photoPickerItems) { items in
+      .onChange(of: photoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Photo picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: false, vm: vm)
       }
       .photosPicker(isPresented: $videoPickerVisible, selection: $videoPickerItems, matching: .videos, photoLibrary: .shared())
-      .onChange(of: videoPickerItems) { items in
+      .onChange(of: videoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Video picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: true, vm: vm)
       }

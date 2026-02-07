@@ -17,21 +17,21 @@ struct ThreadSeparatorView: View {
   // MARK: - Body
   
   var body: some View {
-    HStack(alignment: .center, spacing: 0) {
+    Button(action: onTap) {
+      HStack(alignment: .center, spacing: 0) {
         threadContinuationLine
         .frame(width: Self.avatarContainerWidth)
         .padding(.horizontal, Self.baseUnit)
       
-        threadContinuationButton
+        threadContinuationContent
 //      .padding(.horizontal, Self.baseUnit)
       
-      Spacer()
+        Spacer()
+      }
     }
-    .padding(.bottom, Self.baseUnit)
+    .buttonStyle(.plain)
     .contentShape(Rectangle())
-    .onTapGesture {
-      onTap()
-    }
+    .padding(.bottom, Self.baseUnit)
   }
   
   // MARK: - Components
@@ -66,24 +66,20 @@ struct ThreadSeparatorView: View {
     }
   }
   
-  /// The tappable button to view the full thread
-    private var threadContinuationButton: some View {
-        Button(action: {
-            onTap()
-        }) {
-            HStack {
-                Text("View full thread")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.accentColor)
-                Image(systemName: "chevron.right")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.accentColor)
-            }
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
+  /// The call-to-action content for viewing the full thread
+  private var threadContinuationContent: some View {
+    HStack {
+      Text("View full thread")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.accentColor)
+      Image(systemName: "chevron.right")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.accentColor)
     }
+    .padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
+  }
 
       /*
        HStack(spacing: 0) {

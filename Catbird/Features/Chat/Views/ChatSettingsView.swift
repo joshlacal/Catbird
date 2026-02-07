@@ -27,7 +27,7 @@ struct ChatSettingsView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       List {
         Section {
           HStack {
@@ -370,7 +370,7 @@ struct ChatDataExportView: View {
   @State private var showingShareSheet = false
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       VStack(spacing: 20) {
         Image(systemName: "square.and.arrow.up.circle")
           .appFont(size: 64)

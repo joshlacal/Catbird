@@ -67,7 +67,7 @@ actor MLSBackgroundRefreshManager {
     
     let request = BGProcessingTaskRequest(identifier: taskIdentifier)
     request.requiresNetworkConnectivity = true
-    request.requiresExternalPower = false
+    request.requiresExternalPower = true
     request.earliestBeginDate = Date(timeIntervalSinceNow: delay)
 
     do {
@@ -120,7 +120,7 @@ actor MLSBackgroundRefreshManager {
 
       do {
         try Task.checkCancellation()
-        try await mlsManager.smartRefreshKeyPackages()
+        try await mlsManager.smartRefreshKeyPackages(maxGeneratedPackages: 5)
         try Task.checkCancellation()
         logger.info("Background refresh completed successfully")
         return true

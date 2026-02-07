@@ -459,27 +459,27 @@ struct DeepNavigationFontModifier: ViewModifier {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
-            .onChange(of: UIApplication.shared.connectedScenes.count) { _ in
+            .onChange(of: UIApplication.shared.connectedScenes.count) {
                 // Reapply fonts if scene configuration changes
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
-            .onChange(of: fontManager.fontStyle) { _ in
+            .onChange(of: fontManager.fontStyle) {
                 // Invalidate cache and reapply fonts when font style changes
                 NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
-            .onChange(of: fontManager.fontSize) { _ in
+            .onChange(of: fontManager.fontSize) {
                 // Invalidate cache and reapply fonts when font size changes
                 NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
                 }
             }
-            .onChange(of: fontManager.dynamicTypeEnabled) { _ in
+            .onChange(of: fontManager.dynamicTypeEnabled) {
                 // Invalidate cache and reapply fonts when Dynamic Type setting changes
                 NavigationFontConfig.invalidateCache()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {

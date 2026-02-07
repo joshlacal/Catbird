@@ -241,6 +241,9 @@ import SwiftUI
           .font(.system(size: 15, weight: .semibold))
           .foregroundStyle(canSend ? Color.white : Color.secondary)
           .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
+          .background(Color.accentColor)
+          .clipShape(.circle)
+
       }
       .contentShape(Circle())
       .disabled(!canSend)

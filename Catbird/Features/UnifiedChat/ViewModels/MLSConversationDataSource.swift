@@ -34,6 +34,10 @@ import CatbirdMLSService
     private(set) var hasMoreMessages: Bool = true
     private(set) var error: Error?
 
+    // When a refresh is requested while isLoading is true, queue it
+    // so it runs after the current load finishes
+    private var pendingRefresh: Bool = false
+
     var draftText: String = ""
     var attachedEmbed: MLSEmbedData?
 
@@ -350,11 +354,23 @@ import CatbirdMLSService
     }
 
     func loadMessages() async {
-      guard !isLoading else { return }
+      guard !isLoading else {
+        pendingRefresh = true
+        return
+      }
       isLoading = true
       error = nil
+      pendingRefresh = false
 
-      defer { isLoading = false }
+      defer {
+        isLoading = false
+        if pendingRefresh {
+          pendingRefresh = false
+          Task { @MainActor [weak self] in
+            await self?.loadMessages()
+          }
+        }
+      }
 
       guard let appState = appState,
         let database = appState.mlsDatabase

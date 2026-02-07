@@ -4237,7 +4237,19 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         }
 
         Task.detached(priority: .utility) {
-          try? await MLSClient.shared.syncKeyPackageHashes(for: recipientDid)
+          do {
+            _ = try await MLSClient.shared.syncKeyPackageHashes(for: recipientDid)
+          } catch {
+            notificationLogger.warning(
+              "⚠️ [FG] Failed to sync key package hashes: \(error.localizedDescription)")
+          }
+
+          do {
+            _ = try await MLSClient.shared.monitorAndReplenishBundles(for: recipientDid)
+          } catch {
+            notificationLogger.warning(
+              "⚠️ [FG] Failed to replenish key packages: \(error.localizedDescription)")
+          }
         }
 
         // If we can't process Welcome, try joining via External Commit so we can decrypt immediately.

@@ -15,6 +15,10 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func mediaAttachmentsSection(vm: PostComposerViewModel) -> some View {
     VStack(spacing: 12) {
+      if let gif = vm.selectedGif {
+        selectedGifView(gif)
+      }
+      
       if !vm.mediaItems.isEmpty {
         imageAttachmentsView(vm: vm)
       }
@@ -25,7 +29,7 @@ extension PostComposerViewUIKit {
     }
     .padding(.horizontal, 16)
     .onAppear {
-        pcMediaLogger.debug("PostComposerMedia: Rendering media attachments - images: \(vm.mediaItems.count), video: \(vm.videoItem != nil)")
+        pcMediaLogger.debug("PostComposerMedia: Rendering media attachments - images: \(vm.mediaItems.count), video: \(vm.videoItem != nil), gif: \(vm.selectedGif != nil)")
 
     }
   }

@@ -43,7 +43,7 @@ actor MLSNotificationHandler {
       }
 
       // Force refresh to replenish inventory immediately
-      try await manager.smartRefreshKeyPackages()
+      try await manager.smartRefreshKeyPackages(maxGeneratedPackages: 5)
 
       logger.info("Successfully replenished key packages in response to notification")
     } catch {

@@ -18,7 +18,7 @@ struct AdvancedFilterView: View {
     @State private var excludedWordsText: String = ""
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // Content Filtering Section
                 Section(header: Text("Content Filters"), footer: Text("Control what types of content appear in your search results")) {

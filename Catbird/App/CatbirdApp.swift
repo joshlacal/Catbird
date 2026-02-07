@@ -1666,7 +1666,25 @@ private extension CatbirdApp {
       
     case "sync":
       await handleSync(params: params, manager: manager, logger: e2eLogger)
-      
+
+    case "add-member":
+      await handleAddMember(params: params, manager: manager, logger: e2eLogger)
+
+    case "remove-member":
+      await handleRemoveMember(params: params, manager: manager, logger: e2eLogger)
+
+    case "list-members":
+      await handleListMembers(params: params, manager: manager, logger: e2eLogger)
+
+    case "check-message":
+      await handleCheckMessage(params: params, manager: manager, logger: e2eLogger)
+
+    case "get-epoch":
+      await handleGetEpoch(params: params, manager: manager, logger: e2eLogger)
+
+    case "cleanup-stale":
+      await handleCleanupStale(params: params, manager: manager, logger: e2eLogger)
+
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
       await writeE2EResult(command: command, success: false, error: "Unknown command")
@@ -1766,13 +1784,24 @@ private extension CatbirdApp {
     let groupName = params["name"] ?? "E2E Test Conversation"
     
     e2eLogger.info("[E2E] Creating conversation with: \(targetDID)")
-    
+
     do {
       // Get or create conversation via MLS conversation manager
       guard let conversationManager = await appState.getMLSConversationManager() else {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
-      
+
+      // ⭐ E2E FIX: Pre-replenish key packages before creating group.
+      // On fresh install the background replenishment task may not have finished yet,
+      // causing createGroup to fail or timeout waiting for bundles.
+      e2eLogger.info("[E2E] Ensuring key packages are replenished before group creation...")
+      do {
+        try await conversationManager.smartRefreshKeyPackages()
+        e2eLogger.info("[E2E] Key package replenishment complete")
+      } catch {
+        e2eLogger.warning("[E2E] Key package pre-replenishment failed: \(error.localizedDescription) - createGroup will retry inline")
+      }
+
       // Create group with the target member (using DID type)
       let targetMember = try DID(didString: targetDID)
       let conversation = try await conversationManager.createGroup(
@@ -1965,6 +1994,245 @@ private extension CatbirdApp {
     }
   }
   
+  // MARK: - E2E Group Chat Commands
+
+  private func handleAddMember(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"],
+          let memberDID = params["memberDID"] else {
+      e2eLogger.error("[E2E] add-member requires conversationId and memberDID parameters")
+      await writeE2EResult(command: "add-member", success: false, error: "Missing conversationId or memberDID")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "add-member", success: false, error: "Not authenticated")
+      return
+    }
+
+    e2eLogger.info("[E2E] Adding member \(memberDID) to conversation \(conversationId)")
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      try await conversationManager.addMembers(convoId: conversationId, memberDids: [memberDID])
+
+      e2eLogger.info("[E2E] Member added successfully")
+      await writeE2EResult(command: "add-member", success: true, data: [
+        "conversationId": conversationId,
+        "memberDID": memberDID
+      ])
+    } catch {
+      e2eLogger.error("[E2E] Failed to add member: \(error.localizedDescription)")
+      await writeE2EResult(command: "add-member", success: false, error: error.localizedDescription)
+    }
+  }
+
+  private func handleRemoveMember(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"],
+          let memberDID = params["memberDID"] else {
+      e2eLogger.error("[E2E] remove-member requires conversationId and memberDID parameters")
+      await writeE2EResult(command: "remove-member", success: false, error: "Missing conversationId or memberDID")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "remove-member", success: false, error: "Not authenticated")
+      return
+    }
+
+    let reason = params["reason"]
+    e2eLogger.info("[E2E] Removing member \(memberDID) from conversation \(conversationId)")
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      try await conversationManager.removeMember(from: conversationId, memberDid: memberDID, reason: reason)
+
+      e2eLogger.info("[E2E] Member removed successfully")
+      await writeE2EResult(command: "remove-member", success: true, data: [
+        "conversationId": conversationId,
+        "memberDID": memberDID
+      ])
+    } catch {
+      e2eLogger.error("[E2E] Failed to remove member: \(error.localizedDescription)")
+      await writeE2EResult(command: "remove-member", success: false, error: error.localizedDescription)
+    }
+  }
+
+  private func handleListMembers(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"] else {
+      e2eLogger.error("[E2E] list-members requires conversationId parameter")
+      await writeE2EResult(command: "list-members", success: false, error: "Missing conversationId")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "list-members", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      guard let convo = conversationManager.conversations[conversationId] else {
+        throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+      }
+
+      let memberDIDs = convo.members.map { $0.did.description }
+      let adminDIDs = convo.members.filter { $0.isAdmin }.map { $0.did.description }
+
+      e2eLogger.info("[E2E] Listed \(memberDIDs.count) members for conversation \(conversationId)")
+      await writeE2EResult(command: "list-members", success: true, data: [
+        "conversationId": conversationId,
+        "memberCount": "\(memberDIDs.count)",
+        "members": memberDIDs.joined(separator: ","),
+        "admins": adminDIDs.joined(separator: ",")
+      ])
+    } catch {
+      e2eLogger.error("[E2E] Failed to list members: \(error.localizedDescription)")
+      await writeE2EResult(command: "list-members", success: false, error: error.localizedDescription)
+    }
+  }
+
+  private func handleCheckMessage(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"],
+          let contentPrefix = params["contentPrefix"] else {
+      e2eLogger.error("[E2E] check-message requires conversationId and contentPrefix parameters")
+      await writeE2EResult(command: "check-message", success: false, error: "Missing conversationId or contentPrefix")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "check-message", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      guard let userDid = conversationManager.userDid else {
+        throw NSError(domain: "E2E", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user DID"])
+      }
+
+      let messages = try await conversationManager.storage.fetchMessagesForConversation(
+        conversationId,
+        currentUserDID: userDid,
+        database: conversationManager.database,
+        limit: 200
+      )
+
+      let matching = messages.filter { msg in
+        if let plaintext = msg.plaintext {
+          return plaintext.hasPrefix(contentPrefix)
+        }
+        return false
+      }
+
+      let matchTexts = matching.compactMap { $0.plaintext }
+
+      e2eLogger.info("[E2E] Found \(matching.count) messages matching prefix '\(contentPrefix)' in \(conversationId)")
+      await writeE2EResult(command: "check-message", success: true, data: [
+        "conversationId": conversationId,
+        "contentPrefix": contentPrefix,
+        "matchCount": "\(matching.count)",
+        "totalMessages": "\(messages.count)",
+        "matches": matchTexts.joined(separator: "|")
+      ])
+    } catch {
+      e2eLogger.error("[E2E] Failed to check messages: \(error.localizedDescription)")
+      await writeE2EResult(command: "check-message", success: false, error: error.localizedDescription)
+    }
+  }
+
+  private func handleGetEpoch(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"] else {
+      e2eLogger.error("[E2E] get-epoch requires conversationId parameter")
+      await writeE2EResult(command: "get-epoch", success: false, error: "Missing conversationId")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "get-epoch", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      guard let userDid = conversationManager.userDid else {
+        throw NSError(domain: "E2E", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user DID"])
+      }
+
+      // Sync first to ensure conversation model is up-to-date after add/remove operations
+      try? await conversationManager.syncWithServer(fullSync: false)
+
+      guard let convo = conversationManager.conversations[conversationId] else {
+        throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+      }
+
+      // Query FFI for ground-truth epoch (authoritative source)
+      var ffiEpoch: UInt64 = 0
+      if let groupIdData = Data(hexEncoded: convo.groupId) {
+        ffiEpoch = try await conversationManager.mlsClient.getEpoch(for: userDid, groupId: groupIdData)
+      }
+
+      // Use FFI epoch as the primary value since server epoch may lag
+      let epoch = ffiEpoch > 0 ? ffiEpoch : UInt64(convo.epoch)
+      e2eLogger.info("[E2E] Epoch for \(conversationId): server=\(convo.epoch), ffi=\(ffiEpoch), reported=\(epoch)")
+      await writeE2EResult(command: "get-epoch", success: true, data: [
+        "conversationId": conversationId,
+        "serverEpoch": "\(epoch)",
+        "ffiEpoch": "\(ffiEpoch)"
+      ])
+    } catch {
+      e2eLogger.error("[E2E] Failed to get epoch: \(error.localizedDescription)")
+      await writeE2EResult(command: "get-epoch", success: false, error: error.localizedDescription)
+    }
+  }
+
+  /// E2E: Clean up stale conversations and run GRDB/FFI reconciliation.
+  /// Purges local conversations that no longer exist on the server or have no FFI counterpart.
+  private func handleCleanupStale(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated - cannot cleanup")
+      await writeE2EResult(command: "cleanup-stale", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      e2eLogger.info("[E2E] Running sync to trigger reconciliation and zombie detection...")
+      try await conversationManager.syncWithServer(fullSync: true)
+
+      let convoCount = conversationManager.conversations.count
+      e2eLogger.info("[E2E] Cleanup complete - \(convoCount) conversations remain after reconciliation")
+      await writeE2EResult(command: "cleanup-stale", success: true, data: [
+        "remainingConversations": "\(convoCount)"
+      ])
+    } catch {
+      e2eLogger.error("[E2E] Cleanup failed: \(error.localizedDescription)")
+      await writeE2EResult(command: "cleanup-stale", success: false, error: error.localizedDescription)
+    }
+  }
+
   /// Write E2E command result to a file the harness can read
   private func writeE2EResult(command: String, success: Bool, error: String? = nil, data: [String: String]? = nil) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Results")

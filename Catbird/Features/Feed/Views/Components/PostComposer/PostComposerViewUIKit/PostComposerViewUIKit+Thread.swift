@@ -15,7 +15,7 @@ extension PostComposerViewUIKit {
   func threadEntriesSection(vm: PostComposerViewModel) -> some View {
     if vm.isThreadMode && vm.threadEntries.count > 1 {
       LazyVStack(spacing: 0) {
-        ForEach(Array(vm.threadEntries.enumerated()), id: \.offset) { index, entry in
+        ForEach(Array(vm.threadEntries.enumerated()), id: \.element.id) { index, entry in
           VStack(spacing: 6) {
             HStack(alignment: .top, spacing: 12) {
               VStack(spacing: 4) {
@@ -317,8 +317,8 @@ extension PostComposerViewUIKit {
           .allowsHitTesting(false)
       } else if !entry.mediaItems.isEmpty {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 6)], spacing: 6) {
-          ForEach(entry.mediaItems.indices, id: \.self) { idx in
-            if let image = entry.mediaItems[idx].image {
+          ForEach(entry.mediaItems, id: \.id) { mediaItem in
+            if let image = mediaItem.image {
               image
                 .resizable()
                 .aspectRatio(contentMode: .fill)

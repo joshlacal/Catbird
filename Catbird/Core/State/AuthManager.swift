@@ -366,6 +366,16 @@ final class AuthenticationManager: AuthProgressDelegate {
     stateSubject.continuation.yield(newState)
   }
 
+  /// Validate a DID coming from user input or client session state.
+  private func validatedUserDID(_ rawDID: String, source: String) throws -> String {
+    let did = rawDID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !did.isEmpty, did.hasPrefix("did:") else {
+      logger.critical("🚨 [\(source)] Invalid DID encountered: '\(rawDID, privacy: .private)'")
+      throw AuthError.invalidUserDID
+    }
+    return did
+  }
+
   // MARK: - Public API
 
   /// Initialize the client and check authentication state
@@ -461,7 +471,8 @@ final class AuthenticationManager: AuthProgressDelegate {
         async let didTask = client.getDid()
         async let handleTask = client.getHandle()
 
-        let (userDid, userHandle) = try await (didTask, handleTask)
+        let (resolvedDid, userHandle) = try await (didTask, handleTask)
+        let userDid = try validatedUserDID(resolvedDid, source: "checkAuthenticationState")
 
         self.handle = userHandle
         logger.info("User is authenticated with DID: \(String(describing: userDid))")
@@ -855,7 +866,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       )
       logger.error("[E2E-DEBUG] loginWithPassword SUCCESS, DID: \(accountInfo.did)")
       
-      let did = accountInfo.did
+      let did = try validatedUserDID(accountInfo.did, source: "loginWithPasswordForE2E")
       logger.info("[E2E] Password login successful for DID: \(did)")
 
       // Replace the main client with the authenticated legacy client
@@ -992,7 +1003,10 @@ final class AuthenticationManager: AuthProgressDelegate {
         await self.updateState(.authenticating(progress: .finalizing))
 
         self.logger.debug("🔄 [CALLBACK] Getting DID from client")
-        let did = try await client.getDid()
+        let did = try self.validatedUserDID(
+          try await client.getDid(),
+          source: "handleOAuthCallback"
+        )
         self.logger.debug("✅ [CALLBACK] Got DID: \(did)")
 
         self.logger.debug("🔄 [CALLBACK] Getting handle from client")
@@ -1013,7 +1027,10 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
 
       // Get DID after timeout block completes
-      let did = try await client.getDid()
+      let did = try validatedUserDID(
+        try await client.getDid(),
+        source: "handleOAuthCallback.postValidation"
+      )
 
       // DEBUG: Test a simple API call to verify gateway connectivity
       logger.info("🔍 [DEBUG] Testing API call after auth...")
@@ -1095,9 +1112,13 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       // Get account info from client after OAuth callback
       let accountInfo = await activeClient.getActiveAccountInfo()
-      guard let userDID = accountInfo.did else {
+      guard let resolvedUserDID = accountInfo.did else {
         throw AuthError.unknown(NSError(domain: "AuthManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No account info after OAuth callback"]))
       }
+      let userDID = try validatedUserDID(
+        resolvedUserDID,
+        source: "handleGatewayCallback"
+      )
 
       self.handle = accountInfo.handle
       if let handle = self.handle {
@@ -1536,7 +1557,9 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Switch to a different account
   @MainActor
   func switchToAccount(did: String) async throws {
-    logger.info("🔄 [AUTHMAN-SWITCH] Starting switchToAccount for DID: \(did)")
+    let targetDID = try validatedUserDID(did, source: "switchToAccount.request")
+
+    logger.info("🔄 [AUTHMAN-SWITCH] Starting switchToAccount for DID: \(targetDID)")
     logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(String(describing: self.state))")
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1554,7 +1577,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     // ═══════════════════════════════════════════════════════════════════════════
     guard !isSwitchingAccount else {
       logger.warning("⚠️ [AUTHMAN-SWITCH] Account switch already in progress - ignoring request")
-      logger.warning("   Requested DID: \(did)")
+      logger.warning("   Requested DID: \(targetDID)")
       throw AuthError.accountSwitchInProgress
     }
 
@@ -1569,12 +1592,12 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
     logger.debug("✅ [AUTHMAN-SWITCH] Client is available")
 
-    if case .authenticated(let currentDid) = state, currentDid == did {
-      logger.info("ℹ️ [AUTHMAN-SWITCH] Already using account with DID: \(did)")
+    if case .authenticated(let currentDid) = state, currentDid == targetDID {
+      logger.info("ℹ️ [AUTHMAN-SWITCH] Already using account with DID: \(targetDID)")
       return
     }
 
-    logger.info("🔄 [AUTHMAN-SWITCH] Proceeding with account switch to DID: \(did)")
+    logger.info("🔄 [AUTHMAN-SWITCH] Proceeding with account switch to DID: \(targetDID)")
     logger.debug("🔄 [AUTHMAN-SWITCH] Setting isSwitchingAccount = true")
     isSwitchingAccount = true
 
@@ -1664,8 +1687,8 @@ final class AuthenticationManager: AuthProgressDelegate {
     // Prewarm the target account's database now that the previous account is fully drained.
     // Set the target as active BEFORE prewarming to avoid OOM-blocking rejection.
     do {
-      await MLSGRDBManager.shared.setActiveUser(did)
-      _ = try await MLSGRDBManager.shared.getDatabasePool(for: did)
+      await MLSGRDBManager.shared.setActiveUser(targetDID)
+      _ = try await MLSGRDBManager.shared.getDatabasePool(for: targetDID)
       logger.debug("⚡️ [AUTHMAN-SWITCH] Prewarmed MLS database for target account")
     } catch {
       logger.debug("⚠️ [AUTHMAN-SWITCH] Prewarm failed (non-fatal): \(error.localizedDescription)")
@@ -1675,8 +1698,8 @@ final class AuthenticationManager: AuthProgressDelegate {
       logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .initializing")
       updateState(.initializing)
 
-      logger.info("🔄 [AUTHMAN-SWITCH] Calling client.switchToAccount(did: \(did))")
-      try await client.switchToAccount(did: did)
+      logger.info("🔄 [AUTHMAN-SWITCH] Calling client.switchToAccount(did: \(targetDID))")
+      try await client.switchToAccount(did: targetDID)
       logger.info("✅ [AUTHMAN-SWITCH] client.switchToAccount completed")
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -1690,10 +1713,10 @@ final class AuthenticationManager: AuthProgressDelegate {
       let hasValidSession = await client.hasValidSession()
       if !hasValidSession {
         logger.warning("⚠️ [AUTHMAN-SWITCH] Account has no valid session - triggering re-auth flow")
-        let storedHandle = getStoredHandle(for: did)
-        expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+        let storedHandle = getStoredHandle(for: targetDID)
+        expiredAccountInfo = AccountInfo(did: targetDID, handle: storedHandle, isActive: false)
         logger.info(
-          "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(did) handle=\(storedHandle ?? "nil") to trigger re-auth"
+          "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(storedHandle ?? "nil") to trigger re-auth"
         )
         isSwitchingAccount = false
         updateState(.unauthenticated)
@@ -1702,8 +1725,16 @@ final class AuthenticationManager: AuthProgressDelegate {
       logger.info("✅ [AUTHMAN-SWITCH] Session validated successfully")
 
       logger.debug("🔄 [AUTHMAN-SWITCH] Fetching DID from client")
-      let newDid = try await client.getDid()
+      let newDid = try validatedUserDID(
+        try await client.getDid(),
+        source: "switchToAccount.resolved"
+      )
       logger.debug("✅ [AUTHMAN-SWITCH] Got DID: \(newDid)")
+      if newDid != targetDID {
+        logger.warning(
+          "⚠️ [AUTHMAN-SWITCH] Resolved DID differs from requested target (requested: \(targetDID), resolved: \(newDid))"
+        )
+      }
 
       logger.debug("🔄 [AUTHMAN-SWITCH] Fetching handle from client")
       self.handle = try await client.getHandle()
@@ -1728,10 +1759,10 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       // Set expired account info so LoginView/AccountSwitcherView can trigger re-authentication
       // This allows automatic re-auth flow when switching to an account with expired tokens
-      let storedHandle = getStoredHandle(for: did)
-      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+      let storedHandle = getStoredHandle(for: targetDID)
+      expiredAccountInfo = AccountInfo(did: targetDID, handle: storedHandle, isActive: false)
       logger.info(
-        "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(did) handle=\(storedHandle ?? "nil") to enable re-authentication"
+        "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(storedHandle ?? "nil") to enable re-authentication"
       )
 
       // Set state to unauthenticated so the auth UI can handle re-auth
@@ -2072,6 +2103,8 @@ enum AuthError: Error, LocalizedError {
   case timeout
   case cancelled
   case unknown(Error)
+  /// Received an empty or malformed DID from auth/session resolution.
+  case invalidUserDID
   /// Account switch is already in progress - prevents re-entrancy
   case accountSwitchInProgress
   /// Database drain failed during account switch; do not proceed to avoid corruption.
@@ -2097,6 +2130,8 @@ enum AuthError: Error, LocalizedError {
       return "Authentication was cancelled"
     case .unknown(let error):
       return "Unknown error: \(error.localizedDescription)"
+    case .invalidUserDID:
+      return "Received an invalid account identifier"
     case .accountSwitchInProgress:
       return "Please wait for the current account switch to complete"
     case .databaseDrainFailed:
@@ -2126,6 +2161,8 @@ enum AuthError: Error, LocalizedError {
       return "Authentication was cancelled by the user."
     case .unknown:
       return "An unexpected error occurred during authentication."
+    case .invalidUserDID:
+      return "The authentication response did not include a usable account identifier."
     case .databaseDrainFailed:
       return
         "The app couldn’t acquire exclusive access to the encrypted database to flush and close it safely."
@@ -2156,6 +2193,8 @@ enum AuthError: Error, LocalizedError {
       return "You can try logging in again when ready."
     case .unknown:
       return "Please try again or contact support if the problem persists."
+    case .invalidUserDID:
+      return "Sign in again to re-establish a valid account session."
     case .accountSwitchInProgress:
       return "Wait a moment for the current account switch to finish, then try again."
     case .databaseDrainFailed:

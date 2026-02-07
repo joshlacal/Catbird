@@ -35,7 +35,7 @@ struct MessageRequestsView: View {
   }
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       VStack(spacing: 0) {
         // Filter picker
         if !appState.chatManager.messageRequests.isEmpty {
@@ -431,7 +431,7 @@ struct MessageRequestPreviewView: View {
   }
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 20) {
           // Header

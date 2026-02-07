@@ -46,7 +46,7 @@ struct EditProfileView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // Banner Image Section
                 Section("Banner Image") {

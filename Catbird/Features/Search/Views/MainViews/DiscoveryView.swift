@@ -359,8 +359,7 @@ private struct InlineTopicSummaryLine: View {
     
     private var topicsListView: some View {
         LazyVStack(spacing: 16) {
-            ForEach(filteredTopics.indices, id: \.self) { index in
-                let topic = filteredTopics[index]
+            ForEach(filteredTopics, id: \.link) { topic in
                 topicCard(topic: topic)
                     .padding(.horizontal, 16)
             }
@@ -372,8 +371,7 @@ private struct InlineTopicSummaryLine: View {
             GridItem(.flexible(), spacing: 12),
             GridItem(.flexible(), spacing: 12)
         ], spacing: 16) {
-            ForEach(filteredTopics.indices, id: \.self) { index in
-                let topic = filteredTopics[index]
+            ForEach(filteredTopics, id: \.link) { topic in
                 compactTopicCard(topic: topic)
             }
         }

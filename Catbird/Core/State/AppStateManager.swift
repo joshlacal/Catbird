@@ -242,10 +242,30 @@ final class AppStateManager {
 
   // MARK: - State Transitions
 
+  private func normalizedUserDID(_ rawUserDID: String) -> String? {
+    let userDID = rawUserDID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !userDID.isEmpty, userDID.hasPrefix("did:") else {
+      return nil
+    }
+    return userDID
+  }
+
   /// Transition to authenticated state with a specific user
   /// Creates or retrieves AppState for the user and updates lifecycle
   /// - Parameter userDID: The DID of the user to authenticate as
   func transitionToAuthenticated(userDID: String) async {
+    guard let userDID = normalizedUserDID(userDID) else {
+      logger.critical(
+        "🚨 Refusing authenticated transition for invalid DID: \(userDID, privacy: .private)")
+      authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
+        title: "Authentication Failed",
+        message:
+          "Catbird received an invalid account identifier and blocked authentication to protect account data."
+      )
+      lifecycle = .unauthenticated
+      return
+    }
+
     logger.info("🔐 Transitioning to authenticated state for: \(userDID)")
 
     // Guard against re-entrancy - prevents duplicate calls from racing
@@ -485,6 +505,16 @@ final class AppStateManager {
   ///   - userDID: The DID of the account to switch to
   ///   - draft: Optional composer draft to transfer
   func switchAccount(to userDID: String, withDraft draft: PostComposerDraft? = nil) async {
+    guard let userDID = normalizedUserDID(userDID) else {
+      logger.critical("🚨 Blocking account switch for invalid DID input")
+      authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
+        title: "Account Switch Failed",
+        message:
+          "Catbird blocked this account switch because the target account identifier was invalid."
+      )
+      return
+    }
+
     logger.info("🔄 Switching to account: \(userDID)")
     
     let previousUserDID = lifecycle.userDID

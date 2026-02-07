@@ -444,7 +444,7 @@ struct MessageContextRow: View {
 
 #Preview {
     @Previewable @Environment(AppState.self) var appState
-  NavigationView {
+  NavigationStack {
     ChatModerationView()
       .environment(AppStateManager.shared)
   }

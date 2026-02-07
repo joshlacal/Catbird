@@ -151,7 +151,7 @@ struct FilterView: View {
     @State private var allLanguages: [LanguageOption] = LanguageOption.supportedLanguages
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Date") {
                     ForEach(FilterDate.allCases, id: \.self) { date in
