@@ -30,23 +30,69 @@ struct ProfileRowView: View {
                 
                 // Profile info
                 VStack(alignment: .leading, spacing: 4) {
-                        if profile.displayName?.isEmpty ?? true {
-                            // Display handle if no display name
-                            Text("@\(profile.handle)")
-                                .appFont(AppTextRole.headline)
-                                .lineLimit(1)
+                    if profile.displayName?.isEmpty ?? true {
+                        // Display handle if no display name
+                        HStack(spacing: 4) {
+                            
+                        Text("@\(profile.handle)")
+                            .appFont(AppTextRole.headline)
+                            .lineLimit(1)
+                        
+                        if let pronouns = profile.pronouns, !pronouns.isEmpty {
+                            Text("\(pronouns)")
+                                .appFont(AppTextRole.subheadline)
+                                .foregroundColor(.secondary)
+                                .opacity(0.9)
+                                .textScale(.secondary)
+                                .padding(2)
+                                .padding(.top, 2)
+                                .padding(.bottom, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.secondary.opacity(0.1))
+                                )
+                            
+                            
+                        }
+                    }
                         } else {
                             // Display display name if available
-                            Text(profile.displayName ?? profile.handle.description)
-                                .appFont(AppTextRole.headline)
+                            HStack(spacing: 4) {
+                                Text(profile.displayName ?? profile.handle.description)
+                                    .appFont(AppTextRole.headline)
+
+                                if profile.verification?.verifiedStatus == "valid" {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .foregroundStyle(.blue)
+                                        .font(.caption)
+                                }
+                                
+                                if let pronouns = profile.pronouns, !pronouns.isEmpty {
+                                    Text("\(pronouns)")
+                                        .appFont(AppTextRole.subheadline)
+                                        .foregroundColor(.secondary)
+                                        .opacity(0.9)
+                                        .textScale(.secondary)
+                                        .padding(1)
+                                        .padding(.horizontal, 4)
+                                        .padding(.bottom, 2)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(Color.secondary.opacity(0.1))
+                                        )
+
+
+                                }
+
+                            }
                         }
                                             
                     HStack {
+                        Text("@\(profile.handle)")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.secondary)
 
-                    Text("@\(profile.handle)")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.secondary)
-                        
+
                         // Handle "Follows you" badge if available
                         if let profileView = profile as? AppBskyActorDefs.ProfileView,
                            let viewer = profileView.viewer, viewer.followedBy != nil {

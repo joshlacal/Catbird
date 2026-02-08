@@ -267,7 +267,9 @@ var id: String {
             displayName: postState.currentPost.author.displayName
               ?? postState.currentPost.author.handle.description,
             handle: postState.currentPost.author.handle.description,
-            timeAgo: feedPost.createdAt.date
+            timeAgo: feedPost.createdAt.date,
+            pronouns: postState.currentPost.author.pronouns,
+            isVerified: postState.currentPost.author.verification?.verifiedStatus == "valid" || postState.currentPost.author.did.isEqual(to: try! DID(didString: "did:plc:vc7f4oafdgxsihk4cry2xpze"))
           )
 
           Spacer()

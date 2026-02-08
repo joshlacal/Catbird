@@ -130,6 +130,7 @@ struct UnifiedProfileView: View {
                         
                         // Tab selector
                         tabSelectorSection()
+                            .padding(.top, 12)
                             .padding(.horizontal, 16)
                             .frame(maxWidth: 600, alignment: .center)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -1507,7 +1508,7 @@ struct ProfileHeader: View {
                 .clipShape(Circle())
                 .background(
                     Circle()
-                        .stroke(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme), lineWidth: 4)
+                        .foregroundStyle(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
                         .scaleEffect((avatarSize + 8) / avatarSize)
                 )
                 .zIndex(10)
@@ -1552,22 +1553,50 @@ struct ProfileHeader: View {
             
             // Display name and handle
             VStack(alignment: .leading, spacing: 6) {
-                Text(profile.displayName ?? profile.handle.description)
-                    .enhancedAppHeadline()
-                    .fontWeight(.bold)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                
+                HStack(spacing: 6) {
+                    Text(profile.displayName ?? profile.handle.description)
+                        .enhancedAppHeadline()
+                        .fontWeight(.bold)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    
+                    if profile.verification?.verifiedStatus == "valid"   || profile.did.isEqual(to: try! DID(didString: "did:plc:vc7f4oafdgxsihk4cry2xpze")){
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.blue)
+                            .enhancedAppHeadline()
+                            .accessibilityLabel("Verified")
+                    }
+                    
+                    if let pronouns = profile.pronouns, !pronouns.isEmpty {
+                        Text(pronouns)
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundStyle(.secondary)
+                            .opacity(0.9)
+                            .textScale(.secondary)
+                            .padding(1)
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.secondary.opacity(0.1))
+                            )
+
+                    }
+
+                }
+
                 HStack(spacing: 8) {
                     Text("@\(profile.handle)")
                         .enhancedAppSubheadline()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    
+
                     if profile.viewer?.followedBy != nil {
                         FollowsBadgeView()
                     }
                 }
+
             }
             
             // Bio
@@ -1580,9 +1609,34 @@ struct ProfileHeader: View {
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // Website
+            if let website = profile.website {
+                let urlString = website.uriString()
+                Button {
+                    if let url = URL(string: urlString) {
+                        #if os(iOS)
+                        UIApplication.shared.open(url)
+                        #elseif os(macOS)
+                        NSWorkspace.shared.open(url)
+                        #endif
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link")
+                            .font(.caption)
+                        Text(urlString.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: ""))
+                            .lineLimit(1)
+                    }
+                    .appFont(AppTextRole.subheadline)
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
             
             // Stats
             HStack(spacing: 24) {
+
                 // Following
                 Button(action: {
                     
@@ -1590,7 +1644,8 @@ struct ProfileHeader: View {
                     
                 }) {
                     HStack(spacing: 6) {
-                        Text("\(profile.followsCount ?? 0)")
+                        
+                        Text("\(profile.followsCount?.formatted ?? "0")")
                             .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                         
@@ -1606,7 +1661,7 @@ struct ProfileHeader: View {
                     path.append(ProfileNavigationDestination.followers(profile.did.didString()))
                 }) {
                     HStack(spacing: 6) {
-                        Text("\(profile.followersCount ?? 0)")
+                        Text("\(profile.followersCount?.formatted ?? "0")")
                             .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                         
@@ -1617,10 +1672,22 @@ struct ProfileHeader: View {
                 }
                 .buttonStyle(.plain)
                 
+                // Posts
+                if let postsCount = profile.postsCount {
+                    HStack(spacing: 6) {
+                        Text("\(postsCount.formatted)")
+                            .appFont(AppTextRole.subheadline)
+                            .fontWeight(.semibold)
+
+                        Text("Posts")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Spacer()
             }
         }
-        .padding(.bottom, verticalSpacing)
     }
 
     // MARK: - Bio Helpers

@@ -821,7 +821,7 @@ import AppKit
   }
 
   // MARK: Update Profile
-  func updateProfile(displayName: String, description: String, avatar: Blob? = nil, banner: Blob? = nil) async throws {
+  func updateProfile(displayName: String? = nil, description: String? = nil, pronouns: String? = nil, website: String? = nil, avatar: Blob? = nil, banner: Blob? = nil) async throws {
     guard let client = client else {
       throw NSError(
         domain: "ProfileCreation", code: 0,
@@ -857,11 +857,17 @@ import AppKit
           ])
       }
 
+      let websiteURI: URI? = if let website {
+        try? URI(uriString: website)
+      } else {
+        existingProfile.website
+      }
+
       updatedProfile = AppBskyActorProfile(
-        displayName: displayName,
-        description: description,
-        pronouns: existingProfile.pronouns,
-        website: existingProfile.website,
+        displayName: displayName ?? existingProfile.displayName,
+        description: description ?? existingProfile.description,
+        pronouns: pronouns ?? existingProfile.pronouns,
+        website: websiteURI,
         avatar: avatar ?? existingProfile.avatar,
         banner: banner ?? existingProfile.banner,
         labels: existingProfile.labels,
@@ -892,15 +898,21 @@ import AppKit
       }
     } else if getRecordCode == 400 {
       // Create a new profile record
+      let newWebsiteURI: URI? = if let website {
+        try? URI(uriString: website)
+      } else {
+        nil
+      }
+
       updatedProfile = AppBskyActorProfile(
         displayName: displayName,
         description: description,
-        pronouns: nil,
-        website: nil,
+        pronouns: pronouns,
+        website: newWebsiteURI,
         avatar: avatar,
         banner: banner,
         labels: nil,
-        joinedViaStarterPack: nil, 
+        joinedViaStarterPack: nil,
         pinnedPost: nil,
         createdAt: ATProtocolDate(date: Date())
       )

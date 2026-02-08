@@ -4236,7 +4236,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
             "⚠️ [FG] Failed to invalidate Welcome (non-critical): \(error.localizedDescription)")
         }
 
-        Task.detached(priority: .utility) {
+          Task.detached(priority: .utility) { [self] in
           do {
             _ = try await MLSClient.shared.syncKeyPackageHashes(for: recipientDid)
           } catch {

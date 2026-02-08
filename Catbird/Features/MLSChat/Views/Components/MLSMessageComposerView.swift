@@ -239,7 +239,7 @@ import SwiftUI
       } label: {
         Image(systemName: "arrow.up")
           .font(.system(size: 15, weight: .semibold))
-          .foregroundStyle(canSend ? Color.white : Color.secondary)
+          .foregroundStyle(Color.white)
           .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
           .background(Color.accentColor)
           .clipShape(.circle)

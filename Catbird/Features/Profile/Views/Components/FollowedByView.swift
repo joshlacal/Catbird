@@ -37,6 +37,7 @@ struct FollowedByView: View {
                             .zIndex(Double(maxAvatarsToShow - index))
                         }
                     }
+                    .padding(.trailing, DesignTokens.Spacing.xs)
                     
                     // Text description
                     Text(followedByText)
@@ -47,8 +48,7 @@ struct FollowedByView: View {
                     
                     Spacer()
                 }
-                .padding(.horizontal)
-                .padding(.vertical, DesignTokens.Spacing.xs)
+                .padding(.top, DesignTokens.Spacing.base)
             }
             .contentShape(Rectangle())
             .onTapGesture {

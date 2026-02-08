@@ -93,25 +93,55 @@ struct ThreadViewMainPostView: View, Equatable {
                                 authorAvatarColumn
                                 
                                 VStack(alignment: .leading, spacing: 0) {
-                                    Text(post.author.displayName ?? post.author.handle.description)
-                                        .lineLimit(1, reservesSpace: true)
-                                        .truncationMode(.tail)
-                                        .appHeadline()
-                                        .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
-                                        .allowsTightening(true)
-                                        .padding(.bottom, 1)
-                                        .transaction { $0.animation = nil }
-                                        .contentTransition(.identity)
+                                    HStack(spacing: 4) {
+                                        Text(post.author.displayName ?? post.author.handle.description)
+                                            .lineLimit(1, reservesSpace: true)
+                                            .truncationMode(.tail)
+                                            .appHeadline()
+                                            .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
+                                            .allowsTightening(true)
+                                            .transaction { $0.animation = nil }
+                                            .contentTransition(.identity)
 
-                                    Text(verbatim: "@\(post.author.handle)")
-                                        .appSubheadline()
-                                        .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                        .allowsTightening(true)
-                                        .padding(.bottom, 1)
-                                        .transaction { $0.animation = nil }
-                                        .contentTransition(.identity)
+                                        if post.author.verification?.verifiedStatus == "valid" || post.author.did.isEqual(to: try! DID(didString: "did:plc:vc7f4oafdgxsihk4cry2xpze")){
+                                            Image(systemName: "checkmark.seal.fill")
+                                                .foregroundStyle(.blue)
+                                                .font(.caption)
+                                        }
+                                        
+                                        if let pronouns = post.author.pronouns, !pronouns.isEmpty {
+                                            Text("\(pronouns)")
+                                                .appSubheadline()
+                                                .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
+                                                .lineLimit(1)
+                                                .opacity(0.9)
+                                                .textScale(.secondary)
+                                                .padding(1)
+                                                .padding(.horizontal, 4)
+                                                .padding(.bottom, 2)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 12)
+                                                        .fill(Color.secondary.opacity(0.1))
+                                                )
+
+
+                                        }
+
+                                    }
+                                    .padding(.bottom, 1)
+
+                                    HStack(spacing: 4) {
+                                        Text(verbatim: "@\(post.author.handle)")
+                                            .appSubheadline()
+                                            .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                            .allowsTightening(true)
+
+                                    }
+                                    .padding(.bottom, 1)
+                                    .transaction { $0.animation = nil }
+                                    .contentTransition(.identity)
                                 }                                .padding(.leading, 3)
                                 .padding(.bottom, 4)
                                 .onTapGesture {

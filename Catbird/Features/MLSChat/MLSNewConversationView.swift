@@ -192,7 +192,7 @@ struct MLSNewConversationView: View {
                     Label("Group Name", systemImage: "text.bubble")
                         .designCaption()
                 } footer: {
-                    Text("Give your secure group a name, or leave blank for a default name")
+                    Text("Give your secure group a name.")
                         .designCaption()
                 }
                 
