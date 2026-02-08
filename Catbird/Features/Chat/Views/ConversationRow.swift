@@ -6,7 +6,7 @@ import Petrel
 
 struct ConversationRow: View {
   let convo: ChatBskyConvoDefs.ConvoView
-  let did: String  // Needed to identify the other member
+  let currentUserDID: String  // Current user's DID to identify the other member
 
   // Use @State for properties loaded asynchronously
   @State private var avatarImage: Image?  // Managed by ProfileAvatarView now
@@ -16,8 +16,14 @@ struct ConversationRow: View {
   @Environment(AppState.self) private var appState
   // Determine the other member involved in the conversation
   private var otherMember: ChatBskyActorDefs.ProfileViewBasic? {
+    // Handle edge case where currentUserDID might be empty
+    guard !currentUserDID.isEmpty else {
+      // If we don't have the current user's DID, return the first member as a fallback
+      return convo.members.first
+    }
+
     // Find the first member whose DID does not match the current user's DID
-    return convo.members.first(where: { $0.did.didString() != did }) ?? nil
+    return convo.members.first(where: { $0.did.didString() != currentUserDID })
   }
   
   // Accessibility description for screen readers
@@ -124,8 +130,14 @@ struct ConversationRow: View {
       return
     }
 
-    displayName = profile.displayName ?? ""  // Use empty string if nil
-    handle = "@\(profile.handle.description)"
+    // Check if the account has been deleted (Bluesky uses "missing.invalid" for deleted accounts)
+    if profile.handle.description == "missing.invalid" {
+      displayName = "Deleted Account"
+      handle = ""
+    } else {
+      displayName = profile.displayName ?? ""  // Use empty string if nil
+      handle = "@\(profile.handle.description)"
+    }
   }
 
   // Date formatting helper
@@ -159,7 +171,7 @@ struct LastMessagePreview: View {
     Group {
       switch lastMessage {
       case .chatBskyConvoDefsMessageView(let messageView):
-          Text(messageView.sender.did.didString() == appState.currentUserDID ? "You: \(messageView.text)" : messageView.text)
+          Text(messageView.sender.did.didString() == appState.userDID ? "You: \(messageView.text)" : messageView.text)
           .appCallout()
           .foregroundColor(.gray)
           .lineLimit(2)

@@ -638,13 +638,16 @@ import AppKit
   /// Computes a unique feed key for this profile tab for SwiftData persistence
   func profileFeedKey(for tab: ProfileTab) -> String {
     let base = "author:\(userDID)"
+    let baseKey: String
     switch tab {
-    case .posts: return base + ":posts"
-    case .replies: return base + ":replies"
-    case .media: return base + ":media"
-    case .likes: return base + ":likes"
-    default: return base + ":other"
+    case .posts: baseKey = base + ":posts"
+    case .replies: baseKey = base + ":replies"
+    case .media: baseKey = base + ":media"
+    case .likes: baseKey = base + ":likes"
+    default: baseKey = base + ":other"
     }
+    let account = currentUserDID ?? "unknown-account"
+    return "\(account)-\(baseKey)"
   }
 
   /// Creates CachedFeedViewPost entries for the current tab and saves them via PersistentFeedStateManager
@@ -818,7 +821,7 @@ import AppKit
   }
 
   // MARK: Update Profile
-  func updateProfile(displayName: String, description: String, avatar: Blob? = nil, banner: Blob? = nil) async throws {
+  func updateProfile(displayName: String? = nil, description: String? = nil, pronouns: String? = nil, website: String? = nil, avatar: Blob? = nil, banner: Blob? = nil) async throws {
     guard let client = client else {
       throw NSError(
         domain: "ProfileCreation", code: 0,
@@ -854,11 +857,17 @@ import AppKit
           ])
       }
 
+      let websiteURI: URI? = if let website {
+        try? URI(uriString: website)
+      } else {
+        existingProfile.website
+      }
+
       updatedProfile = AppBskyActorProfile(
-        displayName: displayName,
-        description: description,
-        pronouns: existingProfile.pronouns,
-        website: existingProfile.website,
+        displayName: displayName ?? existingProfile.displayName,
+        description: description ?? existingProfile.description,
+        pronouns: pronouns ?? existingProfile.pronouns,
+        website: websiteURI,
         avatar: avatar ?? existingProfile.avatar,
         banner: banner ?? existingProfile.banner,
         labels: existingProfile.labels,
@@ -889,15 +898,21 @@ import AppKit
       }
     } else if getRecordCode == 400 {
       // Create a new profile record
+      let newWebsiteURI: URI? = if let website {
+        try? URI(uriString: website)
+      } else {
+        nil
+      }
+
       updatedProfile = AppBskyActorProfile(
         displayName: displayName,
         description: description,
-        pronouns: nil,
-        website: nil,
+        pronouns: pronouns,
+        website: newWebsiteURI,
         avatar: avatar,
         banner: banner,
         labels: nil,
-        joinedViaStarterPack: nil, 
+        joinedViaStarterPack: nil,
         pinnedPost: nil,
         createdAt: ATProtocolDate(date: Date())
       )

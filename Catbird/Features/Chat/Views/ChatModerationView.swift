@@ -8,34 +8,78 @@ import SwiftUI
 struct ChatModerationView: View {
   @Environment(AppState.self) private var appState
   @State private var selectedTab = 0
+  @State private var hasAdminAccess = false
+  @State private var isCheckingAccess = true
   
   var body: some View {
-    TabView(selection: $selectedTab) {
-      ActorMetadataView()
-        .tabItem {
-          Image(systemName: "person.circle")
-          Text("User Stats")
+    Group {
+      if isCheckingAccess {
+        VStack(spacing: 12) {
+          ProgressView()
+          Text("Verifying admin access…")
+            .font(.caption)
+            .foregroundColor(.secondary)
         }
-        .tag(0)
-      
-      MessageContextView()
-        .tabItem {
-          Image(systemName: "message.circle")
-          Text("Message Context")
+      } else if hasAdminAccess {
+        TabView(selection: $selectedTab) {
+          ActorMetadataView()
+            .tabItem {
+              Image(systemName: "person.circle")
+              Text("User Stats")
+            }
+            .tag(0)
+          
+          MessageContextView()
+            .tabItem {
+              Image(systemName: "message.circle")
+              Text("Message Context")
+            }
+            .tag(1)
+          
+          AccessControlView()
+            .tabItem {
+              Image(systemName: "key")
+              Text("Access Control")
+            }
+            .tag(2)
         }
-        .tag(1)
-      
-      AccessControlView()
-        .tabItem {
-          Image(systemName: "key")
-          Text("Access Control")
+      } else {
+        VStack(spacing: 12) {
+          Image(systemName: "lock.shield")
+            .font(.largeTitle)
+            .foregroundColor(.secondary)
+          Text("Admin tools are limited to conversation admins.")
+            .font(.callout)
+            .multilineTextAlignment(.center)
+            .foregroundColor(.secondary)
         }
-        .tag(2)
+        .padding()
+      }
     }
     .navigationTitle("Moderation Tools")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
+    .task {
+      await checkAdminAccess()
+    }
+  }
+
+  private func checkAdminAccess() async {
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      await MainActor.run {
+        hasAdminAccess = false
+        isCheckingAccess = false
+      }
+      return
+    }
+
+    let isAdmin = await conversationManager.isCurrentUserAdminInAnyConversation()
+
+    await MainActor.run {
+      hasAdminAccess = isAdmin
+      isCheckingAccess = false
+    }
   }
 }
 
@@ -399,9 +443,10 @@ struct MessageContextRow: View {
 }
 
 #Preview {
-  NavigationView {
+    @Previewable @Environment(AppState.self) var appState
+  NavigationStack {
     ChatModerationView()
-      .environment(AppState.shared)
+      .environment(AppStateManager.shared)
   }
 }
 #endif

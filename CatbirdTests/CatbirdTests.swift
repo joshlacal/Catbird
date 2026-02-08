@@ -73,6 +73,29 @@ struct CatbirdTests {
     #expect(shouldBlur == true, "Graphic content should be initially blurred")
   }
 
+  @Test("Content warning system ignores non-warning labels for censorship")
+  func testContentWarningIgnoresInformationalLabels() async throws {
+    // Create a test label that should not trigger blur/hide
+    let spamLabel = ComAtprotoLabelDefs.Label(
+      ver: nil,
+      src: try DID(didString: "did:plc:test"),
+      uri: try URI(uriString: "at://test.example/app.bsky.feed.post/1"),
+      cid: nil,
+      val: "spam",
+      neg: nil,
+      cts: ATProtocolDate(date: Date()),
+      exp: nil,
+      sig: nil
+    )
+
+    let visibility = ContentLabelManager.getContentVisibility(labels: [spamLabel])
+    let shouldBlur = ContentLabelManager.shouldInitiallyBlur(labels: [spamLabel])
+
+    // Informational/non-warning labels should not censor media
+    #expect(visibility == .show, "Non-warning labels should not change visibility")
+    #expect(shouldBlur == false, "Non-warning labels should not blur content")
+  }
+
 }
 
 // MARK: - Embedding Evaluation Harness

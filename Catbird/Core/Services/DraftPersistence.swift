@@ -2,213 +2,106 @@
 //  DraftPersistence.swift
 //  Catbird
 //
-//  MainActor class for thread-safe SwiftData draft operations
+//  Thin wrapper for draft persistence operations using DatabaseModelActor.
+//  Operations are delegated to the actor to run off the main thread.
 //
 
 import Foundation
 import SwiftData
 import OSLog
 
-/// MainActor class for draft persistence operations
-/// Uses the shared ModelContext on MainActor
+/// Wrapper for draft persistence operations that delegates to DatabaseModelActor.
+/// This class provides async methods that run database operations off the main thread.
+/// Note: Requires @MainActor for initialization due to ModelContainer.mainContext access.
 @MainActor
 final class DraftPersistence {
-  private let logger = Logger(subsystem: "blue.catbird", category: "DraftPersistence")
-  private let modelContext: ModelContext
-  
-  init(modelContext: ModelContext) {
-    self.modelContext = modelContext
-    logger.info("🗄️ DraftPersistence initialized with shared ModelContext")
-  }
-  
-  // MARK: - CRUD Operations
-  
-  func saveDraft(_ draft: PostComposerDraft, accountDID: String) throws -> UUID {
-    logger.info("💾 saveDraft called - Account: \(accountDID), Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
+    private let logger = Logger(subsystem: "blue.catbird", category: "DraftPersistence")
+    private let modelContainer: ModelContainer
     
-    let draftPost: DraftPost
-    do {
-      draftPost = try DraftPost.create(from: draft, accountDID: accountDID)
-      logger.debug("  Created DraftPost model - ID: \(draftPost.id.uuidString)")
-    } catch {
-      logger.error("  ❌ Failed to create DraftPost: \(error.localizedDescription)")
-      throw error
+    /// Actor for database operations (lazy initialized)
+    private lazy var databaseActor: DatabaseModelActor = {
+        DatabaseModelActor(modelContainer: modelContainer)
+    }()
+    
+    init(modelContext: ModelContext) {
+        // Extract the container from the context to create our own actor
+        self.modelContainer = modelContext.container
+        logger.info("🗄️ DraftPersistence initialized with ModelActor (off main thread)")
     }
     
-    modelContext.insert(draftPost)
-    logger.debug("  Inserted into model context")
-    
-    do {
-      try modelContext.save()
-      modelContext.processPendingChanges()
-      logger.info("✅ Saved draft \(draftPost.id.uuidString) for account \(accountDID)")
-    } catch {
-      logger.error("❌ Failed to save model context: \(error.localizedDescription)")
-      throw error
+    init(modelContainer: ModelContainer) {
+        self.modelContainer = modelContainer
+        logger.info("🗄️ DraftPersistence initialized with ModelContainer")
     }
     
-    return draftPost.id
-  }
-  
-  func updateDraft(id: UUID, draft: PostComposerDraft, accountDID: String) throws {
-    logger.info("♻️ updateDraft called - ID: \(id.uuidString), Account: \(accountDID), Post text length: \(draft.postText.count)")
+    // MARK: - Async CRUD Operations (preferred - run off main thread)
     
-    let predicate = #Predicate<DraftPost> { $0.id == id }
-    let descriptor = FetchDescriptor(predicate: predicate)
-    
-    logger.debug("  Fetching existing draft to update")
-    let drafts: [DraftPost]
-    do {
-      drafts = try modelContext.fetch(descriptor)
-    } catch {
-      logger.error("❌ Failed to fetch draft for update: \(error.localizedDescription)")
-      throw error
+    func saveDraftAsync(_ draft: PostComposerDraft, accountDID: String) async throws -> UUID {
+        logger.info("💾 saveDraft (async) - Account: \(accountDID)")
+        return try await databaseActor.saveDraft(draft, accountDID: accountDID)
     }
     
-    guard let existingDraft = drafts.first else {
-      logger.error("❌ Draft not found for update - ID: \(id.uuidString)")
-      throw DraftError.draftNotFound
+    func updateDraft(id: UUID, draft: PostComposerDraft, accountDID: String) async throws {
+        logger.info("♻️ updateDraft (async) - ID: \(id.uuidString)")
+        try await databaseActor.updateDraft(id: id, draft: draft, accountDID: accountDID)
     }
     
-    logger.debug("  Found existing draft - Preview: '\(existingDraft.previewText.prefix(30))...'")
-    
-    do {
-      let encoder = JSONEncoder()
-      let draftData = try encoder.encode(draft)
-      
-      existingDraft.draftData = draftData
-      existingDraft.modifiedDate = Date()
-      existingDraft.previewText = String(draft.postText.prefix(200))
-      existingDraft.hasMedia = !draft.mediaItems.isEmpty || draft.videoItem != nil
-      existingDraft.isReply = draft.threadEntries.first?.parentPostURI != nil
-      existingDraft.isQuote = draft.threadEntries.first?.quotedPostURI != nil
-      existingDraft.isThread = draft.isThreadMode
-      
-      logger.debug("  Updated draft properties")
-    } catch {
-      logger.error("❌ Failed to encode draft data: \(error.localizedDescription)")
-      throw error
+    func fetchDraftsAsync(for accountDID: String) async throws -> [DraftPost] {
+        logger.debug("📥 fetchDrafts (async) - Account: \(accountDID)")
+        return try await databaseActor.fetchDrafts(for: accountDID)
     }
     
-    do {
-      try modelContext.save()
-      modelContext.processPendingChanges()
-      logger.info("✅ Updated draft \(id.uuidString) for account \(accountDID)")
-    } catch {
-      logger.error("❌ Failed to save updated draft: \(error.localizedDescription)")
-      throw error
-    }
-  }
-  
-  func fetchDrafts(for accountDID: String) throws -> [DraftPost] {
-    logger.info("📥 fetchDrafts called - Account: \(accountDID)")
-    
-    let predicate = #Predicate<DraftPost> { $0.accountDID == accountDID }
-    var descriptor = FetchDescriptor(predicate: predicate)
-    descriptor.sortBy = [SortDescriptor(\.modifiedDate, order: .reverse)]
-    
-    logger.debug("  Executing fetch with predicate (account: \(accountDID), sorted by modifiedDate desc)")
-    
-    do {
-      let drafts = try modelContext.fetch(descriptor)
-      logger.info("✅ Fetched \(drafts.count) drafts for account \(accountDID)")
-      
-      if !drafts.isEmpty {
-        logger.debug("  Draft IDs: \(drafts.map { $0.id.uuidString }.joined(separator: ", "))")
-      }
-      
-      return drafts
-    } catch {
-      logger.error("❌ Failed to fetch drafts: \(error.localizedDescription)")
-      throw error
-    }
-  }
-  
-  func deleteDraft(id: UUID) throws {
-    logger.info("🗑️ deleteDraft called - ID: \(id.uuidString)")
-    
-    let predicate = #Predicate<DraftPost> { $0.id == id }
-    let descriptor = FetchDescriptor(predicate: predicate)
-    
-    logger.debug("  Fetching draft to delete")
-    let drafts: [DraftPost]
-    do {
-      drafts = try modelContext.fetch(descriptor)
-    } catch {
-      logger.error("❌ Failed to fetch draft for deletion: \(error.localizedDescription)")
-      throw error
+    func deleteDraft(id: UUID) async throws {
+        logger.info("🗑️ deleteDraft (async) - ID: \(id.uuidString)")
+        try await databaseActor.deleteDraft(id: id)
     }
     
-    guard let draft = drafts.first else {
-      logger.error("❌ Draft not found - ID: \(id.uuidString)")
-      throw DraftError.draftNotFound
+    func countDrafts(for accountDID: String) async throws -> Int {
+        return try await databaseActor.countDrafts(for: accountDID)
     }
     
-    logger.debug("  Found draft - Preview: '\(draft.previewText.prefix(30))...', Account: \(draft.accountDID)")
-    
-    modelContext.delete(draft)
-    logger.debug("  Deleted from context")
-    
-    do {
-      try modelContext.save()
-      logger.info("✅ Deleted draft \(id.uuidString)")
-    } catch {
-      logger.error("❌ Failed to save after deletion: \(error.localizedDescription)")
-      throw error
-    }
-  }
-  
-  func countDrafts(for accountDID: String) throws -> Int {
-    logger.debug("📊 countDrafts called - Account: \(accountDID)")
-    
-    let predicate = #Predicate<DraftPost> { $0.accountDID == accountDID }
-    let descriptor = FetchDescriptor(predicate: predicate)
-    
-    do {
-      let count = try modelContext.fetchCount(descriptor)
-      logger.debug("  Count: \(count) drafts for account \(accountDID)")
-      return count
-    } catch {
-      logger.error("❌ Failed to count drafts: \(error.localizedDescription)")
-      throw error
-    }
-  }
-  
-  // MARK: - Migration
-  
-  func migrateLegacyDraft(
-    id: UUID,
-    draft: PostComposerDraft,
-    accountDID: String,
-    createdDate: Date,
-    modifiedDate: Date
-  ) throws {
-    logger.info("🔄 migrateLegacyDraft called - ID: \(id.uuidString), Account: \(accountDID)")
-    logger.debug("  Created: \(createdDate), Modified: \(modifiedDate), Post text length: \(draft.postText.count)")
-    
-    let draftPost: DraftPost
-    do {
-      draftPost = try DraftPost.create(from: draft, accountDID: accountDID, id: id)
-    } catch {
-      logger.error("❌ Failed to create DraftPost during migration: \(error.localizedDescription)")
-      throw error
+    func migrateLegacyDraft(
+        id: UUID,
+        draft: PostComposerDraft,
+        accountDID: String,
+        createdDate: Date,
+        modifiedDate: Date
+    ) async throws {
+        logger.info("🔄 migrateLegacyDraft (async) - ID: \(id.uuidString)")
+        try await databaseActor.migrateLegacyDraft(
+            id: id,
+            draft: draft,
+            accountDID: accountDID,
+            createdDate: createdDate,
+            modifiedDate: modifiedDate
+        )
     }
     
-    draftPost.createdDate = createdDate
-    draftPost.modifiedDate = modifiedDate
-    logger.debug("  Set legacy timestamps")
+    // MARK: - Synchronous CRUD Operations (MainActor - for existing code compatibility)
     
-    modelContext.insert(draftPost)
-    logger.debug("  Inserted into model context")
-    
-    do {
-      try modelContext.save()
-      logger.info("✅ Migrated legacy draft \(id.uuidString) for account \(accountDID)")
-    } catch {
-      logger.error("❌ Failed to save migrated draft: \(error.localizedDescription)")
-      throw error
+    func saveDraft(_ draft: PostComposerDraft, accountDID: String) throws -> UUID {
+        logger.info("💾 saveDraft (sync/MainActor) - Account: \(accountDID)")
+        
+        // Use main context for synchronous operations (backwards compatibility)
+        let modelContext = modelContainer.mainContext
+        let draftPost = try DraftPost.create(from: draft, accountDID: accountDID)
+        modelContext.insert(draftPost)
+        try modelContext.save()
+        
+        logger.info("✅ Saved draft \(draftPost.id.uuidString)")
+        return draftPost.id
     }
-  }
+    
+    func fetchDrafts(for accountDID: String) throws -> [DraftPost] {
+        logger.debug("📥 fetchDrafts (sync/MainActor) - Account: \(accountDID)")
+        
+        let modelContext = modelContainer.mainContext
+        let predicate = #Predicate<DraftPost> { $0.accountDID == accountDID }
+        var descriptor = FetchDescriptor(predicate: predicate)
+        descriptor.sortBy = [SortDescriptor(\.modifiedDate, order: .reverse)]
+        
+        return try modelContext.fetch(descriptor)
+    }
 }
 
 // MARK: - Errors

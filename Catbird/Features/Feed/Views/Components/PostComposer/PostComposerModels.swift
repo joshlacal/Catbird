@@ -4,7 +4,7 @@ import SwiftUI
 
 // MARK: - Tenor API Models (shared with GifPickerView)
 
-struct TenorGif: Codable, Identifiable, Equatable {
+struct TenorGif: Codable, Identifiable, Hashable {
     let id: String
     let title: String
     let content_description: String
@@ -18,7 +18,7 @@ struct TenorGif: Codable, Identifiable, Equatable {
     let content_description_source: String
 }
 
-struct TenorMediaFormats: Codable, Equatable {
+struct TenorMediaFormats: Codable, Hashable {
     let gif: TenorMediaItem?
     let mediumgif: TenorMediaItem?
     let tinygif: TenorMediaItem?
@@ -36,7 +36,7 @@ struct TenorMediaFormats: Codable, Equatable {
     let nanogifpreview: TenorMediaItem?
 }
 
-struct TenorMediaItem: Codable, Equatable {
+struct TenorMediaItem: Codable, Hashable {
     let url: String
     let dims: [Int]
     let duration: Double?
@@ -46,7 +46,7 @@ struct TenorMediaItem: Codable, Equatable {
 
 // MARK: - Thread Models
 
-struct ThreadEntry: Identifiable {
+struct ThreadEntry: Identifiable, Hashable {
     let id = UUID()
     var text: String = ""
     var mediaItems: [PostComposerViewModel.MediaItem] = []
@@ -85,7 +85,7 @@ extension PlatformImage {
 
 // MARK: - Draft State Management
 
-struct PostComposerDraft: Codable {
+struct PostComposerDraft: Codable, Hashable {
   let postText: String
   let mediaItems: [CodableMediaItem]
   let videoItem: CodableMediaItem?
@@ -102,7 +102,7 @@ struct PostComposerDraft: Codable {
 
 // MARK: - Codable Wrappers for Draft State
 
-struct CodableMediaItem: Codable {
+struct CodableMediaItem: Codable, Hashable {
   let altText: String
   let aspectRatio: CGSize?
   let isLoading: Bool
@@ -166,7 +166,7 @@ extension CodableMediaItem {
   }
 }
 
-struct CodableThreadEntry: Codable {
+struct CodableThreadEntry: Codable, Hashable {
   let text: String
   let mediaItems: [CodableMediaItem]
   let videoItem: CodableMediaItem?

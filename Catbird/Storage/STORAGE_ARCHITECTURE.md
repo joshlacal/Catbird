@@ -230,39 +230,6 @@ try keychainManager.archiveKey(
 )
 ```
 
-### 4. Migration System (`MLSStorageMigration.swift`)
-
-Handles migration from existing storage systems to the MLS Core Data model.
-
-#### Migration Flow:
-
-1. **Detection:** Scan for legacy data sources
-2. **Migration:** Convert and import data
-3. **Verification:** Validate migrated data
-4. **Cleanup:** Optionally remove legacy data
-
-#### Supported Migration Sources:
-
-- UserDefaults-based storage
-- File-based JSON storage
-- Custom legacy formats
-
-#### Usage:
-
-```swift
-let migration = MLSStorageMigration()
-
-// Check if migration needed
-if !migration.isMigrationCompleted {
-    try await migration.migrateIfNeeded()
-}
-
-// Rollback if needed
-if somethingWentWrong {
-    try await migration.rollbackMigration()
-}
-```
-
 ## Data Flow
 
 ### Message Sending Flow:
@@ -346,7 +313,6 @@ if somethingWentWrong {
 
 1. **MLSStorageTests:** CRUD operations, relationships, batch operations
 2. **MLSKeychainManagerTests:** Key storage, retrieval, deletion
-3. **MLSStorageMigrationTests:** Migration scenarios, rollback
 
 ### Integration Tests:
 
@@ -402,10 +368,9 @@ public enum KeychainError: LocalizedError {
 
 ### Logging:
 
-Uses OSLog with subsystem `com.catbird.mls`:
+Uses OSLog with subsystem `blue.catbird.mls`:
 - Category: `MLSStorage` for Core Data operations
 - Category: `MLSKeychainManager` for Keychain operations
-- Category: `MLSStorageMigration` for migration events
 
 ## Future Enhancements
 

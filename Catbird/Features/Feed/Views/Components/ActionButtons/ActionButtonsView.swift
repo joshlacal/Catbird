@@ -221,11 +221,18 @@ struct ActionButtonsView: View {
       try? await Task.sleep(for: .milliseconds(500))
       await MainActor.run { initialLoadComplete = true }
 
-      // Start cancellable task for continuous updates
+      // Start cancellable task for continuous updates with debouncing
       updateTask = Task {
+        var lastUpdate = Date.distantPast
+        let debounceInterval: TimeInterval = 0.1  // 100ms debounce to prevent excessive re-renders
+
         for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
           try Task.checkCancellation()  // Check if task was cancelled
-          await refreshState()
+          let now = Date()
+          if now.timeIntervalSince(lastUpdate) >= debounceInterval {
+            lastUpdate = now
+            await refreshState()
+          }
         }
       }
     }
@@ -246,6 +253,7 @@ struct ActionButtonsView: View {
           parentPost: post,
           appState: appState
         )
+        .applyAppStateEnvironment(appState)
         #if os(iOS)
         .presentationDetents({
           if #available(iOS 26.0, *) { return [.large] } else { return [PresentationDetent.large] }
@@ -260,7 +268,7 @@ struct ActionButtonsView: View {
       .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
       #endif
     }
-    .id(appState.currentUserDID)
+    .id(appState.userDID)
   }
 
   // MARK: - Reply Handling

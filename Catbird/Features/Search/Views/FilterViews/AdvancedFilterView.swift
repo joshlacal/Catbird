@@ -18,7 +18,7 @@ struct AdvancedFilterView: View {
     @State private var excludedWordsText: String = ""
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 // Content Filtering Section
                 Section(header: Text("Content Filters"), footer: Text("Control what types of content appear in your search results")) {
@@ -236,9 +236,8 @@ struct AdvancedFilterView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     // Create a mock view model for preview
-    let appState = AppState.shared
-    let viewModel = RefinedSearchViewModel(appState: appState)
     
-    return AdvancedFilterView(viewModel: viewModel)
+    return AdvancedFilterView(viewModel: RefinedSearchViewModel(appState: appState))
 }

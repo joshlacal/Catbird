@@ -12,6 +12,8 @@ struct PostHeaderView: View {
     let displayName: String
     let handle: String
     let timeAgo: Date
+    var pronouns: String? = nil
+    var isVerified: Bool = false
     
     // Constants for layout
     private let profileImageSize: CGFloat = 40
@@ -24,19 +26,48 @@ struct PostHeaderView: View {
             HStack(alignment: .top, spacing: spacing) {
                 // DisplayName with potential truncation
                 if displayName != "" {
-                    Text(displayName)
-                        .appHeadline()
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .layoutPriority(1)
+                    HStack(spacing: 4) {
+                        Text(displayName)
+                            .appHeadline()
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if isVerified {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.blue)
+                                .font(.caption)
+                        }
+                        
+                        if let pronouns, !pronouns.isEmpty {
+                            Text("\(pronouns)")
+                                .appBody()
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                                .opacity(0.9)
+                                .textScale(.secondary)
+                                .padding(1)
+                                .padding(.horizontal, 4)
+                                .padding(.bottom, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.secondary.opacity(0.1))
+                                )
+
+                        }
+
+                    }
+                    .layoutPriority(1)
                 }
                 // Handle with conditional visibility and truncation
-                Text("@\(handle)")
-                    .appBody()
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(0)
+                HStack(spacing: 4) {
+                    Text("@\(handle)")
+                        .appBody()
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                }
+                .layoutPriority(0)
             }
             .layoutPriority(1) // Gives priority to this HStack
                                // Separator and Time
@@ -65,10 +96,11 @@ struct PostHeaderView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     PostHeaderView(
         displayName: "Josh", 
         handle: "josh.uno", 
         timeAgo: Date()
     )
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }

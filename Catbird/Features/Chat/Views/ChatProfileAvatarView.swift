@@ -13,7 +13,7 @@ struct ChatProfileAvatarView: View {
   // No need for @State imageLoaded, LazyImage handles its state
 
   var body: some View {
-    let avatarURL = profile?.avatar?.url
+    let avatarURL = profile?.finalAvatarURL()
 
     LazyImage(url: avatarURL) { state in
       if let image = state.image {

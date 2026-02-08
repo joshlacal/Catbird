@@ -156,7 +156,7 @@ struct ContentMediaSettingsView: View {
             }
             
             // Thread View Preferences
-            Section("Thread Display") {
+            Section {
                 if isLoadingThreadPrefs {
                     ProgressView()
                 } else {
@@ -183,7 +183,19 @@ struct ContentMediaSettingsView: View {
                         set: { appState.appSettings.threadedReplies = $0 }
                     ))
                     .tint(.blue)
+                    
+                    Toggle("Auto-Load Hidden Replies", isOn: Binding(
+                        get: { appState.appSettings.showHiddenPosts },
+                        set: { appState.appSettings.showHiddenPosts = $0 }
+                    ))
+                    .tint(.blue)
                 }
+            } header: {
+                Text("Thread Display")
+            } footer: {
+                Text("When enabled, replies hidden by threadgates are loaded automatically. Otherwise, a \"Show More Replies\" button will appear when hidden replies are available.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             
             // External Media Embeds
@@ -392,6 +404,7 @@ struct ContentMediaSettingsView: View {
         appState.appSettings.threadSortOrder = threadSortOrder
         appState.appSettings.prioritizeFollowedUsers = prioritizeFollowedUsers
         appState.appSettings.threadedReplies = false
+        appState.appSettings.showHiddenPosts = false
         
         // Reset feed preferences
         hideReplies = false
@@ -409,8 +422,9 @@ struct ContentMediaSettingsView: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         ContentMediaSettingsView()
-            .environment(AppState.shared)
+            .applyAppStateEnvironment(appState)
     }
 }

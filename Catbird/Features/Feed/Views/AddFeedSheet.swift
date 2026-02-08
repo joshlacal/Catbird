@@ -228,7 +228,7 @@ struct AddFeedSheet: View {
             if let uri = previewURI {
                 NavigationStack(path: $previewPath) {
                     FeedScreen(path: $previewPath, uri: uri)
-                        .environment(appState)
+                        .applyAppStateEnvironment(appState)
                         .navigationTitle("Preview")
                     #if os(iOS)
                         .toolbarTitleDisplayMode(.inline)

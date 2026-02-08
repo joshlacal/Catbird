@@ -119,7 +119,7 @@ final class CreateListViewModel {
 struct CreateListView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
-  @State private var viewModel: CreateListViewModel
+  @State private var viewModel: CreateListViewModel?
   @State private var showingPhotoPicker = false
   @State private var photoPickerItem: PhotosPickerItem?
   @FocusState private var isNameFieldFocused: Bool
@@ -129,47 +129,60 @@ struct CreateListView: View {
   private let maxDescriptionLength = 300
   
   init() {
-    // We'll initialize viewModel in onAppear since we need AppState
-    self._viewModel = State(wrappedValue: CreateListViewModel(appState: AppState.shared))
+    // ViewModel will be initialized in onAppear
   }
   
   var body: some View {
     NavigationStack {
-      formContent
-        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-        .navigationTitle("Create List")
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
-        .toolbar {
-          toolbarContent
+      Group {
+        if let viewModel = viewModel {
+          formContent(viewModel: viewModel)
+        } else {
+          ProgressView()
         }
-        .onAppear {
-          setupView()
+      }
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+      .navigationTitle("Create List")
+//      #if os(iOS)
+//      .toolbarTitleDisplayMode(.inline)
+//      #endif
+      .toolbar {
+        toolbarContent
+      }
+      .task {
+        if viewModel == nil {
+          viewModel = CreateListViewModel(appState: appState)
         }
-        .alert("Error", isPresented: $viewModel.showingError) {
-          errorAlertButton
-        } message: {
-          errorMessage
-        }
-        .photosPicker(
-          isPresented: $showingPhotoPicker,
-          selection: $photoPickerItem,
-          matching: .images
-        )
-        .onChange(of: photoPickerItem) { _, newItem in
-          handlePhotoSelection(newItem)
-        }
-        .overlay {
-          loadingOverlay
-        }
+      }
+      .onAppear {
+        isNameFieldFocused = true
+      }
+      .alert("Error", isPresented: Binding(
+        get: { viewModel?.showingError ?? false },
+        set: { if !$0 { viewModel?.showingError = false } }
+      )) {
+        errorAlertButton
+      } message: {
+        errorMessage
+      }
+      .photosPicker(
+        isPresented: $showingPhotoPicker,
+        selection: $photoPickerItem,
+        matching: .images
+      )
+      .onChange(of: photoPickerItem) { _, newItem in
+        handlePhotoSelection(newItem)
+      }
+      .overlay {
+        loadingOverlay
+      }
     }
   }
   
   // MARK: - View Components
   
   @ViewBuilder
-  private var formContent: some View {
+  private func formContent(viewModel: CreateListViewModel) -> some View {
     Form {
       basicInformationSection
       listTypeSection  
@@ -189,35 +202,42 @@ struct CreateListView: View {
   
   @ViewBuilder
   private var listTypeSection: some View {
-    Section {
-      Picker("List Type", selection: $viewModel.purpose) {
-        Text("Curated List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefscuratelist)
-        Text("Moderation List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefsmodlist)
-        Text("Reference List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefsreferencelist)
+    if let viewModel = viewModel {
+      Section {
+        Picker("List Type", selection: Binding(
+          get: { viewModel.purpose },
+          set: { viewModel.purpose = $0 }
+        )) {
+          Text("Curated List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefscuratelist)
+          Text("Moderation List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefsmodlist)
+          Text("Reference List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefsreferencelist)
+        }
+        .pickerStyle(.menu)
+        
+        listTypeDescriptionSection(viewModel: viewModel)
+      } header: {
+        Text("List Type")
       }
-      .pickerStyle(.menu)
-      
-      listTypeDescriptionSection
-    } header: {
-      Text("List Type")
     }
   }
   
   @ViewBuilder
   private var avatarSection: some View {
-    Section {
-      HStack {
-        avatarPreview
-        avatarControls
-        Spacer()
+    if let viewModel = viewModel {
+      Section {
+        HStack {
+          avatarPreview(viewModel: viewModel)
+          avatarControls(viewModel: viewModel)
+          Spacer()
+        }
+      } header: {
+        Text("Avatar")
       }
-    } header: {
-      Text("Avatar")
     }
   }
   
   @ViewBuilder
-  private var avatarPreview: some View {
+  private func avatarPreview(viewModel: CreateListViewModel) -> some View {
     Group {
       if let avatarImage = viewModel.avatarImage {
         #if os(iOS)
@@ -246,7 +266,7 @@ struct CreateListView: View {
   }
   
   @ViewBuilder
-  private var avatarControls: some View {
+  private func avatarControls(viewModel: CreateListViewModel) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text("List Avatar")
         .font(.headline)
@@ -284,20 +304,20 @@ struct CreateListView: View {
     ToolbarItem(placement: .primaryAction) {
       Button("Create") {
         Task {
-          await viewModel.createList()
-          if !viewModel.showingError {
+          await viewModel?.createList()
+          if viewModel?.showingError != true {
             dismiss()
           }
         }
       }
-      .disabled(!viewModel.isValid || viewModel.isCreating)
+      .disabled(viewModel?.isValid != true || viewModel?.isCreating == true)
       .fontWeight(.semibold)
     }
   }
   
   @ViewBuilder
   private var loadingOverlay: some View {
-    if viewModel.isCreating {
+    if viewModel?.isCreating == true {
       Color.black.opacity(0.3)
         .ignoresSafeArea()
         .overlay {
@@ -317,13 +337,13 @@ struct CreateListView: View {
   @ViewBuilder
   private var errorAlertButton: some View {
     Button("OK") {
-      viewModel.showingError = false
+      viewModel?.showingError = false
     }
   }
   
   @ViewBuilder
   private var errorMessage: some View {
-    if let errorMessage = viewModel.errorMessage {
+    if let viewModel = viewModel, let errorMessage = viewModel.errorMessage {
       Text(errorMessage)
     }
   }
@@ -340,7 +360,7 @@ struct CreateListView: View {
       if let newItem = newItem,
          let data = try? await newItem.loadTransferable(type: Data.self),
          let image = PlatformImage(data: data) {
-        viewModel.setAvatar(image)
+        viewModel?.setAvatar(image)
       }
       photoPickerItem = nil
     }
@@ -350,49 +370,59 @@ struct CreateListView: View {
   
   @ViewBuilder
   private var nameFieldSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        TextField("List name", text: $viewModel.name)
-          .focused($isNameFieldFocused)
-          .onChange(of: viewModel.name) { _, newValue in
-            let trimmedValue = newValue.count > maxNameLength ? String(newValue.prefix(maxNameLength)) : newValue
-            viewModel.name = trimmedValue
-          }
-        
-        Spacer()
-        
-        Text("\(viewModel.name.count)/\(maxNameLength)")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-    }
-  }
-  
-  @ViewBuilder
-  private var descriptionFieldSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .top) {
-        TextField("Description (optional)", text: $viewModel.description, axis: .vertical)
-          .lineLimit(3...6)
-          .onChange(of: viewModel.description) { _, newValue in
-            let trimmedValue = newValue.count > maxDescriptionLength ? String(newValue.prefix(maxDescriptionLength)) : newValue
-            viewModel.description = trimmedValue
-          }
-        
-        Spacer()
-        
-        VStack {
-          Text("\(viewModel.description.count)/\(maxDescriptionLength)")
+    if let viewModel = viewModel {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          TextField("List name", text: Binding(
+            get: { viewModel.name },
+            set: { viewModel.name = $0 }
+          ))
+            .focused($isNameFieldFocused)
+            .onChange(of: viewModel.name) { _, newValue in
+              let trimmedValue = newValue.count > maxNameLength ? String(newValue.prefix(maxNameLength)) : newValue
+              viewModel.name = trimmedValue
+            }
+          
+          Spacer()
+          
+          Text("\(viewModel.name.count)/\(maxNameLength)")
             .font(.caption)
             .foregroundStyle(.secondary)
-          Spacer()
         }
       }
     }
   }
   
   @ViewBuilder
-  private var listTypeDescriptionSection: some View {
+  private var descriptionFieldSection: some View {
+    if let viewModel = viewModel {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top) {
+          TextField("Description (optional)", text: Binding(
+            get: { viewModel.description },
+            set: { viewModel.description = $0 }
+          ), axis: .vertical)
+            .lineLimit(3...6)
+            .onChange(of: viewModel.description) { _, newValue in
+              let trimmedValue = newValue.count > maxDescriptionLength ? String(newValue.prefix(maxDescriptionLength)) : newValue
+              viewModel.description = trimmedValue
+            }
+          
+          Spacer()
+          
+          VStack {
+            Text("\(viewModel.description.count)/\(maxDescriptionLength)")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            Spacer()
+          }
+        }
+      }
+    }
+  }
+  
+  @ViewBuilder
+  private func listTypeDescriptionSection(viewModel: CreateListViewModel) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       switch viewModel.purpose {
       case .appbskygraphdefscuratelist:

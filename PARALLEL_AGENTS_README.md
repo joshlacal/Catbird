@@ -263,19 +263,19 @@ While agents can't directly communicate, you can coordinate through file system:
 
 Run setup first, then spawn workers that read from shared location.
 
-## Comparison to copilot-runner.py
+## Comparison to copilot-cli MCP
 
-| Feature | parallel-agents.py | copilot-runner.py |
-|---------|-------------------|-------------------|
-| Concurrent execution | ✅ Yes (truly parallel) | ⚠️ Optional |
-| Agent isolation | ✅ Full isolation | ❌ Shared context |
+| Feature | parallel-agents.py | copilot-cli MCP |
+|---------|-------------------|-----------------|
+| Concurrent execution | ✅ Yes (truly parallel) | ✅ Yes |
+| Agent isolation | ✅ Full isolation | ✅ Full isolation |
 | Task independence | ✅ Required | ⚠️ Can depend |
-| Configuration | JSON | JSON/YAML |
-| Workflow support | ❌ No | ✅ Yes |
-| Best for | Independent tasks | Sequential pipelines |
+| Configuration | JSON | MCP calls |
+| Workflow support | ❌ No | ✅ Via agent orchestration |
+| Best for | Independent tasks | Managed agent spawning |
 
-Use **parallel-agents.py** when tasks are independent.  
-Use **copilot-runner.py** when tasks must run in order or share state.
+Use **parallel-agents.py** for batch execution of many independent tasks.  
+Use **copilot-cli MCP** for programmatic agent spawning with lifecycle management.
 
 ## Future Enhancements
 

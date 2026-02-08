@@ -80,14 +80,15 @@ final class FeedFeedbackManager {
         // if can send interactions or is Discover feed
         if canSendInteractions || feed.uriString() == "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot" {
             isEnabled = true
+            logger.debug("FeedFeedback ENABLED for \(feedType.identifier) (canSend: \(canSendInteractions))")
         } else {
             isEnabled = false
+            logger.debug("FeedFeedback DISABLED for \(feedType.identifier) - interactions not accepted by generator")
         }
     case .timeline, .list, .author, .likes:
       isEnabled = false
+      logger.debug("FeedFeedback DISABLED for \(feedType.identifier) - not a custom feed")
     }
-    
-      logger.debug("FeedFeedback configured for \(feedType.identifier), enabled: \(self.isEnabled)")
   }
   
   /// Disable feedback and clear state

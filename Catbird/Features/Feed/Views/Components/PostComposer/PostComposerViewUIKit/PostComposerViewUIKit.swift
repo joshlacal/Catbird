@@ -20,9 +20,11 @@ import UIKit
 private let pcUIKitLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerUIKit")
 
 struct PostComposerViewUIKit: View {
-  @Environment(AppState.self) var appState
   @Environment(\.dismiss) var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
+  
+  // Store AppState reference locally to avoid global observation
+ let appState: AppState
   
   @State var viewModel: PostComposerViewModel?
   private let initialParentPost: AppBskyFeedDefs.PostView?
@@ -58,6 +60,7 @@ struct PostComposerViewUIKit: View {
   @State var showingGifPicker = false
   @State var showingThreadgate = false
   @State var showingLabelSelector = false
+  @State var showingOutlineTagsEditor = false
   @State private var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false
@@ -69,6 +72,7 @@ struct PostComposerViewUIKit: View {
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
        appState: AppState) {
+    self.appState = appState
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
     self.restoringDraftParam = nil
@@ -76,6 +80,7 @@ struct PostComposerViewUIKit: View {
   
   init(restoringFromDraft draft: PostComposerDraft,
        appState: AppState) {
+    self.appState = appState
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.restoringDraftParam = draft
@@ -114,7 +119,7 @@ struct PostComposerViewUIKit: View {
       }
     }
     // Root-level stable identity: recreate composer only on account switch
-    .id(appState.currentUserDID ?? "composer-unknown-user")
+    .id(appState.userDID ?? "composer-unknown-user")
     .task {
       guard viewModel == nil else { 
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
@@ -218,7 +223,7 @@ struct PostComposerViewUIKit: View {
 
           // Drafts button next to X on leading side
           ToolbarItem(placement: .cancellationAction) {
-            if appState.composerDraftManager.hasDraftsForCurrentAccount {
+            if !appState.composerDraftManager.savedDrafts.isEmpty {
               Button(action: { showingDrafts = true }) {
                 Image(systemName: "doc.text")
               }
@@ -269,6 +274,8 @@ struct PostComposerViewUIKit: View {
             }
           }
         }
+        // Force toolbar re-render when drafts count changes
+        .id("toolbar-\(appState.composerDraftManager.savedDrafts.count)")
     }
     #else
     mainContent(vm: vm)
@@ -311,20 +318,22 @@ struct PostComposerViewUIKit: View {
       // Tappable avatar that opens account switcher
       Button(action: {
         pcUIKitLogger.info("PostComposerViewUIKit: Avatar tapped - opening account switcher")
+        if hasContent(vm: vm) {
+          appState.composerDraftManager.storeDraft(from: vm)
+        }
         showingAccountSwitcher = true
       }) {
         #if os(iOS)
         UIKitAvatarView(
-          did: appState.currentUserDID,
+          did: appState.userDID,
           client: appState.atProtoClient,
           size: 40,
-          avatarURL: appState.currentUserProfile?.avatar?.url
+          avatarURL: appState.currentUserProfile?.finalAvatarURL()
         )
         .frame(width: 40, height: 40)
         .contentShape(Circle())
         .clipShape(Circle())
         .clipped()
-        .allowsHitTesting(false)
         #else
         if let profile = appState.currentUserProfile, let avatarURL = profile.avatar {
           AsyncImage(url: URL(string: avatarURL.description)) { image in
@@ -440,7 +449,7 @@ struct PostComposerViewUIKit: View {
           #endif
         }
       )
-      .frame(minHeight: 120)
+      .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
     }
     .padding(.horizontal, 16)
     .onAppear {

@@ -228,6 +228,7 @@ struct AuthenticationManagerActualTests {
         let networkError = AuthError.networkError(NSError(domain: "test", code: 1))
         let badResponseError = AuthError.badResponse(500)
         let unknownError = AuthError.unknown(NSError(domain: "test", code: 2))
+        let invalidDIDError = AuthError.invalidUserDID
         
         #expect(clientError.errorDescription?.contains("not initialized") == true, "Client error should have correct description")
         #expect(sessionError.errorDescription?.contains("Invalid session") == true, "Session error should have correct description")
@@ -235,6 +236,7 @@ struct AuthenticationManagerActualTests {
         #expect(networkError.errorDescription?.contains("Network error") == true, "Network error should have correct description")
         #expect(badResponseError.errorDescription?.contains("Bad response") == true, "Bad response error should have correct description")
         #expect(unknownError.errorDescription?.contains("Unknown error") == true, "Unknown error should have correct description")
+        #expect(invalidDIDError.errorDescription?.contains("invalid account identifier") == true, "Invalid DID error should have correct description")
     }
     
     // MARK: - LABiometryType Extension Tests

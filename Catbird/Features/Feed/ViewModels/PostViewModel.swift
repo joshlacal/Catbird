@@ -499,6 +499,9 @@ final class PostViewModel {
                     client: client
                 )
                 
+                await MainActor.run {
+                    appState.toastManager.show(ToastItem(message: "Bookmarked", icon: "bookmark.fill"))
+                }
                 return true
                 
             } else { // Deleting an existing bookmark
@@ -507,6 +510,9 @@ final class PostViewModel {
                     client: client
                 )
                 
+                await MainActor.run {
+                    appState.toastManager.show(ToastItem(message: "Bookmark removed", icon: "bookmark"))
+                }
                 return true
             }
         } catch {

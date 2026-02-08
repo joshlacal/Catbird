@@ -637,6 +637,7 @@ struct ModernTextEditor: View {
             let link = out[range].link
             let mention = out[range].richText.mentionLink
             let tag = out[range].richText.tagLink
+            let existingBackground = out[range].backgroundColor
             
             // Clear common styling attributes
             out[range].font = nil
@@ -646,7 +647,7 @@ struct ModernTextEditor: View {
             // Clear foreground and underline, but we'll reapply them for links
             out[range].foregroundColor = nil
             out[range].underlineStyle = nil
-            
+
             // Reapply allowed attributes with enhanced styling
             out[range].link = link
             out[range].richText.mentionLink = mention
@@ -654,22 +655,32 @@ struct ModernTextEditor: View {
             
             // Apply enhanced link styling
             if link != nil {
-                out[range].foregroundColor = .accentColor
-                out[range].underlineStyle = .single
-                // Add subtle background highlight for better visibility
+              out[range].foregroundColor = .accentColor
+              out[range].underlineStyle = .single
+              // Add subtle background highlight for better visibility
+              if existingBackground == nil {
                 out[range].backgroundColor = Color.accentColor.opacity(0.1)
+              }
             }
             
             // Apply mention styling
             if mention != nil {
-                out[range].foregroundColor = .accentColor
+              out[range].foregroundColor = .accentColor
+              if existingBackground == nil {
                 out[range].backgroundColor = Color.accentColor.opacity(0.08)
+              }
             }
             
             // Apply tag styling
             if tag != nil {
-                out[range].foregroundColor = .secondary
+              out[range].foregroundColor = .secondary
+              if existingBackground == nil {
                 out[range].backgroundColor = Color.secondary.opacity(0.1)
+              }
+            }
+
+            if let existingBackground {
+              out[range].backgroundColor = existingBackground
             }
         }
         // Ensure links never include whitespace characters

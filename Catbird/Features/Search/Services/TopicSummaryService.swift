@@ -50,6 +50,17 @@ actor TopicSummaryService {
     """
     #endif
 
+    /// Retrieves a cached summary for a topic if available.
+    /// - Parameter topic: Trend view from Petrel.
+    /// - Returns: Cached summary string, or nil if not cached.
+    func getCachedSummary(for topic: AppBskyUnspeccedDefs.TrendView) async -> String? {
+        let key = topic.link
+        if let cachedEntry = cache[key], cachedEntry.displayName == topic.displayName {
+            return cachedEntry.summary
+        }
+        return nil
+    }
+
     /// Streams a concise one-sentence description for a trending topic, yielding partial results as they arrive.
     /// - Parameters:
     ///   - topic: Trend view from Petrel.

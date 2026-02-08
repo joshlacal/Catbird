@@ -25,9 +25,19 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     case accessibilityExtraExtraExtraLarge = "accessibilityExtraExtraExtraLarge"
     
     /// Get current system content size category
+    /// Note: This may be called before UIApplication.shared is available (e.g., during App.init()).
+    /// In that case, we return a safe default.
     static var current: CrossPlatformContentSizeCategory {
         #if os(iOS)
-        return CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
+        // Guard against early access before UIApplication is available
+        // During CatbirdApp.init(), UIApplication.shared may not exist yet
+        // Use the safer approach of checking if we can access the shared instance
+        // through reflection to avoid the crash
+        guard let app = UIApplication.value(forKeyPath: "sharedApplication") as? UIApplication else {
+            // UIApplication not ready yet (during App.init() or very early launch)
+            return .large  // Safe default - matches iOS system default
+        }
+        return CrossPlatformContentSizeCategory(from: app.preferredContentSizeCategory)
         #elseif os(macOS)
         // On macOS and Mac Catalyst, check if we're running as Catalyst
         if ProcessInfo.processInfo.isiOSAppOnMac {
@@ -241,7 +251,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
         // Apply additional scaling for Mac Catalyst
         #if targetEnvironment(macCatalyst)
-        let catalystScale = baseScale * 1.1
+        let catalystScale = baseScale
         return catalystScale
         #endif
 
@@ -389,14 +399,9 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         }
         
         // Post notification for any components that need manual updates
-        if Thread.isMainThread {
+        Task { @MainActor in
             NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
-            logger.debug("Posted FontChanged notification synchronously")
-        } else {
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: NSNotification.Name("FontChanged"), object: nil)
-                self.logger.debug("Posted FontChanged notification asynchronously")
-            }
+            self.logger.debug("Posted FontChanged notification")
         }
     }
     
@@ -487,7 +492,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         
         // Apply this trait collection to all windows in the app
         // This ensures that UIFont.preferredFont calls will use the limited size
-        DispatchQueue.main.async {
+        Task { @MainActor in
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 for window in windowScene.windows {
                     // Override the trait collection for this window
@@ -515,7 +520,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// Remove content size category override to restore normal Dynamic Type behavior (iOS only)
     #if os(iOS)
     private func removeContentSizeCategoryOverride() {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
                 for window in windowScene.windows {
                     // Restore original trait collection if we stored one
@@ -761,14 +766,14 @@ enum AppTextRole: CaseIterable {
 
 struct AppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
-    @Environment(AppState.self) private var appState
+    @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
-    
+
     let role: AppTextRole
-    
+
     func body(content: Content) -> some View {
         let baseWeight = getBaseWeight(for: role)
-        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState.appSettings.boldText)
+        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState?.appSettings.boldText ?? false)
         
         content
             .font(fontManager.fontForTextRole(role).weight(adjustedWeight))
@@ -778,7 +783,7 @@ struct AppFontModifier: ViewModifier {
     
     private func getAccessibleTextColor() -> Color {
         // Apply high contrast if enabled
-        if appState.appSettings.increaseContrast {
+        if let appState = appState, appState.appSettings.increaseContrast {
             return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
         } else {
             return Color.primary
@@ -820,15 +825,15 @@ struct AppFontModifier: ViewModifier {
 
 struct CustomAppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
-    @Environment(AppState.self) private var appState
+    @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
-    
+
     let size: CGFloat
     let weight: Font.Weight
     let textStyle: Font.TextStyle?
-    
+
     func body(content: Content) -> some View {
-        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState.appSettings.boldText)
+        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState?.appSettings.boldText ?? false)
         
         content
             .font(fontManager.scaledFont(
@@ -842,7 +847,7 @@ struct CustomAppFontModifier: ViewModifier {
     
     private func getAccessibleTextColor() -> Color {
         // Apply high contrast if enabled
-        if appState.appSettings.increaseContrast {
+        if let appState = appState, appState.appSettings.increaseContrast {
             return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
         } else {
             return Color.primary

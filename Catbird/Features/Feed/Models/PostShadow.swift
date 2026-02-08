@@ -41,10 +41,8 @@ actor PostShadowManager {
     // Map of URI -> Shadow state
     private var shadows: [String: PostShadow] = [:]
     
-    /// Shared singleton instance
-    static let shared = PostShadowManager()
-    
-    private init() {}
+    /// Public initializer
+    init() {}
     
     // MARK: - Shadow Management
     
@@ -308,7 +306,9 @@ actor PostShadowManager {
             indexedAt: post.indexedAt,
             viewer: viewerState,
             labels: post.labels,
-            threadgate: post.threadgate
+            threadgate: post.threadgate,
+            debug: nil
+
         )
     }
     

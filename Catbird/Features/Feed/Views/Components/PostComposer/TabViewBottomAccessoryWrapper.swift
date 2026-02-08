@@ -15,8 +15,10 @@ import Petrel
 
 @available(iOS 26.0, *)
 struct TabViewBottomAccessoryWrapper: View {
-  @Environment(AppState.self) private var appState
+  @ObservationIgnored @Environment(AppState.self) private var appState
   @State private var showingFullComposer = false
+  // Capture the draft at sheet presentation time to avoid rebuilds from autosave mutations
+  @State private var composerInitialDraft: PostComposerDraft?
   @AppStorage("postComposerDraft") private var draftText = ""
   @AppStorage("postComposerDraftContext") private var draftContext = ""
   
@@ -34,7 +36,7 @@ struct TabViewBottomAccessoryWrapper: View {
       }
     }
     .sheet(isPresented: $showingFullComposer) {
-      if let draft = appState.composerDraftManager.currentDraft {
+      if let draft = composerInitialDraft ?? appState.composerDraftManager.currentDraft {
         // Restore minimized composer
         PostComposerViewUIKit(
           restoringFromDraft: draft,
@@ -46,6 +48,9 @@ struct TabViewBottomAccessoryWrapper: View {
           appState: appState
         )
       }
+    }
+    .onChange(of: showingFullComposer) { _, isPresented in
+      composerInitialDraft = isPresented ? appState.composerDraftManager.currentDraft : nil
     }
   }
   

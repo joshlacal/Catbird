@@ -18,7 +18,7 @@ struct ConversationManagementView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationManagementView")
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       List {
         // Conversation info section
         Section {
@@ -172,7 +172,7 @@ struct ConversationInfoRow: View {
   let conversation: ChatBskyConvoDefs.ConvoView
   
   private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
-    conversation.members.filter { $0.did.didString() != appState.currentUserDID }
+    conversation.members.filter { $0.did.didString() != appState.userDID }
   }
   
   var body: some View {
@@ -257,7 +257,7 @@ struct ConversationInvitationView: View {
   @State private var errorMessage: String?
   
   private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
-    conversation.members.filter { $0.did.didString() != appState.currentUserDID }
+    conversation.members.filter { $0.did.didString() != appState.userDID }
   }
   
   var body: some View {
@@ -388,6 +388,7 @@ struct ConversationInvitationView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   // Mock conversation for preview
   let mockConversation = ChatBskyConvoDefs.ConvoView(
     id: "mock-convo-id",
@@ -401,7 +402,7 @@ struct ConversationInvitationView: View {
   )
   
   ConversationManagementView(conversation: mockConversation)
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }
 
 #endif

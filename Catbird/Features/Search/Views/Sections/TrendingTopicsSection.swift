@@ -353,9 +353,25 @@ private struct TrendingTopicSummaryLine: View {
             isLoading = true
             defer { isLoading = false }
 
-            // Attempt to stream a brief description using TopicSummaryService.
-            os_log("[SummaryUI] Row task start for %{public}@", topic.displayName)
+            // Poll cache - prewarming should have already generated summaries
+            os_log("[SummaryUI] Checking cache for %{public}@", topic.displayName)
             
+            // Wait briefly for prewarming to complete, then check cache
+            for attempt in 0..<10 {
+                if let cachedSummary = await TopicSummaryService.shared.getCachedSummary(for: topic) {
+                    await MainActor.run {
+                        summary = cachedSummary
+                    }
+                    os_log("[SummaryUI] Cache hit for %{public}@ on attempt %d", topic.displayName, attempt)
+                    return
+                }
+                
+                // Wait 100ms before next attempt (max 1 second total)
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            
+            // If still no cache after polling, fall back to streaming
+            os_log("[SummaryUI] Cache miss after polling for %{public}@, falling back to stream", topic.displayName)
             if let stream = await TopicSummaryService.shared.streamSummary(for: topic, appState: appState) {
                 isStreaming = true
                 do {
@@ -368,12 +384,6 @@ private struct TrendingTopicSummaryLine: View {
                     os_log("[SummaryUI] Stream error for %{public}@: %{public}@", topic.displayName, error.localizedDescription)
                 }
                 isStreaming = false
-            } else {
-                // Fallback to non-streaming if stream unavailable
-                let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
-                await MainActor.run {
-                    summary = text ?? ""
-                }
             }
             
             os_log("[SummaryUI] Row task end for %{public}@ -> %{public}@", topic.displayName, summary.isEmpty ? "<empty>" : summary)

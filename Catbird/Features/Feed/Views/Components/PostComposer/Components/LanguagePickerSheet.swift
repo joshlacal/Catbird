@@ -42,7 +42,13 @@ struct LanguagePickerSheet: View {
       .searchable(text: $searchText)
       .navigationTitle("Add Language")
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+        ToolbarItem(placement: .cancellationAction) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "checkmark")
+            }
+        }
       }
     }
   }
@@ -50,8 +56,17 @@ struct LanguagePickerSheet: View {
   private func toggle(_ code: String) {
     if let idx = selectedLanguages.firstIndex(where: { $0.lang.languageCode?.identifier == code }) {
       selectedLanguages.remove(at: idx)
+      // Save preference: clear if empty, otherwise save first language
+      if selectedLanguages.isEmpty {
+        UserDefaults.standard.removeObject(forKey: "defaultComposerLanguage")
+      } else if let firstLang = selectedLanguages.first {
+        let langCode = firstLang.lang.languageCode?.identifier ?? firstLang.lang.minimalIdentifier
+        UserDefaults.standard.set(langCode, forKey: "defaultComposerLanguage")
+      }
     } else {
       selectedLanguages.append(LanguageCodeContainer(languageCode: code))
+      // Save the newly added language as default preference
+      UserDefaults.standard.set(code, forKey: "defaultComposerLanguage")
     }
   }
 }

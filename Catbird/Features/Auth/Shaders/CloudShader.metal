@@ -81,7 +81,7 @@ float noise(float2 p) {
 
 float fbm(float2 n) {
     float total = 0.0, amplitude = 0.1;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 5; i++) {  // Reduced from 7 - imperceptible for slow clouds
         total += noise(n) * amplitude;
         n = m * n;
         amplitude *= 0.4;
@@ -98,24 +98,24 @@ fragment float4 cloud_fragment(VertexOut in [[stage_in]],
     float time = uniforms.time * speed * uniforms.animationSpeed;
     float q = fbm(uv * cloudscale * 0.5);
     
-    // Ridged noise shape
+    // Ridged noise shape - reduced iterations for performance
     float r = 0.0;
     uv *= cloudscale;
     uv -= q - time;
     float weight = 0.8;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 6; i++) {  // Reduced from 8
         r += abs(weight * noise(uv));
         uv = m * uv + time;
         weight *= 0.7;
     }
-    
-    // Noise shape
+
+    // Noise shape - reduced iterations for performance
     float f = 0.0;
     uv = p * float2(uniforms.resolution.x / uniforms.resolution.y, 1.0);
     uv *= cloudscale;
     uv -= q - time;
     weight = 0.7;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 6; i++) {  // Reduced from 8
         f += weight * noise(uv);
         uv = m * uv + time;
         weight *= 0.6;
@@ -123,27 +123,27 @@ fragment float4 cloud_fragment(VertexOut in [[stage_in]],
     
     f *= r + f;
     
-    // Noise colour
+    // Noise colour - reduced iterations
     float c = 0.0;
     time = uniforms.time * speed * 2.0 * uniforms.animationSpeed;
     uv = p * float2(uniforms.resolution.x / uniforms.resolution.y, 1.0);
     uv *= cloudscale * 2.0;
     uv -= q - time;
     weight = 0.4;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 5; i++) {  // Reduced from 7
         c += weight * noise(uv);
         uv = m * uv + time;
         weight *= 0.6;
     }
-    
-    // Noise ridge colour
+
+    // Noise ridge colour - reduced iterations
     float c1 = 0.0;
     time = uniforms.time * speed * 3.0 * uniforms.animationSpeed;
     uv = p * float2(uniforms.resolution.x / uniforms.resolution.y, 1.0);
     uv *= cloudscale * 3.0;
     uv -= q - time;
     weight = 0.4;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 5; i++) {  // Reduced from 7
         c1 += abs(weight * noise(uv));
         uv = m * uv + time;
         weight *= 0.6;

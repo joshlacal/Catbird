@@ -29,13 +29,12 @@
 
 ## 🔧 Tooling & Automation
 
-### Copilot CLI Runner
+### Copilot CLI MCP Server
 
-- **[COPILOT_RUNNER_README.md](COPILOT_RUNNER_README.md)** - Complete documentation
-- **[COPILOT_RUNNER_QUICKREF.md](COPILOT_RUNNER_QUICKREF.md)** - Quick reference
-- **[copilot-runner.py](copilot-runner.py)** - Python implementation
-- **[copilot-runner.sh](copilot-runner.sh)** - Bash implementation
-- **[copilot-tasks.example.json](copilot-tasks.example.json)** - Example task definitions
+See **[AGENTS.md](AGENTS.md)** section "Headless Task Automation (copilot-cli MCP)" for:
+- Spawning and managing Copilot CLI agent instances
+- Parallel and sequential task execution via MCP
+- Security and approval configuration
 
 ### Parallel Agents
 

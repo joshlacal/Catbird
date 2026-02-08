@@ -4,7 +4,6 @@ import SwiftUI
 
 struct EmptyConversationView: View {
   @Environment(AppState.self) private var appState
-  @Environment(\.colorScheme) private var colorScheme
   
   var body: some View {
     VStack(spacing: DesignTokens.Spacing.lg) {
@@ -24,6 +23,6 @@ struct EmptyConversationView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 }

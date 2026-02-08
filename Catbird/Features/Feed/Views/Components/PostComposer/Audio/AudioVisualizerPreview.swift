@@ -10,7 +10,7 @@ import AVFoundation
 import Observation
 
 struct AudioVisualizerPreview: View {
-  @Environment(AppState.self) private var appState
+  @ObservationIgnored @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @Environment(\.colorScheme) private var colorScheme
   

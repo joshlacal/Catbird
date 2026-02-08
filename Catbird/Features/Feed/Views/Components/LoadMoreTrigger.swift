@@ -101,6 +101,7 @@ struct LoadMoreTrigger: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     // Preview with a simple loading action
     LoadMoreTrigger {
         try? await Task.sleep(for: .seconds(2))

@@ -25,21 +25,25 @@ struct HomeView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "HomeView")
 
   var body: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 0)
-    
+    // Capture appState early to ensure it's available for sheet presentations
+    let capturedAppState = appState
+    let navigationPath = capturedAppState.navigationManager.pathBinding(for: 0)
+
     ZStack {
       mainNavigationView(navigationPath: navigationPath)
         .sheet(isPresented: $showingSettings) {
           SettingsView()
-                .environment(appState)
+            .applyAppStateEnvironment(capturedAppState)
+            .environment(capturedAppState)
         }
         .sheet(isPresented: $showingQuickFilter) {
           QuickFilterSheet()
-            .environment(appState)
+            .applyAppStateEnvironment(capturedAppState)
+            .environment(capturedAppState)
         }
     }
       .onAppear {
-        appState.navigationManager.updateCurrentTab(0)
+        capturedAppState.navigationManager.updateCurrentTab(0)
       }
       .onChange(of: selectedFeed) { oldValue, newValue in
         handleSelectedFeedChange(oldValue: oldValue, newValue: newValue)
@@ -159,14 +163,20 @@ struct HomeView: View {
       Button(action: {
         showingSettings = true
       }) {
-        AvatarView(
-          did: appState.currentUserDID,
+        let avatarURL = appState.currentUserProfile?.finalAvatarURL()
+
+        return AvatarView(
+          did: appState.userDID,
           client: appState.atProtoClient,
-          size: 30
+          size: 30,
+          avatarURL: avatarURL
         )
+        .scaledToFit()
         .frame(width: 30, height: 30)
-        .aspectRatio(1, contentMode: .fit)
+        .clipShape(Circle())
+        .id("\(appState.userDID)-\(appState.currentUserProfile?.avatar?.description ?? "noavatar")")
       }
+      .buttonStyle(.plain)
       .accessibilityLabel("Profile and settings")
       .accessibilityHint("Opens your profile and app settings")
       .accessibilityAddTraits(.isButton)
@@ -183,7 +193,7 @@ struct HomeView: View {
   private func handleLastTappedTabChange(oldValue: Int?, newValue: Int?) {
     if newValue == 0, selectedTab == 0 {
       appState.tabTappedAgain = 0
-      DispatchQueue.main.async {
+      Task { @MainActor in
         lastTappedTab = nil
       }
     }

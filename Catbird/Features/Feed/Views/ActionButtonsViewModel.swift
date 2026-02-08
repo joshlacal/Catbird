@@ -64,11 +64,12 @@ import SwiftUI
         #if os(iOS)
         // Create custom activity for sharing to chat
         let shareToChat = ShareToChatActivity(post: post, appState: appState)
+        let shareToMLSChat = ShareToMLSChatActivity(post: post, appState: appState)
         
         // Only pass ShareablePost which handles both URL and post data
         let activityViewController = UIActivityViewController(
             activityItems: [ShareablePost(post: post)],
-            applicationActivities: [shareToChat]
+            applicationActivities: [shareToMLSChat, shareToChat]  // MLS first for prominence
         )
         
         // Customize the order of activities to show Share to Chat first

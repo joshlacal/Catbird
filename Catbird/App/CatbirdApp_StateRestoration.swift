@@ -15,8 +15,8 @@ extension CatbirdApp {
   
   @MainActor
   func restoreApplicationState() async {
-    guard !hasRestoredState else { return }
-    hasRestoredState = true
+    guard !appStateManager.hasRestoredState else { return }
+    appStateManager.hasRestoredState = true
     
     logger.info("🔄 Starting application state restoration")
     
@@ -26,13 +26,13 @@ extension CatbirdApp {
       
       // Wait for app state to be properly initialized
       var attempts = 0
-      while !appState.isAuthenticated && attempts < 10 {
+      while appState?.isAuthenticated != true && attempts < 10 {
         try await Task.sleep(for: .milliseconds(100))
         attempts += 1
       }
-      
+
       // Restore navigation state if authenticated
-      if appState.isAuthenticated {
+      if appState?.isAuthenticated == true {
         await restoreNavigationState()
         await restoreFeedState()
       }
@@ -45,20 +45,22 @@ extension CatbirdApp {
   
   @MainActor
   func restoreUserDefaultsState() async {
+    guard let appState = appState else { return }
+
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
-    
+
     // Restore biometric settings
     if let biometricEnabled = defaults.object(forKey: "biometric_auth_enabled") as? Bool {
-      await appState.authManager.setBiometricAuthEnabled(biometricEnabled)
+      await AppStateManager.shared.authentication.setBiometricAuthEnabled(biometricEnabled)
       logger.debug("Restored biometric auth setting: \(biometricEnabled)")
     }
-    
+
     // Restore adult content setting
     if let adultContentEnabled = defaults.object(forKey: "isAdultContentEnabled") as? Bool {
       appState.isAdultContentEnabled = adultContentEnabled
       logger.debug("Restored adult content setting: \(adultContentEnabled)")
     }
-    
+
     logger.debug("User defaults state restored")
   }
   
@@ -78,10 +80,12 @@ extension CatbirdApp {
   
   @MainActor
   func saveApplicationState() {
+    guard let appState = appState else { return }
+    
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
     
     // Save biometric settings
-    defaults.set(appState.authManager.biometricAuthEnabled, forKey: "biometric_auth_enabled")
+    defaults.set(AppStateManager.shared.authentication.biometricAuthEnabled, forKey: "biometric_auth_enabled")
     
     // Save adult content setting
     defaults.set(appState.isAdultContentEnabled, forKey: "isAdultContentEnabled")

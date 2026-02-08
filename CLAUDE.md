@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Efficiency & Workflow
 - **NO timeline estimates**: Don't predict how long things will take
 - **NO dates in documentation**: Avoid date-based references that become stale
-- **NO unnecessary builds**: Only build when explicitly requested by user
-- **Prefer syntax checks**: Use `swift -frontend -parse` for validation instead of full builds
-- **Trust user feedback**: If user reports Xcode errors, work with that rather than building yourself
+- **BUILD FREELY**: Builds take ~20 seconds on M4 Max - just do it
+- **Verify with real builds**: Use XcodeBuildMCP for actual compilation
+- **Full verification loop**: Build → Run → describe_ui → Screenshot → Test
 - **Use MCP servers extensively**: Verify against Apple docs, use xcodebuild-mcp, leverage all MCP tools
 - **Work continuously**: No artificial session boundaries - keep going until task is complete
 - **Maximize parallelism**: Use parallel tool calls aggressively for independent operations
@@ -1246,9 +1246,8 @@ The project includes automated quality checks:
 - **ALWAYS** run syntax checks before committing: `./swift-check.sh`
 - **ALWAYS** use `describe_ui()` before UI automation (never guess coordinates)
 - **Prefer MCP servers** over manual commands for consistency
-- **DO NOT BUILD** unless explicitly instructed by the user
-- **Use syntax checks** (`swift -frontend -parse`) to validate code changes
-- **Full builds** only when user requests or for release preparation
+- **BUILD FREELY** - builds take ~20 seconds on M4 Max
+- **Full verification**: Build → Run → describe_ui → Screenshot → Test
 - **Test on both platforms** when making UI changes (if instructed)
 
 ## MCP Server Quick Reference

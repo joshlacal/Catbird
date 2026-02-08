@@ -43,6 +43,10 @@ import os
     /// Load more coordination
     var loadMoreTask: Task<Void, Never>?
 
+    /// Update serialization - prevents concurrent performUpdate calls
+    private var updateTask: Task<Void, Never>?
+    private var isPerformingUpdate = false
+
     /// State observation with proper @Observable integration
     var stateObserver: UIKitStateObserver<FeedStateManager>?
 
@@ -51,6 +55,8 @@ import os
     /// AppState observation for account switch boundaries
     var appStateObserver: UIKitStateObserver<AppState>?
     var feedbackObserver: UIKitStateObserver<FeedFeedbackManager>?
+    /// Observer for tab tap to scroll to top
+    var tabTapObserver: UIKitStateObserver<AppState>?
 
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -75,7 +81,7 @@ import os
 
     /// Apply a full reload on the next snapshot (set when feed switches)
     private var shouldReloadDataOnce = false
-
+    
     // MARK: - Initialization
 
     init(
@@ -185,13 +191,41 @@ import os
           // Trigger a one-time hard reload when the transition completes
           if previous && !now {
             self.shouldReloadDataOnce = true
-            await self.performUpdate()
+            // If posts are empty (likely because load was skipped during transition), load them now
+            if self.stateManager.posts.isEmpty {
+              self.controllerLogger.debug("🔄 Account transition complete, loading initial data")
+              await self.loadInitialData()
+            } else {
+              await self.performUpdate()
+            }
           }
           previous = now
         }
       }
       appStateObserver?.startObserving()
     }
+    
+    // Observe tab tap to scroll to top and refresh
+    private func setupTabTapObserver() {
+      tabTapObserver = UIKitStateObserver(observing: stateManager.appState) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          
+          // Check if home tab (0) was tapped again
+          if let tappedTab = self.stateManager.appState.tabTappedAgain, tappedTab == 0 {
+            self.controllerLogger.debug("🏠 Home tab tapped again - scrolling to top and refreshing")
+            
+            // Clear the signal immediately to prevent re-triggering
+            self.stateManager.appState.tabTappedAgain = nil
+            
+            // Scroll to top and refresh
+            self.scrollToTopAndRefresh()
+          }
+        }
+      }
+      tabTapObserver?.startObserving()
+    }
+    
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
@@ -209,6 +243,7 @@ import os
       setupThemeObserver()
       setupFeedbackObserver()
       setupAccountSwitchObserver()
+      setupTabTapObserver()
       updateBackgroundState()
     }
 
@@ -217,6 +252,7 @@ import os
 
       // Update theme colors when view appears to catch any missed theme changes
       updateThemeColors()
+      stateManager.appState.urlHandler.registerTopViewController(self)
 
       Task { @MainActor in
         if stateManager.posts.isEmpty {
@@ -241,7 +277,9 @@ import os
       themeObserver?.stopObserving()
       feedbackObserver?.stopObserving()
       appStateObserver?.stopObserving()
+      tabTapObserver?.stopObserving()
       loadMoreTask?.cancel()
+      updateTask?.cancel()
 
       if let backgroundObserver = backgroundObserver {
         NotificationCenter.default.removeObserver(backgroundObserver)
@@ -300,6 +338,10 @@ import os
         collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
       ])
+      
+      // Fix 5: scrollsToTop
+      // Ensure this is the primary scroll view for status bar tapping
+      collectionView.scrollsToTop = true
     }
 
     private func createLayout() -> UICollectionViewLayout {
@@ -398,6 +440,9 @@ import os
       // Registration for post cells
       let postRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
         [weak self] cell, indexPath, postId in
+        let signpostId = PerformanceSignposts.beginCellConfiguration(postId: postId)
+        defer { PerformanceSignposts.endCellConfiguration(id: signpostId) }
+        
         guard let self = self,
           let post = self.stateManager.posts.first(where: { $0.id == postId })
         else {
@@ -417,7 +462,7 @@ import os
 
         // Configure cell with UIHostingConfiguration and inject required environment
         let appState = self.stateManager.appState
-        let accountID = appState.currentUserDID ?? "unknown-account"
+        let accountID = appState.userDID ?? "unknown-account"
         let feedID = self.stateManager.currentFeedType.identifier
         let hostingIdentity = "\(accountID)-\(feedID)-\(post.id)"
         cell.contentConfiguration = UIHostingConfiguration {
@@ -426,7 +471,7 @@ import os
             navigationPath: self.navigationPath,
             feedTypeIdentifier: self.stateManager.currentFeedType.identifier
           )
-          .environment(appState)
+          .applyAppStateEnvironment(appState)
           .environment(\.fontManager, appState.fontManager)
           .id(hostingIdentity)
           .padding(0)
@@ -519,44 +564,87 @@ import os
         return
       }
 
-      // Always end refreshing, even on error
-      if isRefreshing {
-        #if !targetEnvironment(macCatalyst)
-          refreshControl.endRefreshing()
-        #endif
-        isRefreshing = false
+      // Prevent concurrent updates - if already updating, cancel previous and wait
+      if isPerformingUpdate {
+        controllerLogger.debug("⚠️ Update already in progress, cancelling previous")
+        updateTask?.cancel()
+        // Brief wait to allow cancellation to complete
+        try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
       }
 
-      // Check for errors before updating UI
-      if case .error(let error) = stateManager.loadingState {
-        controllerLogger.error("❌ Feed update error: \(error.localizedDescription)")
-        // Keep existing posts visible, user can retry
+      // Cancel any pending update task
+      updateTask?.cancel()
+
+      // Create new update task
+      updateTask = Task { @MainActor in
+        // Mark as performing update
+        isPerformingUpdate = true
+        defer {
+          isPerformingUpdate = false
+        }
+
+        guard !Task.isCancelled else { return }
+
+        // Always end refreshing, even on error
+        if isRefreshing {
+          #if !targetEnvironment(macCatalyst)
+            refreshControl.endRefreshing()
+          #endif
+          isRefreshing = false
+        }
+
+        // Check for errors before updating UI
+        if case .error(let error) = stateManager.loadingState {
+          controllerLogger.error("❌ Feed update error: \(error.localizedDescription)")
+          // Keep existing posts visible, user can retry
+          updateBackgroundState()
+          return
+        }
+
+        controllerLogger.debug("🔄 Fast update: Creating snapshot")
+
+        // CRITICAL: Capture state at this moment to prevent race conditions
+        // Do NOT read from stateManager during snapshot application
+        let capturedPosts = stateManager.posts
+        let capturedHeaderPresent = headerView != nil
+        let accountID = stateManager.appState.userDID ?? "unknown-account"
+        let feedID = stateManager.currentFeedType.identifier
+
+        guard !Task.isCancelled else { return }
+
+        // Build snapshot from captured immutable state
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        snapshot.appendSections([.main])
+
+        // Prepend header cell when available
+        if capturedHeaderPresent {
+          snapshot.appendItems([.header], toSection: .main)
+        }
+
+        let items = capturedPosts.map { Item.post(account: accountID, feed: feedID, id: $0.id) }
+        snapshot.appendItems(items, toSection: .main)
+
+        guard !Task.isCancelled else { return }
+
+        // Apply snapshot using reload for safety (prevents batch update inconsistencies)
+        if #available(iOS 15.0, *), shouldReloadDataOnce {
+          shouldReloadDataOnce = false
+          await dataSource.applySnapshotUsingReloadData(snapshot)
+        } else if #available(iOS 15.0, *) {
+          // FIXED: Use applySnapshotUsingReloadData for all updates to avoid batch update race conditions
+          await dataSource.applySnapshotUsingReloadData(snapshot)
+        } else {
+          // Fallback for iOS 14 (though minimum is iOS 16)
+          await dataSource.apply(snapshot, animatingDifferences: false)
+        }
+
+        guard !Task.isCancelled else { return }
+
+        controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
         updateBackgroundState()
-        return
       }
 
-      controllerLogger.debug("🔄 Fast update: Creating snapshot")
-
-      var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-      snapshot.appendSections([.main])
-      // Prepend header cell when available
-      if headerView != nil {
-        snapshot.appendItems([.header], toSection: .main)
-      }
-      let accountID = stateManager.appState.currentUserDID ?? "unknown-account"
-      let feedID = stateManager.currentFeedType.identifier
-      let items = stateManager.posts.map { Item.post(account: accountID, feed: feedID, id: $0.id) }
-      snapshot.appendItems(items, toSection: .main)
-
-      if #available(iOS 15.0, *), shouldReloadDataOnce {
-        shouldReloadDataOnce = false
-        await dataSource.applySnapshotUsingReloadData(snapshot)
-      } else {
-        await dataSource.apply(snapshot, animatingDifferences: false)
-      }
-
-      controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
-      updateBackgroundState()
+      await updateTask?.value
     }
 
     @MainActor
@@ -583,24 +671,107 @@ import os
     // MARK: - Observers
 
     private func setupObservers() {
-      stateObserver = UIKitStateObserver(observing: stateManager) { [weak self] _ in
-        Task { @MainActor [weak self] in
-          await self?.performUpdate()
-        }
-      }
+      stateObserver = UIKitStateObserver.observeFeedStateManager(
+        stateManager,
+        onPostsChanged: { [weak self] _ in
+          Task { @MainActor in
+            await self?.performUpdate()
+          }
+        },
+        onLoadingStateChanged: { [weak self] _ in
+          self?.updateBackgroundState()
+        },
+        onScrollAnchorChanged: { _ in }
+      )
       stateObserver?.startObserving()
     }
 
     private func setupScrollToTopCallback() {
-      // Note: scrollToTop functionality will be handled differently
-      // as setScrollToTopCallback was part of scroll preservation system
+      // Register the callback so FeedStateManager can trigger scroll-to-top
+      stateManager.scrollToTopCallback = { [weak self] in
+        self?.scrollToTopAnimated()
+      }
+    }
+
+    /// Scrolls to the absolute top of the collection view (animated)
+    private func scrollToTopAnimated() {
+      guard let collectionView = collectionView else { return }
+      
+      // Fix 3: Force Layout Calculation
+      // If cells vary in height, estimates might be wrong. Force reconciliation.
+      collectionView.layoutIfNeeded()
+      // Fix 4: Invalidate layout to clear bad estimates if needed (optional, but good for truly dynamic content)
+      // collectionView.collectionViewLayout.invalidateLayout()
+
+      // Fix 2: Disable Paging During Scroll
+      // If paging is enabled, it can snag the scroll.
+      let wasPagingEnabled = collectionView.isPagingEnabled
+      if wasPagingEnabled {
+        collectionView.isPagingEnabled = false
+      }
+
+      // Scroll to the very top, respecting adjusted content insets (for large title nav bar)
+      // Fix 1: Scroll to Offset, Not Item
+      let minOffsetY = -collectionView.adjustedContentInset.top
+      let minOffsetX = -collectionView.adjustedContentInset.left
+      
+      controllerLogger.debug("🔝 Scrolling to top (animated) to y=\(minOffsetY)")
+
+      // Use UIView animation to ensure we can restore paging in completion
+      UIView.animate(
+        withDuration: 0.3,
+        animations: {
+          collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: true)
+        }
+      ) { _ in
+        // Restore paging if it was enabled
+        if wasPagingEnabled {
+          collectionView.isPagingEnabled = true
+        }
+      }
+    }
+    
+    /// Scrolls to top and refreshes to get the latest posts
+    /// This is the behavior when the user taps the home tab while already on the home tab
+    func scrollToTopAndRefresh() {
+      guard let collectionView = collectionView else { return }
+      
+      // Only refresh when we're truly already at the top.
+      let topOffset = -collectionView.adjustedContentInset.top
+      let isAtTop = collectionView.contentOffset.y <= topOffset + 1.0
+      
+      controllerLogger.debug("🔝 Home tab tapped - isAtTop: \(isAtTop), currentOffset: \(collectionView.contentOffset.y), topOffset: \(topOffset)")
+      
+      if isAtTop {
+        // Already at top - refresh to get new posts
+        controllerLogger.debug("🔝 Already at top - refreshing feed")
+        Task { @MainActor in
+          await stateManager.refreshUserInitiated()
+        }
+      } else {
+        // Not at top - just scroll to top (no refresh)
+        controllerLogger.debug("🔝 Not at top - scrolling to top")
+        scrollToTopAnimated()
+      }
+    }
+    
+    /// Scrolls to the absolute top of the content (no animation, no protection)
+    private func scrollToAbsoluteTop() {
+      guard let collectionView = collectionView else { return }
+      
+      // Force layout to ensure contentSize is accurate
+      collectionView.layoutIfNeeded()
+      
+      let minOffsetY = -collectionView.adjustedContentInset.top
+      let minOffsetX = -collectionView.adjustedContentInset.left
+        controllerLogger.debug("🔝 Scrolling to absolute top: (\(minOffsetX), \(minOffsetY)), contentSize: \(collectionView.contentSize.debugDescription)")
+      collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: false)
     }
 
     private func scrollToTop() {
-      guard !stateManager.posts.isEmpty else { return }
-
-      let indexPath = IndexPath(item: 0, section: 0)
-      collectionView.scrollToItem(at: indexPath, at: .top, animated: true)
+      // Fix 1: Scroll to Offset, Not the Item
+      // Relying on scrollToItem is unreliable with dynamic layouts.
+      scrollToTopAnimated()
     }
 
     // MARK: - Scroll Position Management
@@ -715,6 +886,7 @@ import os
       themeObserver?.stopObserving()
       feedbackObserver?.stopObserving()
       appStateObserver?.stopObserving()
+      tabTapObserver?.stopObserving()
 
       // Update the state manager
       stateManager = newStateManager
@@ -725,6 +897,7 @@ import os
       setupThemeObserver()
       setupFeedbackObserver()
       setupAccountSwitchObserver()
+      setupTabTapObserver()
 
       // Load fresh data for new feed
       Task { @MainActor in
@@ -774,6 +947,17 @@ import os
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       onScrollOffsetChanged?(scrollView.contentOffset.y)
+
+      let contentHeight = scrollView.contentSize.height
+      guard contentHeight > .zero else { return }
+      let viewportHeight = scrollView.bounds.height
+      let preloadThreshold = contentHeight - viewportHeight * 1.5
+      if scrollView.contentOffset.y > preloadThreshold {
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          await self.stateManager.loadMore()
+        }
+      }
     }
   }
 
@@ -783,13 +967,16 @@ import os
   extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
-      // Prefetch content for upcoming cells
-      for indexPath in indexPaths {
-        if indexPath.item < stateManager.posts.count {
-          let post = stateManager.posts[indexPath.item]
-          // Prefetch images or other content if needed
-          _ = post  // Use post for prefetching
-        }
+      // Prefetch images for upcoming cells
+      let posts = indexPaths.compactMap { indexPath -> CachedFeedViewPost? in
+        guard indexPath.item < stateManager.posts.count else { return nil }
+        return stateManager.posts[indexPath.item]
+      }
+      
+      guard !posts.isEmpty else { return }
+      
+      Task {
+        await FeedPrefetchingManager.shared.prefetchAssets(for: posts)
       }
     }
   }

@@ -273,7 +273,7 @@ struct AdvancedSettingsView: View {
   }
   
   private func loadCurrentSettings() async {
-    guard let client = appState.authManager.client,
+    guard let client = AppStateManager.shared.authentication.client,
           let account = await client.getCurrentAccount() else {
       return
     }
@@ -308,7 +308,7 @@ struct AdvancedSettingsView: View {
   }
   
   private func saveChanges() async {
-    guard let client = appState.authManager.client else {
+    guard let client = AppStateManager.shared.authentication.client else {
       error = NSError(
         domain: "AdvancedSettings",
         code: -1,
@@ -371,8 +371,9 @@ struct AdvancedSettingsView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   NavigationStack {
     AdvancedSettingsView()
-      .environment(AppState.shared)
+      .applyAppStateEnvironment(appState)
   }
 }

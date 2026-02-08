@@ -83,6 +83,9 @@ class PostViewRecycler {
   private var hitCount = 0
   private var missCount = 0
 
+  // Timer for periodic cleanup
+  private var cleanupTimer: Timer?
+
   private init() {
     // Start cleanup timer
     startCleanupTimer()
@@ -225,10 +228,15 @@ class PostViewRecycler {
   }
 
   private func startCleanupTimer() {
-    Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+    cleanupTimer?.invalidate()
+    cleanupTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
       Task { @MainActor in
-        self.performCleanup()
+        self?.performCleanup()
       }
     }
+  }
+
+  deinit {
+    cleanupTimer?.invalidate()
   }
 }

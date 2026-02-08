@@ -149,7 +149,7 @@ struct AccountSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 if isLoading {
                     Section {
@@ -171,15 +171,6 @@ struct AccountSettingsView: View {
                             }
                             .padding(.vertical, 8)
                         }
-                    }
-                    
-                    Section("Account Information") {
-                        emailSection
-                        
-                        // Update Email requires OAuth scope not available with current auth flow
-                        // Button("Update Email") {
-                        //     isShowingEmailSheet = true
-                        // }
                     }
                     
                     Section("Handle Management") {
@@ -307,10 +298,7 @@ struct AccountSettingsView: View {
         
         do {
             // Get current user profile
-            guard let userDID = appState.currentUserDID else {
-                handleAPIError(AuthError.invalidCredentials, operation: "get user DID")
-                return
-            }
+             let userDID = appState.userDID
             
             let (profileCode, profileData) = try await client.app.bsky.actor.getProfile(
                 input: .init(actor: ATIdentifier(string: userDID))
@@ -457,7 +445,7 @@ struct AccountSettingsView: View {
             
             do {
                 let responseCode = try await client.com.atproto.server.deleteAccount(
-                    input: .init(did: try DID(didString: appState.currentUserDID ?? ""), password: "", token: "")
+                    input: .init(did: try DID(didString: appState.userDID ?? ""), password: "", token: "")
                 )
                 
                 if responseCode == 200 {

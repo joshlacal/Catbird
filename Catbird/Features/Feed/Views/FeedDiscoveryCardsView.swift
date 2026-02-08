@@ -414,10 +414,19 @@ struct FeedDiscoveryCardsView: View {
   }
   
   private func loadSubscriptionStatuses() async {
-    for feed in feeds {
-      let status = await isSubscribedToFeed(feed.uri)
-      await MainActor.run {
-        subscriptionStatus[feed.uri.uriString()] = status
+    // Fetch all subscription statuses in parallel instead of sequentially (fixes N+1)
+    await withTaskGroup(of: (String, Bool).self) { group in
+      for feed in feeds {
+        group.addTask {
+          let status = await self.isSubscribedToFeed(feed.uri)
+          return (feed.uri.uriString(), status)
+        }
+      }
+
+      for await (uriString, status) in group {
+        await MainActor.run {
+          self.subscriptionStatus[uriString] = status
+        }
       }
     }
   }
@@ -550,7 +559,7 @@ struct FeedDiscoveryCard: View {
       NavigationStack {
         if let feedUri = try? ATProtocolURI(uriString: feed.uri.uriString()) {
             FeedScreen(path: $path, uri: feedUri)
-            .environment(appState)
+            .applyAppStateEnvironment(appState)
             .navigationTitle(feed.displayName)
     #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
@@ -1081,6 +1090,7 @@ struct SkeletonPostCard: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   FeedDiscoveryCardsView()
-        .environment(AppState.shared)
+        .environment(AppStateManager.shared)
 }

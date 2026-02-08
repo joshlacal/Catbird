@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A view that displays a loading indicator with an optional message
-struct LoadingView: View {
+struct LoadingWithMessageView: View {
     let message: String
     
     var body: some View {
@@ -21,5 +21,6 @@ struct LoadingView: View {
 }
 
 #Preview {
-    LoadingView(message: "Loading content...")
+    @Previewable @Environment(AppState.self) var appState
+    LoadingWithMessageView(message: "Loading content...")
 }

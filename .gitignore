@@ -237,3 +237,35 @@ agent_*.log
 docs/session-notes/
 
 Makefile
+
+# Rust build artifacts (mls-ffi)
+MLS/mls-ffi/target/
+MLS/mls-ffi/Cargo.lock
+MLS/mls-ffi/**/*.dylib
+MLS/mls-ffi/**/*.so
+MLS/mls-ffi/**/*.a
+MLS/mls-ffi/uniffi-bindings/
+
+# Framework build outputs (keep committed xcframework in MLS/mls-ffi/)
+Frameworks/
+# Duplicate xcframework in root (should be in MLS/mls-ffi/)
+MLSFFIFramework.xcframework/
+
+# Build and profiling outputs
+fault_ordering_output/
+*.xcresult/
+
+# Build helper scripts (project-specific)
+extract_order_file.sh
+generate_order_file_complete.sh
+generate_order_file_xctestrun.sh
+update_linkmap_path.sh
+verify_fault_ordering_setup.sh
+
+# Session documentation
+docs/MLS_*.md
+docs/FaultOrdering-Setup.md
+FAULTORDERING_FIXED.md
+FAULTORDERING_STATUS.md
+FaultOrdering-QuickRef.md
+MLS_SECURITY_AUDIT.md

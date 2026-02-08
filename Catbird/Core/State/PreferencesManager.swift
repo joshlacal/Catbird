@@ -254,7 +254,7 @@ final class PreferencesManager {
         case .threadViewPref(let value):
           serverThreadViewPref = ThreadViewPreference(
             sort: value.sort,
-            prioritizeFollowedUsers: value.prioritizeFollowedUsers
+            prioritizeFollowedUsers: nil
           )
 
         case .feedViewPref(let value):
@@ -618,8 +618,7 @@ final class PreferencesManager {
       allPrefItems.append(
         .threadViewPref(
           AppBskyActorDefs.ThreadViewPref(
-            sort: threadPref.sort,
-            prioritizeFollowedUsers: threadPref.prioritizeFollowedUsers
+            sort: threadPref.sort
           )))
     }
 
@@ -1129,7 +1128,7 @@ final class PreferencesManager {
         if let pref = updatedValue as? AppBskyActorDefs.ThreadViewPref {
           localPrefs.threadViewPref = ThreadViewPreference(
             sort: pref.sort,
-            prioritizeFollowedUsers: pref.prioritizeFollowedUsers
+            prioritizeFollowedUsers: nil
           )
         }
 

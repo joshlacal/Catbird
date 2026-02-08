@@ -102,29 +102,31 @@ struct Post: View, Equatable {
                 translationButton
             }
             
-            // Main post content with enhanced typography
+            // Main post content with translation inline
             if !post.text.isEmpty {
-                #if os(iOS)
-                if useUIKitSelectableText && isSelectable {
-                    SelectableTextView(
-                        attributedString: post.facetsAsAttributedString,
-                        textSize: textSize,
-                        textStyle: textStyle,
-                        textDesign: textDesign,
-                        textWeight: textWeight,
-                        fontWidth: fontWidth,
-                        lineSpacing: lineSpacing,
-                        letterSpacing: letterSpacing
-                    )
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(3)
-                    .transition(.opacity)
-                    .layoutPriority(1)
-                } else {
-                    TappableTextView(
-                        attributedString: post.facetsAsAttributedString,
-                        textSize: textSize,
-                        textStyle: textStyle,
+                VStack(alignment: .leading, spacing: 4) {
+                    // Show translated text or original text
+                    #if os(iOS)
+                    if useUIKitSelectableText && isSelectable {
+                        SelectableTextView(
+                            attributedString: displayAttributedString,
+                            textSize: textSize,
+                            textStyle: textStyle,
+                            textDesign: textDesign,
+                            textWeight: textWeight,
+                            fontWidth: fontWidth,
+                            lineSpacing: lineSpacing,
+                            letterSpacing: letterSpacing
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(3)
+                        .transition(.opacity)
+                        .layoutPriority(1)
+                    } else {
+                        TappableTextView(
+                            attributedString: displayAttributedString,
+                            textSize: textSize,
+                            textStyle: textStyle,
                         textDesign: textDesign,
                         textWeight: textWeight,
                         fontWidth: fontWidth,
@@ -137,40 +139,58 @@ struct Post: View, Equatable {
                     .transition(.opacity)
                     .layoutPriority(1)
                     .modifier(TranslationPresentationIfAvailable(isPresented: $showTranslationPopover, text: post.text))
-                }
+                    }
                 #else
-                TappableTextView(
-                    attributedString: post.facetsAsAttributedString,
-                    textSize: textSize,
-                    textStyle: textStyle,
-                    textDesign: textDesign,
-                    textWeight: textWeight,
-                    fontWidth: fontWidth,
-                    lineSpacing: lineSpacing,
-                    letterSpacing: letterSpacing
-                )
-                .modifier(SelectableModifier(isSelectable: isSelectable))
-                .padding(3)
-                .transition(.opacity)
-                .layoutPriority(1)
-                #endif
-            }
-            
-            // Translated text with improved styling
-            if showTranslation, let translatedText = translatedText {
-                Text(translatedText)
-                    .bodyStyle(size: Typography.Size.body, weight: .light, lineHeight: Typography.LineHeight.relaxed)
-                    .italic()
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.secondary.opacity(0.1))
+                    TappableTextView(
+                        attributedString: displayAttributedString,
+                        textSize: textSize,
+                        textStyle: textStyle,
+                        textDesign: textDesign,
+                        textWeight: textWeight,
+                        fontWidth: fontWidth,
+                        lineSpacing: lineSpacing,
+                        letterSpacing: letterSpacing
                     )
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .modifier(SelectableModifier(isSelectable: isSelectable))
+                    .padding(3)
+                    .transition(.opacity)
+                    .layoutPriority(1)
+                #endif
+                }
+                .id(showTranslation ? "translated" : "original")
+                .animation(.easeInOut(duration: 0.3), value: showTranslation)
+                    
+                    // Show original text below when translated
+                    if showTranslation, let _ = translatedText {
+                        Text(post.text)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
+        .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
+        .modifier(TranslationTaskModifier(config: translationConfig) { session in
+            if #available(iOS 18.0, macCatalyst 26.0, *),
+               let translationSession = session as? TranslationSession {
+                await performTranslation(session: translationSession)
+            }
+        })
+        .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
+            ForEach(sourceLanguages, id: \.languageCode) { language in
+                Button(languageName(for: language)) {
+                    Task {
+                        await setupTranslation(sourceLanguage: language)
+                    }
+                }
             }
             
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose the language to translate from")
+        }
+
             // Translation error with enhanced styling
             if let error = translationError {
                 Text(error)
@@ -205,28 +225,6 @@ struct Post: View, Equatable {
                 .padding(.top, 4)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: showTranslation && translatedText != nil && translationError == nil)
-        .modifier(TranslationTaskModifier(config: translationConfig) { session in
-            if #available(iOS 18.0, macCatalyst 26.0, *),
-               let translationSession = session as? TranslationSession {
-                await performTranslation(session: translationSession)
-            }
-        })
-        .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
-            ForEach(sourceLanguages, id: \.languageCode) { language in
-                let languageName = Locale.current.localizedString(forLanguageCode: language.languageCode?.identifier ?? "") ?? language.languageCode?.identifier ?? "Unknown"
-                Button(languageName) {
-                    Task {
-                        await setupTranslation(sourceLanguage: language)
-                    }
-                }
-            }
-            
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Choose the language to translate from")
-        }
-    }
     
     private var sourceLanguageCodes: String {
         sourceLanguages
@@ -237,7 +235,27 @@ struct Post: View, Equatable {
     private var targetLanguageCode: String {
         targetLanguage.baseLanguageCode?.lowercased() ?? "en"
     }
-    
+
+    // Computed property to prevent repeated complex ternary expressions
+    private var displayAttributedString: AttributedString {
+        if showTranslation, let translated = translatedText {
+            return AttributedString(translated)
+        }
+        return post.facetsAsAttributedString
+    }
+
+    // Extract complex animation value to prevent type checker explosion
+    private var shouldAnimateTranslation: Bool {
+        showTranslation && translatedText != nil && translationError == nil
+    }
+
+    // Extract language name formatting to prevent type checker explosion in ForEach
+    private func languageName(for language: Locale.Language) -> String {
+        let identifier = language.languageCode?.identifier ?? ""
+        let localized = Locale.current.localizedString(forLanguageCode: identifier)
+        return localized ?? (identifier.isEmpty ? "Unknown" : identifier)
+    }
+
     // Enhanced translation button with better styling
     private var translationButton: some View {
         Button(action: toggleTranslation) {
@@ -509,6 +527,7 @@ extension Locale.Language {
 
 //// MARK: - Preview
 // #Preview {
+//    @Previewable @Environment(AppState.self) var appState
 //    let mockPost = AppBskyFeedPost(
 //        text: "This is a sample post with some #hashtags and @mentions that might need to be displayed properly in the UI.",
 //        entities: [],

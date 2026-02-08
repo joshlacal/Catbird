@@ -1,4 +1,5 @@
 import OSLog
+import Petrel
 import SwiftUI
 
 #if os(iOS)
@@ -16,12 +17,62 @@ struct ChatSettingsView: View {
   @State private var isMarkingAllRead = false
   @State private var exportedData: Data?
   @State private var errorMessage: String?
-  
+  @State private var isOptedIn = false
+  @State private var isLoadingOptInStatus = true  // Start as true to prevent onChange during init
+  @State private var isTogglingOptIn = false
+  @State private var hasLoadedInitialState = false  // Track if we've completed initial load
+  @State private var hasAdminAccess = false
+  @State private var isCheckingAdminAccess = true
+
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       List {
+        Section {
+          HStack {
+            VStack(alignment: .leading, spacing: 4) {
+              Text("MLS Chat")
+                .font(.body)
+              Text("Enable end-to-end encrypted messaging")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+            Spacer()
+            if isLoadingOptInStatus || isTogglingOptIn {
+              ProgressView()
+                .scaleEffect(0.8)
+            } else {
+              Toggle("", isOn: Binding(
+                get: { isOptedIn },
+                set: { newValue in
+                  // Only process if we've loaded initial state and value actually changed
+                  guard hasLoadedInitialState, newValue != isOptedIn else { return }
+                  toggleOptInStatus(newValue)
+                }
+              ))
+                .labelsHidden()
+            }
+          }
+          
+          // Show MLS privacy settings link when opted in
+          if isOptedIn && !isLoadingOptInStatus {
+            NavigationLink {
+              MLSChatSettingsView()
+            } label: {
+              HStack {
+                Image(systemName: "lock.shield")
+                  .foregroundColor(.blue)
+                Text("MLS Privacy Settings")
+              }
+            }
+          }
+        } header: {
+          Text("Privacy")
+        } footer: {
+          Text("When enabled, you can use end-to-end encrypted MLS chat. Only opted-in users will be visible in chat typeahead.")
+        }
+
         Section {
           Button {
             markAllConversationsAsRead()
@@ -58,14 +109,35 @@ struct ChatSettingsView: View {
             }
           }
           .disabled(isExporting)
-          
-          NavigationLink {
-            ChatModerationView()
-          } label: {
+
+          if isCheckingAdminAccess {
             HStack {
-              Image(systemName: "shield")
-                .foregroundColor(.orange)
-              Text("Moderation Tools")
+              ProgressView()
+                .scaleEffect(0.8)
+              Text("Checking admin access…")
+                .foregroundColor(.secondary)
+            }
+          } else if hasAdminAccess {
+            NavigationLink {
+              ChatModerationView()
+            } label: {
+              HStack {
+                Image(systemName: "shield")
+                  .foregroundColor(.orange)
+                Text("Moderation Tools")
+              }
+            }
+          } else {
+            HStack {
+              Image(systemName: "lock.fill")
+                .foregroundColor(.secondary)
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Moderation Tools")
+                  .foregroundColor(.secondary)
+                Text("Visible only to conversation admins")
+                  .font(.caption)
+                  .foregroundColor(.secondary)
+              }
             }
           }
         } header: {
@@ -131,6 +203,113 @@ struct ChatSettingsView: View {
       } message: {
         Text(errorMessage ?? "An unknown error occurred")
       }
+      .task {
+        await loadOptInStatus()
+        await refreshAdminAccess()
+      }
+      .onAppear {
+        // Refresh opt-in status when returning from MLSChatSettingsView (user may have opted out)
+        if hasLoadedInitialState {
+          let currentStatus = ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+          if currentStatus != isOptedIn {
+            isOptedIn = currentStatus
+          }
+        }
+      }
+    }
+  }
+
+  private func loadOptInStatus() async {
+     let userDID = appState.userDID
+    await MainActor.run {
+      isLoadingOptInStatus = true
+      // Load from local per-account setting
+      isOptedIn = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
+      isLoadingOptInStatus = false
+      hasLoadedInitialState = true
+    }
+  }
+
+  private func toggleOptInStatus(_ optIn: Bool) {
+    // Prevent re-entrancy: if already toggling, ignore the change
+    guard !isTogglingOptIn else {
+      logger.debug("Ignoring toggle - already in progress")
+      return
+    }
+    
+    Task {
+      let userDID = appState.userDID 
+      
+      guard let mlsClient = await appState.getMLSAPIClient() else {
+        logger.error("MLS client not available")
+        await MainActor.run {
+          errorMessage = "MLS chat is not available"
+        }
+        return
+      }
+
+      await MainActor.run {
+        isTogglingOptIn = true
+      }
+
+      do {
+        if optIn {
+          // CRITICAL FIX: Initialize MLS (device registration + key packages) BEFORE calling optIn
+          // This ensures other users can find and add this user to conversations
+          logger.info("Initializing MLS before opt-in (device registration + key packages)...")
+          try await appState.initializeMLS()
+          
+          // CRITICAL: Wait for key packages to be uploaded before marking as opted-in
+          // This prevents the "no active keypackages" issue where optIn is called
+          // but key packages are still being uploaded in a detached task
+          if let conversationManager = await appState.getMLSConversationManager() {
+            logger.info("Uploading key packages synchronously before opt-in...")
+            try await conversationManager.uploadKeyPackageBatchSmart(count: 100)
+            logger.info("Key packages uploaded successfully")
+          }
+          
+          // Now call optIn to mark the user as available on the server
+          _ = try await mlsClient.optIn()
+          ExperimentalSettings.shared.enableMLSChat(for: userDID)
+          logger.info("Successfully opted in to MLS chat for account: \(userDID.prefix(20))...")
+        } else {
+          _ = try await mlsClient.optOut()
+          ExperimentalSettings.shared.disableMLSChat(for: userDID)
+          logger.info("Successfully opted out of MLS chat for account: \(userDID.prefix(20))...")
+        }
+        await MainActor.run {
+          isOptedIn = optIn  // Update state to reflect successful change
+          isTogglingOptIn = false
+        }
+      } catch {
+        logger.error("Failed to toggle opt-in status: \(error.localizedDescription)")
+        await MainActor.run {
+          // State remains unchanged since we didn't update isOptedIn during the toggle
+          isTogglingOptIn = false
+          errorMessage = "Failed to update MLS chat settings: \(error.localizedDescription)"
+        }
+      }
+    }
+  }
+
+  private func refreshAdminAccess() async {
+    await MainActor.run {
+      isCheckingAdminAccess = true
+    }
+
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      await MainActor.run {
+        hasAdminAccess = false
+        isCheckingAdminAccess = false
+      }
+      return
+    }
+
+    let isAdmin = await conversationManager.isCurrentUserAdminInAnyConversation()
+
+    await MainActor.run {
+      hasAdminAccess = isAdmin
+      isCheckingAdminAccess = false
     }
   }
   
@@ -191,7 +370,7 @@ struct ChatDataExportView: View {
   @State private var showingShareSheet = false
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       VStack(spacing: 20) {
         Image(systemName: "square.and.arrow.up.circle")
           .appFont(size: 64)
@@ -248,7 +427,8 @@ struct ChatDataExportView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   ChatSettingsView()
-    .environment(AppState.shared)
+    .environment(AppStateManager.shared)
 }
 #endif

@@ -151,7 +151,7 @@ struct FilterView: View {
     @State private var allLanguages: [LanguageOption] = LanguageOption.supportedLanguages
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Date") {
                     ForEach(FilterDate.allCases, id: \.self) { date in
@@ -315,9 +315,9 @@ struct FilterView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     // Create a mock view model for preview
-    let appState = AppState.shared
-    let viewModel = RefinedSearchViewModel(appState: appState)
+
     
-    return FilterView(viewModel: viewModel)
+     FilterView(viewModel: RefinedSearchViewModel(appState: appState))
 }

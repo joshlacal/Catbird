@@ -26,7 +26,7 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
     self.profile = profile
     self.displayName = profile.displayName?.isEmpty == false ? profile.displayName! : profile.handle.description
     self.handle = profile.handle.description
-    self.avatarURL = profile.avatar?.url
+    self.avatarURL = profile.finalAvatarURL()
   }
 
   init(profile: AppBskyActorDefs.ProfileView) {
@@ -40,7 +40,8 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
       labels: profile.labels,
       createdAt: profile.createdAt,
       verification: profile.verification,
-      status: profile.status
+      status: profile.status,
+      debug: nil
     )
     self.init(profile: basic)
   }
@@ -56,7 +57,8 @@ struct MentionSuggestion: Identifiable, Equatable, Hashable {
       labels: profile.labels,
       createdAt: profile.createdAt,
       verification: profile.verification,
-      status: profile.status
+      status: profile.status,
+      debug: nil
     )
     self.init(profile: basic)
   }
@@ -359,8 +361,8 @@ class MentionSearchManager {
     
     do {
       // Search actors for mentions
-      let (code, data) = try await client.app.bsky.actor.searchActors(
-        input: AppBskyActorSearchActors.Parameters(q: query, limit: 8)
+      let (code, data) = try await client.app.bsky.actor.searchActorsTypeahead(
+        input: AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 8)
       )
       
       guard !Task.isCancelled else { return }

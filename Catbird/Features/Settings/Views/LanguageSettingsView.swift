@@ -670,8 +670,10 @@ struct EnhancedContentLanguagesView: View {
                 }
                 
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Done") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
                     .fontWeight(.semibold)
                 }
@@ -747,8 +749,9 @@ struct ContentLanguageRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         LanguageSettingsView()
-            .environment(AppState.shared)
+            .applyAppStateEnvironment(appState)
     }
 }

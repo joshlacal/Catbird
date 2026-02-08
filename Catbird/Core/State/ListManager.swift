@@ -217,7 +217,7 @@ final class ListManager {
       // Create the record in the repository
       let (responseCode, createData) = try await client.com.atproto.repo.createRecord(
         input: .init(
-          repo: try ATIdentifier(string: appState?.currentUserDID ?? ""),
+          repo: try ATIdentifier(string: appState?.userDID ?? ""),
           collection: try NSID(nsidString: "app.bsky.graph.list"),
           rkey: nil,
           validate: true,
@@ -424,7 +424,7 @@ final class ListManager {
       
       let (responseCode, _) = try await client.com.atproto.repo.createRecord(
         input: .init(
-          repo: try ATIdentifier(string: appState?.currentUserDID ?? ""),
+          repo: try ATIdentifier(string: appState?.userDID ?? ""),
           collection: try NSID(nsidString: "app.bsky.graph.listitem"),
           rkey: nil,
           validate: true,
@@ -471,7 +471,7 @@ final class ListManager {
       // Find the listitem record for this user and list
       let (responseCode, recordsData) = try await client.com.atproto.repo.listRecords(
         input: .init(
-          repo: try ATIdentifier(string: appState?.currentUserDID ?? ""),
+          repo: try ATIdentifier(string: appState?.userDID ?? ""),
           collection: try NSID(nsidString: "app.bsky.graph.listitem"),
           limit: 100,
           cursor: nil
@@ -552,7 +552,7 @@ final class ListManager {
     do {
       let (responseCode, listsData) = try await client.app.bsky.graph.getLists(
         input: .init(
-          actor: try ATIdentifier(string: appState?.currentUserDID ?? ""),
+          actor: try ATIdentifier(string: appState?.userDID ?? ""),
           limit: 100,
           cursor: nil
         )

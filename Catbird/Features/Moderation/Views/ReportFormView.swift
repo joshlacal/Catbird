@@ -4,6 +4,7 @@ import Petrel
 /// View for submitting reports for content or users
 struct ReportFormView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
     @State private var reportingService: ReportingService
     
     // Report data
@@ -179,6 +180,17 @@ struct ReportFormView: View {
             
             if success {
                 showingSuccessAlert = true
+                
+                // Show report submitted toast
+                await MainActor.run {
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: "Report submitted",
+                            icon: "flag.fill",
+                            duration: 2.5
+                        )
+                    )
+                }
             } else {
                 errorMessage = "Failed to submit report. Please try again."
             }
@@ -212,6 +224,7 @@ struct ReportFormView: View {
 }
 
 // #Preview {
+//    @Previewable @Environment(AppState.self) var appState
 //    // Mock data for preview
 //    let mockReportingService = ReportingService(client: ATProtoClient(authMethod: .legacy, oauthConfig: .init(), baseURL: URL(string: "https://bsky.social")!, namespace: "", environment: .production))
 //    

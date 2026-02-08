@@ -1,30 +1,32 @@
 #if os(iOS)
-import ExyteChat
 import Petrel
 import SwiftUI
 import OSLog
 
+/// DEPRECATED: This component is not currently used in the app.
+/// Reactions are handled by UnifiedMessageBubble → ReactionBar → ConversationView emoji picker.
+/// Keeping for reference only.
 struct MessageReactionsView: View {
   let convoId: String
   let messageId: String
   let messageView: ChatBskyConvoDefs.MessageView
+  var onRequestEmojiPicker: (() -> Void)?
 
   @Environment(AppState.self) private var appState
-  @State private var showingEmojiPicker = false
   @State private var reactionTask: Task<Void, Never>?
-  
+
   private let logger = Logger(subsystem: "blue.catbird", category: "MessageReactionsView")
-  
+
   // Group reactions by emoji and count them
   private var groupedReactions: [String: [ChatBskyConvoDefs.ReactionView]] {
     guard let reactions = messageView.reactions else { return [:] }
     return Dictionary(grouping: reactions, by: { $0.value })
   }
-  
+
   // Check if current user has reacted with specific emoji
   private func currentUserReacted(to emoji: String) -> Bool {
     guard let userReactions = groupedReactions[emoji] else { return false }
-    return userReactions.contains { $0.sender.did.didString() == appState.currentUserDID }
+    return userReactions.contains { $0.sender.did.didString() == appState.userDID }
   }
 
   var body: some View {
@@ -36,22 +38,9 @@ struct MessageReactionsView: View {
             let reactions = groupedReactions[emoji] ?? []
             let count = reactions.count
             let userReacted = currentUserReacted(to: emoji)
-            
+
             Button(action: {
-              // Cancel any existing reaction task to prevent concurrent operations
-              reactionTask?.cancel()
-              
-              reactionTask = Task {
-                do {
-                  try await toggleReaction(emoji: emoji)
-                } catch {
-                  // Handle cancellation and other errors gracefully
-                  if !(error is CancellationError) && !error.localizedDescription.lowercased().contains("cancel") {
-                    logger.error("Reaction error: \(error.localizedDescription)")
-                    // Could optionally show a brief toast here instead of alert
-                  }
-                }
-              }
+              handleReaction(emoji: emoji)
             }) {
               HStack(spacing: 4) {
                 Text(emoji)
@@ -77,10 +66,10 @@ struct MessageReactionsView: View {
             .buttonStyle(.plain)
             .animation(.easeInOut(duration: 0.2), value: userReacted)
           }
-          
+
           // Add reaction button
           Button(action: {
-            showingEmojiPicker = true
+            onRequestEmojiPicker?()
           }) {
             Image(systemName: "plus.circle")
               .font(.caption)
@@ -96,44 +85,25 @@ struct MessageReactionsView: View {
         }
       }
     }
-    .sheet(isPresented: $showingEmojiPicker) {
-      VStack {
-        HStack {
-          Text("Add Reaction")
-            .font(.headline)
-            .padding(.leading)
-          Spacer()
-          Button("Cancel", systemImage: "xmark") {
-            showingEmojiPicker = false
-          }
-          .padding(.trailing)
-        }
-        .padding(.top)
-        
-        EmojiReactionPicker(isPresented: $showingEmojiPicker) { emoji in
-          // Cancel any existing reaction task to prevent concurrent operations
-          reactionTask?.cancel()
-          
-          reactionTask = Task {
-            do {
-              try await toggleReaction(emoji: emoji)
-            } catch {
-              // Handle cancellation and other errors gracefully
-              if !(error is CancellationError) && !error.localizedDescription.lowercased().contains("cancel") {
-                logger.error("Emoji picker reaction error: \(error.localizedDescription)")
-                // Could optionally show a brief toast here instead of alert
-              }
-            }
-          }
-        }
-        .padding()
-      }
-      .presentationDetents([.height(350)])
-      .presentationDragIndicator(.visible)
-    }
     .onDisappear {
       // Clean up any pending reaction tasks when view disappears
       reactionTask?.cancel()
+    }
+  }
+
+  private func handleReaction(emoji: String) {
+    // Cancel any existing reaction task to prevent concurrent operations
+    reactionTask?.cancel()
+
+    reactionTask = Task {
+      do {
+        try await toggleReaction(emoji: emoji)
+      } catch {
+        // Handle cancellation and other errors gracefully
+        if !(error is CancellationError) && !error.localizedDescription.lowercased().contains("cancel") {
+          logger.error("Reaction error: \(error.localizedDescription)")
+        }
+      }
     }
   }
 

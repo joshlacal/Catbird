@@ -31,6 +31,7 @@ struct FeedsStartPage: View {
   @State private var isSearchBarVisible = false
   @State private var isLoaded = false
   @State private var isInitialized = false
+  @State private var currentUserDID: String?  // Track current account for change detection
   @State private var showAddFeedSheet = false
   @State private var newFeedURI = ""
   @State private var pinNewFeed = false
@@ -207,12 +208,7 @@ struct FeedsStartPage: View {
 
     do {
       // Get the DID first
-      let did: String
-      if let currentUserDID = appState.currentUserDID {
-        did = currentUserDID
-      } else {
-        did = try await client.getDid()
-      }
+      let did: String = appState.userDID
 
       // Fetch the profile
       let (responseCode, profileData) = try await client.app.bsky.actor.getProfile(
@@ -574,8 +570,10 @@ struct FeedsStartPage: View {
         if SystemFeedTypes.isTimelineFeed(feed) {
           // Special handling for Timeline feed
           timelineFeedLink(feedURI: feed, category: category)
+
         } else if let uri = try? ATProtocolURI(uriString: feed) {
           feedLink(for: uri, feedURI: feed, category: category)
+
         }
       }
     }
@@ -788,7 +786,6 @@ struct FeedsStartPage: View {
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
     }
     .buttonStyle(PlainButtonStyle())
-    .interactiveGlass()
     .onDrag {
       draggedFeedItem = feedURI
       isDragging = true
@@ -852,7 +849,9 @@ struct FeedsStartPage: View {
       showErrorAlert: $showErrorAlert,
       errorAlertMessage: $errorAlertMessage,
       onAppear: handleOnAppear,
-      onDisappear: handleOnDisappear
+      onDisappear: handleOnDisappear,
+      onAccountSwitch: handleAccountSwitch,
+      currentUserDID: currentUserDID
     )
     
   }
@@ -886,8 +885,8 @@ struct FeedsStartPage: View {
       }
     }
     .frame(maxWidth: drawerWidth)
-    .overlay(alignment: .topTrailing) {
-      // Overlays
+    .overlay {
+      // Full-screen loading/initialization overlays
       loadingOverlay()
       initializationOverlay()
     }
@@ -904,24 +903,50 @@ struct FeedsStartPage: View {
   
   private func handleOnAppear() {
     Task {
+      // Track current user for account switch detection
+      currentUserDID = appState.userDID
+
       await viewModel.initializeWithModelContext(modelContext)
       await updateFilteredFeeds()
       isInitialized = true
-      
+
       withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
         isLoaded = true
       }
-      
+
       if appState.isAuthenticated {
         await loadUserProfile()
       }
-      
+
       if stateInvalidationSubscriber == nil {
         stateInvalidationSubscriber = FeedsStartPageStateSubscriber(
           viewModel: viewModel,
           updateFilteredFeeds: updateFilteredFeeds
         )
         appState.stateInvalidationBus.subscribe(stateInvalidationSubscriber!)
+      }
+    }
+  }
+
+  private func handleAccountSwitch() {
+    // Reset state when account changes
+    isInitialized = false
+    isLoaded = false
+    profile = nil
+    currentUserDID = appState.userDID
+
+    // Re-run initialization for the new account
+    Task {
+      await viewModel.initializeWithModelContext(modelContext)
+      await updateFilteredFeeds()
+      isInitialized = true
+
+      withAnimation(.easeOut(duration: 0.3).delay(0.1)) {
+        isLoaded = true
+      }
+
+      if appState.isAuthenticated {
+        await loadUserProfile()
       }
     }
   }
@@ -954,7 +979,7 @@ struct FeedsStartPage: View {
       HStack(spacing: max(8, horizontalPadding * 0.4)) {
         // Avatar with responsive sizing
         Group {
-          if let avatarURL = profile?.avatar?.url {
+          if let avatarURL = profile?.finalAvatarURL() {
             AsyncProfileImage(url: avatarURL, size: avatarSize)
           } else {
             // Fallback avatar
@@ -1003,10 +1028,9 @@ struct FeedsStartPage: View {
     .clipped()
     .contentShape(Rectangle())
     .onTapGesture {
-      if let userDID = appState.authManager.state.userDID {
-        appState.navigationManager.navigate(to: .profile(userDID))
-        isDrawerOpen = false
-      }
+      let userDID = appState.userDID
+      appState.navigationManager.navigate(to: .profile(userDID))
+      isDrawerOpen = false
     }
     .onLongPressGesture {
       #if os(iOS)
@@ -1138,26 +1162,26 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func loadingOverlay() -> some View {
     if viewModel.isLoading {
-      VStack {
-        Spacer()
-        ProgressView("Loading feeds...")
-        Spacer()
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.systemBackground.opacity(0.9))
+      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+        .ignoresSafeArea()
+        .overlay {
+          ProgressView("Loading feeds...")
+        }
+        .contentShape(Rectangle())
+        .allowsHitTesting(true)
     }
   }
 
   @ViewBuilder
   private func initializationOverlay() -> some View {
     if !isInitialized {
-      VStack {
-        Spacer()
-        ProgressView("Loading your feeds...")
-        Spacer()
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.systemBackground.opacity(0.9))
+      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+        .ignoresSafeArea()
+        .overlay {
+          ProgressView("Loading your feeds...")
+        }
+        .contentShape(Rectangle())
+        .allowsHitTesting(true)
     }
   }
   
@@ -1277,7 +1301,9 @@ extension View {
         showErrorAlert: Binding<Bool>,
         errorAlertMessage: Binding<String>,
         onAppear: @escaping () -> Void,
-        onDisappear: @escaping () -> Void
+        onDisappear: @escaping () -> Void,
+        onAccountSwitch: @escaping () -> Void,
+        currentUserDID: String?
     ) -> some View {
         self
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
@@ -1287,7 +1313,9 @@ extension View {
                 showErrorAlert: showErrorAlert,
                 errorAlertMessage: errorAlertMessage,
                 onAppear: onAppear,
-                onDisappear: onDisappear
+                onDisappear: onDisappear,
+                onAccountSwitch: onAccountSwitch,
+                currentUserDID: currentUserDID
             )
             .configuredSheets(
                 showAddFeedSheet: showAddFeedSheet,
@@ -1310,13 +1338,21 @@ private extension View {
         showErrorAlert: Binding<Bool>,
         errorAlertMessage: Binding<String>,
         onAppear: @escaping () -> Void,
-        onDisappear: @escaping () -> Void
+        onDisappear: @escaping () -> Void,
+        onAccountSwitch: @escaping () -> Void,
+        currentUserDID: String?
     ) -> some View {
         // Remove global SwiftUI .toolbar usage to keep actions confined to the drawer.
         // Lifecycle and alerts remain here; UI buttons are rendered inside the drawer view itself.
         self
             .onAppear(perform: onAppear)
             .onDisappear(perform: onDisappear)
+            .onChange(of: appState.userDID) { oldDID, newDID in
+                // Detect account switch - only trigger if we had a previous DID and it changed
+                if let currentDID = currentUserDID, currentDID != newDID {
+                    onAccountSwitch()
+                }
+            }
             .alert("Error", isPresented: showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -1363,8 +1399,11 @@ private extension View {
                 Task { await viewModel.updateCaches() }
             }
             .task {
-                try? await Task.sleep(for: .seconds(2))
-                await viewModel.fetchFeedGenerators()
+                // Retry fetching generators if we don't have them after initial load
+                try? await Task.sleep(for: .seconds(1))
+                if viewModel.feedGenerators.isEmpty {
+                    await viewModel.fetchFeedGenerators()
+                }
             }
             .onChange(of: viewModel.feedGenerators) { _, _ in
                 Task { await viewModel.updateCaches() }

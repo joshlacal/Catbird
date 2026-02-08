@@ -3,6 +3,47 @@ import OSLog
 import Petrel
 import SwiftUI
 
+// MARK: - Relationship Types
+
+struct RelationshipInfo: Sendable, Codable {
+    let did: DID
+    let following: Bool
+    let followedBy: Bool
+    let blocked: Bool
+}
+
+enum RelationshipError: Error {
+    case clientNotConfigured
+    case actorNotFound(DID)
+    case invalidResponse
+    case networkError(Error)
+}
+
+// MARK: - Relationship Cache
+
+actor RelationshipCache {
+    private var cache: [String: RelationshipInfo] = [:]
+    
+    func get(actor: DID, target: DID) -> RelationshipInfo? {
+        let key = cacheKey(actor: actor, target: target)
+        return cache[key]
+    }
+    
+    func set(actor: DID, target: DID, info: RelationshipInfo) {
+        let key = cacheKey(actor: actor, target: target)
+        cache[key] = info
+    }
+    
+    func remove(actor: DID, target: DID) {
+        let key = cacheKey(actor: actor, target: target)
+        cache.removeValue(forKey: key)
+    }
+    
+    private func cacheKey(actor: DID, target: DID) -> String {
+        return "\(actor.didString())-\(target.didString())"
+    }
+}
+
 enum GraphError: Error, LocalizedError {
   case clientNotInitialized
   case invalidResponse
@@ -192,7 +233,7 @@ final class GraphManager {
 
       let follow = AppBskyGraphFollow(
         subject: subjectDID,
-        createdAt: ATProtocolDate(date: Date())
+        createdAt: ATProtocolDate(date: Date()), via: nil
       )
 
       // Wrap the follow in a value container
@@ -883,6 +924,142 @@ final class GraphManager {
     }
   }
 
+  // MARK: - Relationship Service Integration
+  
+  // Cache for detailed relationship info
+  private let relationshipCache = RelationshipCache()
+  
+  /// Check if an actor is following a target
+  /// - Parameters:
+  ///   - actor: The DID of the actor
+  ///   - target: The DID of the target
+  /// - Returns: True if the actor is following the target
+  /// - Throws: RelationshipError if the check fails
+  func isFollowing(actor: DID, target: DID) async throws -> Bool {
+    let info = try await getRelationship(actor: actor, target: target)
+    return info.following
+  }
+  
+  /// Get complete relationship information between an actor and target
+  /// - Parameters:
+  ///   - actor: The DID of the actor
+  ///   - target: The DID of the target
+  /// - Returns: RelationshipInfo containing the relationship details
+  /// - Throws: RelationshipError if the fetch fails
+  func getRelationship(actor: DID, target: DID) async throws -> RelationshipInfo {
+    // Check cache first
+    if let cached = await relationshipCache.get(actor: actor, target: target) {
+      return cached
+    }
+    
+    // Fetch from API
+    let info = try await fetchRelationship(actor: actor, target: target)
+    
+    // Cache the result
+    await relationshipCache.set(actor: actor, target: target, info: info)
+    
+    return info
+  }
+  
+  /// Batch check follow relationships for multiple targets
+  /// - Parameters:
+  ///   - actor: The DID of the actor
+  ///   - targets: Array of target DIDs to check
+  /// - Returns: Dictionary mapping each target DID to whether the actor is following them
+  /// - Throws: RelationshipError if the batch check fails
+  func batchCheckFollows(actor: DID, targets: [DID]) async throws -> [DID: Bool] {
+    guard !targets.isEmpty else {
+      return [:]
+    }
+    
+    // Check which targets are already cached
+    var result: [DID: Bool] = [:]
+    var uncachedTargets: [DID] = []
+    
+    for target in targets {
+      if let cached = await relationshipCache.get(actor: actor, target: target) {
+        result[target] = cached.following
+      } else {
+        uncachedTargets.append(target)
+      }
+    }
+    
+    // Fetch uncached targets
+    guard !uncachedTargets.isEmpty else {
+      return result
+    }
+    
+    let relationships = try await fetchRelationships(actor: actor, targets: uncachedTargets)
+    
+    // Cache and add to result
+    for info in relationships {
+      result[info.did] = info.following
+      await relationshipCache.set(actor: actor, target: info.did, info: info)
+    }
+    
+    return result
+  }
+  
+  /// Invalidate cached relationship for a specific actor-target pair
+  /// - Parameters:
+  ///   - actor: The DID of the actor
+  ///   - target: The DID of the target
+  func invalidateRelationship(actor: DID, target: DID) async {
+    await relationshipCache.remove(actor: actor, target: target)
+  }
+  
+  private func fetchRelationship(actor: DID, target: DID) async throws -> RelationshipInfo {
+    let relationships = try await fetchRelationships(actor: actor, targets: [target])
+    
+    guard let info = relationships.first else {
+      throw RelationshipError.actorNotFound(target)
+    }
+    
+    return info
+  }
+  
+  private func fetchRelationships(actor: DID, targets: [DID]) async throws -> [RelationshipInfo] {
+    guard let client = atProtoClient else {
+        throw RelationshipError.clientNotConfigured
+    }
+    
+    let parameters = AppBskyGraphGetRelationships.Parameters(
+      actor: .did(actor),
+      others: targets.map { .did($0) }
+    )
+    
+    let (responseCode, output) = try await client.app.bsky.graph.getRelationships(input: parameters)
+    
+    guard (200...299).contains(responseCode), let output = output else {
+      throw RelationshipError.invalidResponse
+    }
+    
+    var results: [RelationshipInfo] = []
+    
+    for relationshipUnion in output.relationships {
+      switch relationshipUnion {
+      case .appBskyGraphDefsRelationship(let relationship):
+        let info = RelationshipInfo(
+          did: relationship.did,
+          following: relationship.following != nil,
+          followedBy: relationship.followedBy != nil,
+          blocked: false
+        )
+        results.append(info)
+        
+      case .appBskyGraphDefsNotFoundActor(let notFound):
+        // Actor not found - skip or handle differently
+        continue
+        
+      case .unexpected:
+        // Skip unexpected response types
+        continue
+      }
+    }
+    
+    return results
+  }
+
   // MARK: - Following Cache Management
 
   /// Refreshes the list of users the current user is following
@@ -1031,7 +1208,6 @@ final class GraphManager {
   }
 }
 
-// Extension for AppState to access GraphManager
 // Extension for AppState to access GraphManager
 // Removed performFollow and performUnfollow as they are defined in AppState directly
 extension AppState {

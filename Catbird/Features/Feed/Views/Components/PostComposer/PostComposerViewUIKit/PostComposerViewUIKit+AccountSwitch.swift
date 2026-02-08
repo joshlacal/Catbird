@@ -13,11 +13,7 @@ extension PostComposerViewUIKit {
   
   /// Handles account switch completion - persists current draft to carry over to new account
   func handleAccountSwitchComplete(vm: PostComposerViewModel) {
-    guard let currentDID = appState.currentUserDID else {
-      pcAccountLogger.warning("PostComposerAccount: No current DID after account switch")
-      return
-    }
-    
+    let currentDID = appState.userDID
     pcAccountLogger.info("PostComposerAccount: Account switch completed - new DID: \(currentDID)")
     
     // Save current draft state to carry over to the new account

@@ -98,6 +98,29 @@ actor FeedPrefetchingManager {
     return (cachedFeed.posts, cachedFeed.cursor)
   }
 
+  /// Prefetch assets for cached feed view posts (used by collection view prefetching)
+  /// - Parameter posts: Array of cached posts to prefetch assets for
+  func prefetchAssets(for posts: [CachedFeedViewPost]) async {
+    // Extract image URLs from cached posts and prefetch them
+    let manager = await ImageLoadingManager.shared
+    
+    for post in posts {
+      guard let feedViewPost = try? post.feedViewPost else { continue }
+      
+      // Prefetch avatar
+      if let avatarUrl = feedViewPost.post.author.avatar {
+        if let url = URL(string: avatarUrl.uriString()) {
+          await manager.startPrefetching(urls: [url])
+        }
+      }
+      
+      // Prefetch embed images
+      if let embed = feedViewPost.post.embed {
+        await prefetchEmbedContentOptimized(embed: embed)
+      }
+    }
+  }
+
   /// Prefetch additional data for a specific post
   /// - Parameters:
   ///   - post: The post to prefetch data for

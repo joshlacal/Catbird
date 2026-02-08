@@ -4,7 +4,7 @@ import SwiftUI
 struct ThreadgateOptionsView: View {
   @Binding var settings: ThreadgateSettings
   @Environment(\.dismiss) private var dismiss
-  @Environment(AppState.self) private var appState
+  @ObservationIgnored @Environment(AppState.self) private var appState
 
   // For UI state
   @State private var selectedOption: ThreadgateSettings.ReplyOption
@@ -229,10 +229,14 @@ struct ThreadgateOptionsView: View {
         }
 
         ToolbarItem(placement: .confirmationAction) {
-          Button("Done") {
-            updateSettings()
-            dismiss()
-          }
+            Button {
+                updateSettings()
+
+                dismiss()
+            } label: {
+                Image(systemName: "checkmark")
+            }
+
         }
       }
       .task {

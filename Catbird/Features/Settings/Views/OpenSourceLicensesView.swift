@@ -13,22 +13,7 @@ struct OpenSourceLicensesView: View {
           }
           
           Section("Dependencies") {
-            LicenseRow(
-              name: "Chat",
-              author: "exyte",
-              version: "2.6.3",
-              url: "https://github.com/exyte/Chat.git",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "FaultOrdering",
-              author: "getsentry",
-              version: "1.0.0",
-              url: "https://github.com/getsentry/FaultOrdering",
-              license: "MIT"
-            )
-            
+                        
             LicenseRow(
               name: "LazyPager",
               author: "gh123man",
@@ -36,12 +21,28 @@ struct OpenSourceLicensesView: View {
               url: "https://github.com/gh123man/LazyPager",
               license: "MIT"
             )
+
+            LicenseRow(
+              name: "GRDB",
+              author: "groue",
+              version: "7.8.0",
+              url: "https://github.com/groue/GRDB.swift.git",
+              license: "MIT"
+            )
             
             LicenseRow(
-              name: "MCEmojiPicker",
-              author: "izyumkin",
-              version: "1.2.3",
-              url: "https://github.com/izyumkin/MCEmojiPicker",
+              name: "Mantis",
+              author: "guoyingtao",
+              version: "1.7.5",
+              url: "https://github.com/guoyingtao/Mantis",
+              license: "MIT"
+            )
+
+            LicenseRow(
+              name: "EmojiKit",
+              author: "Daniel Saidi",
+              version: "2.2.1",
+              url: "https://github.com/danielsaidi/EmojiKit",
               license: "MIT"
             )
             
@@ -54,11 +55,35 @@ struct OpenSourceLicensesView: View {
             )
             
             LicenseRow(
+              name: "OpenMLS",
+              author: "OpenMLS",
+              version: "0.6.0",
+              url: "https://github.com/openmls/openmls",
+              license: "MIT"
+            )
+            
+            LicenseRow(
               name: "Petrel",
               author: "joshlacal",
               version: "1.0.0",
               url: "https://github.com/joshlacal/Petrel",
               license: "MIT"
+            )
+            
+            LicenseRow(
+              name: "Sentry",
+              author: "getsentry",
+              version: "8.56.1",
+              url: "https://github.com/getsentry/sentry-cocoa",
+              license: "MIT"
+            )
+            
+            LicenseRow(
+              name: "SQLCipher",
+              author: "ZETETIC LLC",
+              version: "4.11.0",
+              url: "https://github.com/sqlcipher/SQLCipher.swift.git",
+              license: "Community Edition"
             )
             
             LicenseRow(
@@ -131,5 +156,6 @@ private struct LicenseRow: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   OpenSourceLicensesView()
 }

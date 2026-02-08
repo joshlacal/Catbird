@@ -100,6 +100,11 @@ final class FeedStateManager: StateInvalidationSubscriber {
     private let feedModel: FeedModel
     private var feedType: FetchType
     
+    /// Account-scoped cache identifier for persistence helpers
+    private var feedCacheIdentifier: String {
+        "\(appState.userDID)-\(feedType.identifier)"
+    }
+    
     /// Scroll position tracking
     private var scrollAnchor: ScrollAnchor?
     
@@ -290,14 +295,67 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     // MARK: - Data Loading
     
+    /// Waits for account availability with retries
+    private func waitForAccountAvailability(maxAttempts: Int = 10) async -> Bool {
+        // First check if client exists
+        guard let client = appState.atProtoClient else {
+            return false
+        }
+
+        // Check if account is available (with retry for transient state issues)
+        for attempt in 1...maxAttempts {
+            let validSession = await client.hasValidSession()
+            if validSession {
+                // Also check if we can get the handle, which confirms the session is truly usable
+                if let _ = try? await client.getHandle() {
+                    return true
+                }
+            }
+            
+            if attempt < maxAttempts {
+                // Exponential backoff: 100ms, 200ms, 400ms... capped at 1s
+                let delay = UInt64(min(100_000_000.0 * pow(2.0, Double(attempt - 1)), 1_000_000_000.0))
+                try? await Task.sleep(nanoseconds: delay)
+            }
+        }
+        
+        return await client.hasValidSession()
+    }
+    
     /// Performs initial load of the feed
     @MainActor
     func loadInitialData() async {
         guard case .idle = loadingState else { return }
 
-        // Only load if posts are empty or this is a user-initiated action
-        guard posts.isEmpty || isUserInitiatedAction else {
-            logger.debug("Skipping initial load - posts exist and not user-initiated")
+        // If we already have posts (likely from cache restoration), check if cache needs refresh
+        // Only skip refresh if this manager has previously refreshed successfully (lastRefreshTime != distantPast)
+        // For fresh managers after account switch, lastRefreshTime is distantPast, so we'll check freshness
+        if !posts.isEmpty && !isUserInitiatedAction && feedModel.lastRefreshTime != Date.distantPast {
+            let shouldRefresh = await PersistentFeedStateManager.shared.shouldRefreshFeed(
+                feedIdentifier: feedCacheIdentifier,
+                lastUserRefresh: nil,
+                appBecameActiveTime: nil
+            )
+
+            guard shouldRefresh else {
+                logger.debug("Skipping initial refresh - cached feed is fresh enough to display without flashing")
+                return
+            }
+
+            loadingState = .refreshing
+            await feedModel.loadFeed(
+                fetch: feedType,
+                forceRefresh: false,
+                strategy: .backgroundRefresh
+            )
+            await updatePostsFromModel()
+            loadingState = .idle
+            return
+        }
+
+        // Allow loading for fresh managers (no previous refresh) even if posts exist from cache
+        if !posts.isEmpty && !isUserInitiatedAction {
+            logger.debug("Skipping initial load - posts exist (\(self.posts.count)) and not user-initiated")
             return
         }
 
@@ -306,6 +364,14 @@ final class FeedStateManager: StateInvalidationSubscriber {
         loadingState = .loading
         errorMessage = nil
         hasReachedEnd = false  // Reset when loading fresh data
+        
+        // Wait for account to be ready
+        if !(await waitForAccountAvailability()) {
+            logger.error("❌ Cannot load initial data: Account unavailable after retries")
+            errorMessage = "Account unavailable. Please try again."
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
+            return
+        }
 
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
 
@@ -338,6 +404,14 @@ final class FeedStateManager: StateInvalidationSubscriber {
         loadingState = .loading
         errorMessage = nil
         hasReachedEnd = false  // Reset when loading fresh data
+        
+        // Wait for account to be ready
+        if !(await waitForAccountAvailability()) {
+            logger.error("❌ Cannot load system initial data: Account unavailable after retries")
+            errorMessage = "Account unavailable. Please try again."
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
+            return
+        }
 
         // For system-initiated loads (like post-auth), always force refresh even if posts exist
         await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
@@ -393,22 +467,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
 
         // Check if account is available (with retry for transient state issues)
-        var accountAvailable = false
-        for attempt in 1...3 {
-            let validSession = await client.hasValidSession()
-            if validSession {
-                if let handle = try? await client.getHandle() {
-                    logger.debug("✅ Account validation passed: \(validSession) \(handle)") }
-                accountAvailable = true
-                break
-            } else {
-                logger.warning("⚠️ Account not available on attempt \(attempt)/3, waiting 100ms...")
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-            }
-        }
-
-        guard accountAvailable else {
-            logger.error("❌ Cannot refresh: Account manager state is inconsistent after 3 attempts")
+        if !(await waitForAccountAvailability(maxAttempts: 3)) {
+            logger.error("❌ Cannot refresh: Account manager state is inconsistent after retries")
             errorMessage = "Account session lost. Please try again or restart the app."
             loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
             return
@@ -659,7 +719,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Restores persisted posts without triggering network requests
     @MainActor
-    func restorePersistedPosts(_ posts: [CachedFeedViewPost]) async {
+    func restorePersistedPosts(_ posts: [CachedFeedViewPost], cursor: String?) async {
         guard self.posts.isEmpty else {
             logger.debug("Posts already loaded, skipping restoration")
             return
@@ -691,7 +751,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         self.hasReachedEnd = false
         
         // Update feed model's posts to match
-        await feedModel.restorePersistedPosts(validPosts)
+        await feedModel.restorePersistedPosts(validPosts, cursor: cursor)
         
         logger.debug("Restored \(validPosts.count) persisted posts (\(invalidPostIds.count) invalid posts filtered out)")
     }

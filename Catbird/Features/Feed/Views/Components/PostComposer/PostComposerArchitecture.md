@@ -439,7 +439,7 @@ class BlueskyMediaUploadPipeline {
 class CollaborativeComposer {
     // Real-time co-editing
     func enableCollaboration(with users: [UserDID]) async {
-        // Set up WebSocket connection for real-time updates
+        // Set up SSE connection for real-time updates
         await establishCollaborationSession(users)
     }
     

@@ -55,6 +55,8 @@ final class PostComposerViewModel {
   var videoItem: MediaItem?
   var currentEditingMediaId: UUID?
   var isAltTextEditorPresented = false
+  var isPhotoEditorPresented = false
+  var currentEditingImageIndex: Int?
   var isVideoUploading: Bool = false
   var mediaUploadManager: MediaUploadManager?
   // If non-nil, posting is blocked due to server policy
@@ -482,18 +484,23 @@ func saveDraftIfNeeded() {
       self.pickerItem = nil
       self.rawVideoURL = url
       self.isAudioVisualizerVideo = isAudioVisualizerVideo
-      self.rawVideoAsset = AVAsset(url: url)
+      self.rawVideoAsset = AVURLAsset(url: url)
     }
   }
-  
-  // MARK: - Alert Model
-  
-  struct AlertItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
-  }
-  
+}
+
+// MARK: - MediaItem Hashable Conformance
+
+extension PostComposerViewModel.MediaItem: Hashable {
+    static func == (lhs: PostComposerViewModel.MediaItem, rhs: PostComposerViewModel.MediaItem) -> Bool {
+        lhs.id == rhs.id
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
   // MARK: - Media Source Tracking
   
   enum MediaSource {
@@ -502,4 +509,3 @@ func saveDraftIfNeeded() {
     case gifConversion(String)
     case genmojiConversion(Data)
   }
-}

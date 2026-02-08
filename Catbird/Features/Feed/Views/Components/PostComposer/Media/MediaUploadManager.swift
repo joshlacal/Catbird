@@ -12,9 +12,9 @@ import Petrel
 import SwiftUI
 
 #if os(iOS)
-import UIKit
+  import UIKit
 #elseif os(macOS)
-import AppKit
+  import AppKit
 #endif
 
 /// Manages media upload operations including image and video processing
@@ -34,7 +34,8 @@ final class MediaUploadManager {
   private var serviceAuthCache: [String: ServiceAuthCacheEntry] = [:]
 
   // Throttle preflight checks
-  private var lastPreflight: (timestamp: Date, result: (allowed: Bool, message: String?, code: String?))?
+  private var lastPreflight:
+    (timestamp: Date, result: (allowed: Bool, message: String?, code: String?))?
   private var isCheckingLimits = false
 
   // Video upload state
@@ -80,7 +81,8 @@ final class MediaUploadManager {
 
     // Compress if needed (AT Protocol limit is 1MB)
     if let image = PlatformImage(data: processedData),
-      let compressed = compressImage(image, maxSizeInBytes: 900_000) {
+      let compressed = compressImage(image, maxSizeInBytes: 900_000)
+    {
       processedData = compressed
     }
 
@@ -105,35 +107,35 @@ final class MediaUploadManager {
   }
 
   // MARK: - Video Upload Methods
-    /// Get authentication token for video operations
-    private func getVideoAuthTokenForUploadLimits() async throws -> String {
-      logger.debug("DEBUG: Requesting service auth token")
-      let didValue = try await client.getDid()
-      logger.debug("DEBUG: Using DID: \(didValue)")
-      
-      let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-        aud: try DID(didString: "did:web:video.bsky.app"),
-        exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
-        lxm: try NSID(nsidString: "app.bsky.video.getUploadLimits")
-      )
-      
-      let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
-        input: serviceParams)
-      logger.debug("DEBUG: Service auth response code: \(authCode)")
-      
-      if authCode != 200 {
-        logger.error("ERROR: Service auth request failed with code \(authCode)")
-        throw VideoUploadError.authenticationFailed
-      }
-      
-      guard let serviceAuth = authData else {
-        logger.error("ERROR: Missing service auth data")
-        throw VideoUploadError.authenticationFailed
-      }
-      
-      logger.debug("DEBUG: Authentication successful, token obtained")
-      return serviceAuth.token
+  /// Get authentication token for video operations
+  private func getVideoAuthTokenForUploadLimits() async throws -> String {
+    logger.debug("DEBUG: Requesting service auth token")
+    let didValue = try await client.getDid()
+    logger.debug("DEBUG: Using DID: \(didValue)")
+
+    let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
+      aud: try DID(didString: "did:web:video.bsky.app"),
+      exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
+      lxm: try NSID(nsidString: "app.bsky.video.getUploadLimits")
+    )
+
+    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
+      input: serviceParams)
+    logger.debug("DEBUG: Service auth response code: \(authCode)")
+
+    if authCode != 200 {
+      logger.error("ERROR: Service auth request failed with code \(authCode)")
+      throw VideoUploadError.authenticationFailed
     }
+
+    guard let serviceAuth = authData else {
+      logger.error("ERROR: Missing service auth data")
+      throw VideoUploadError.authenticationFailed
+    }
+
+    logger.debug("DEBUG: Authentication successful, token obtained")
+    return serviceAuth.token
+  }
 
   /// Get authentication token for a specific video service method
   private func getVideoServiceAuthToken(lxm: String) async throws -> String {
@@ -143,16 +145,17 @@ final class MediaUploadManager {
     }
 
     logger.debug("DEBUG: Requesting service auth token for lxm=\(lxm)")
-    _ = try await client.getDid() // ensure session
+    _ = try await client.getDid()  // ensure session
     // Request a short-lived token to reduce risk; cache will avoid re-minting unnecessarily
     let now = Int(Date().timeIntervalSince1970)
-    let expUnix = now + 5 * 60 // 5 minutes
+    let expUnix = now + 5 * 60  // 5 minutes
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
       aud: try DID(didString: "did:web:video.bsky.app"),
       exp: expUnix,
       lxm: try NSID(nsidString: lxm)
     )
-    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(input: serviceParams)
+    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
+      input: serviceParams)
     logger.debug("DEBUG: Service auth response code: \(authCode)")
     guard authCode == 200, let serviceAuth = authData else {
       logger.error("ERROR: Service auth request failed for lxm=\(lxm) code=\(authCode)")
@@ -174,17 +177,26 @@ final class MediaUploadManager {
     }
 
     logger.debug("DEBUG: Requesting PDS repo-upload service auth token (lxm=\(lxm))")
-    _ = try await client.getDid() // ensure session
-      let host = await client.baseURL.host ?? "bsky.social"
+    let userDid = try await client.getDid()  // ensure session and get DID
+
+    // Resolve real PDS URL to ensure we get the correct audience (bypassing any proxy/gateway configuration)
+    // The video service requires the aud to be the user's actual PDS DID (e.g. did:web:inkcap...)
+    let pdsURL = try await client.resolveDIDToPDSURL(did: userDid)
+    guard let host = pdsURL.host else {
+      logger.error("ERROR: Could not resolve PDS host for DID \(userDid) from URL \(pdsURL)")
+      throw VideoUploadError.authenticationFailed
+    }
+
     let aud = try DID(didString: "did:web:\(host)")
     let now = Int(Date().timeIntervalSince1970)
-    let expUnix = now + 5 * 60 // 5 minutes
+    let expUnix = now + 5 * 60  // 5 minutes
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
       aud: aud,
       exp: expUnix,
       lxm: try NSID(nsidString: lxm)
     )
-    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(input: serviceParams)
+    let (authCode, authData) = try await client.com.atproto.server.getServiceAuth(
+      input: serviceParams)
     logger.debug("DEBUG: PDS service auth response code: \(authCode)")
     guard authCode == 200, let serviceAuth = authData else {
       logger.error("ERROR: PDS service auth request failed for lxm=\(lxm) code=\(authCode)")
@@ -194,29 +206,31 @@ final class MediaUploadManager {
     serviceAuthCache[lxm] = ServiceAuthCacheEntry(token: serviceAuth.token, expiresAt: expiry)
     return serviceAuth.token
   }
-  
+
   /// Check upload limits from video server directly
   /// Always attempts to decode the response body to surface server-provided reasons,
   /// even on non-200 (e.g., 401 with { canUpload:false, error:"unconfirmed_email", message:"..." }).
-  private func checkVideoUploadLimits(token: String) async throws -> (canUpload: Bool, message: String?, code: String?) {
+  private func checkVideoUploadLimits(token: String) async throws -> (
+    canUpload: Bool, message: String?, code: String?
+  ) {
     logger.debug("DEBUG: Checking upload limits from server")
-    
+
     let limitsURL = URL(string: "\(videoBaseURL)/app.bsky.video.getUploadLimits")!
-    
+
     var request = URLRequest(url: limitsURL)
     request.httpMethod = "GET"
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-      logger.debug("Request: \(request.debugDescription)")
-    
+    logger.debug("Request: \(request.debugDescription)")
+
     let (data, response) = try await URLSession.shared.data(for: request)
-      logger.debug("Received data: \(data), response: \(response)")
+    logger.debug("Received data: \(data), response: \(response)")
     guard let httpResponse = response as? HTTPURLResponse else {
       logger.error("ERROR: Invalid HTTP response type")
       throw VideoUploadError.processingFailed("Invalid response from server")
     }
-    
+
     logger.debug("DEBUG: Upload limits response code: \(httpResponse.statusCode)")
-    
+
     // Try to decode body regardless of status to extract message/error
     let decoder = JSONDecoder()
     if httpResponse.statusCode == 200 {
@@ -231,7 +245,8 @@ final class MediaUploadManager {
       }
     } else {
       let bodyText = String(data: data, encoding: .utf8) ?? "<binary>"
-      logger.error("ERROR: Failed to get upload limits, HTTP \(httpResponse.statusCode) body=\(bodyText)")
+      logger.error(
+        "ERROR: Failed to get upload limits, HTTP \(httpResponse.statusCode) body=\(bodyText)")
       // Attempt to decode structured reason from non-200 body
       if let limits = try? decoder.decode(UploadLimitsResponse.self, from: data) {
         var combined: String?
@@ -247,13 +262,17 @@ final class MediaUploadManager {
         return (false, combined, limits.error)
       }
       // Could not decode; return generic
-      return (false, "Server error when checking upload limits (HTTP \(httpResponse.statusCode))", nil)
+      return (
+        false, "Server error when checking upload limits (HTTP \(httpResponse.statusCode))", nil
+      )
     }
   }
 
   // MARK: - Public preflight check
   /// Quickly check if the server currently allows video uploads for this account.
-  func preflightUploadPermission(force: Bool = false) async -> (allowed: Bool, message: String?, code: String?) {
+  func preflightUploadPermission(force: Bool = false) async -> (
+    allowed: Bool, message: String?, code: String?
+  ) {
     // If a recent result exists (<= 5 min) and not forced, return it to avoid spamming
     if !force, let last = lastPreflight, Date().timeIntervalSince(last.timestamp) <= 300 {
       return last.result
@@ -271,7 +290,9 @@ final class MediaUploadManager {
       lastPreflight = (Date(), packaged)
       return packaged
     } catch {
-      let packaged: (allowed: Bool, message: String?, code: String?) = (false, error.localizedDescription, nil)
+      let packaged: (allowed: Bool, message: String?, code: String?) = (
+        false, error.localizedDescription, nil
+      )
       lastPreflight = (Date(), packaged)
       return packaged
     }
@@ -282,7 +303,7 @@ final class MediaUploadManager {
   func requestEmailConfirmation() async throws {
     _ = try await client.com.atproto.server.requestEmailConfirmation()
   }
-  
+
   /// Structure for decoding upload limits response
   private struct UploadLimitsResponse: Decodable {
     let canUpload: Bool
@@ -291,27 +312,28 @@ final class MediaUploadManager {
     let message: String?
     let error: String?
   }
-    
-    private func generateUniqueVideoName() -> String {
-        let randomString = UUID().uuidString.prefix(12)
-        return "\(randomString).mp4"
-    }
+
+  private func generateUniqueVideoName() -> String {
+    let randomString = UUID().uuidString.prefix(12)
+    return "\(randomString).mp4"
+  }
 
   /// Start video upload process with additional validation
   @MainActor
   func uploadVideo(url: URL, alt: String? = nil) async throws -> Blob {
     logger.debug("DEBUG: Starting video upload for URL: \(url)")
-    
+
     // Validate file exists
     let fileManager = FileManager.default
     guard fileManager.fileExists(atPath: url.path) else {
       logger.error("ERROR: Video file does not exist at path: \(url.path)")
       throw VideoUploadError.processingFailed("Video file not found at specified location.")
     }
-    
+
     // Check file size
     guard let fileAttributes = try? fileManager.attributesOfItem(atPath: url.path),
-          let fileSize = fileAttributes[.size] as? NSNumber else {
+      let fileSize = fileAttributes[.size] as? NSNumber
+    else {
       logger.error("ERROR: Could not determine video file size for path: \(url.path)")
       throw VideoUploadError.processingFailed("Could not determine video file size")
     }
@@ -319,10 +341,11 @@ final class MediaUploadManager {
     logger.debug("DEBUG: Video file size: \(fileSize.intValue) bytes")
     let maxVideoSize = 100 * 1024 * 1024  // 100MB
     if fileSize.intValue > maxVideoSize {
-      logger.error("ERROR: Video exceeds maximum size of 100MB (actual: \(fileSize.intValue / 1024 / 1024)MB)")
+      logger.error(
+        "ERROR: Video exceeds maximum size of 100MB (actual: \(fileSize.intValue / 1024 / 1024)MB)")
       throw VideoUploadError.processingFailed("Video exceeds maximum size of 100MB")
     }
-    
+
     // Validate video format
     do {
       let asset = AVURLAsset(url: url)
@@ -330,9 +353,10 @@ final class MediaUploadManager {
       let isPlayable = try await asset.load(.isPlayable)
       if !isPlayable {
         logger.error("ERROR: Video asset is not playable")
-        throw VideoUploadError.processingFailed("Video format is not supported or file is corrupted")
+        throw VideoUploadError.processingFailed(
+          "Video format is not supported or file is corrupted")
       }
-      
+
       // Verify it has a video track
       logger.debug("DEBUG: Checking for video tracks")
       let videoTracks = try await asset.loadTracks(withMediaType: .video)
@@ -340,34 +364,36 @@ final class MediaUploadManager {
         logger.error("ERROR: No video tracks found in asset")
         throw VideoUploadError.processingFailed("No video content found in file")
       }
-      
+
       // Get duration
       let duration = try await asset.load(.duration)
       let durationInSeconds = CMTimeGetSeconds(duration)
       logger.debug("DEBUG: Video duration: \(durationInSeconds) seconds")
-      
+
       // Check duration limits if needed
-      if durationInSeconds > 180 { // 3 minutes max (updated March 2025)
-        logger.error("ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 180 seconds)")
+      if durationInSeconds > 180 {  // 3 minutes max (updated March 2025)
+        logger.error(
+          "ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 180 seconds)")
         throw VideoUploadError.processingFailed("Video exceeds maximum duration of 3 minutes")
       }
     } catch let assetError where !(assetError is VideoUploadError) {
       logger.error("ERROR: Failed to validate video asset: \(assetError)")
-      throw VideoUploadError.processingFailed("Could not validate video: \(assetError.localizedDescription)")
+      throw VideoUploadError.processingFailed(
+        "Could not validate video: \(assetError.localizedDescription)")
     }
 
     // Get authentication token
     let authToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getUploadLimits")
-    
+
     // Check upload limits from server using direct URLSession
     let (canUpload, limitMessage, _) = try await checkVideoUploadLimits(token: authToken)
-    
+
     guard canUpload else {
       let errorMessage = limitMessage ?? "Cannot upload videos at this time"
       logger.error("ERROR: Server does not allow video uploads: \(errorMessage)")
       throw VideoUploadError.processingFailed(errorMessage)
     }
-    
+
     logger.debug("DEBUG: Video uploads are allowed, proceeding with upload")
 
     // Get DID for the upload URL
@@ -384,7 +410,7 @@ final class MediaUploadManager {
     var urlComponents = URLComponents(url: uploadURL, resolvingAgainstBaseURL: true)!
     urlComponents.queryItems = [
       URLQueryItem(name: "did", value: didValue),
-      URLQueryItem(name: "name", value: generateUniqueVideoName())
+      URLQueryItem(name: "name", value: generateUniqueVideoName()),
     ]
     uploadURL = urlComponents.url!
     logger.debug("DEBUG: Upload URL: \(uploadURL)")
@@ -399,13 +425,14 @@ final class MediaUploadManager {
       logger.error("ERROR: Failed to load video data: \(error)")
       isVideoUploading = false
       uploadStatus = .failed(error: "Could not load video data: \(error.localizedDescription)")
-      throw VideoUploadError.processingFailed("Could not load video data: \(error.localizedDescription)")
+      throw VideoUploadError.processingFailed(
+        "Could not load video data: \(error.localizedDescription)")
     }
-    
+
     // IMPORTANT: Upload requires a token scoped to repo upload with aud set to the PDS DID
     // (see Bluesky reference app). Using video service DID will be rejected with 401.
     let token = try await getPdsRepoUploadAuthToken()
-      
+
     // Set up HTTP request
     logger.debug("DEBUG: Setting up HTTP request for video upload")
     var request = URLRequest(url: uploadURL)
@@ -433,7 +460,7 @@ final class MediaUploadManager {
       Task { @MainActor in
         self?.videoUploadProgress = progress
         self?.uploadStatus = .uploading(progress: progress)
-          self?.logger.debug("DEBUG: Upload progress: \(Int(progress * 100))%")
+        self?.logger.debug("DEBUG: Upload progress: \(Int(progress * 100))%")
       }
     }
 
@@ -446,7 +473,9 @@ final class MediaUploadManager {
         fromFile: url,
         delegate: progressDelegate
       )
-      logger.debug("DEBUG: Upload request completed with response status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+      logger.debug(
+        "DEBUG: Upload request completed with response status: \((response as? HTTPURLResponse)?.statusCode ?? 0)"
+      )
       if let bodyString = String(data: responseData, encoding: .utf8) {
         logger.debug("DEBUG: Server response body: \(bodyString)")
       }
@@ -464,44 +493,51 @@ final class MediaUploadManager {
       uploadStatus = .failed(error: "Invalid response from server")
       throw VideoUploadError.uploadFailed
     }
-    
+
     // Decode and log response body for debugging
-    logger.debug("DEBUG: Server response body: \(String(data: responseData, encoding: .utf8) ?? "<binary data>")")
-    
-      if httpResponse.statusCode == 200 {
-          logger.debug("DEBUG: Video upload successful, processing response")
-          let decoder = JSONDecoder()
-          do {
-              let jobStatus = try decoder.decode(AppBskyVideoDefs.JobStatus.self, from: responseData)
-              logger.debug("DEBUG: Job ID: \(jobStatus.jobId)")
-              videoJobId = jobStatus.jobId
-              // Use a token scoped for job status against the video service
-              let statusToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getJobStatus")
-              return try await pollVideoJobStatus(jobId: jobStatus.jobId, token: statusToken)
-          } catch {
-              logger.error("ERROR: Failed to decode job status from response: \(error)")
-              isVideoUploading = false
-              uploadStatus = .failed(error: "Invalid response format from server")
-              throw VideoUploadError.processingFailed("Could not decode server response: \(error.localizedDescription)")
-          }
-      } else if httpResponse.statusCode == 409,
-            let errorJson = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-            let jobId = errorJson["jobId"] as? String {
-             logger.debug("DEBUG: Video was already processed, reusing job ID: \(jobId)")
-             videoJobId = jobId
-             let statusToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getJobStatus")
-             return try await pollVideoJobStatus(jobId: jobId, token: statusToken)
+    logger.debug(
+      "DEBUG: Server response body: \(String(data: responseData, encoding: .utf8) ?? "<binary data>")"
+    )
+
+    if httpResponse.statusCode == 200 {
+      logger.debug("DEBUG: Video upload successful, processing response")
+      let decoder = JSONDecoder()
+      do {
+        let jobStatus = try decoder.decode(AppBskyVideoDefs.JobStatus.self, from: responseData)
+        logger.debug("DEBUG: Job ID: \(jobStatus.jobId)")
+        videoJobId = jobStatus.jobId
+        // Use a token scoped for job status against the video service
+        let statusToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getJobStatus")
+        return try await pollVideoJobStatus(jobId: jobStatus.jobId, token: statusToken)
+      } catch {
+        logger.error("ERROR: Failed to decode job status from response: \(error)")
+        isVideoUploading = false
+        uploadStatus = .failed(error: "Invalid response format from server")
+        throw VideoUploadError.processingFailed(
+          "Could not decode server response: \(error.localizedDescription)")
+      }
+    } else if httpResponse.statusCode == 409,
+      let errorJson = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+      let jobId = errorJson["jobId"] as? String
+    {
+      logger.debug("DEBUG: Video was already processed, reusing job ID: \(jobId)")
+      videoJobId = jobId
+      let statusToken = try await getVideoServiceAuthToken(lxm: "app.bsky.video.getJobStatus")
+      return try await pollVideoJobStatus(jobId: jobId, token: statusToken)
     } else {
       // Try to extract error message from response body
       let errorMessage: String
       if let errorJson = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-         let message = errorJson["message"] as? String {
+        let message = errorJson["message"] as? String
+      {
         errorMessage = message
       } else {
         errorMessage = "HTTP \(httpResponse.statusCode)"
       }
-      
-      logger.error("ERROR: Video upload failed with HTTP status code \(httpResponse.statusCode): \(errorMessage)")
+
+      logger.error(
+        "ERROR: Video upload failed with HTTP status code \(httpResponse.statusCode): \(errorMessage)"
+      )
       isVideoUploading = false
       uploadStatus = .failed(error: "Upload failed: \(errorMessage)")
       throw VideoUploadError.uploadFailed
@@ -515,61 +551,64 @@ final class MediaUploadManager {
     let maxAttempts = 30  // Timeout after 5 minutes (30 * 10 seconds)
     var consecutiveErrorCount = 0
     let maxConsecutiveErrors = 3
-    
+
     while attempts < maxAttempts {
       attempts += 1
       logger.debug("DEBUG: Polling attempt \(attempts) of \(maxAttempts)")
 
       do {
         // Prepare request
-          var statusURL = URL(string: "\(videoBaseURL)/app.bsky.video.getJobStatus")!
-          var urlComponents = URLComponents(url: statusURL, resolvingAgainstBaseURL: true)!
-          urlComponents.queryItems = [URLQueryItem(name: "jobId", value: jobId)]
-          statusURL = urlComponents.url!
+        var statusURL = URL(string: "\(videoBaseURL)/app.bsky.video.getJobStatus")!
+        var urlComponents = URLComponents(url: statusURL, resolvingAgainstBaseURL: true)!
+        urlComponents.queryItems = [URLQueryItem(name: "jobId", value: jobId)]
+        statusURL = urlComponents.url!
 
-          var request = URLRequest(url: statusURL)
-          request.httpMethod = "GET"
-          request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-          
+        var request = URLRequest(url: statusURL)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
         // Perform request
         let (responseData, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
           logger.error("ERROR: Invalid HTTP response type")
           throw VideoUploadError.processingFailed("Invalid response from server")
         }
-        
+
         logger.debug("DEBUG: Job status response code: \(httpResponse.statusCode)")
-        
+
         if httpResponse.statusCode != 200 {
           logger.error("ERROR: Job status request returned HTTP \(httpResponse.statusCode)")
           consecutiveErrorCount += 1
-          
+
           if consecutiveErrorCount >= maxConsecutiveErrors {
             logger.error("ERROR: Too many consecutive errors (\(consecutiveErrorCount))")
-            throw VideoUploadError.processingFailed("Failed to get job status after multiple attempts")
+            throw VideoUploadError.processingFailed(
+              "Failed to get job status after multiple attempts")
           }
-          
+
           // Continue to next attempt after a delay
-          try await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+          try await Task.sleep(nanoseconds: 5_000_000_000)  // 5 seconds
           continue
         }
-        
+
         // Reset consecutive error count on success
         consecutiveErrorCount = 0
-        
+
         // Decode the response
         let decoder = JSONDecoder()
         let status = try decoder.decode(JobStatusResponse.self, from: responseData)
-        
+
         // Log the complete job status for debugging
-          logger.debug("DEBUG: Job status: state=\(status.jobStatus.state), progress=\(status.jobStatus.progress ?? -1), error=\(status.jobStatus.error ?? "nil")")
-        
+        logger.debug(
+          "DEBUG: Job status: state=\(status.jobStatus.state), progress=\(status.jobStatus.progress ?? -1), error=\(status.jobStatus.error ?? "nil")"
+        )
+
         // Handle different job states
         switch status.jobStatus.state {
         case "queued":
           logger.debug("DEBUG: Job is queued for processing")
-          
+
         case "processing":
           if let progress = status.jobStatus.progress {
             await MainActor.run {
@@ -580,11 +619,13 @@ final class MediaUploadManager {
           } else {
             logger.debug("DEBUG: Processing (no progress percentage reported)")
           }
-          
+
         case "JOB_STATE_COMPLETED":
           logger.debug("DEBUG: Job completed successfully")
           if let processedBlob = status.jobStatus.blob {
-            logger.debug("DEBUG: Blob received: type=\(processedBlob.mimeType), size=\(processedBlob.size) bytes")
+            logger.debug(
+              "DEBUG: Blob received: type=\(processedBlob.mimeType), size=\(processedBlob.size) bytes"
+            )
             await MainActor.run {
               self.uploadStatus = .complete
               self.uploadedBlob = processedBlob
@@ -593,7 +634,8 @@ final class MediaUploadManager {
             return processedBlob
           } else {
             logger.error("ERROR: Job succeeded but no blob was returned")
-            throw VideoUploadError.processingFailed("Server reported success but provided no video data")
+            throw VideoUploadError.processingFailed(
+              "Server reported success but provided no video data")
           }
         case "JOB_STATE_FAILED":
           let errorMessage = status.jobStatus.error ?? "Unknown error"
@@ -603,7 +645,7 @@ final class MediaUploadManager {
             self.videoError = errorMessage
           }
           throw VideoUploadError.processingFailed(errorMessage)
-          
+
         default:
           logger.debug("DEBUG: Unknown job state: \(status.jobStatus.state)")
         }
@@ -613,10 +655,11 @@ final class MediaUploadManager {
       } catch {
         logger.error("ERROR: Failed to poll job status: \(error)")
         consecutiveErrorCount += 1
-        
+
         if consecutiveErrorCount >= maxConsecutiveErrors {
           logger.error("ERROR: Too many consecutive errors (\(consecutiveErrorCount))")
-          throw VideoUploadError.processingFailed("Failed to poll job status: \(error.localizedDescription)")
+          throw VideoUploadError.processingFailed(
+            "Failed to poll job status: \(error.localizedDescription)")
         }
       }
 
@@ -628,12 +671,13 @@ final class MediaUploadManager {
     // If we reach here, we've timed out
     await MainActor.run {
       self.isVideoUploading = false
-      self.uploadStatus = .failed(error: "Video processing timed out after \(videoAttempts) attempts")
+      self.uploadStatus = .failed(
+        error: "Video processing timed out after \(videoAttempts) attempts")
     }
     logger.error("ERROR: Video processing timed out after \(attempts) attempts")
     throw VideoUploadError.processingTimeout
   }
-  
+
   /// Structure for decoding job status response
   private struct JobStatusResponse: Decodable {
     let jobStatus: AppBskyVideoDefs.JobStatus
@@ -642,28 +686,28 @@ final class MediaUploadManager {
   /// Cancel an ongoing upload
   func cancelUpload() {
     logger.info("Cancelling video upload")
-    
+
     // Cancel any ongoing upload tasks
     if let currentUploadTask = currentUploadTask {
       currentUploadTask.cancel()
       self.currentUploadTask = nil
       logger.debug("Cancelled ongoing upload task")
     }
-    
+
     // Cancel any ongoing processing tasks
     if let currentProcessingTask = currentProcessingTask {
       currentProcessingTask.cancel()
       self.currentProcessingTask = nil
       logger.debug("Cancelled ongoing processing task")
     }
-    
+
     // If we have a job ID, attempt to cancel the server-side job
     if let jobId = videoJobId {
       Task {
         await cancelServerSideJob(jobId: jobId)
       }
     }
-    
+
     // Reset all upload state
     uploadStatus = .cancelled
     videoUploadProgress = 0.0
@@ -671,18 +715,18 @@ final class MediaUploadManager {
     videoJobId = nil
     uploadedBlob = nil
     isVideoUploading = false
-    
+
     logger.info("Video upload cancelled and state reset")
   }
-  
+
   /// Cancels a server-side video processing job
   private func cancelServerSideJob(jobId: String) async {
     logger.info("Attempting to cancel server-side job: \(jobId)")
-    
+
     // There's no explicit cancel endpoint in the current AT Protocol spec,
     // but we can mark it as cancelled in our tracking
     logger.debug("Server-side job cancellation requested for: \(jobId)")
-    
+
     // In a full implementation, you might want to:
     // 1. Store cancelled job IDs to avoid polling them
     // 2. Implement a retry mechanism for network failures
@@ -691,7 +735,8 @@ final class MediaUploadManager {
 
   /// Creates a video embed from the uploaded blob
   func createVideoEmbed(aspectRatio: CGSize?, alt: String) -> AppBskyFeedPost
-    .AppBskyFeedPostEmbedUnion? {
+    .AppBskyFeedPostEmbedUnion?
+  {
     guard let blob = uploadedBlob else {
       return nil
     }
@@ -709,7 +754,8 @@ final class MediaUploadManager {
       video: blob,
       captions: nil,
       alt: alt.isEmpty ? nil : alt,
-      aspectRatio: ratio
+      aspectRatio: ratio,
+      presentation: nil
     )
 
     return .appBskyEmbedVideo(videoEmbed)
@@ -738,40 +784,46 @@ final class MediaUploadManager {
     }
 
     #if os(iOS)
-    let image = UIImage(cgImage: cgImage)
-    return image.jpegData(compressionQuality: 0.9)
+      let image = UIImage(cgImage: cgImage)
+      return image.jpegData(compressionQuality: 0.9)
     #elseif os(macOS)
-    let image = NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
-    guard let tiffData = image.tiffRepresentation,
-          let bitmapRep = NSBitmapImageRep(data: tiffData) else {
-      return nil
-    }
-    return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+      let image = NSImage(
+        cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
+      guard let tiffData = image.tiffRepresentation,
+        let bitmapRep = NSBitmapImageRep(data: tiffData)
+      else {
+        return nil
+      }
+      return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
     #endif
   }
 
   func compressImage(_ image: PlatformImage, maxSizeInBytes: Int = 900_000) -> Data? {
     var compression: CGFloat = 1.0
     #if os(iOS)
-    var imageData = image.jpegData(compressionQuality: compression)
+      var imageData = image.jpegData(compressionQuality: compression)
     #elseif os(macOS)
-    var imageData: Data?
-    if let tiffData = image.tiffRepresentation,
-       let bitmapRep = NSBitmapImageRep(data: tiffData) {
-      imageData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compression])
-    }
+      var imageData: Data?
+      if let tiffData = image.tiffRepresentation,
+        let bitmapRep = NSBitmapImageRep(data: tiffData)
+      {
+        imageData = bitmapRep.representation(
+          using: .jpeg, properties: [.compressionFactor: compression])
+      }
     #endif
 
     // Gradually lower quality until we get under target size
     while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
       compression -= 0.1
       #if os(iOS)
-      imageData = image.jpegData(compressionQuality: compression)
+        imageData = image.jpegData(compressionQuality: compression)
       #elseif os(macOS)
-      if let tiffData = image.tiffRepresentation,
-         let bitmapRep = NSBitmapImageRep(data: tiffData) {
-        imageData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: compression])
-      }
+        if let tiffData = image.tiffRepresentation,
+          let bitmapRep = NSBitmapImageRep(data: tiffData)
+        {
+          imageData = bitmapRep.representation(
+            using: .jpeg, properties: [.compressionFactor: compression])
+        }
       #endif
     }
 
@@ -781,21 +833,22 @@ final class MediaUploadManager {
       let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
 
       #if os(iOS)
-      UIGraphicsBeginImageContextWithOptions(newSize, false, image.scale)
-      image.draw(in: CGRect(origin: .zero, size: newSize))
-      let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
-      UIGraphicsEndImageContext()
-      return resizedImage?.jpegData(compressionQuality: 0.7)
+        UIGraphicsBeginImageContextWithOptions(newSize, false, image.scale)
+        image.draw(in: CGRect(origin: .zero, size: newSize))
+        let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return resizedImage?.jpegData(compressionQuality: 0.7)
       #elseif os(macOS)
-      let resizedImage = NSImage(size: newSize, flipped: false) { rect in
-        image.draw(in: rect)
-        return true
-      }
-      if let tiffData = resizedImage.tiffRepresentation,
-         let bitmapRep = NSBitmapImageRep(data: tiffData) {
-        return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
-      }
-      return nil
+        let resizedImage = NSImage(size: newSize, flipped: false) { rect in
+          image.draw(in: rect)
+          return true
+        }
+        if let tiffData = resizedImage.tiffRepresentation,
+          let bitmapRep = NSBitmapImageRep(data: tiffData)
+        {
+          return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
+        }
+        return nil
       #endif
     }
 

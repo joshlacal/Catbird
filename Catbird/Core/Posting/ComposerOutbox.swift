@@ -42,10 +42,29 @@ final class ComposerOutbox {
     logger.info("Outbox: enqueued thread count=\(texts.count)")
   }
 
-  func processAll(appState: AppState) async {
+  func processAll(appState: AppState, maxItems: Int? = nil) async {
     let postManager = appState.postManager
-    var remaining: [ComposerOutboxItem] = []
-    for item in items {
+    let processingCap = maxItems.map { max(0, $0) } ?? items.count
+    let processingCount = min(processingCap, items.count)
+
+    guard processingCount > 0 else { return }
+
+    let pendingItems = Array(items.prefix(processingCount))
+    let untouchedItems = Array(items.dropFirst(processingCount))
+    var failedOrUnprocessedItems: [ComposerOutboxItem] = []
+
+    if processingCount < items.count {
+        logger.info("Outbox: processing bounded batch size=\(processingCount) remaining=\(self.items.count - processingCount)")
+    }
+
+    var index = pendingItems.startIndex
+    while index < pendingItems.endIndex {
+      if Task.isCancelled {
+        failedOrUnprocessedItems.append(contentsOf: pendingItems[index...])
+        break
+      }
+
+      let item = pendingItems[index]
       do {
         switch item.kind {
         case .post:
@@ -60,10 +79,13 @@ final class ComposerOutbox {
         logger.info("Outbox: posted item=\(item.id.uuidString)")
       } catch {
         logger.error("Outbox: failed item=\(item.id.uuidString) error=\(error.localizedDescription)")
-        remaining.append(item) // keep for retry
+        failedOrUnprocessedItems.append(item)
       }
+
+      pendingItems.formIndex(after: &index)
     }
-    items = remaining
+
+    items = failedOrUnprocessedItems + untouchedItems
     persist()
   }
 
@@ -83,4 +105,3 @@ final class ComposerOutbox {
     } catch { items = [] }
   }
 }
-

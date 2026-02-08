@@ -290,13 +290,22 @@ extension PostComposerViewModel {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
                         var mediaItem = MediaItem()
                         mediaItem.rawData = data
+
                         #if os(iOS)
-                        mediaItem.image = Image(uiImage: UIImage(data: data) ?? UIImage())
+                        let platformImage = UIImage(data: data)
+                        if let platformImage = platformImage {
+                            mediaItem.image = Image(uiImage: platformImage)
+                            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+                        }
                         #elseif os(macOS)
-                        mediaItem.image = Image(nsImage: NSImage(data: data) ?? NSImage())
+                        let platformImage = NSImage(data: data)
+                        if let platformImage = platformImage {
+                            mediaItem.image = Image(nsImage: platformImage)
+                            mediaItem.aspectRatio = platformImage.size
+                        }
                         #endif
                         mediaItem.isLoading = false
-                        
+
                         if isDataAnimatedGIF(data) {
                             await processGIFAsVideoFromData(data)
                         } else {
@@ -314,17 +323,26 @@ extension PostComposerViewModel {
     func processDetectedGenmoji(_ genmojiData: Data) async {
         var mediaItem = MediaItem()
         mediaItem.rawData = genmojiData
+
         #if os(iOS)
-        mediaItem.image = Image(uiImage: UIImage(data: genmojiData) ?? UIImage())
+        let platformImage = UIImage(data: genmojiData)
+        if let platformImage = platformImage {
+            mediaItem.image = Image(uiImage: platformImage)
+            mediaItem.aspectRatio = CGSize(width: platformImage.size.width, height: platformImage.size.height)
+        }
         #elseif os(macOS)
-        mediaItem.image = Image(nsImage: NSImage(data: genmojiData) ?? NSImage())
+        let platformImage = NSImage(data: genmojiData)
+        if let platformImage = platformImage {
+            mediaItem.image = Image(nsImage: platformImage)
+            mediaItem.aspectRatio = platformImage.size
+        }
         #endif
         mediaItem.isLoading = false
-        
+
         let source = MediaSource.genmojiConversion(genmojiData)
         if !isMediaSourceAlreadyAdded(source) {
             trackMediaSource(source)
-            
+
             if mediaItems.count < maxImagesAllowed {
                 mediaItems.append(mediaItem)
             }
@@ -504,6 +522,9 @@ extension PostComposerViewModel {
         isPosting = true
         defer { isPosting = false }
         
+        // Start MetricKit tracking for post composition
+        await MetricKitSignposts.beginPostComposition()
+        
         logger.info("Creating post with text: \(self.postText)")
         
         let postManager = appState.postManager
@@ -515,22 +536,49 @@ extension PostComposerViewModel {
         
         // Create embed if needed
         var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
-        if let gif = selectedGif {
+
+        // Check if we have both a quoted post AND media - this requires recordWithMedia
+        if let quotedPost = quotedPost {
+            let strongRef = ComAtprotoRepoStrongRef(
+                uri: quotedPost.uri,
+                cid: quotedPost.cid
+            )
+            let record = AppBskyEmbedRecord(record: strongRef)
+
+            if let gif = selectedGif {
+                logger.debug("Creating recordWithMedia embed (quote + GIF)")
+                if let gifEmbed = try await createGifEmbed(gif),
+                   case .appBskyEmbedExternal(let external) = gifEmbed {
+                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedExternal(external)
+                    embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                }
+            } else if !mediaItems.isEmpty {
+                logger.debug("Creating recordWithMedia embed (quote + \(self.mediaItems.count) images)")
+                if let imagesEmbed = try await createImagesEmbed(),
+                   case .appBskyEmbedImages(let images) = imagesEmbed {
+                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedImages(images)
+                    embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                }
+            } else if videoItem != nil {
+                logger.debug("Creating recordWithMedia embed (quote + video)")
+                if let videoEmbed = try await createVideoEmbed(),
+                   case .appBskyEmbedVideo(let video) = videoEmbed {
+                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedVideo(video)
+                    embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                }
+            } else {
+                logger.debug("Creating quote post embed")
+                embed = .appBskyEmbedRecord(record)
+            }
+        } else if let gif = selectedGif {
             logger.debug("Creating GIF embed")
-            // Handle GIF embed
             embed = try await createGifEmbed(gif)
         } else if !mediaItems.isEmpty {
             logger.debug("Creating images embed for \(self.mediaItems.count) images")
-            // Handle image embeds
             embed = try await createImagesEmbed()
         } else if videoItem != nil {
             logger.debug("Creating video embed")
-            // Handle video embed
             embed = try await createVideoEmbed()
-        } else if let quotedPost = quotedPost {
-            logger.debug("Creating quote post embed")
-            // Handle quote post embed
-            embed = createQuoteEmbed(quotedPost)
         } else if let embedURL = selectedEmbedURL, let urlCard = urlCards[embedURL] {
             logger.debug("Creating external link embed for selected URL: \(embedURL)")
             embed = await createExternalEmbedWithThumbnail(urlCard)
@@ -577,13 +625,18 @@ extension PostComposerViewModel {
                 ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
                 appState.composerDraftManager.clearDraft()
                 logger.info("Post queued offline")
+                await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
                 return
             }
+            await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
             throw error
         }
         
         // Clear draft on successful post creation
         appState.composerDraftManager.clearDraft()
+        
+        // End MetricKit tracking for successful post
+        await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
         
         logger.info("Post created successfully")
     }
@@ -1070,6 +1123,19 @@ extension PostComposerViewModel {
             logger.debug("PostComposer: No manual link facets to add")
         }
         
+        // Filter out phantom mentions (length <= 1) which can cause issues
+        enhancedFacets = enhancedFacets.filter { facet in
+            let length = facet.index.byteEnd - facet.index.byteStart
+            if length <= 1 {
+                // Check if it's a mention
+                if case .appBskyRichtextFacetMention = facet.features.first {
+                    logger.warning("PostComposer: Filtering out phantom mention facet of length \(length) at \(facet.index.byteStart)")
+                    return false
+                }
+            }
+            return true
+        }
+        
         logger.debug("PostComposer: Final facets count: \(enhancedFacets.count)")
         return enhancedFacets
     }
@@ -1106,8 +1172,8 @@ extension PostComposerViewModel {
         for (handle, range) in mentions {
             do {
                 // Try to resolve the profile
-                let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
-                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActors(input: params)
+                let params = AppBskyActorSearchActorsTypeahead.Parameters(q: handle, limit: 1)
+                let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
                 
                 if responseCode >= 200 && responseCode < 300,
                    let response = searchResponse,
@@ -1125,7 +1191,9 @@ extension PostComposerViewModel {
                         labels: profile.labels,
                         createdAt: profile.createdAt,
                         verification: profile.verification,
-                        status: profile.status
+                        status: profile.status,
+                        debug: nil
+
                     )
                     
                     await MainActor.run {

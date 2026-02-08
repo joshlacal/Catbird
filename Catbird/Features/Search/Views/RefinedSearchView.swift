@@ -26,6 +26,7 @@ struct RefinedSearchView: View {
     @State private var isShowingFilters = false
     @State private var isShowingAdvancedFilters = false
     @State private var isShowingAllTrendingTopics = false
+    @State private var isShowingAllSavedSearches = false  // SRCH-015: All saved searches sheet
     @State private var isShowingSaveSearchSheet = false  // SRCH-015: Save search UI
     @State private var isShowingSuggestedProfiles = false
     @State private var isShowingAddFeedSheet = false
@@ -82,6 +83,20 @@ struct RefinedSearchView: View {
             AllTrendingTopicsView(
                 topics: viewModel.trendingTopics,
                 onSelect: handleTopicSelection
+            )
+        }
+        .sheet(isPresented: $isShowingAllSavedSearches) {
+            AllSavedSearchesView(
+                savedSearches: viewModel.savedSearches,
+                onSelect: { savedSearch in
+                    isShowingAllSavedSearches = false
+                    if let client = appState.atProtoClient {
+                        viewModel.loadAndApplySavedSearch(savedSearch, client: client)
+                    }
+                },
+                onDelete: { savedSearch in
+                    viewModel.deleteSavedSearch(savedSearch.id)
+                }
             )
         }
         .sheet(isPresented: $isShowingSaveSearchSheet) {
@@ -287,6 +302,7 @@ struct RefinedSearchView: View {
             viewModel: viewModel,
             path: navigationPath,
             showAllTrendingTopics: $isShowingAllTrendingTopics,
+            showAllSavedSearches: $isShowingAllSavedSearches,
             showSuggestedProfiles: $isShowingSuggestedProfiles,
             showAddFeedSheet: $isShowingAddFeedSheet
         )
@@ -651,7 +667,8 @@ struct RefinedSearchView: View {
 
 // MARK: - Preview
 #Preview {
-    @Previewable @State var appState = AppState.shared
+    @Previewable @Environment(AppState.self) var appState
+
     let selectedTab = Binding.constant(1)
     
     RefinedSearchView(appState: appState, selectedTab: selectedTab, lastTappedTab: .constant(1))

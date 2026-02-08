@@ -298,8 +298,9 @@ extension View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         AgeVerificationView()
-            .environment(AppState.shared)
+            .applyAppStateEnvironment(appState)
     }
 }

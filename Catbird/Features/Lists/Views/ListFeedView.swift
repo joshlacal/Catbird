@@ -25,7 +25,7 @@ final class ListFeedViewModel {
   
   var isOwnList: Bool {
     guard let listDetails = listDetails else { return false }
-    return listDetails.creator.did.didString() == appState.currentUserDID
+    return listDetails.creator.did.didString() == appState.userDID
   }
   
   // MARK: - Initialization
@@ -197,7 +197,7 @@ struct ListFeedView: View {
     VStack(spacing: 12) {
       HStack(spacing: 12) {
         // List Avatar
-        LazyImage(url: listDetails.avatar?.url) { state in
+        LazyImage(url: listDetails.finalAvatarURL()) { state in
           if let image = state.image {
             image
               .resizable()
@@ -256,7 +256,7 @@ struct ListFeedView: View {
           viewModel.showingMembersList = false
         } label: {
           HStack(spacing: 12) {
-            LazyImage(url: member.avatar?.url) { state in
+            LazyImage(url: member.finalAvatarURL()) { state in
               if let image = state.image {
                 image
                   .resizable()
@@ -291,9 +291,12 @@ struct ListFeedView: View {
     #endif
     .toolbar {
       ToolbarItem(placement: .cancellationAction) {
-        Button("Done") {
-          viewModel.showingMembersList = false
-        }
+          Button {
+              viewModel.showingMembersList = false
+          } label: {
+              Image(systemName: "xmark")
+          }
+
       }
     }
   }

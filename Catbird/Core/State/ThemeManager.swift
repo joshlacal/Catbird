@@ -24,10 +24,14 @@ import OSLog
     /// Cache current theme settings to avoid redundant applications
     private var currentTheme: String = ""
     private var currentDarkThemeMode: String = ""
-    
+
     /// Debounce force navigation bar updates to prevent infinite loops
     private var lastForceUpdateTime: Date = Date.distantPast
     private let forceUpdateDebounceInterval: TimeInterval = 0.1 // 100ms
+
+    /// Theme application debouncing
+    private var themeApplyTask: Task<Void, Never>?
+    private let themeApplyDebounceInterval: TimeInterval = 0.1 // 100ms
     
     // MARK: - Theme Definitions
     
@@ -45,21 +49,25 @@ import OSLog
     // MARK: - Methods
     
     /// Apply theme based on current settings
-    func applyTheme(theme: String, darkThemeMode: String) {
+    /// - Parameters:
+    ///   - theme: user selected theme (light/dark/system)
+    ///   - darkThemeMode: dim/black preference
+    ///   - forceImmediateNavigationTypography: when true, navigation title fonts are applied right away to avoid the initial width flicker before the debounced pass runs
+    func applyTheme(theme: String, darkThemeMode: String, forceImmediateNavigationTypography: Bool = false) {
         // Skip if settings haven't changed
         if theme == currentTheme && darkThemeMode == currentDarkThemeMode {
             return
         }
-        
+
         logger.info("Applying theme: \(theme), dark mode: \(darkThemeMode)")
-        
+
         // Update cache
         currentTheme = theme
         currentDarkThemeMode = darkThemeMode
-        
+
         // Update dark theme mode
         self.darkThemeMode = (darkThemeMode == "black") ? .black : .dim
-        
+
         // Update color scheme override
         switch theme {
         case "light":
@@ -71,21 +79,42 @@ import OSLog
         default:
             colorSchemeOverride = nil
         }
-        
-        // Batch all theme updates to reduce main thread blocking
-        Task { @MainActor in
+
+        // Invalidate font cache when theme changes (fonts may need regeneration)
+        NavigationFontConfig.invalidateCache()
+
+        // Cancel any pending theme application
+        themeApplyTask?.cancel()
+
+        if forceImmediateNavigationTypography {
+            // Apply navigation typography immediately to avoid first-frame flashes before the debounced task runs
+            Task { @MainActor in
+                await applyToNavigationBar()
+                NavigationFontConfig.forceApplyToAllNavigationBars(fontManager: fontManager)
+            }
+        }
+
+        // Debounce theme application to coalesce rapid changes
+        themeApplyTask = Task { @MainActor in
+            // Wait for debounce interval
+            try? await Task.sleep(nanoseconds: UInt64(themeApplyDebounceInterval * 1_000_000_000))
+
+            // Check if cancelled
+            guard !Task.isCancelled else { return }
+
+            // Batch all theme updates to reduce main thread blocking
             // Apply immediate window-level changes first (most visible)
             await applyToAllWindows()
-            
+
             // Apply UI component themes in batches
             await applyUIComponentThemes()
-            
+
             // Selectively invalidate color cache (only for changed theme)
             ThemeColorCache.shared.invalidateTheme(theme)
-            
+
             // Force update navigation bars with optimized approach
             await optimizedNavigationBarUpdate()
-            
+
             // Post notification after all updates complete
             NotificationCenter.default.post(name: NSNotification.Name("ThemeChanged"), object: nil)
         }
@@ -262,15 +291,8 @@ import OSLog
     
     /// Update a single navigation bar efficiently
     #if os(iOS)
+    @MainActor
     private func updateSingleNavigationBar(_ navBar: UINavigationBar) {
-        // Ensure we're on the main thread for UI operations
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async {
-                self.updateSingleNavigationBar(navBar)
-            }
-            return
-        }
-        
         // Get current appearances async
         let standard = UINavigationBar.appearance().standardAppearance
         let scrollEdge = UINavigationBar.appearance().scrollEdgeAppearance ?? standard
@@ -305,13 +327,9 @@ import OSLog
             await applyToNavigationBar()
         }
         
-        // Force all existing navigation bars to update typography (ensure main thread)
-        if Thread.isMainThread {
-            performLegacyForceUpdate()
-        } else {
-            DispatchQueue.main.async {
-                self.performLegacyForceUpdate()
-            }
+        // Force all existing navigation bars to update typography
+        Task { @MainActor in
+            self.performLegacyForceUpdate()
         }
         #endif
     }

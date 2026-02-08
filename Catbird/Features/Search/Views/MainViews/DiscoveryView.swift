@@ -13,6 +13,7 @@ struct DiscoveryView: View {
     var viewModel: RefinedSearchViewModel
     @Binding var path: NavigationPath
     @Binding var showAllTrendingTopics: Bool
+    @Binding var showAllSavedSearches: Bool
     @Binding var showSuggestedProfiles: Bool
     @Binding var showAddFeedSheet: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -35,7 +36,7 @@ struct DiscoveryView: View {
                             viewModel.deleteSavedSearch(savedSearch.id)
                         },
                         onShowAll: {
-                            // TODO: Show all saved searches sheet
+                            showAllSavedSearches = true
                         }
                     )
                 }
@@ -358,8 +359,7 @@ private struct InlineTopicSummaryLine: View {
     
     private var topicsListView: some View {
         LazyVStack(spacing: 16) {
-            ForEach(filteredTopics.indices, id: \.self) { index in
-                let topic = filteredTopics[index]
+            ForEach(filteredTopics, id: \.link) { topic in
                 topicCard(topic: topic)
                     .padding(.horizontal, 16)
             }
@@ -371,8 +371,7 @@ private struct InlineTopicSummaryLine: View {
             GridItem(.flexible(), spacing: 12),
             GridItem(.flexible(), spacing: 12)
         ], spacing: 16) {
-            ForEach(filteredTopics.indices, id: \.self) { index in
-                let topic = filteredTopics[index]
+            ForEach(filteredTopics, id: \.link) { topic in
                 compactTopicCard(topic: topic)
             }
         }
@@ -555,7 +554,7 @@ private struct InlineTopicSummaryLine: View {
             appState.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
             HStack(spacing: 8) {
-                AsyncProfileImage(url: actor.avatar?.url, size: 32)
+                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(actor.displayName ?? "@\(actor.handle)")

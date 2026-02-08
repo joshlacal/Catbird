@@ -24,6 +24,9 @@ import SwiftUI
     
     // Target conversation for deep-link navigation (Chat tab specific)
     var targetConversationId: String?
+    
+    // Target MLS conversation for deep-link navigation (Chat tab specific)
+    var targetMLSConversationId: String?
 
     // Set the current tab index - called when the user switches tabs
     func updateCurrentTab(_ index: Int) {
@@ -46,6 +49,16 @@ import SwiftUI
             // For chat tab, set the target conversation ID instead of using navigation path
             // This properly handles the NavigationSplitView architecture
             targetConversationId = convoId
+            // Clear the navigation path to ensure clean navigation state
+            tabPaths[targetTab] = NavigationPath()
+            return
+        }
+        
+        // Special handling for MLS conversation navigation in chat tab
+        if case .mlsConversation(let convoId) = destination, targetTab == 4 {
+            // For chat tab, set the target MLS conversation ID instead of using navigation path
+            // This properly handles the NavigationSplitView architecture
+            targetMLSConversationId = convoId
             // Clear the navigation path to ensure clean navigation state
             tabPaths[targetTab] = NavigationPath()
             return

@@ -593,51 +593,40 @@ extension Color {
 
 // MARK: - Theme Color Cache
 
-/// Performance optimization: Cache calculated colors
+import os
+
+/// Performance optimization: Cache calculated colors with lock-based thread safety
+/// Uses OSAllocatedUnfairLock for minimal blocking (nanoseconds) - much faster than DispatchQueue.sync
 class ThemeColorCache {
     static let shared = ThemeColorCache()
-    
+
     private var cache: [String: Color] = [:]
-    private let queue = DispatchQueue(label: "catbird.theme.colorcache", attributes: .concurrent)
-    
+    private let lock = OSAllocatedUnfairLock()
+
     func color(for key: String, generator: () -> Color) -> Color {
-        // Try to read from cache
-        var cachedColor: Color?
-        queue.sync {
-            cachedColor = cache[key]
-        }
-        
-        if let cached = cachedColor {
+        // Fast path: check cache with minimal lock time
+        let cached: Color? = lock.withLock { cache[key] }
+        if let cached = cached {
             return cached
         }
-        
-        // Generate and cache
+
+        // Generate color outside of lock
         let color = generator()
-        queue.async(flags: .barrier) {
-            self.cache[key] = color
-        }
-        
+
+        // Store with minimal lock time
+        lock.withLock { cache[key] = color }
         return color
     }
-    
+
     func invalidate() {
-        queue.async(flags: .barrier) {
-            self.cache.removeAll()
-        }
+        lock.withLock { cache.removeAll() }
     }
-    
+
     /// Selectively invalidate cache entries for a specific theme
     /// This reduces the performance impact compared to full invalidation
     func invalidateTheme(_ theme: String) {
-        queue.async(flags: .barrier) {
-            // Remove only cache entries that contain the theme name
-            let keysToRemove = self.cache.keys.filter { key in
-                key.contains(theme) || key.contains("dynamic")
-            }
-            
-            for key in keysToRemove {
-                self.cache.removeValue(forKey: key)
-            }
+        lock.withLock {
+            cache = cache.filter { !$0.key.hasPrefix(theme) && !$0.key.hasPrefix("dynamic") }
         }
     }
 }
@@ -666,6 +655,12 @@ extension Color {
     /// Adaptive text color that respects contrast settings
     static func adaptiveText(appState: AppState?, themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme) -> Color {
         let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        return dynamicText(themeManager, style: style, currentScheme: currentScheme, increaseContrast: increaseContrast)
+    }
+
+    /// Adaptive text color variant that accepts AppSettings directly
+    static func adaptiveText(appSettings: AppSettings?, themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme) -> Color {
+        let increaseContrast = appSettings?.increaseContrast ?? false
         return dynamicText(themeManager, style: style, currentScheme: currentScheme, increaseContrast: increaseContrast)
     }
     

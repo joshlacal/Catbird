@@ -22,7 +22,7 @@ struct ReportChatMessageView: View {
   }
   
   var body: some View {
-    NavigationView {
+    NavigationStack {
       Form {
         Section("Message to Report") {
           Text(message.text)

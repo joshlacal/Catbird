@@ -69,9 +69,6 @@ struct SaveSearchSheet: View {
                     }
                 } header: {
                     Text("Notifications")
-                } footer: {
-                    Text("Coming soon: Real-time notifications for new search results")
-                        .foregroundColor(.secondary)
                 }
                 .disabled(true) // Future feature
             }
@@ -202,6 +199,7 @@ struct SaveSearchSheet: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     SaveSearchSheet(
         query: "artificial intelligence",
         filters: AdvancedSearchParams(),

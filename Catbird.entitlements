@@ -26,6 +26,7 @@
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)blue.catbird</string>
+		<string>$(AppIdentifierPrefix)blue.catbird.shared</string>
 	</array>
 </dict>
 </plist>

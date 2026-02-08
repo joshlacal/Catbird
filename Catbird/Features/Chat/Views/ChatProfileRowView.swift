@@ -193,6 +193,7 @@ struct ChatProfileRowView: View {
 
 // MARK: - Preview
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     VStack {
         // Placeholder for preview
         Text("ChatProfileRowView Preview")

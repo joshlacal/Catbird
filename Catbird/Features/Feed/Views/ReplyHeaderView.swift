@@ -52,5 +52,6 @@ struct ReplyHeaderView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     ReplyHeaderView(displayName: "Josh", handle: "josh.uno", timeAgo: "2m")
 }

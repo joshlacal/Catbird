@@ -252,8 +252,10 @@ struct AllSavedSearchesView: View {
                 }
                 
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
                 }
             }

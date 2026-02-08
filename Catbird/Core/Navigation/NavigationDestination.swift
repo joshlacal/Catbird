@@ -22,6 +22,7 @@ enum NavigationDestination: Hashable {
     case activitySubscriptions
     #if os(iOS)
     case conversation(String) // convoId
+    case mlsConversation(String) // MLS secure conversation ID
     case chatTab
     #endif
     
@@ -79,6 +80,9 @@ enum NavigationDestination: Hashable {
         case .conversation(let convoId):
             hasher.combine("conversation")
             hasher.combine(convoId)
+        case .mlsConversation(let convoId):
+            hasher.combine("mlsConversation")
+            hasher.combine(convoId)
         case .chatTab:
             hasher.combine("chatTab")
         #endif
@@ -123,6 +127,8 @@ enum NavigationDestination: Hashable {
             return true
         #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):
+            return lhsId == rhsId
+        case (.mlsConversation(let lhsId), .mlsConversation(let rhsId)):
             return lhsId == rhsId
         case (.chatTab, .chatTab):
             return true

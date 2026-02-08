@@ -8,7 +8,10 @@ extension UIViewController {
     func getCurrentColorScheme() -> ColorScheme {
         let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         // Use ThemeManager's effective color scheme to account for manual overrides
-            return AppState.shared.themeManager.effectiveColorScheme(for: systemScheme)
+        if let activeState = AppStateManager.shared.lifecycle.appState {
+            return activeState.themeManager.effectiveColorScheme(for: systemScheme)
+        }
+        return systemScheme
     }
 }
 
@@ -16,7 +19,10 @@ extension UIView {
     func getCurrentColorScheme() -> ColorScheme {
         let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
         // Use ThemeManager's effective color scheme to account for manual overrides
-            return AppState.shared.themeManager.effectiveColorScheme(for: systemScheme)
+        if let activeState = AppStateManager.shared.lifecycle.appState {
+            return activeState.themeManager.effectiveColorScheme(for: systemScheme)
+        }
+        return systemScheme
     }
 }
 
@@ -71,6 +77,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var parentLoadAttempts = 0
   private var hasReachedTopOfThread = false
   private var pendingLoadTask: Task<Void, Never>?
+  
+  // Hidden replies state
+  private var hasOtherReplies = false  // Whether the thread has additional hidden replies
+  private var isLoadingHiddenReplies = false  // Loading state for hidden replies
+  private var hasLoadedHiddenReplies = false  // Whether hidden replies have been loaded
   
   // Theme observation
   private var themeObserver: UIKitStateObserver<ThemeManager>?
@@ -159,6 +170,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case parentPosts
     case mainPost
     case replies
+    case showMoreReplies
     case bottomSpacer
   }
 
@@ -167,6 +179,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case parentPost(ParentPost)
     case mainPost(AppBskyFeedDefs.PostView)
     case reply(ReplyWrapper)
+    case showMoreRepliesButton
     case spacer
   }
 
@@ -478,6 +491,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     collectionView.register(MainPostCell.self, forCellWithReuseIdentifier: "MainPostCell")
     collectionView.register(ReplyCell.self, forCellWithReuseIdentifier: "ReplyCell")
     collectionView.register(LoadMoreCell.self, forCellWithReuseIdentifier: "LoadMoreCell")
+    collectionView.register(ShowMoreRepliesCell.self, forCellWithReuseIdentifier: "ShowMoreRepliesCell")
     collectionView.register(SpacerCell.self, forCellWithReuseIdentifier: "SpacerCell")
   }
 
@@ -536,6 +550,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       layoutSection.interGroupSpacing = 0
     case .replies:
       layoutSection.interGroupSpacing = 9
+    case .showMoreReplies:
+      layoutSection.interGroupSpacing = 0
     case .bottomSpacer:
       break
     }
@@ -602,6 +618,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         } else {
           estimatedHeight = 180  // Default if no replies
         }
+        
+      case .showMoreReplies:
+        estimatedHeight = 50  // Fixed height for show more button
 
       case .bottomSpacer:
         estimatedHeight = 600
@@ -680,12 +699,51 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           path: self.path
         )
         return cell
+        
+      case .showMoreRepliesButton:
+        let cell =
+          collectionView.dequeueReusableCell(withReuseIdentifier: "ShowMoreRepliesCell", for: indexPath)
+          as! ShowMoreRepliesCell
+        cell.configure(isLoading: self.isLoadingHiddenReplies) { [weak self] in
+          self?.loadHiddenRepliesFromButton()
+        }
+        return cell
+        
       case .spacer:
         return collectionView.dequeueReusableCell(withReuseIdentifier: "SpacerCell", for: indexPath)
       }
     }
 
     return dataSource
+  }
+  
+  /// Called when user taps the "Show More Replies" button
+  private func loadHiddenRepliesFromButton() {
+    guard !isLoadingHiddenReplies, !hasLoadedHiddenReplies else { return }
+    
+    isLoadingHiddenReplies = true
+    updateShowMoreRepliesCell()
+    
+    Task { @MainActor in
+      await threadManager?.loadHiddenReplies(uri: postURI)
+      processHiddenReplies()
+      
+      hasLoadedHiddenReplies = true
+      isLoadingHiddenReplies = false
+      
+      // Refresh the snapshot to show the new replies and remove the button
+      updateDataSnapshot(animatingDifferences: true)
+    }
+  }
+  
+  /// Update the show more replies cell to reflect loading state
+  private func updateShowMoreRepliesCell() {
+    var snapshot = dataSource.snapshot()
+    guard let showMoreItem = snapshot.itemIdentifiers(inSection: .showMoreReplies).first else {
+      return
+    }
+    snapshot.reconfigureItems([showMoreItem])
+    applySnapshot(snapshot, animatingDifferences: false)
   }
 
   // MARK: - Thread Loading Logic
@@ -703,9 +761,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           controllerLogger.debug("🧵 THREAD LOAD: This thread has no parent posts, marking as top of thread")
           hasReachedTopOfThread = true
         }
+        
+        // Track whether there are hidden replies available
+        hasOtherReplies = threadData.hasOtherReplies
+        
+        // If auto-load setting is enabled, load hidden replies automatically
+        // Otherwise, we'll show a "Show More Replies" button
+        if appState.appSettings.showHiddenPosts && threadData.hasOtherReplies {
+          await threadManager?.loadHiddenReplies(uri: postURI)
+          hasLoadedHiddenReplies = true
+        }
       }
 
       processThreadData()
+      processHiddenReplies()
 
       // Pre-calculate all post heights
       if let mainPost = self.mainPost {
@@ -880,6 +949,63 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       replyWrappers = []
     }
   }
+  
+  /// Process hidden replies from the threadManager and merge into replyWrappers
+  /// These are replies that Bluesky's algorithm filtered out but the user wants to see
+  private func processHiddenReplies() {
+    guard let hiddenReplies = threadManager?.hiddenReplies, !hiddenReplies.isEmpty else {
+      return
+    }
+    
+    guard let mainPost = mainPost else { return }
+    
+    // Get existing reply URIs to avoid duplicates
+    let existingURIs = Set(replyWrappers.map { $0.id })
+    
+    var additionalReplies: [ReplyWrapper] = []
+    
+    for item in hiddenReplies {
+      guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value else {
+        continue
+      }
+      
+      let id = item.uri.uriString()
+      
+      // Skip if already in the main replies
+      if existingURIs.contains(id) {
+        continue
+      }
+      
+      let isFromOP = threadItemPost.post.author.did.didString() == mainPost.author.did.didString()
+      let isOpThread = threadItemPost.opThread
+      let hasReplies = threadItemPost.moreReplies > 0
+      
+      // Convert to the v2 ThreadItem type by creating a compatible wrapper
+      // We create a v2 ThreadItem using the same underlying ThreadItemPost
+      let v2Value = AppBskyUnspeccedGetPostThreadV2.ThreadItemValueUnion.appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+      let v2ThreadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: item.uri,
+        depth: item.depth,
+        value: v2Value
+      )
+      
+      let wrapper = ReplyWrapper(
+        id: id,
+        threadItem: v2ThreadItem,
+        depth: item.depth,
+        isFromOP: isFromOP,
+        isOpThread: isOpThread,
+        hasReplies: hasReplies
+      )
+      additionalReplies.append(wrapper)
+    }
+    
+    // Append hidden replies to the main replies list
+    if !additionalReplies.isEmpty {
+      replyWrappers.append(contentsOf: additionalReplies)
+      controllerLogger.debug("🧵 THREAD LOAD: Merged \(additionalReplies.count) previously-filtered replies into thread")
+    }
+  }
 
   private func updateDataSnapshot(animatingDifferences: Bool = false) {
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
@@ -906,15 +1032,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let opThreadItems = opThreadContinuations.map { Item.reply($0) }
     snapshot.appendItems(opThreadItems, toSection: .replies)
     
-    // Then add regular replies (from other users)
+    // Then add regular replies (from other users) - includes merged hidden replies
     let replyItems = replyWrappers.map { Item.reply($0) }
     snapshot.appendItems(replyItems, toSection: .replies)
+    
+    // Add "Show More Replies" button if there are hidden replies and they haven't been loaded yet
+    if hasOtherReplies && !hasLoadedHiddenReplies {
+      snapshot.appendItems([.showMoreRepliesButton], toSection: .showMoreReplies)
+    }
 
     // Add bottom spacer
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
 
     // Apply snapshot via serialized helper to avoid overlap
-    applySnapshot(snapshot, animatingDifferences: false)
+    applySnapshot(snapshot, animatingDifferences: animatingDifferences)
   }
 
   private func updateLoadingCell(isLoading: Bool) {
@@ -2511,6 +2642,103 @@ final class LoadMoreCell: UICollectionViewCell {
   }
 }
 
+// MARK: - Show More Replies Cell
+@available(iOS 18.0, *)
+final class ShowMoreRepliesCell: UICollectionViewCell {
+  private let button = UIButton(type: .system)
+  private let activityIndicator = UIActivityIndicatorView(style: .medium)
+  private var tapAction: (() -> Void)?
+  private var isCurrentlyLoading = false
+  
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    setupViews()
+    
+    // Disable implicit layer animations
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
+  }
+  
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+  
+  private func setupViews() {
+    // Configure button
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.setTitle("Show More Replies", for: .normal)
+    // Apply medium weight to the preferred subheadline font without using non-existent withWeight API
+      let baseFont = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
+    let descriptor = baseFont.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.medium]])
+    button.titleLabel?.font = UIFont(descriptor: descriptor, size: 0)
+    button.setTitleColor(.systemBlue, for: .normal)
+    button.addTarget(self, action: #selector(buttonTapped), for: .touchUpInside)
+    
+    // Configure activity indicator
+    activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+    activityIndicator.hidesWhenStopped = true
+    
+    // Container stack
+    let stackView = UIStackView(arrangedSubviews: [button, activityIndicator])
+    stackView.translatesAutoresizingMaskIntoConstraints = false
+    stackView.axis = .horizontal
+    stackView.spacing = 8
+    stackView.alignment = .center
+    
+    contentView.addSubview(stackView)
+    
+    NSLayoutConstraint.activate([
+      stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+      stackView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+      stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12)
+    ])
+    
+    // Accessibility
+    isAccessibilityElement = true
+    accessibilityLabel = "Show more replies"
+    accessibilityTraits = .button
+  }
+  
+  func configure(isLoading: Bool, onTap: @escaping () -> Void) {
+    tapAction = onTap
+    
+    guard isLoading != isCurrentlyLoading else { return }
+    isCurrentlyLoading = isLoading
+    
+    if isLoading {
+      button.isEnabled = false
+      button.setTitle("Loading...", for: .normal)
+      activityIndicator.startAnimating()
+    } else {
+      button.isEnabled = true
+      button.setTitle("Show More Replies", for: .normal)
+      activityIndicator.stopAnimating()
+    }
+  }
+  
+  @objc private func buttonTapped() {
+    tapAction?()
+  }
+  
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    tapAction = nil
+    isCurrentlyLoading = false
+    button.isEnabled = true
+    button.setTitle("Show More Replies", for: .normal)
+    activityIndicator.stopAnimating()
+  }
+}
+
 @available(iOS 18.0, *)
 final class SpacerCell: UICollectionViewCell {
   override init(frame: CGRect) {
@@ -2584,7 +2812,7 @@ struct ParentPostView: View {
         reason: .notFound,
         path: $path
       )
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
 
     case .appBskyUnspeccedDefsThreadItemBlocked:
       Text("Blocked post")
@@ -2692,7 +2920,7 @@ struct ReplyView: View {
                 reason: .notFound,
                 path: $path
               )
-              .environment(appState)
+              .applyAppStateEnvironment(appState)
               
               // Offer a way to jump into the missing leg of the chain
               Button(action: { path.append(NavigationDestination.post(nestedWrapper.uri)) }) {
@@ -2728,7 +2956,7 @@ struct ReplyView: View {
         reason: .notFound,
         path: $path
       )
-      .environment(appState)
+      .applyAppStateEnvironment(appState)
 
     case .appBskyUnspeccedDefsThreadItemBlocked:
       Text("Blocked reply")
@@ -2782,3 +3010,4 @@ extension ReplyWrapper {
     return threadItem.uri
   }
 }
+

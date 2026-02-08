@@ -175,12 +175,26 @@ extension PostComposerViewModel {
         let mockPost = AppBskyFeedPost(text: postText, entities: nil, facets: facets, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date()))
         let styledAttributedText = mockPost.facetsAsAttributedString
         
+        // Convert to mutable attributed string to add overflow highlighting
+        let mutableAttrString = NSMutableAttributedString(attributedString: NSAttributedString(styledAttributedText))
+        
+        // Apply red background to characters beyond 300-char limit
+        if postText.count > 300 {
+            let overflowRange = NSRange(location: 300, length: postText.count - 300)
+            #if os(iOS)
+            mutableAttrString.addAttribute(.backgroundColor, value: UIColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
+            #else
+            mutableAttrString.addAttribute(.backgroundColor, value: NSColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
+            #endif
+            logger.info("PostComposerTextProcessing: Applied red background to overflow text - range: \(overflowRange)")
+        }
+        
         // Update both AttributedString (iOS 26+) and NSAttributedString (legacy)
         if #available(iOS 26.0, macOS 15.0, *) {
-            attributedPostText = styledAttributedText
-            richAttributedText = NSAttributedString(styledAttributedText)
+            attributedPostText = AttributedString(mutableAttrString)
+            richAttributedText = mutableAttrString
         } else {
-            richAttributedText = NSAttributedString(styledAttributedText)
+            richAttributedText = mutableAttrString
         }
     }
     
@@ -452,8 +466,8 @@ extension PostComposerViewModel {
         
         logger.info("PostComposerTextProcessing: Searching profiles for query: '\(query)'")
         do {
-            let params = AppBskyActorSearchActors.Parameters(q: query, limit: 5)
-            let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActors(input: params)
+            let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 5)
+            let (responseCode, searchResponse) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
             
             if responseCode >= 200 && responseCode < 300, let response = searchResponse {
                 logger.info("PostComposerTextProcessing: Profile search successful - found \(response.actors.count) actors")
@@ -469,7 +483,9 @@ extension PostComposerViewModel {
                         labels: profileView.labels,
                         createdAt: profileView.createdAt,
                         verification: profileView.verification,
-                        status: profileView.status
+                        status: profileView.status,
+                        debug: nil
+
                     )
                 }
                 logger.debug("PostComposerTextProcessing: Converted to \(self.mentionSuggestions.count) ProfileViewBasic")

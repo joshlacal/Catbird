@@ -36,6 +36,10 @@ final class CachedFeedViewPost: Identifiable {
     var threadHiddenCount: Int?
     var isPartOfThread: Bool
     var isIncompleteThread: Bool
+
+    /// Repost metadata for efficient ID computation (avoids JSON decoding during equality checks)
+    var isRepost: Bool
+    var repostIndexedAt: Date?
     
     /// Serialized slice items for thread display (stores all posts in the thread)
     var serializedSliceItems: Data?
@@ -74,6 +78,14 @@ final class CachedFeedViewPost: Identifiable {
         self.isTemporary = false // Default to false for cached posts
         self.feedOrder = nil
 
+        // Extract repost metadata for efficient ID computation
+        if case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedViewPost.reason {
+            self.isRepost = true
+            self.repostIndexedAt = reasonRepost.indexedAt.date
+        } else {
+            self.isRepost = false
+            self.repostIndexedAt = nil
+        }
     }
     
     /// Full initializer with all parameters
@@ -105,6 +117,15 @@ final class CachedFeedViewPost: Identifiable {
         self.isIncompleteThread = false
         self.serializedSliceItems = nil
         self.isTemporary = false
+
+        // Extract repost metadata for efficient ID computation
+        if case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedViewPost.reason {
+            self.isRepost = true
+            self.repostIndexedAt = reasonRepost.indexedAt.date
+        } else {
+            self.isRepost = false
+            self.repostIndexedAt = nil
+        }
     }
     
     /// Initializer with thread metadata
@@ -156,8 +177,17 @@ final class CachedFeedViewPost: Identifiable {
         self.serializedSliceItems = nil
         self.isTemporary = false
         self.feedOrder = nil
+
+        // Extract repost metadata for efficient ID computation
+        if case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedViewPost.reason {
+            self.isRepost = true
+            self.repostIndexedAt = reasonRepost.indexedAt.date
+        } else {
+            self.isRepost = false
+            self.repostIndexedAt = nil
+        }
     }
-    
+
     /// Initializer from FeedSlice (following React Native pattern)
     init?(from slice: FeedSlice, feedType: String = "timeline") {
         // Use the main post (last item in slice, which is the actual feed post)
@@ -217,8 +247,17 @@ final class CachedFeedViewPost: Identifiable {
 
         self.isTemporary = false
         self.feedOrder = nil
+
+        // Extract repost metadata for efficient ID computation
+        if case .appBskyFeedDefsReasonRepost(let reasonRepost) = slice.reason {
+            self.isRepost = true
+            self.repostIndexedAt = reasonRepost.indexedAt.date
+        } else {
+            self.isRepost = false
+            self.repostIndexedAt = nil
+        }
     }
-    
+
     /// Creates ReplyRef from slice items (reconstructing the thread structure)
     private static func createReplyRefFromSlice(_ slice: FeedSlice) -> AppBskyFeedDefs.ReplyRef? {
         guard slice.items.count > 1 else { return nil }
@@ -368,5 +407,33 @@ extension CachedFeedViewPost {
         }
 
         return results
+    }
+}
+
+// MARK: - Upsert Support
+
+extension CachedFeedViewPost {
+    /// Updates this cached post with values from another instance.
+    /// Used for upsert operations to update existing records in place,
+    /// avoiding SwiftData unique constraint violations.
+    ///
+    /// - Parameter source: The source post to copy values from
+    func update(from source: CachedFeedViewPost) {
+        self.feedType = source.feedType
+        self.serializedPost = source.serializedPost
+        self.cursor = source.cursor
+        self.cachedAt = source.cachedAt
+        self.createdAt = source.createdAt
+        self.feedOrder = source.feedOrder
+        self.threadDisplayMode = source.threadDisplayMode
+        self.threadPostCount = source.threadPostCount
+        self.threadHiddenCount = source.threadHiddenCount
+        self.isPartOfThread = source.isPartOfThread
+        self.isIncompleteThread = source.isIncompleteThread
+        self.isRepost = source.isRepost
+        self.repostIndexedAt = source.repostIndexedAt
+        self.serializedSliceItems = source.serializedSliceItems
+        // Note: id is not updated as it's the unique key
+        // Note: isTemporary is @Transient and not persisted
     }
 }

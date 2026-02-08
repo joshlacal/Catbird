@@ -42,11 +42,22 @@ extension PostComposerViewUIKit {
         }
       }
 
-      // Compact inline outline hashtags
-      compactOutlineTagsView(vm: vm)
-      
-      // Compact inline language chips (always visible)
-      compactLanguageChipsView(vm: vm)
+      // Outline hashtags, languages, and character counter in horizontal layout
+      HStack(alignment: .top, spacing: 12) {
+        // Leading: hashtags and languages stacked vertically
+        VStack(alignment: .leading, spacing: 4) {
+          compactOutlineTagsView(vm: vm)
+          compactLanguageChipsView(vm: vm)
+        }
+        .layoutPriority(-1)  // Lower priority so character counter gets space
+        
+        Spacer(minLength: 8)
+        
+        // Trailing: character counter
+        CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
+          .layoutPriority(1)  // Higher priority to ensure visibility
+          .zIndex(1)
+      }
     }
     .padding(.horizontal, 16)
     .onAppear {
@@ -123,7 +134,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   private func compactLanguageChipsView(vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 8) {
+      HStack(alignment: .center, spacing: 8) {
         Image(systemName: "globe")
           .font(.system(size: 12))
           .foregroundColor(.secondary)
@@ -133,6 +144,8 @@ extension PostComposerViewUIKit {
           Text("No language set")
             .font(.system(size: 11))
             .foregroundColor(.secondary)
+          
+          Spacer()
         } else {
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
@@ -196,9 +209,8 @@ extension PostComposerViewUIKit {
   }
   
   private func showAddTagDialog(vm: PostComposerViewModel) {
-    // For now, users can use the full OutlineTagsView from the toolbar
-    // This is just a placeholder for future inline tag addition
     pcMetadataLogger.info("PostComposerMetadata: Add tag button tapped")
+    showingOutlineTagsEditor = true
   }
   
   @ViewBuilder

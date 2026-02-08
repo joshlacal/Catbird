@@ -69,7 +69,8 @@ struct WaveformView: View {
       let sampleIndex = Int((Double(index) / Double(barCount)) * Double(samples.count))
       let clampedIndex = min(sampleIndex, samples.count - 1)
       let sample = samples[clampedIndex]
-      return minBarHeight + (CGFloat(sample) * (maxBarHeight - minBarHeight))
+      let normalized = sample.isFinite ? max(0, min(sample, 1)) : 0
+      return minBarHeight + (CGFloat(normalized) * (maxBarHeight - minBarHeight))
     }
     
     // If recording, use current level with some variation
@@ -91,7 +92,8 @@ struct WaveformView: View {
       let sampleIndex = Int((Double(index) / Double(barCount)) * Double(samples.count))
       let clampedIndex = min(sampleIndex, samples.count - 1)
       let sample = samples[clampedIndex]
-      return sample > 0.05 ? 0.9 : 0.3
+      let normalized = sample.isFinite ? max(0, min(sample, 1)) : 0
+      return normalized > 0.05 ? 0.9 : 0.3
     }
     
     if isRecording && currentLevel > 0 {
@@ -169,7 +171,8 @@ struct StaticWaveformView: View {
   private func drawPlayhead(in context: GraphicsContext, size: CGSize) {
     guard duration > 0 else { return }
     
-    let progress = currentTime / duration
+    let progressRaw = currentTime / duration
+    let progress = progressRaw.isFinite ? min(max(progressRaw, 0), 1) : 0
     let playheadX = size.width * CGFloat(progress)
     
     let playheadPath = Path { path in
@@ -225,7 +228,7 @@ struct FrequencyVisualizerView: View {
     
     let minHeight: CGFloat = 4
     let maxHeight: CGFloat = 60
-    let frequency = frequencyBins[index]
+    let frequency = frequencyBins[index].isFinite ? max(0, min(frequencyBins[index], 1)) : 0
     
     // Add some animation variation
     let variation = sin(animationOffset + Double(index) * 0.3) * 0.1 + 0.9

@@ -230,9 +230,29 @@ final class PostManager {
             // Also notify thread update for the root post
             let rootUri = getRootUri(from: parentPost)
             appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootUri))
+            
+            // Show reply success toast with tap to view
+            appState.toastManager.show(
+              ToastItem(
+                message: "Reply posted",
+                icon: "bubble.left.and.bubble.right.fill",
+                duration: 3.0,
+//                action: .navigateToThread(postURI: postURI.uriString())
+              )
+            )
           } else {
             // This is a new post - send post created event
             appState.stateInvalidationBus.notify(.postCreated(tempPost))
+            
+            // Show post success toast with tap to view
+            appState.toastManager.show(
+              ToastItem(
+                message: "Post published",
+                icon: "paperplane.fill",
+                duration: 3.0,
+//                action: .navigateToPost(postURI: postURI.uriString(), authorHandle: "")
+              )
+            )
           }
           
           // Always notify profile update when a user creates a post
@@ -318,7 +338,8 @@ final class PostManager {
         labels: currentProfile.labels,
         createdAt: currentProfile.createdAt,
         verification: currentProfile.verification,
-        status: currentProfile.status
+        status: currentProfile.status,
+        debug: nil
       )
     } else {
       // Fallback to minimal profile
@@ -342,7 +363,8 @@ final class PostManager {
         labels: [],
         createdAt: nil,
         verification: nil,
-        status: nil
+        status: nil,
+        debug: nil
       )
     }
     
@@ -456,7 +478,8 @@ final class PostManager {
         pinned: false
       ),
       labels: [],
-      threadgate: nil
+      threadgate: nil,
+      debug: nil
     )
   }
   

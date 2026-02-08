@@ -1,6 +1,7 @@
 import Foundation
 import BackgroundTasks
 import OSLog
+import UIKit
 
 #if os(iOS)
 @available(iOS 13.0, *)
@@ -36,9 +37,9 @@ enum ChatBackgroundRefreshManager {
   }
 
   static func schedule() {
-    guard didRegister else {
-      logger.debug("Skipping chat BGTask schedule because registration has not run")
-      return
+      if !didRegister {
+        logger.info("Lazily registering chat BGTask before scheduling")
+        registerIfNeeded()
     }
 
     let now = Date()
@@ -63,15 +64,23 @@ enum ChatBackgroundRefreshManager {
   private static func handle(task: BGAppRefreshTask) {
     logger.info("Chat BGTask started")
 
+    // While running in background, ensure GRDB connections are resumed for the duration
+    // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
+    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "Chat BGTask \(taskIdentifier)")
+
+    // RAII background task assertion — auto-released on scope exit
+    let bgTask = CatbirdBackgroundTask(name: "BGTask-\(taskIdentifier)")
+
     schedule()
 
     let refreshWork = Task<Bool, Never> {
-      guard AppState.shared.isAuthenticated else {
+      guard let activeState = await AppStateManager.shared.lifecycle.appState,
+            activeState.isAuthenticated else {
         logger.info("Skipping chat refresh - user not authenticated")
         return true
       }
 
-      let appState = AppState.shared
+      let appState = activeState
 
       if Task.isCancelled { return false }
       await appState.chatManager.loadConversations(refresh: true)
@@ -93,6 +102,11 @@ enum ChatBackgroundRefreshManager {
     }
 
     Task {
+      defer {
+        bgTask.end()
+        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Chat BGTask \(taskIdentifier)")
+      }
+
       let success = await refreshWork.value
       task.setTaskCompleted(success: success)
     }

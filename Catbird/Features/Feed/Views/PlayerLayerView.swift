@@ -218,8 +218,8 @@ final class PlayerContainer: UIView {
       queue: .main
     ) { [weak self] _ in
       guard let self = self, !self.isCleanedUp else { return }
-      // Seamless loop: seek with zero tolerance then resume
-      self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+      // Seamless loop: seek with infinite tolerance for performance
+      self.player?.seek(to: .zero, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity)
       self.player?.safePlay()
     }
   }
@@ -436,7 +436,7 @@ final class PlayerContainerMac: NSView {
       queue: .main
     ) { [weak self] _ in
       guard let self = self, !self.isCleanedUp else { return }
-      self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+      self.player?.seek(to: .zero, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity)
       self.player?.safePlay()
     }
   }

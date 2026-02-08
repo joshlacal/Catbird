@@ -16,12 +16,12 @@ extension PostComposerViewUIKit {
   func sheetModifiers<Content: View>(vm: PostComposerViewModel, _ content: Content) -> some View {
     let photoPickerContent = content
       .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems, matching: .images, photoLibrary: .shared())
-      .onChange(of: photoPickerItems) { items in
+      .onChange(of: photoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Photo picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: false, vm: vm)
       }
       .photosPicker(isPresented: $videoPickerVisible, selection: $videoPickerItems, matching: .videos, photoLibrary: .shared())
-      .onChange(of: videoPickerItems) { items in
+      .onChange(of: videoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Video picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: true, vm: vm)
       }
@@ -42,8 +42,9 @@ extension PostComposerViewUIKit {
         )
       }
       .sheet(isPresented: $showingAccountSwitcher) {
-        AccountSwitcherView(showsDismissButton: true)
-          .environment(appState)
+        // Pass current draft when switching accounts from composer
+        AccountSwitcherView(showsDismissButton: true, draftToTransfer: vm.saveDraftState())
+          .applyAppStateEnvironment(appState)
           .onDisappear {
             handleAccountSwitchComplete(vm: vm)
           }
@@ -74,6 +75,22 @@ extension PostComposerViewUIKit {
           get: { vm.selectedLabels },
           set: { vm.selectedLabels = $0 }
         ))
+      }
+      .sheet(isPresented: $showingOutlineTagsEditor) {
+        NavigationStack {
+          OutlineTagsView(tags: Binding(
+            get: { vm.outlineTags },
+            set: { vm.outlineTags = $0 }
+          ))
+          .navigationTitle("Outline Hashtags")
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Done") { showingOutlineTagsEditor = false }
+            }
+          }
+          .padding(.horizontal, 16)
+        }
       }
 
     
@@ -132,7 +149,55 @@ extension PostComposerViewUIKit {
           }
         )
       }
-    
+      .sheet(isPresented: Binding(
+        get: { vm.isAltTextEditorPresented },
+        set: { vm.isAltTextEditorPresented = $0 }
+      )) {
+        if let videoItem = vm.videoItem, vm.currentEditingMediaId == videoItem.id {
+          AltTextEditorView(
+            altText: videoItem.altText,
+            image: videoItem.image ?? Image(systemName: "video.fill"),
+            imageId: videoItem.id,
+            imageData: videoItem.rawData,
+            onSave: vm.updateAltText
+          )
+        } else if let index = vm.mediaItems.firstIndex(where: { $0.id == vm.currentEditingMediaId }) {
+          AltTextEditorView(
+            altText: vm.mediaItems[index].altText,
+            image: vm.mediaItems[index].image ?? Image(systemName: "photo"),
+            imageId: vm.mediaItems[index].id,
+            imageData: vm.mediaItems[index].rawData,
+            onSave: vm.updateAltText
+          )
+        }
+      }
+      .sheet(isPresented: Binding(
+        get: { vm.isPhotoEditorPresented },
+        set: { vm.isPhotoEditorPresented = $0 }
+      )) {
+        #if os(iOS)
+        if let index = vm.currentEditingImageIndex,
+           vm.mediaItems.indices.contains(index),
+           let rawData = vm.mediaItems[index].rawData,
+           let uiImage = UIImage(data: rawData) {
+          PhotoEditorSheet(image: uiImage) { editedImage in
+            pcSheetsLogger.info("PostComposerSheets: Photo edit completed for image at index \(index)")
+            vm.updateEditedImage(editedImage, at: index)
+          }
+        }
+        #elseif os(macOS)
+        if let index = vm.currentEditingImageIndex,
+           vm.mediaItems.indices.contains(index),
+           let rawData = vm.mediaItems[index].rawData,
+           let nsImage = NSImage(data: rawData) {
+          PhotoEditorSheet(image: nsImage) { editedImage in
+            pcSheetsLogger.info("PostComposerSheets: Photo edit completed for image at index \(index)")
+            vm.updateEditedImage(editedImage, at: index)
+          }
+        }
+        #endif
+      }
+
     linkSheetContent
       .alert("Discard Draft?", isPresented: $showingDismissAlert) {
         Button("Discard", role: .destructive) {

@@ -238,13 +238,14 @@ extension PostComposerViewModel {
                     
                     for i in 0..<frameCount {
                         guard let image = CGImageSourceCreateImageAtIndex(imageSource, i, nil) else { continue }
-                        
+
                         guard let pixelBuffer = self.createPixelBuffer(from: image, width: Int(width), height: Int(height)) else { continue }
-                        
+
+                        // Wait for writer to be ready - this is on a background queue so brief waits are acceptable
                         while !writerInput.isReadyForMoreMediaData {
                             Thread.sleep(forTimeInterval: 0.01)
                         }
-                        
+
                         adaptor.append(pixelBuffer, withPresentationTime: currentTime)
                         currentTime = CMTimeAdd(currentTime, frameDuration)
                     }

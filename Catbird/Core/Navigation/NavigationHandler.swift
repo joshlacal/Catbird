@@ -1,5 +1,6 @@
 import Petrel
 import SwiftUI
+import CatbirdMLSService
 
 /// Utility for handling navigation destination resolution throughout the app
 struct NavigationHandler {
@@ -131,6 +132,10 @@ struct NavigationHandler {
     // Add necessary environment objects or parameters if needed
     // .environment(appState) // Already available via @Environment
 
+    case .mlsConversation(let convoId):
+      MLSConversationDetailView(conversationId: convoId)
+        .id(convoId)  // Use convoId for view identity
+
     case .chatTab:
       ChatTabView(
         selectedTab: selectedTab,
@@ -221,6 +226,8 @@ struct NavigationHandler {
     case .conversation:
       // Title might be dynamic based on convo, but NavigationHandler provides a static one
       return "Conversation"
+    case .mlsConversation:
+      return "Secure Conversation"
     case .chatTab:
       return "Messages"
     #endif
@@ -275,6 +282,8 @@ struct NavigationHandler {
     #if os(iOS)
     case .conversation:
       return "bubble.left.and.bubble.right.fill"  // Or just "bubble.left.fill"
+    case .mlsConversation:
+      return "lock.shield.fill"
     case .chatTab:
       return "bubble.left.and.bubble.right"
     #endif

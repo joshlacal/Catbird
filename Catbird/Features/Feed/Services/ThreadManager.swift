@@ -8,6 +8,7 @@
 import Foundation
 import Observation
 import Petrel
+import SwiftData
 import os
 
 /// Manages loading and caching of thread data
@@ -18,11 +19,17 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// The thread data once loaded
   var threadData: AppBskyUnspeccedGetPostThreadV2.Output?
 
+  /// Hidden/other replies loaded via getPostThreadOtherV2
+  var hiddenReplies: [AppBskyUnspeccedGetPostThreadOtherV2.ThreadItem] = []
+
   /// Loading state indicator
   var isLoading: Bool = false
 
   /// Loading state for additional parent posts
   var isLoadingMoreParents: Bool = false
+
+  /// Loading state for hidden replies
+  var isLoadingHiddenReplies: Bool = false
 
   /// Any error that occurred during loading
   var error: Error?
@@ -34,13 +41,15 @@ final class ThreadManager: StateInvalidationSubscriber {
 
   /// Reference to the app state
   private let appState: AppState
-  
+
   /// The URI of the currently loaded thread (for state invalidation)
   private var currentThreadURI: ATProtocolURI?
 
+  /// Model context for SwiftData cache operations
+  @ObservationIgnored private var modelContext: ModelContext?
+
   /// The ATPROTO client for API calls
   private var client: ATProtoClient? {
-    // Safe handling to prevent fatalError during FaultOrdering
     return appState.atProtoClient
   }
 
@@ -51,13 +60,47 @@ final class ThreadManager: StateInvalidationSubscriber {
     // Subscribe to state invalidation events
     appState.stateInvalidationBus.subscribe(self)
   }
-  
+
   deinit {
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
   }
 
+  /// Configure with model context for SwiftData cache operations
+  func setModelContext(_ context: ModelContext) {
+    self.modelContext = context
+    logger.debug("ThreadManager configured with ModelContext for caching")
+  }
+
   // MARK: - Thread Loading
+
+  /// Check if cached thread data exists
+  /// - Parameter uri: The post URI to look up in cache
+  /// - Returns: True if cache exists for this thread
+  @MainActor
+  private func hasCachedThread(uri: ATProtocolURI) async -> Bool {
+    guard let modelContext = modelContext else {
+      return false
+    }
+
+    let descriptor = FetchDescriptor<CachedFeedViewPost>(
+      predicate: #Predicate<CachedFeedViewPost> { post in
+          post.uri == uri && post.feedType == "thread-cache"
+      }
+    )
+
+    do {
+      let cachedPosts = try modelContext.fetch(descriptor)
+      let hasCached = !cachedPosts.isEmpty
+      if hasCached {
+        logger.info("✅ Found cached posts for thread: \(uri.uriString())")
+      }
+      return hasCached
+    } catch {
+      logger.error("Failed to check cached thread: \(error.localizedDescription)")
+      return false
+    }
+  }
 
   /// Load a thread by its URI
   /// - Parameter uri: The post URI to load
@@ -68,6 +111,12 @@ final class ThreadManager: StateInvalidationSubscriber {
     currentThreadURI = uri
 
     logger.debug("Loading thread: \(uri.uriString())")
+
+    // Check if we have cached data (just for logging/optimization hints)
+    let hasCached = await hasCachedThread(uri: uri)
+    if hasCached {
+      logger.info("📦 Cache exists for this thread - will refresh with fresh data")
+    }
 
     do {
       guard let client = client else {
@@ -94,6 +143,9 @@ final class ThreadManager: StateInvalidationSubscriber {
 
         // Store the thread data directly (no shadow merging needed with v2)
         self.threadData = output
+
+        // Save thread posts to cache for instant display on future visits
+        await cacheThreadPosts(output.thread)
       } else {
         // Handle specific errors
         if responseCode == 404 {
@@ -118,6 +170,46 @@ final class ThreadManager: StateInvalidationSubscriber {
     }
 
     isLoading = false
+  }
+
+  /// Load hidden replies for a thread using getPostThreadOtherV2
+  /// This fetches replies that are hidden by threadgate settings
+  /// - Parameter uri: The anchor post URI to load hidden replies for
+  @MainActor
+  func loadHiddenReplies(uri: ATProtocolURI) async {
+    guard !isLoadingHiddenReplies else {
+      logger.debug("Already loading hidden replies, skipping request.")
+      return
+    }
+
+    isLoadingHiddenReplies = true
+    defer { isLoadingHiddenReplies = false }
+
+    logger.debug("Loading hidden replies for thread: \(uri.uriString())")
+
+    do {
+      guard let client = client else {
+        logger.error("Network client unavailable for loading hidden replies")
+        return
+      }
+
+      let params = AppBskyUnspeccedGetPostThreadOtherV2.Parameters(
+        anchor: uri
+      )
+
+      let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadOtherV2(input: params)
+
+      if responseCode == 200, let output = output {
+        logger.debug("Loaded \(output.thread.count) hidden replies for thread: \(uri.uriString())")
+        self.hiddenReplies = output.thread
+      } else {
+        logger.warning("Failed to load hidden replies, response code: \(responseCode)")
+        self.hiddenReplies = []
+      }
+    } catch {
+      logger.error("Error loading hidden replies: \(error.localizedDescription)")
+      self.hiddenReplies = []
+    }
   }
 
   /// Load more parent posts for a thread and integrate them into the existing thread structure
@@ -205,8 +297,78 @@ final class ThreadManager: StateInvalidationSubscriber {
     }
   }
 
+  // MARK: - Cache Management
 
-  // MARK: - State Invalidation Handling
+  /// Save thread posts to SwiftData cache for instant display on future visits
+  private func cacheThreadPosts(_ threadItems: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]) async {
+    guard let modelContext = modelContext else {
+      logger.debug("Cannot cache thread posts - modelContext unavailable")
+      return
+    }
+
+    var savedCount = 0
+
+    for threadItem in threadItems {
+      // Only cache actual posts (not blocked/notfound items)
+      guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = threadItem.value else {
+        continue
+      }
+
+      // Convert to FeedViewPost for caching
+      let feedViewPost = AppBskyFeedDefs.FeedViewPost(
+        post: threadItemPost.post,
+        reply: nil,
+        reason: nil,
+        feedContext: nil,
+        reqId: nil
+      )
+
+      // Create cached post with special feedType for thread cache
+      guard let cachedPost = CachedFeedViewPost(
+        from: feedViewPost,
+        cursor: nil,
+        feedType: "thread-cache",
+        feedOrder: nil
+      ) else {
+        continue
+      }
+
+      await MainActor.run {
+        // Upsert: update existing post or insert new one to avoid constraint violations
+        let postId = cachedPost.id
+        let descriptor = FetchDescriptor<CachedFeedViewPost>(
+          predicate: #Predicate<CachedFeedViewPost> { post in
+            post.id == postId
+          }
+        )
+
+        do {
+          let existing = try modelContext.fetch(descriptor)
+          _ = modelContext.upsert(
+            cachedPost,
+            existingModel: existing.first,
+            update: { existingPost, newPost in existingPost.update(from: newPost) }
+          )
+          savedCount += 1
+        } catch {
+          logger.error("Failed to check/save thread post to cache: \(error.localizedDescription)")
+        }
+      }
+    }
+
+    // Save all changes at once
+    await MainActor.run {
+      do {
+        if savedCount > 0 {
+          try modelContext.save()
+          logger.info("✅ Saved \(savedCount) thread posts to cache")
+        }
+      } catch {
+        logger.error("Failed to save thread posts to cache: \(error.localizedDescription)")
+      }
+    }
+  }
+
   // MARK: - State Invalidation Handling
   
   /// Check if this manager is interested in a specific event
@@ -292,10 +454,12 @@ final class ThreadManager: StateInvalidationSubscriber {
   @MainActor
   private func clearThreadData() async {
     threadData = nil
+    hiddenReplies = []
     currentThreadURI = nil
     error = nil
     isLoading = false
     isLoadingMoreParents = false
+    isLoadingHiddenReplies = false
   }
 }
 

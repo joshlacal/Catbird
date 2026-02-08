@@ -289,8 +289,10 @@ struct SmartFeedDiscoveryView: View {
                 enhancedEmptyRecommendationsView
             } else {
                 LazyVStack(spacing: 16) {
-                    ForEach(personalizedRecommendations.indices, id: \.self) { index in
-                        let recommendation = personalizedRecommendations[index]
+                    ForEach(
+                        Array(personalizedRecommendations.enumerated()),
+                        id: \.element.feed.uri
+                    ) { index, recommendation in
                         
                         EnhancedRecommendationCard(
                             recommendation: recommendation,
@@ -347,8 +349,10 @@ struct SmartFeedDiscoveryView: View {
                 enhancedEmptyTrendingView
             } else {
                 LazyVStack(spacing: 12) {
-                    ForEach(trendingFeeds.indices, id: \.self) { index in
-                        let recommendation = trendingFeeds[index]
+                    ForEach(
+                        Array(trendingFeeds.enumerated()),
+                        id: \.element.feed.uri
+                    ) { index, recommendation in
                         
                         EnhancedRecommendationCard(
                             recommendation: recommendation,
@@ -770,7 +774,7 @@ struct EnhancedRecommendationCard: View {
     private var feedPreviewSheet: some View {
         NavigationStack (path: $path){
             FeedScreen(path: $path, uri: recommendation.feed.uri)
-                .environment(AppState.shared)
+                .environment(AppStateManager.shared)
                 .navigationTitle(recommendation.feed.displayName)
     #if os(iOS)
                 .toolbarTitleDisplayMode(.inline)
@@ -1054,8 +1058,10 @@ struct EnhancedInterestFeedSection: View {
                 )
             } else {
                 LazyVStack(spacing: 12) {
-                    ForEach(recommendations.prefix(3).indices, id: \.self) { index in
-                        let recommendation = recommendations[index]
+                    ForEach(
+                        Array(recommendations.prefix(3).enumerated()),
+                        id: \.element.feed.uri
+                    ) { index, recommendation in
                         
                         EnhancedRecommendationCard(
                             recommendation: recommendation,
@@ -1185,8 +1191,9 @@ struct InterestTag: View {
 // MARK: - Preview
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         SmartFeedDiscoveryView()
-            .environment(AppState.shared)
+            .environment(AppStateManager.shared)
     }
 }

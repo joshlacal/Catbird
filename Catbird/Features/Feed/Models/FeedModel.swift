@@ -27,6 +27,13 @@ final class FeedModel: StateInvalidationSubscriber {
 
   /// Feed generator info for custom feeds (contains DID for proxy routing)
   private(set) var feedGeneratorInfo: AppBskyFeedDefs.GeneratorView?
+  private func cacheKey(for feedIdentifier: String) -> String {
+    let account = appState.userDID ?? "unknown-account"
+    return "\(account)-\(feedIdentifier)"
+  }
+  private var accountScopedIdentifier: String {
+    cacheKey(for: feedManager.fetchType.identifier)
+  }
   
   @MainActor var posts: [CachedFeedViewPost] = []
 
@@ -41,6 +48,19 @@ final class FeedModel: StateInvalidationSubscriber {
   // Pagination
   @MainActor private var cursor: String?
   
+  // MARK: - Nonisolated Processing
+  
+  /// Process and filter posts off the main actor for better performance
+  /// This moves heavy computation (filtering, sorting, transforming) to background threads
+  nonisolated private func processPostsOffMainActor(
+    _ slices: [FeedSlice],
+    feedKey: String
+  ) -> [CachedFeedViewPost] {
+    // Heavy work happens here, off the main actor
+    return slices.compactMap { slice in
+      CachedFeedViewPost(from: slice, feedType: feedKey)
+    }
+  }
   // Navigation state
   @MainActor var isReturningFromNavigation = false
 
@@ -96,26 +116,34 @@ final class FeedModel: StateInvalidationSubscriber {
       return nil
     }
     
-    do {
-      let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: feedURI))
-      
-      if result.responseCode == 200, let data = result.data {
-        logger.debug("Fetched feed generator info for \(feedURI.uriString()): \(data.view.displayName ?? "Unknown")")
-        return data.view
-      } else {
-        logger.warning("Failed to fetch feed generator info: HTTP \(result.responseCode)")
-        return nil
+    // Retry logic for fetching generator info
+    for attempt in 1...3 {
+      do {
+        let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: feedURI))
+        
+        if result.responseCode == 200, let data = result.data {
+          logger.debug("Fetched feed generator info for \(feedURI.uriString()): \(data.view.displayName ?? "Unknown")")
+          return data.view
+        } else {
+          logger.warning("Failed to fetch feed generator info (attempt \(attempt)): HTTP \(result.responseCode)")
+        }
+      } catch {
+        logger.error("Error fetching feed generator info for \(feedURI.uriString()) (attempt \(attempt)): \(error.localizedDescription)")
       }
-    } catch {
-      logger.error("Error fetching feed generator info for \(feedURI.uriString()): \(error.localizedDescription)")
-      return nil
+      
+      // Wait before retrying
+      if attempt < 3 {
+        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+      }
     }
+    
+    return nil
   }
   
   // MARK: - Data Restoration
   
   @MainActor
-  func restorePersistedPosts(_ posts: [CachedFeedViewPost]) async {
+  func restorePersistedPosts(_ posts: [CachedFeedViewPost], cursor: String?) async {
     guard self.posts.isEmpty else {
       logger.debug("Posts already loaded, skipping restoration")
       return
@@ -144,12 +172,9 @@ final class FeedModel: StateInvalidationSubscriber {
     
     self.posts = validPosts
     self.isLoading = false
-    self.hasMore = true
-    
-    // When restoring, we don't have the original cursor
-    // Set cursor to nil - it will be updated on next load
-    // This is safe because loadMore will fetch from the server
-    self.cursor = nil
+    // Preserve pagination state if we have a stored cursor; allow pagination fallback when nil
+    self.hasMore = cursor != nil || !validPosts.isEmpty
+    self.cursor = cursor
     
     logger.debug("Restored \(validPosts.count) persisted posts to FeedModel (\(invalidPostIds.count) invalid posts filtered out)")
 
@@ -163,9 +188,10 @@ final class FeedModel: StateInvalidationSubscriber {
   private func applyPrewarmedData(_ prewarmData: [AppBskyFeedDefs.FeedViewPost]) async {
     let filterSettings = await getFilterSettings()
     let tunedPosts = await feedTuner.tune(prewarmData, filterSettings: filterSettings)
+    let feedKey = cacheKey(for: lastFeedType.identifier)
     
     let cachedPosts = tunedPosts.compactMap { slice in
-      CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
+      CachedFeedViewPost(from: slice, feedType: feedKey)
     }
     
     self.posts = cachedPosts
@@ -197,7 +223,7 @@ final class FeedModel: StateInvalidationSubscriber {
         // Process with FeedTuner
         let slices = await feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
         let newPosts = slices.compactMap { slice in
-          CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
+          CachedFeedViewPost(from: slice, feedType: feedKey)
         }
         
         self.posts = newPosts
@@ -242,24 +268,27 @@ final class FeedModel: StateInvalidationSubscriber {
       // Fetch the feed generator info to get the correct DID
       feedGeneratorInfo = await fetchFeedGeneratorInfo(for: generatorUri)
       
-      // Configure feed feedback with the generator's DID (NOT the creator's DID)
-      // The generator DID is the service DID (e.g., did:web:xxx or feed generator's did:plc)
-      // The creator DID is the person who created the feed
-      if let generatorDID = feedGeneratorInfo?.did.didString() {
-        appState.feedFeedbackManager.configure(
-          for: fetch,
-          client: appState.atProtoClient,
-          feedGeneratorDID: generatorDID,
-          canSendInteractions: feedGeneratorInfo?.acceptsInteractions ?? false
-        )
-        logger.debug("Configured feed feedback for generator: \(generatorDID)")
-      } else {
-        logger.warning("No DID found in feed generator info, feedback may not route correctly")
-        appState.feedFeedbackManager.configure(
-          for: fetch,
-          client: appState.atProtoClient,
-          feedGeneratorDID: nil
-        )
+      // Only configure if not cancelled to avoid race conditions
+      if !Task.isCancelled {
+          // Configure feed feedback with the generator's DID (NOT the creator's DID)
+          // The generator DID is the service DID (e.g., did:web:xxx or feed generator's did:plc)
+          // The creator DID is the person who created the feed
+          if let generatorDID = feedGeneratorInfo?.did.didString() {
+            appState.feedFeedbackManager.configure(
+              for: fetch,
+              client: appState.atProtoClient,
+              feedGeneratorDID: generatorDID,
+              canSendInteractions: feedGeneratorInfo?.acceptsInteractions ?? false
+            )
+            logger.debug("Configured feed feedback for generator: \(generatorDID)")
+          } else {
+            logger.warning("No DID found in feed generator info, feedback may not route correctly")
+            appState.feedFeedbackManager.configure(
+              for: fetch,
+              client: appState.atProtoClient,
+              feedGeneratorDID: nil
+            )
+          }
       }
     } else {
       // Disable feedback for non-custom feeds
@@ -303,11 +332,10 @@ final class FeedModel: StateInvalidationSubscriber {
       let filterSettings = await getFilterSettings()
       let slices = await feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
       logger.debug("🔍 FeedTuner returned \(slices.count) slices")
-      let newPosts = slices.compactMap { slice in
-        // Convert to CachedFeedViewPost with thread metadata preserved
-        // Returns nil if validation fails (malformed data)
-        return CachedFeedViewPost(from: slice, feedType: fetch.identifier)
-      }
+      let feedKey = cacheKey(for: fetch.identifier)
+      
+      // Process posts off the main actor for better performance
+      let newPosts = processPostsOffMainActor(slices, feedKey: feedKey)
 
       if strategy == .backgroundRefresh && !posts.isEmpty {
         let existingIds = Set(posts.map { $0.id })
@@ -316,13 +344,21 @@ final class FeedModel: StateInvalidationSubscriber {
 
         if uniqueNewPostCount > posts.count / 10 || forceRefresh {
           self.posts = newPosts
-          // Persist feed data for caching
-          await PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetch.identifier)
+          // Persist feed data for caching using account-scoped key
+          await PersistentFeedStateManager.shared.saveFeedData(
+            self.posts,
+            for: accountScopedIdentifier,
+            cursor: self.cursor
+          )
         }
       } else {
         self.posts = newPosts
         // Persist feed data for caching
-        await PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetch.identifier)
+        await PersistentFeedStateManager.shared.saveFeedData(
+          self.posts,
+          for: accountScopedIdentifier,
+          cursor: self.cursor
+        )
       }
 
       self.cursor = newCursor
@@ -357,9 +393,10 @@ final class FeedModel: StateInvalidationSubscriber {
     // Process posts using FeedTuner for consistency
     let filterSettings = await getFilterSettings()
     let slices = await feedTuner.tune(cachedPosts, filterSettings: filterSettings)
+    let feedKey = cacheKey(for: lastFeedType.identifier)
     await MainActor.run {
       self.posts = slices.compactMap { slice in
-        return CachedFeedViewPost(from: slice, feedType: "timeline")
+        return CachedFeedViewPost(from: slice, feedType: feedKey)
       }
       self.cursor = cursor
       self.hasMore = cursor != nil
@@ -371,7 +408,7 @@ final class FeedModel: StateInvalidationSubscriber {
 
   @MainActor
   func loadMore() async {
-    guard !isLoading && !isLoadingMore && hasMore && cursor != nil else {
+    guard !isLoading && !isLoadingMore && hasMore else {
         logger.debug("🔍 loadMore skipped - isLoading: \(self.isLoading), isLoadingMore: \(self.isLoadingMore), hasMore: \(self.hasMore), cursor: \(self.cursor ?? "nil")")
       return
     }
@@ -396,17 +433,22 @@ final class FeedModel: StateInvalidationSubscriber {
       // Process new posts using FeedTuner
       let filterSettings = await getFilterSettings()
       let newSlices = await feedTuner.tune(fetchedPosts, filterSettings: filterSettings)
-      let newCachedPosts = newSlices.compactMap { slice in
-        return CachedFeedViewPost(from: slice, feedType: fetchType.identifier)
-      }
+      let feedKey = cacheKey(for: fetchType.identifier)
+      
+      // Process posts off the main actor for better performance
+      let newCachedPosts = processPostsOffMainActor(newSlices, feedKey: feedKey)
       let existingIds = Set(posts.map { $0.id })
       let uniqueNewPosts = newCachedPosts.filter { !existingIds.contains($0.id) }
 
       self.posts.append(contentsOf: uniqueNewPosts)
       self.cursor = newCursor
       self.hasMore = newCursor != nil
-      // Persist combined feed data for caching
-      await PersistentFeedStateManager.shared.saveFeedData(self.posts, for: fetchType.identifier)
+      // Persist combined feed data for caching using account-scoped key
+      await PersistentFeedStateManager.shared.saveFeedData(
+        self.posts,
+        for: accountScopedIdentifier,
+        cursor: newCursor
+      )
       
       logger.debug("🔍 loadMore completed - added \(uniqueNewPosts.count) posts, newCursor: \(newCursor ?? "nil"), hasMore: \(self.hasMore)")
 
@@ -444,14 +486,20 @@ final class FeedModel: StateInvalidationSubscriber {
     }
   }
 
+  /// Refresh post shadows in parallel for better performance
   private func refreshPostShadows(_ posts: [AppBskyFeedDefs.FeedViewPost]) async {
-    for post in posts {
-      await appState.postShadowManager.updateShadow(forUri: post.post.uri.uriString()) { shadow in
-        if let like = post.post.viewer?.like {
-          shadow.likeUri = like
-        }
-        if let repost = post.post.viewer?.repost {
-          shadow.repostUri = repost
+    // Use task group for parallel shadow updates
+    await withTaskGroup(of: Void.self) { group in
+      for post in posts {
+        group.addTask {
+          await self.appState.postShadowManager.updateShadow(forUri: post.post.uri.uriString()) { shadow in
+            if let like = post.post.viewer?.like {
+              shadow.likeUri = like
+            }
+            if let repost = post.post.viewer?.repost {
+              shadow.repostUri = repost
+            }
+          }
         }
       }
     }
@@ -502,6 +550,11 @@ final class FeedModel: StateInvalidationSubscriber {
   @MainActor
   private func setIsBackgroundRefreshing(_ value: Bool) {
     isBackgroundRefreshing = value
+  }
+
+  @MainActor
+  func currentCursor() -> String? {
+    cursor
   }
 
   @MainActor
@@ -622,7 +675,8 @@ final class FeedModel: StateInvalidationSubscriber {
   func processAndFilterPosts(
     fetchedPosts: [AppBskyFeedDefs.FeedViewPost],
     newCursor: String?,
-    filterSettings: FeedFilterSettings
+    filterSettings: FeedFilterSettings,
+    feedType: FetchType
   ) async -> [CachedFeedViewPost] {
     // First process posts using FeedTuner (following React Native pattern)
     logger.debug("🔍 processAndFilterPosts: About to call feedTuner.tune() with \(fetchedPosts.count) posts")
@@ -631,8 +685,9 @@ final class FeedModel: StateInvalidationSubscriber {
     logger.debug("🔍 processAndFilterPosts: FeedTuner returned \(slices.count) slices")
     
     // Convert slices to cached posts
+    let feedKey = cacheKey(for: feedType.identifier)
     let newCachedPosts = slices.compactMap { slice in
-      return CachedFeedViewPost(from: slice, feedType: "timeline")
+      return CachedFeedViewPost(from: slice, feedType: feedKey)
     }
 
     let activeFilters = filterSettings.activeFilters
@@ -712,7 +767,8 @@ final class FeedModel: StateInvalidationSubscriber {
       let filteredPosts = await processAndFilterPosts(
         fetchedPosts: fetchedPosts,
         newCursor: newCursor,
-        filterSettings: filterSettings
+        filterSettings: filterSettings,
+        feedType: fetch
       )
 
       // Update posts list
@@ -772,7 +828,8 @@ final class FeedModel: StateInvalidationSubscriber {
       let filteredNewPosts = await processAndFilterPosts(
         fetchedPosts: fetchedPosts,
         newCursor: newCursor,
-        filterSettings: filterSettings
+        filterSettings: filterSettings,
+        feedType: fetchType
       )
 
       // Filter out duplicates based on ID before appending
@@ -913,7 +970,8 @@ final class FeedModel: StateInvalidationSubscriber {
     )
     
     // Create a cached post with temporary flag
-    guard let cachedPost = CachedFeedViewPost(from: feedViewPost, feedType: lastFeedType.identifier) else {
+    let feedKey = cacheKey(for: lastFeedType.identifier)
+    guard let cachedPost = CachedFeedViewPost(from: feedViewPost, feedType: feedKey) else {
       logger.error("Failed to create cached post for optimistic insert")
       return
     }
@@ -949,8 +1007,9 @@ final class FeedModel: StateInvalidationSubscriber {
     guard !validFeedViewPosts.isEmpty else { return }
 
     let tunedSlices = await feedTuner.tune(validFeedViewPosts, filterSettings: filterSettings)
+    let feedKey = cacheKey(for: lastFeedType.identifier)
     let reprocessedPosts = tunedSlices.compactMap { slice in
-      return CachedFeedViewPost(from: slice, feedType: lastFeedType.identifier)
+      return CachedFeedViewPost(from: slice, feedType: feedKey)
     }
     
     // Only update if the filtered content actually changed
@@ -1006,7 +1065,7 @@ final class FeedModel: StateInvalidationSubscriber {
         contentLabelPreferences: contentLabelPrefs,
         hideAdultContent: hideAdultContent,
         hiddenPosts: hiddenPosts,
-        currentUserDid: appState.currentUserDID
+        currentUserDid: appState.userDID
       )
     } catch {
       logger.warning("Failed to get feed preferences, using defaults: \(error)")

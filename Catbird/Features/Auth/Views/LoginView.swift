@@ -9,7 +9,7 @@ struct LoginView: View {
     let isAddingNewAccount: Bool
     
     // MARK: - Environment
-    @Environment(AppState.self) private var appState
+    @Environment(AppStateManager.self) private var appStateManager
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var colorScheme
@@ -234,13 +234,13 @@ struct LoginView: View {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                                     .symbolEffect(.pulse)
-                                Text(appState.authManager.expiredAccountInfo != nil ? "Session Expired" : "Login Error")
+                                Text(appStateManager.authentication.expiredAccountInfo != nil ? "Session Expired" : "Login Error")
                                     .appFont(AppTextRole.headline)
                                 Spacer()
                                 Button(action: {
                                     error = nil
                                     // Clear expired account info when dismissing error
-                                    appState.authManager.clearExpiredAccountInfo()
+                                    appStateManager.authentication.clearExpiredAccountInfo()
                                 }) {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundStyle(.secondary)
@@ -249,17 +249,17 @@ struct LoginView: View {
                                 .buttonStyle(.plain)
                             }
 
-                            Text(appState.authManager.expiredAccountInfo != nil ?
-                                 "Your session for \(appState.authManager.expiredAccountInfo?.handle ?? "this account") has expired." :
+                            Text(appStateManager.authentication.expiredAccountInfo != nil ?
+                                 "Your session for \(appStateManager.authentication.expiredAccountInfo?.handle ?? "this account") has expired." :
                                  errorMessage)
                                 .appFont(AppTextRole.callout)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Button(appState.authManager.expiredAccountInfo != nil ? "Sign In Again" : "Try Again") {
+                            Button(appStateManager.authentication.expiredAccountInfo != nil ? "Sign In Again" : "Try Again") {
                                 // Check if we have an expired account to re-authenticate
-                                if let expiredAccount = appState.authManager.expiredAccountInfo {
+                                if let expiredAccount = appStateManager.authentication.expiredAccountInfo {
                                     // Automatically start OAuth flow for the expired account
                                     Task {
                                         await startReAuthenticationForExpiredAccount(expiredAccount)
@@ -267,7 +267,7 @@ struct LoginView: View {
                                 } else {
                                     // Reset error state and go back to selection
                                     error = nil
-                                    appState.authManager.resetError()
+                                    appStateManager.authentication.resetError()
                                 }
                             }
                             .buttonStyle(.bordered)
@@ -339,7 +339,7 @@ struct LoginView: View {
     #endif
             }
         }
-        .onChange(of: appState.authState) { _, newValue in
+        .onChange(of: appStateManager.authentication.state) { _, newValue in
             // Update local error state based on auth manager errors
             if case .error(let message) = newValue {
                 error = message
@@ -349,11 +349,17 @@ struct LoginView: View {
                 // Cancel authentication task on error
                 authenticationTask?.cancel()
                 authenticationTask = nil
-            } else if case .authenticated = newValue {
-                // Successfully authenticated
+            } else if case .authenticated(let userDID) = newValue {
+                // Successfully authenticated - transition to authenticated state
+                Task {
+                    await appStateManager.transitionToAuthenticated(userDID: userDID)
+                }
                 isLoggingIn = false
                 loginProgress = .idle
                 showTimeoutCountdown = false
+                // Clear any cancelled state from previous attempts - we succeeded
+                authenticationCancelled = false
+                error = nil
                 // Cancel authentication task on success
                 authenticationTask?.cancel()
                 authenticationTask = nil
@@ -361,7 +367,7 @@ struct LoginView: View {
                 // Update local progress based on detailed auth progress
                 isLoggingIn = true
                 showTimeoutCountdown = true
-                
+
                 // Map detailed progress to our local progress enum if needed
                 switch progress {
                 case .initializingClient, .resolvingHandle, .fetchingMetadata, .generatingAuthURL:
@@ -388,6 +394,8 @@ struct LoginView: View {
                 authenticationTask = nil
             }
             showTimeoutCountdown = false
+            // Reset the re-authentication flag so it can trigger again if the user returns to this view
+            hasStartedReAuthentication = false
         }
         .onTapGesture(count: 5) {
             // Hidden gesture: tap 5 times to enable debug mode
@@ -397,18 +405,49 @@ struct LoginView: View {
         }
         .task {
             // Check biometric authentication availability
-            biometricAuthAvailable = (appState.authManager.biometricType != .none)
+            biometricAuthAvailable = (appStateManager.authentication.biometricType != .none)
 
             // If there's an expired account, automatically start re-authentication
             // BUT: Skip this if we're explicitly adding a new account (not re-authenticating)
             // ALSO: Skip if already authenticating to prevent loops
-            if let expiredAccount = appState.authManager.expiredAccountInfo,
+            if let expiredAccount = appStateManager.authentication.expiredAccountInfo,
                !hasStartedReAuthentication,
                !isLoggingIn,
                !isAddingNewAccount,
-               !appState.authManager.state.isAuthenticating {
+               !appStateManager.authentication.state.isAuthenticating {
                 logger.info("Expired account detected, automatically starting re-authentication")
+                
+                // Prefill handle field with the stored handle (not DID) for better iOS autofill matching
+                if let storedHandle = expiredAccount.handle, !storedHandle.isEmpty {
+                    handle = storedHandle
+                }
+                
                 hasStartedReAuthentication = true
+                await startReAuthenticationForExpiredAccount(expiredAccount)
+            }
+        }
+        .onChange(of: appStateManager.authentication.expiredAccountInfo?.did) { oldValue, newValue in
+            // React to expiredAccountInfo changes - trigger re-authentication when it's newly set
+            // This handles the case where the user is logged out due to session expiry while using the app
+            guard let newDID = newValue,
+                  oldValue == nil, // Only trigger when newly set (nil -> value)
+                  let expiredAccount = appStateManager.authentication.expiredAccountInfo,
+                  !hasStartedReAuthentication,
+                  !isLoggingIn,
+                  !isAddingNewAccount,
+                  !appStateManager.authentication.state.isAuthenticating else {
+                return
+            }
+            
+            logger.info("Expired account info changed (DID: \(newDID)), automatically starting re-authentication")
+            
+            // Prefill handle field with the stored handle (not DID) for better iOS autofill matching
+            if let storedHandle = expiredAccount.handle, !storedHandle.isEmpty {
+                handle = storedHandle
+            }
+            
+            hasStartedReAuthentication = true
+            Task {
                 await startReAuthenticationForExpiredAccount(expiredAccount)
             }
         }
@@ -446,7 +485,7 @@ struct LoginView: View {
 #endif
         }
         .focused($focusedField, equals: Field.username)
-        .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
+        .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? AppSettings())
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .background(textFieldBackgroundView)
         .modifier(TextFieldShadowModifier(colorScheme: colorScheme))
@@ -631,7 +670,7 @@ struct LoginView: View {
 #endif
             }
             .focused($focusedField, equals: Field.pdsurl)
-            .shake(animatableParameter: showInvalidAnimation, appSettings: appState.appSettings)
+            .shake(animatableParameter: showInvalidAnimation, appSettings: appStateManager.lifecycle.appState?.appSettings ?? AppSettings())
             .frame(maxWidth: min(geometry.size.width * 0.9, 400))
             .transition(AnyTransition.opacity.combined(with: AnyTransition.move(edge: .top)))
         }
@@ -880,20 +919,23 @@ struct LoginView: View {
         isLoggingIn = false
         loginProgress = .idle
         showTimeoutCountdown = false
-        authenticationCancelled = true
         
+        // Only show authenticationCancelled if user explicitly cancelled, not on errors
+        // This prevents "Authentication cancelled" from appearing on auth failures
+        authenticationCancelled = true
+
         // Reset the auth manager error state
-        appState.authManager.resetError()
+        appStateManager.authentication.resetError()
     }
     
     /// Starts the timeout countdown
     private func startTimeoutCountdown() {
         showTimeoutCountdown = true
         timeoutCountdown = 60
-        
+
         // Create a countdown timer
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [self] timer in
-            
+
             DispatchQueue.main.async {
                 if self.timeoutCountdown > 0 && self.isLoggingIn {
                     self.timeoutCountdown -= 1
@@ -920,10 +962,10 @@ struct LoginView: View {
     
     private func loginProgressDescription() -> String {
         // Check if we have detailed progress from auth manager
-        if let authProgress = appState.authState.authProgress {
+        if let authProgress = appStateManager.authentication.state.authProgress {
             return authProgress.userDescription
         }
-        
+
         // Fallback to old progress descriptions
         switch loginProgress {
         case .idle:
@@ -938,10 +980,10 @@ struct LoginView: View {
             return "Finalizing login"
         }
     }
-    
+
     private func loginTechnicalDescription() -> String? {
         // Return technical description if available for debugging
-        return appState.authState.authProgress?.technicalDescription
+        return appStateManager.authentication.state.authProgress?.technicalDescription
     }
     
     private func authModeActionButtonText() -> String {
@@ -1058,24 +1100,24 @@ struct LoginView: View {
         
         // Configure custom service DIDs if advanced options are enabled
         if showAppViewAdvancedOptions {
-            appState.authManager.customAppViewDID = customAppViewDID
-            appState.authManager.customChatDID = customChatDID
+            appStateManager.authentication.customAppViewDID = customAppViewDID
+            appStateManager.authentication.customChatDID = customChatDID
             logger.info("Using custom AppView DID: \(customAppViewDID)")
             logger.info("Using custom Chat DID: \(customChatDID)")
         }
-        
+
         // Start timeout countdown
         startTimeoutCountdown()
-        
+
         // Clean up handle - remove @ prefix and whitespace
         let cleanHandle = handle.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "@", with: "")
-        
+
         // Create and store the authentication task
         authenticationTask = Task { @MainActor in
             do {
                 // Get auth URL
-                let authURL = try await appState.authManager.login(handle: cleanHandle)
+                let authURL = try await appStateManager.authentication.login(handle: cleanHandle)
                 
                 // Check for cancellation after getting auth URL
                 try Task.checkCancellation()
@@ -1090,12 +1132,12 @@ struct LoginView: View {
                         callbackURL = try await webAuthenticationSession.authenticate(
                           using: authURL,
                           callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                          preferredBrowserSession: .shared,
+                          preferredBrowserSession: .ephemeral,
                           additionalHeaderFields: [:]
                         )
                     } else {
                         // Fallback on earlier versions
-                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
+                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .ephemeral
                           )
                     }
 
@@ -1103,34 +1145,37 @@ struct LoginView: View {
                     try Task.checkCancellation()
                     
                     logger.info("Authentication session completed successfully")
-                    
+
                     // Update progress
                     loginProgress = .processingCallback
-                    
+
                     // Process callback
-                    try await appState.authManager.handleCallback(callbackURL)
-                    
+                    try await appStateManager.authentication.handleCallback(callbackURL)
+
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
-                    
+
                     // Update progress
                     loginProgress = .completing
-                    
+
                     // Success is handled via onChange of authState
-                    
+
                 } catch let authSessionError as ASWebAuthenticationSessionError {
                     // User cancelled authentication
                     logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
+                    // Only set authenticationCancelled for explicit user cancellation
                     authenticationCancelled = true
                     isLoggingIn = false
                     loginProgress = .idle
                     showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
-                    appState.authManager.resetError()
+                    appStateManager.authentication.resetError()
                 } catch {
-                    // Other authentication errors (including timeout and cancellation)
+                    // Other authentication errors (including timeout)
                     logger.error("Authentication error: \(error.localizedDescription)")
+                    // Don't show authenticationCancelled for errors, use error state instead
                     self.error = error.localizedDescription
+                    authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
                     showTimeoutCountdown = false
@@ -1179,7 +1224,7 @@ struct LoginView: View {
         authenticationTask = Task { @MainActor in
             do {
                 // Get auth URL for the expired account
-                let authURL = try await appState.authManager.startOAuthFlowForExpiredAccount()
+                let authURL = try await appStateManager.authentication.startOAuthFlowForExpiredAccount()
 
                 guard let authURL else {
                     logger.error("Failed to get auth URL for expired account re-authentication")
@@ -1203,12 +1248,12 @@ struct LoginView: View {
                         callbackURL = try await webAuthenticationSession.authenticate(
                           using: authURL,
                           callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                          preferredBrowserSession: .shared,
+                          preferredBrowserSession: .ephemeral,
                           additionalHeaderFields: [:]
                         )
                     } else {
                         // Fallback on earlier versions
-                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .shared
+                        callbackURL = try await webAuthenticationSession.authenticate(using: URL(string: "https://catbird/oauth/callback")!, callbackURLScheme: "catbird", preferredBrowserSession: .ephemeral
                           )
                     }
 
@@ -1221,7 +1266,7 @@ struct LoginView: View {
                     loginProgress = .processingCallback
 
                     // Process callback
-                    try await appState.authManager.handleCallback(callbackURL)
+                    try await appStateManager.authentication.handleCallback(callbackURL)
 
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
@@ -1234,21 +1279,24 @@ struct LoginView: View {
                 } catch let authSessionError as ASWebAuthenticationSessionError {
                     // User cancelled authentication
                     logger.notice("Re-authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
+                    // Only set authenticationCancelled for explicit user cancellation
                     authenticationCancelled = true
                     isLoggingIn = false
                     loginProgress = .idle
                     showTimeoutCountdown = false
                     hasStartedReAuthentication = false
-                    
+
                     // Clear expired account info to prevent automatic retry loop
-                    await appState.authManager.clearExpiredAccountInfo()
-                    
+                    await appStateManager.authentication.clearExpiredAccountInfo()
+
                     // Reset auth state to prevent getting stuck
-                    appState.authManager.resetError()
+                    appStateManager.authentication.resetError()
                 } catch {
-                    // Other authentication errors (including timeout and cancellation)
+                    // Other authentication errors (including timeout)
                     logger.error("Re-authentication error: \(error.localizedDescription)")
+                    // Don't show authenticationCancelled for errors, use error state instead
                     self.error = error.localizedDescription
+                    authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
                     showTimeoutCountdown = false
@@ -1298,11 +1346,11 @@ struct LoginView: View {
         authenticationTask = Task { @MainActor in
             do {
                 // Get auth URL for signup
-                let authURL = try await appState.authManager.client?.startSignUpFlow(pdsURL: pdsURL)
-                
+                let authURL = try await appStateManager.authentication.client?.startSignUpFlow(pdsURL: pdsURL)
+
                 // Check for cancellation after getting auth URL
                 try Task.checkCancellation()
-                
+
                 guard let authURL else {
                     logger.error("Failed to get auth URL for signup")
                     error = "Failed to get authentication URL"
@@ -1310,51 +1358,44 @@ struct LoginView: View {
                     showTimeoutCountdown = false
                     return
                 }
-                
+
                 // Open web authentication session
                 do {
                     let callbackURL = try await webAuthenticationSession.authenticate(
                         using: authURL,
                         callback: .https(host: "catbird.blue", path: "/oauth/callback"),
-                        preferredBrowserSession: .shared, additionalHeaderFields: [:]
+                        preferredBrowserSession: .ephemeral, additionalHeaderFields: [:]
                     )
-                    
+
                     // Check for cancellation after web authentication
                     try Task.checkCancellation()
-                    
+
                     logger.info("Signup authentication session completed successfully")
-                    
+
                     // Process callback
-                    try await appState.authManager.handleCallback(callbackURL)
-                    
+                    try await appStateManager.authentication.handleCallback(callbackURL)
+
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
-                    
+
                     // Success is handled via onChange of authState
-                    
+
                 } catch let authSessionError as ASWebAuthenticationSessionError {
                     // User cancelled authentication
                     logger.notice("Signup was cancelled by user: \(authSessionError._nsError.localizedDescription)")
+                    // Only set authenticationCancelled for explicit user cancellation
                     authenticationCancelled = true
                     isLoggingIn = false
                     showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
-                    appState.authManager.resetError()
+                    appStateManager.authentication.resetError()
                 } catch {
-                    // Other authentication errors (including timeout and cancellation)
+                    // Other authentication errors (including timeout)
                     logger.error("Signup authentication error: \(error.localizedDescription)")
                     
-                    // Check for specific cancellation errors
-                    let isCancellationError = error is CancellationError ||
-                        (error as NSError).code == NSURLErrorCancelled ||
-                        error.localizedDescription.contains("cancelled") ||
-                        error.localizedDescription.contains("canceled")
-                    
-                    // Don't show cancellation errors as user-facing errors
-                    if !isCancellationError {
-                        self.error = error.localizedDescription
-                    }
-                    
+                    // Don't show authenticationCancelled for errors, use error state instead
+                    self.error = error.localizedDescription
+                    authenticationCancelled = false
                     isLoggingIn = false
                     showTimeoutCountdown = false
                 }
@@ -1425,11 +1466,11 @@ struct LoginView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     // Preview provider for LoginView
-    @Previewable @State var appState = AppState.shared
     
     LoginView()
-        .environment(appState)
+        .applyAppStateEnvironment(appState)
 }
 
 // MARK: - View Modifiers

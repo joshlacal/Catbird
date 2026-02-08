@@ -7,9 +7,9 @@ This guide provides prescriptive, production-focused instructions for AI agents 
 ### Efficiency & Workflow
 - **NO timeline estimates**: Don't predict how long things will take - timelines are consistently inaccurate
 - **NO dates in documentation**: Avoid date-based references that become stale immediately
-- **NO unnecessary builds**: Only build when explicitly requested by user - syntax checks are faster
-- **Prefer syntax checks**: Use `swift -frontend -parse` for validation instead of full builds
-- **Trust user feedback**: If user reports Xcode errors, work directly with that information
+- **BUILD FREELY**: Builds take ~20 seconds on M4 Max - just do it
+- **Verify with real builds**: Use XcodeBuildMCP for actual compilation, not just syntax checks
+- **Full verification loop**: Build → Run → describe_ui → Screenshot → Test
 - **Use MCP servers extensively**: Always verify against Apple docs via MCP, use xcodebuild-mcp, leverage all available MCP tools
 - **Work continuously**: No artificial session boundaries - complete tasks fully without stopping prematurely
 - **Maximize parallelism**: Use parallel tool calls aggressively for all independent operations
@@ -470,158 +470,119 @@ swiftlint
 find Catbird/ -name "*.swift" | head -10 | xargs -I {} swift -frontend -parse {}
 ```
 
-## Headless Task Automation (Copilot CLI)
+## Headless Task Automation (copilot-cli MCP)
 
-Run multiple development tasks in parallel or sequence without manual interaction using the GitHub Copilot CLI task runners.
+Spawn and manage multiple Copilot CLI agent instances via the **copilot-cli** MCP server for parallel or sequential task execution.
 
 ### Quick Start Examples
 
-**Single Task Execution:**
-```bash
-# Syntax check with specific approval
-./copilot-runner.sh single "syntax-check" \
-  "Check all Swift files for syntax errors" \
-  "--allow-tool 'shell(swift)'"
+**Spawn a single agent:**
+```python
+# Run a syntax check task
+copilot_cli:run_agent(
+    prompt="Check all Swift files for syntax errors",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-tool", "Bash(swift)"]
+)
 ```
 
-**Parallel Task Execution (runs simultaneously):**
-```bash
-# Build for both platforms at once
-./copilot-runner.sh parallel \
-  "build-ios|Build for iOS simulator|--allow-all-tools" \
-  "build-macos|Build for macOS|--allow-all-tools" \
-  "lint|Run SwiftLint|--allow-tool 'shell(swiftlint)'"
+**Spawn multiple agents in parallel:**
+```python
+# Build for both platforms simultaneously
+copilot_cli:run_agent(
+    prompt="Build Catbird for iOS simulator",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-all-tools"]
+)
+
+copilot_cli:run_agent(
+    prompt="Build Catbird for macOS",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-all-tools"]
+)
+
+copilot_cli:run_agent(
+    prompt="Run SwiftLint on the codebase",
+    workingDirectory="/path/to/Catbird",
+    approval=["--allow-tool", "Bash(swiftlint)"]
+)
 ```
 
-**Sequential Task Execution (runs in order):**
-```bash
-# CI/CD pipeline - stop on failure
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow ci-pipeline \
-  --sequential \
-  --stop-on-failure
+**Check agent status:**
+```python
+# List all running agents
+copilot_cli:list_agents()
+
+# Get specific agent output
+copilot_cli:get_agent_output(agentId="agent-uuid")
+
+# Stop a running agent
+copilot_cli:stop_agent(agentId="agent-uuid")
 ```
 
-**Workflow Execution from Config:**
-```bash
-# Pre-commit checks
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow pre-commit
+### Available Operations
 
-# Full multi-platform build
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow full-build
-```
-
-### Available Tools
-
-- **`copilot-runner.sh`** - Bash version (simple, portable, no dependencies)
-- **`copilot-runner.py`** - Python version (advanced features, JSON/YAML support)
-- **`copilot-tasks.example.json`** - Example task definitions with workflows
+| Operation | Description |
+|-----------|-------------|
+| `run_agent()` | Spawn a new Copilot CLI agent with a prompt |
+| `list_agents()` | List all active agent instances |
+| `get_agent_output()` | Get stdout/stderr from an agent |
+| `stop_agent()` | Terminate a running agent |
 
 ### Key Features
 
-- **Parallel execution**: Run independent tasks simultaneously for faster completion
-- **Sequential execution**: Chain dependent operations in order
-- **Headless operation**: Auto-approval with configurable security controls
-- **Task definitions**: Reusable JSON/YAML task configurations
-- **Result logging**: All outputs saved to `copilot-results/` with timestamps
-- **Workflow support**: Pre-defined task sequences (pre-commit, ci-pipeline, full-build)
-- **Security controls**: Granular approval flags for safe automation
+- **Parallel execution**: Spawn multiple agents simultaneously for independent tasks
+- **Managed lifecycle**: Track, monitor, and stop agents as needed
+- **Output capture**: Retrieve agent output for verification
+- **Security controls**: Granular approval flags per agent
+- **Working directory**: Each agent can operate in a specific directory
 
 ### Security & Approval Flags
 
-Control what Copilot can do without manual approval:
+Control what each agent can do:
 
-```bash
+```python
 # Safe: Only allow specific commands
---allow-tool 'shell(swift)'        # Allow Swift compiler only
---allow-tool 'shell(git status)'   # Allow read-only git
---deny-tool 'shell(rm)'            # Block dangerous commands
+approval=["--allow-tool", "Bash(swift)"]        # Allow Swift compiler only
+approval=["--allow-tool", "Bash(git status)"]   # Allow read-only git
+approval=["--deny-tool", "Bash(rm)"]            # Block dangerous commands
 
 # Moderate: Allow builds but deny destructive operations
---allow-tool 'shell(xcodebuild)' --deny-tool 'shell(rm)' --deny-tool 'write'
+approval=["--allow-tool", "Bash(xcodebuild)", "--deny-tool", "Bash(rm)"]
 
 # Full automation (⚠️ use in containers/VMs only)
---allow-all-tools
+approval=["--allow-all-tools"]
 ```
 
 ### Common Development Workflows
 
 **Pre-commit Validation:**
-```bash
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --tasks swift-syntax-check swiftlint git-status \
-  --sequential
+```python
+# Spawn agents for pre-commit checks
+copilot_cli:run_agent(
+    prompt="Check Swift syntax in all files",
+    approval=["--allow-tool", "Bash(swift)"]
+)
+copilot_cli:run_agent(
+    prompt="Run SwiftLint and report issues",
+    approval=["--allow-tool", "Bash(swiftlint)"]
+)
 ```
 
 **Multi-platform CI Build:**
-```bash
-./copilot-runner.py from-file copilot-tasks.example.json \
-  --workflow ci-pipeline \
-  --stop-on-failure \
-  --results-dir ./ci-results
+```python
+# Parallel builds for CI
+copilot_cli:run_agent(prompt="Build iOS target for simulator", approval=["--allow-all-tools"])
+copilot_cli:run_agent(prompt="Build macOS target", approval=["--allow-all-tools"])
+copilot_cli:run_agent(prompt="Run all unit tests", approval=["--allow-all-tools"])
 ```
 
 **Parallel Quality Checks:**
-```bash
-./copilot-runner.sh parallel \
-  "swiftlint|Run SwiftLint|--allow-tool 'shell(swiftlint)'" \
-  "todos|Check for TODOs|--allow-tool 'shell(rg)'" \
-  "prints|Find print statements|--allow-tool 'shell(rg)'"
-```
-
-### Integration Examples
-
-**Makefile Integration:**
-```makefile
-.PHONY: copilot-check
-copilot-check:
-	./copilot-runner.py from-file copilot-tasks.json --workflow pre-commit
-
-.PHONY: copilot-build-all
-copilot-build-all:
-	./copilot-runner.py from-file copilot-tasks.json --workflow full-build
-```
-
-**Git Pre-commit Hook:**
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
-./copilot-runner.sh sequential \
-  "syntax|Check Swift syntax|--allow-tool 'shell(swift)'" \
-  "lint|Run SwiftLint|--allow-tool 'shell(swiftlint)'" \
-  || exit 1
-```
-
-**GitHub Actions:**
-```yaml
-- name: Run Copilot CI Tasks
-  run: |
-    ./copilot-runner.py from-file copilot-tasks.json \
-      --workflow ci-pipeline \
-      --sequential \
-      --stop-on-failure
-```
-
-### Output & Results
-
-All task execution generates timestamped log files:
-- `copilot-results/run_TIMESTAMP.log` - Main execution log
-- `copilot-results/task_TASKNAME_TIMESTAMP.log` - Individual task logs
-
-Exit codes:
-- `0` - All tasks succeeded
-- `1` - One or more tasks failed
-
-### Full Documentation
-
-See **`COPILOT_RUNNER_README.md`** for:
-- Complete task definition format (JSON/YAML)
-- Advanced features and options
-- Security best practices
-- Troubleshooting guide
-- More integration examples
+```python
+# Run multiple quality checks simultaneously
+copilot_cli:run_agent(prompt="Run SwiftLint", approval=["--allow-tool", "Bash(swiftlint)"])
+copilot_cli:run_agent(prompt="Find TODO comments in code", approval=["--allow-tool", "Bash(rg)"])
+copilot_cli:run_agent(prompt="Find print statements", approval=["--allow-tool", "Bash(rg)"])
 
 ## MCP Development Workflows
 
@@ -1243,12 +1204,8 @@ The project includes automated quality checks:
 
 ### Development Workflow
 - **ALWAYS** use sequential-thinking for complex tasks (feature planning, bug diagnosis, optimization)
-- **ALWAYS** run syntax checks before committing: `./swift-check.sh`
 - **ALWAYS** use `describe_ui()` before UI automation (never guess coordinates)
 - **Prefer MCP servers** over manual commands for consistency
-- **DO NOT BUILD** unless explicitly instructed by the user
-- **Use syntax checks** (`swift -frontend -parse`) to validate code changes
-- **Full builds** only when user requests or for release preparation
 - **Test on both platforms** when making UI changes (if instructed)
 
 ## Testing Guidelines
@@ -1264,6 +1221,36 @@ The project includes automated quality checks:
 - Test critical user flows (login, post, navigate)
 - Use accessibility identifiers for reliable element selection
 - Simulator automation via MCP tools
+
+### Parallel Testing (M4 Max)
+
+Run tests across multiple targets simultaneously. See `~/Developer/.claude/AGENTS.md` for full parallel testing documentation.
+
+**Quick Reference - Available Targets:**
+| Target | Simulator ID | Notes |
+|--------|--------------|-------|
+| iPhone 17 Pro | `40111BBE-8709-40D0-9016-A27448486A80` | Default |
+| iPhone 17 Pro Max | `B53B2875-BFF5-4127-B56A-50529F7813CB` | Large screen |
+| iPad Pro 13-inch | `56D76971-EC63-4C7C-B2D8-A6D0C3FD07B0` | Tablet layout |
+| macOS | N/A | Native build |
+| Physical iPhone | `6AFBE06D-301D-5F38-80D6-06B26ED62A2C` | Real device |
+
+**Parallel Test Command (example):**
+```python
+# Execute in parallel (single message):
+XcodeBuildMCP_test_sim(simulatorId="40111BBE...")  # iPhone
+XcodeBuildMCP_test_sim(simulatorId="56D76971...")  # iPad
+XcodeBuildMCP_test_macos()                          # macOS
+```
+
+**Tab Bar Navigation (coordinates):**
+```python
+# Tab bar y=832 on iPhone (center of 791-874)
+tap(x=50, y=832)   # Home
+tap(x=140, y=832)  # Notifications
+tap(x=230, y=832)  # Messages
+tap(x=320, y=832)  # Search
+```
 
 ### Testing Commands
 
@@ -1362,7 +1349,7 @@ The app should be modified to always be in a production-ready state with all maj
 - **Sequential-thinking mandatory** for complex tasks (3+ steps)
 - **Never guess UI coordinates** - always use `describe_ui()`
 - **Prefer MCP over manual** for consistency and automation
-- **DO NOT BUILD unless instructed** - use syntax checks instead
+- **BUILD FREELY** - builds take ~20 seconds on M4 Max
 - Production quality only: no placeholders, no TODOs, no temporary code
 - Maintain strict compiler warnings-free builds (when building)
 

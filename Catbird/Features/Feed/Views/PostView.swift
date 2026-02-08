@@ -267,7 +267,9 @@ var id: String {
             displayName: postState.currentPost.author.displayName
               ?? postState.currentPost.author.handle.description,
             handle: postState.currentPost.author.handle.description,
-            timeAgo: feedPost.createdAt.date
+            timeAgo: feedPost.createdAt.date,
+            pronouns: postState.currentPost.author.pronouns,
+            isVerified: postState.currentPost.author.verification?.verifiedStatus == "valid" || postState.currentPost.author.did.isEqual(to: try! DID(didString: "did:plc:vc7f4oafdgxsihk4cry2xpze"))
           )
 
           Spacer()
@@ -483,7 +485,9 @@ var id: String {
           labels: nil,
           createdAt: nil,
           verification: nil,
-          status: nil
+          status: nil,
+          debug: nil
+
         )
       case .notFound, .parseError, .permissionDenied:
         // Generic placeholder for deleted/not found posts
@@ -499,7 +503,8 @@ var id: String {
           labels: nil,
           createdAt: nil,
           verification: nil,
-          status: nil
+          status: nil,
+          debug: nil
         )
       }
     }
@@ -592,12 +597,28 @@ var id: String {
 
       threadSummaryTask = Task {
         do {
-          let summary = try await agent.summarizeThread(at: targetURI)
+          var accumulatedText = ""
+          let stream = await agent.streamThreadSummary(at: targetURI)
+          
+          for try await chunk in stream {
+            guard !Task.isCancelled else { return }
+            
+            accumulatedText += chunk
+            
+            await MainActor.run {
+              self.threadSummaryText = accumulatedText
+            }
+          }
+          
           guard !Task.isCancelled else { return }
 
-          let cleaned = summary.trimmingCharacters(in: .whitespacesAndNewlines)
           await MainActor.run {
-            if cleaned.isEmpty {
+            let cleaned = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let squashed = cleaned
+              .lowercased()
+              .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+
+            if cleaned.isEmpty || squashed.range(of: #"^(null)+$"#, options: .regularExpression) != nil {
               self.threadSummaryError = "The model couldn't generate a summary for this thread."
               self.isThreadSummaryLoading = false
               self.canRetryThreadSummary = true
@@ -635,8 +656,17 @@ var id: String {
         return ("Thread summarization isn't available on this device.", false)
       case .invalidThreadURI(let value):
         return ("The thread identifier \(value) is invalid.", false)
-      case .emptyResult:
-        return ("There isn't enough conversation to summarize yet.", false)
+      case .emptyResult(let context):
+        if context.contains("post may be deleted") {
+          return ("That post isn’t available anymore, so this thread can’t be summarized.", false)
+        }
+        if context.hasPrefix("thread fetch") || context.contains("thread (no data") || context.contains("thread (empty") {
+          return ("Couldn’t load this thread to summarize. Try again.", true)
+        }
+        if context.contains("no valid posts") {
+          return ("There isn't enough conversation to summarize yet.", false)
+        }
+        return ("Couldn’t generate a summary for this thread. Try again.", true)
       case .underlying(let underlying):
         let message = (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription
         return (message, true)
@@ -699,7 +729,7 @@ var id: String {
 
   /// Fetch the current user's DID
   private func fetchCurrentUserDid() {
-    postState.currentUserDid = appState.currentUserDID  // Use consolidated state
+    postState.currentUserDid = appState.userDID  // Use consolidated state
   }
 
   /// Get the final avatar URL with fallback handling
@@ -709,20 +739,10 @@ var id: String {
   }
 
   /// Prefetch the avatar image for better performance
+  /// Note: Relies on Nuke's built-in timeout handling rather than creating separate timeout tasks
   private func prefetchAvatar() async {
-    // Use postState.isAvatarLoaded and check before prefetching
     guard let finalAvatarURL = getFinalAvatarURL(), !postState.isAvatarLoaded else { return }
-    let manager = ImageLoadingManager.shared
-    await manager.startPrefetching(urls: [finalAvatarURL])
-
-    // Cancel prefetching if avatar doesn't load after a delay
-    Task {
-      try await Task.sleep(for: .seconds(5))
-      // Check isAvatarLoaded again before stopping
-      if !postState.isAvatarLoaded {
-        await manager.stopPrefetching(urls: [finalAvatarURL])
-      }
-    }
+    await ImageLoadingManager.shared.startPrefetching(urls: [finalAvatarURL])
   }
 
   /// Check if a post has adult content labels

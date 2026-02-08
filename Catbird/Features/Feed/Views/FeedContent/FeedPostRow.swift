@@ -119,6 +119,7 @@ struct FeedPostRow: View, Equatable, Identifiable {
 // MARK: - Preview Support
 
 //#Preview {
+//    @Previewable @Environment(AppState.self) var appState
 //    @State var navigationPath = NavigationPath()
 //
 //    // Create a mock post for preview
@@ -158,7 +159,7 @@ struct FeedPostRow: View, Equatable, Identifiable {
 //        )
 //    )
 //
-//    let mockViewModel = FeedPostViewModel(post: mockPost, appState: AppState.shared)
+//    let mockViewModel = FeedPostViewModel(post: mockPost, appState: appState)
 //
 //    NavigationStack(path: $navigationPath) {
 //        FeedPostRow(

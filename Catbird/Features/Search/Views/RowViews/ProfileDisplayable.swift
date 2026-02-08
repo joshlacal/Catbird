@@ -14,13 +14,17 @@ protocol ProfileDisplayable: Identifiable, Equatable, Hashable {
     var handle: Handle { get }
     var displayName: String? { get }
     var avatar: URI? { get }
-    
+    var pronouns: String? { get }
+    var verification: AppBskyActorDefs.VerificationState? { get }
+
     func finalAvatarURL() -> URL?
 }
 
 // Default helpers
 extension ProfileDisplayable {
     func finalAvatarURL() -> URL? { avatar?.url }
+    var pronouns: String? { nil }
+    var verification: AppBskyActorDefs.VerificationState? { nil }
 }
 
 /// Conformance for ProfileViewDetailed

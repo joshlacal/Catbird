@@ -48,6 +48,9 @@ final class FeedPostViewModel {
     private var _timeAgoString: String?
     private var _hasMedia: Bool?
     private var _isThread: Bool?
+
+    /// Cached decoded FeedViewPost to avoid repeated JSON parsing
+    private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
     
     // MARK: - Dependencies
     
@@ -71,9 +74,14 @@ final class FeedPostViewModel {
         logger.debug("FeedPostViewModel initialized for post: \(post.id)")
     }
 
-    /// Accessor for feedViewPost from the cached post
+    /// Accessor for feedViewPost from the cached post (with caching to avoid repeated JSON parsing)
     private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
-        try? post.feedViewPost
+        if let cached = _cachedFeedViewPost {
+            return cached
+        }
+        let decoded = try? post.feedViewPost
+        _cachedFeedViewPost = decoded
+        return decoded
     }
     
     // MARK: - Data Updates
@@ -84,7 +92,10 @@ final class FeedPostViewModel {
             logger.error("Attempted to update FeedPostViewModel with different post ID")
             return
         }
-        
+
+        // Clear cached FeedViewPost since we're getting new data
+        _cachedFeedViewPost = nil
+
         // Clear cached properties if content changed
         if let oldPost = feedViewPost,
            let newFVP = try? newPost.feedViewPost {
@@ -504,6 +515,7 @@ final class FeedPostViewModel {
     
     /// Clears all cached properties
     private func clearAllCache() {
+        _cachedFeedViewPost = nil
         _displayText = nil
         _truncatedText = nil
         _hasContentWarning = nil
@@ -550,34 +562,10 @@ final class FeedPostViewModel {
     private func detectContentWarning() -> Bool {
         guard let fvp = feedViewPost else { return false }
 
-        // Check post labels
+        // Check post labels - these apply to both the post and embedded content
         if let labels = fvp.post.labels,
            !labels.isEmpty {
             return ContentLabelManager<AnyView>.getContentVisibility(labels: labels) == .warn
-        }
-
-        // Check embedded content labels
-        if let embed = fvp.post.embed {
-            switch embed {
-            case .appBskyEmbedImagesView(let imageEmbed):
-                let images = imageEmbed.images
-                for image in images {
-                    if !image.alt.isEmpty,
-                       ContentLabelManager<AnyView>.shouldInitiallyBlur(labels: []) { // TODO: label parsing
-                        return true
-                    }
-                }
-            case .appBskyEmbedExternalView(_):
-                break
-            case .appBskyEmbedRecordView(_):
-                break
-            case .appBskyEmbedRecordWithMediaView(_):
-                break
-            case .appBskyEmbedVideoView(_):
-                break
-            case .unexpected:
-                break
-            }
         }
         
         return false

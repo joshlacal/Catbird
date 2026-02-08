@@ -327,7 +327,7 @@ struct AboutSettingsView: View {
             ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
             modifiedSince: Date(timeIntervalSince1970: 0)
         ) {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 isClearingCache = false
             }
         }
@@ -542,8 +542,9 @@ struct AboutSettingsView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
     NavigationStack {
         AboutSettingsView()
-            .environment(AppState.shared)
+            .applyAppStateEnvironment(appState)
     }
 }

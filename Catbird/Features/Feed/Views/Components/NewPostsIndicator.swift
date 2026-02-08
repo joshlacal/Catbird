@@ -60,7 +60,7 @@ struct NewPostsIndicator: View {
       }
     }
     .animation(.spring(response: 0.5, dampingFraction: 0.78), value: shouldRender)
-    .onChange(of: newPostsCount) { newValue in
+    .onChange(of: newPostsCount) { _, newValue in
       logger.debug("🔄 NEW_POSTS_INDICATOR: newPostsCount changed from \(lastCount) to \(newValue)")
       guard newValue != lastCount else { return }
       if newValue > lastCount {  // Got more

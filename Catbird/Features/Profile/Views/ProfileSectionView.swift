@@ -306,6 +306,7 @@ struct ProfileSectionView: View {
 }
 
 #Preview {
+    @Previewable @Environment(AppState.self) var appState
   NavigationStack {
     ProfileSectionView(
       viewModel: ProfileViewModel(

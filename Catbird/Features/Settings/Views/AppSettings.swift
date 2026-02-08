@@ -515,6 +515,14 @@ import OSLog
         }
     }
     
+    var showHiddenPosts: Bool {
+        get { settingsModel?.showHiddenPosts ?? defaults.showHiddenPosts }
+        set {
+            settingsModel?.showHiddenPosts = newValue
+            saveChanges()
+        }
+    }
+    
     // Feed Preferences
     var showSavedFeedSamples: Bool {
         get { settingsModel?.showSavedFeedSamples ?? defaults.showSavedFeedSamples }
@@ -719,7 +727,16 @@ import OSLog
             saveChanges()
         }
     }
-    
+
+    // MLS Chat Settings
+    var mlsMessageRetentionDays: Int {
+        get { settingsModel?.mlsMessageRetentionDays ?? defaults.mlsMessageRetentionDays }
+        set {
+            settingsModel?.mlsMessageRetentionDays = newValue
+            saveChanges()
+        }
+    }
+
     // Developer Settings
     
     

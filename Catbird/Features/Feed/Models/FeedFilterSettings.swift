@@ -25,7 +25,7 @@ struct FeedFilter: Identifiable, Hashable {
 /// Manages filter settings and persists user preferences
 @Observable final class FeedFilterSettings {
   var filters: [FeedFilter] = []
-  
+
   // Feed sorting mode (Latest by default). When set to .relevant,
   // callers may re-rank using on-device embeddings.
   enum FeedSortMode: String, CaseIterable, Identifiable {
@@ -33,11 +33,10 @@ struct FeedFilter: Identifiable, Hashable {
     case relevant
     var id: String { rawValue }
   }
-  
+
   var sortMode: FeedSortMode = .latest {
     didSet { saveSettings() }
   }
-
 
   // Tracking of active filters
   private(set) var activeFilterIds: Set<String> = []
@@ -117,7 +116,7 @@ struct FeedFilter: Identifiable, Hashable {
         description: "Hide posts that quote other posts",
         isEnabled: false,
         filterBlock: { post in
-          if case let .appBskyFeedDefsPostView(parent) = post.reply?.parent {
+          if case .appBskyFeedDefsPostView(let parent) = post.reply?.parent {
             // Check if the post is a quote
             if let embed = parent.embed {
               switch embed {
@@ -203,13 +202,14 @@ struct FeedFilter: Identifiable, Hashable {
               break
             }
           }
-          
+
           // Also check for links in the post text via facets
           guard case .knownType(let record) = post.post.record,
-                let feedPost = record as? AppBskyFeedPost else {
+            let feedPost = record as? AppBskyFeedPost
+          else {
             return true
           }
-          
+
           // Check facets for links
           if let facets = feedPost.facets {
             for facet in facets {
@@ -220,7 +220,7 @@ struct FeedFilter: Identifiable, Hashable {
               }
             }
           }
-          
+
           return true
         }
       ),
@@ -230,7 +230,7 @@ struct FeedFilter: Identifiable, Hashable {
         isEnabled: false,
         // The actual filtering is done by LanguageFilterProcessor
         filterBlock: { _ in true }
-      )
+      ),
     ]
   }
 
@@ -305,7 +305,7 @@ struct FeedFilter: Identifiable, Hashable {
 
     // Persist settings
     saveSettings()
-    
+
     // Handle language filter toggle
     if filter.name == "Filter by Language" {
       if updatedFilter.isEnabled {
@@ -321,7 +321,7 @@ struct FeedFilter: Identifiable, Hashable {
   private func loadSavedSettings() {
     // Load filter preferences from UserDefaults
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-      if let savedFilters = defaults?.object(forKey: "FeedFilterActiveFilters") as? [String] {
+    if let savedFilters = defaults?.object(forKey: "FeedFilterActiveFilters") as? [String] {
       activeFilterIds = Set(savedFilters)
 
       // Update filters based on saved settings
@@ -346,7 +346,7 @@ struct FeedFilter: Identifiable, Hashable {
 
   private func loadMuteWords() {
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-      let muteWordsString = defaults?.string(forKey: "muteWords") ?? ""
+    let muteWordsString = defaults?.string(forKey: "muteWords") ?? ""
     let muteWords = muteWordsString.split(separator: ",").map {
       String($0).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -356,17 +356,18 @@ struct FeedFilter: Identifiable, Hashable {
       updateMuteWordProcessor(processor)
     }
   }
-  
+
   private func loadLanguageFilter() {
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
     let contentLanguages = defaults?.stringArray(forKey: "contentLanguages") ?? ["en"]
-    let isLanguageFilterEnabled = filters.first { $0.name == "Filter by Language" }?.isEnabled ?? false
-    
+    let isLanguageFilterEnabled =
+      filters.first { $0.name == "Filter by Language" }?.isEnabled ?? false
+
     if isLanguageFilterEnabled && !contentLanguages.isEmpty {
       let processor = LanguageFilterProcessor(contentLanguages: contentLanguages)
       updateLanguageProcessor(processor)
     }
-    
+
     // Listen for language preference changes
     NotificationCenter.default.addObserver(
       self,
@@ -375,7 +376,7 @@ struct FeedFilter: Identifiable, Hashable {
       object: nil
     )
   }
-  
+
   @objc private func languagePreferencesChanged() {
     loadLanguageFilter()
   }
@@ -383,8 +384,8 @@ struct FeedFilter: Identifiable, Hashable {
   private func saveSettings() {
     // Save filter preferences to UserDefaults
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-      
-      defaults?.set(Array(activeFilterIds), forKey: "FeedFilterActiveFilters")
+
+    defaults?.set(Array(activeFilterIds), forKey: "FeedFilterActiveFilters")
     defaults?.set(sortMode.rawValue, forKey: "FeedSortMode")
   }
 
@@ -397,12 +398,12 @@ struct FeedFilter: Identifiable, Hashable {
     contentProcessors.append(processor)
     muteWordProcessor = processor
   }
-  
+
   // Update the language filter processor
   func updateLanguageProcessor(_ processor: LanguageFilterProcessor) {
     // Remove existing language processor if present
     contentProcessors.removeAll { $0 is LanguageFilterProcessor }
-    
+
     // Add new processor
     contentProcessors.append(processor)
     languageProcessor = processor
@@ -426,48 +427,49 @@ struct FeedFilter: Identifiable, Hashable {
 
     return allFilters
   }
-  
+
   // Load persisted sort mode
   func loadSortMode() {
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
     if let raw = defaults?.string(forKey: "FeedSortMode"),
-       let mode = FeedSortMode(rawValue: raw) {
+      let mode = FeedSortMode(rawValue: raw)
+    {
       sortMode = mode
     }
   }
-  
+
   // MARK: - Convenience Properties
-  
+
   /// Convenience property for checking if "Hide Link Posts" filter is enabled
   var hideLinks: Bool {
     isFilterEnabled(name: "Hide Link Posts")
   }
-  
+
   /// Convenience property for checking if "Only Text Posts" filter is enabled
   var onlyTextPosts: Bool {
     isFilterEnabled(name: "Only Text Posts")
   }
-  
+
   /// Convenience property for checking if "Only Media Posts" filter is enabled
   var onlyMediaPosts: Bool {
     isFilterEnabled(name: "Only Media Posts")
   }
-  
+
   /// Convenience property for checking if "Hide Replies" filter is enabled
   var hideReplies: Bool {
     isFilterEnabled(name: "Hide Replies")
   }
-  
+
   /// Convenience property for checking if "Hide Reposts" filter is enabled
   var hideReposts: Bool {
     isFilterEnabled(name: "Hide Reposts")
   }
-  
+
   /// Convenience property for checking if "Hide Quote Posts" filter is enabled
   var hideQuotePosts: Bool {
     isFilterEnabled(name: "Hide Quote Posts")
   }
-  
+
   /// Convenience property for "Hide Replies By Unfollowed"
   /// Note: This is controlled via FeedViewPreference server sync, not local filters
   var hideRepliesByUnfollowed: Bool {
@@ -507,8 +509,9 @@ final class MuteWordProcessor: PostContentProcessor {
 
     switch post.reply?.parent {
     case .appBskyFeedDefsPostView(let postView):
-      if case let .knownType(parentPostObj) = postView.record,
-        let parentFeedPost = parentPostObj as? AppBskyFeedPost {
+      if case .knownType(let parentPostObj) = postView.record,
+        let parentFeedPost = parentPostObj as? AppBskyFeedPost
+      {
         // Check the parent post's text for mute words
         let parentText = parentFeedPost.text.lowercased()
         for word in muteWords {
@@ -543,11 +546,11 @@ final class MuteWordProcessor: PostContentProcessor {
 final class LanguageFilterProcessor: PostContentProcessor {
   private let contentLanguages: [String]
   private let detector = LanguageDetector.shared
-  
+
   init(contentLanguages: [String]) {
     self.contentLanguages = contentLanguages
   }
-  
+
   func process(post: AppBskyFeedDefs.FeedViewPost) -> Bool {
     // Extract text from post
     guard case .knownType(let postObj) = post.post.record,
@@ -555,11 +558,11 @@ final class LanguageFilterProcessor: PostContentProcessor {
     else {
       return true
     }
-    
+
     // Check if the post's language matches our content languages
     return detector.matchesContentLanguages(feedPost.text, contentLanguages: contentLanguages)
   }
-  
+
   func metadataForPost(uri: String) -> [String: Any]? {
     return nil
   }

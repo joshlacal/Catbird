@@ -91,7 +91,7 @@ struct EmailUpdateSheet: View {
             // Use the AT Protocol email update API
             do {
                 // First, request an email update token
-                let client = await AppState.shared.atProtoClient
+                let client = await appState.atProtoClient
                 guard let client = client else {
                     Task { @MainActor in
                         errorMessage = "Unable to connect to server"

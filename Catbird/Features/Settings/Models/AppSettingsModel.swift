@@ -9,7 +9,7 @@ final class AppSettingsModel {
     static let sharedId = "app_settings"
     
     // Unique identifier for single instance
-    var id: String = "app_settings"
+    @Attribute(.unique) var id: String = "app_settings"
     
     // MARK: - Stored Properties
     
@@ -62,6 +62,7 @@ final class AppSettingsModel {
     var threadSortOrder: String = "hot"
     var prioritizeFollowedUsers: Bool = true
     var threadedReplies: Bool = false
+    var showHiddenPosts: Bool = false  // Auto-load posts hidden by threadgate (otherwise shows button)
     
     // Local Feed Preferences (used in addition to server preferences)
     var showSavedFeedSamples: Bool = false
@@ -102,7 +103,10 @@ final class AppSettingsModel {
     
     // Privacy
     var loggedOutVisibility: Bool = true
-    
+
+    // MLS Chat Settings
+    var mlsMessageRetentionDays: Int = 30  // Default: 30 days (balanced policy)
+
     // Developer Settings
     
     
@@ -181,6 +185,7 @@ final class AppSettingsModel {
         if let value = defaults.string(forKey: "threadSortOrder") { threadSortOrder = value }
         prioritizeFollowedUsers = defaults.bool(forKey: "prioritizeFollowedUsers")
         threadedReplies = defaults.bool(forKey: "threadedReplies")
+        showHiddenPosts = defaults.bool(forKey: "showHiddenPosts")
         
         // Feed Preferences
         showSavedFeedSamples = defaults.bool(forKey: "showSavedFeedSamples")
@@ -219,7 +224,13 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = defaults.bool(forKey: "loggedOutVisibility")
-        
+
+        // MLS Chat Settings
+        if defaults.object(forKey: "mlsMessageRetentionDays") != nil {
+            mlsMessageRetentionDays = defaults.integer(forKey: "mlsMessageRetentionDays")
+        }
+        if mlsMessageRetentionDays == 0 { mlsMessageRetentionDays = 30 }  // Ensure valid default
+
         // Developer Settings
         
     }
@@ -282,6 +293,7 @@ final class AppSettingsModel {
         threadSortOrder = "hot"
         prioritizeFollowedUsers = true
         threadedReplies = false
+        showHiddenPosts = false
         
         // Feed Preferences
         showSavedFeedSamples = false
@@ -312,7 +324,10 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = true
-        
+
+        // MLS Chat Settings
+        mlsMessageRetentionDays = 30
+
         // Developer Settings
         
     }

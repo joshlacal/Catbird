@@ -39,7 +39,12 @@ final class ComposerDraftManager {
   
   private let draftKey = "composerMinimizedDraft"
   private var hasMigratedLegacyDrafts = false
-  
+
+  /// Debounce timer for UserDefaults writes to avoid blocking main thread
+  @ObservationIgnored
+  private var persistDebounceTask: Task<Void, Never>?
+  private let persistDebounceInterval: TimeInterval = 0.5  // 500ms debounce
+
   @ObservationIgnored
   private var accountObservation: Task<Void, Never>?
   
@@ -81,7 +86,7 @@ final class ComposerDraftManager {
       accountObservation = Task { [weak self] in
         guard let self = self else { return }
         var lastDID: String? = nil
-        for await state in appState.authManager.stateChanges {
+        for await state in await AppStateManager.shared.authentication.stateChanges {
           let currentDID = state.userDID
           // Reload drafts whenever the active DID changes, including logout/login
           if currentDID != lastDID {
@@ -105,7 +110,7 @@ final class ComposerDraftManager {
   // MARK: - Saved Drafts (SwiftData)
   
   /// Save current draft to SwiftData for later retrieval
-  func saveCurrentDraftToDisk() {
+  @MainActor func saveCurrentDraftToDisk() {
       logger.info("💾 saveCurrentDraftToDisk called - Has current draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
     
     guard let draft = currentDraft else {
@@ -138,8 +143,12 @@ final class ComposerDraftManager {
         await MainActor.run {
           currentDraft = nil
           restoredSavedDraftId = nil
-          UserDefaults.standard.removeObject(forKey: draftKey)
-          logger.debug("🧹 Cleared current draft and UserDefaults entry")
+          logger.debug("🧹 Cleared current draft")
+        }
+        // Remove UserDefaults entry on background thread
+        let key = draftKey
+        Task.detached(priority: .utility) {
+          UserDefaults.standard.removeObject(forKey: key)
         }
         await loadSavedDrafts()
       } catch {
@@ -149,7 +158,7 @@ final class ComposerDraftManager {
   }
   
   /// Save a new draft directly to SwiftData
-  func createSavedDraft(_ draft: PostComposerDraft) {
+  @MainActor func createSavedDraft(_ draft: PostComposerDraft) {
     logger.info("📝 createSavedDraft called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
     
     guard let accountDID = currentAccountDID else {
@@ -175,6 +184,7 @@ final class ComposerDraftManager {
   }
   
   /// Save a new draft directly to SwiftData and wait for completion
+  @MainActor
   func createSavedDraftAndWait(_ draft: PostComposerDraft) async {
     logger.info("📝 createSavedDraftAndWait called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
     
@@ -190,10 +200,10 @@ final class ComposerDraftManager {
     logger.info("💾 Creating new saved draft - Account: \(accountDID)")
     
     do {
-      let draftId = try await persistence.saveDraft(draft, accountDID: accountDID)
+      let draftId = try persistence.saveDraft(draft, accountDID: accountDID)
       logger.info("✅ Successfully created saved draft - ID: \(draftId.uuidString)")
       await loadSavedDrafts()
-        logger.info("✅ Draft saved and drafts reloaded - Total drafts: \(self.savedDrafts.count)")
+      logger.info("✅ Draft saved and drafts reloaded - Total drafts: \(self.savedDrafts.count)")
     } catch {
       logger.error("❌ Failed to create saved draft: \(error.localizedDescription)")
     }
@@ -239,57 +249,48 @@ final class ComposerDraftManager {
   }
   
   /// Reload all saved drafts for current account from SwiftData
+  @MainActor
   func loadSavedDrafts() async {
       logger.info("📂 loadSavedDrafts called - Has persistence: \(self.draftPersistence != nil), Account DID: \(self.currentAccountDID ?? "nil")")
-    
+
     guard let persistence = draftPersistence else {
       logger.warning("⚠️ No persistence available - cannot load drafts")
-      await MainActor.run { 
-        savedDrafts = []
-        draftsLoaded = false
-      }
+      savedDrafts = []
+      draftsLoaded = false
       return
     }
-    
+
     guard let accountDID = currentAccountDID else {
       logger.info("ℹ️ No account DID - clearing drafts list")
-      await MainActor.run { 
-        savedDrafts = []
-        draftsLoaded = true
-      }
+      savedDrafts = []
+      draftsLoaded = true
       return
     }
-    
+
     do {
       logger.debug("🔍 Fetching drafts for account: \(accountDID)")
-      
-      let drafts = try await MainActor.run {
-        try persistence.fetchDrafts(for: accountDID)
-      }
+
+      let drafts = try persistence.fetchDrafts(for: accountDID)
       logger.info("📥 Fetched \(drafts.count) drafts from persistence")
-      
+
       let viewModels = drafts.map { DraftPostViewModel(draftPost: $0) }
-      await MainActor.run {
-        savedDrafts = viewModels
-        draftsLoaded = true
-        logger.info("✅ Loaded \(self.savedDrafts.count) saved drafts for account \(accountDID)")
-        
-        if !savedDrafts.isEmpty {
-          logger.debug("📋 Draft summaries:")
-          for vm in savedDrafts.prefix(5) {
-            logger.debug("  - ID: \(vm.id.uuidString), Preview: '\(vm.previewText.prefix(30))...', Modified: \(vm.modifiedDate)")
-          }
-          if savedDrafts.count > 5 {
-              logger.debug("  ... and \(self.savedDrafts.count - 5) more")
-          }
+      savedDrafts = viewModels
+      draftsLoaded = true
+      logger.info("✅ Loaded \(self.savedDrafts.count) saved drafts for account \(accountDID)")
+
+      if !savedDrafts.isEmpty {
+        logger.debug("📋 Draft summaries:")
+        for vm in savedDrafts.prefix(5) {
+          logger.debug("  - ID: \(vm.id.uuidString), Preview: '\(vm.previewText.prefix(30))...', Modified: \(vm.modifiedDate)")
+        }
+        if savedDrafts.count > 5 {
+            logger.debug("  ... and \(self.savedDrafts.count - 5) more")
         }
       }
     } catch {
       logger.error("❌ Failed to load saved drafts for account \(accountDID): \(error.localizedDescription)")
-      await MainActor.run { 
-        savedDrafts = []
-        draftsLoaded = true
-      }
+      savedDrafts = []
+      draftsLoaded = true
     }
   }
   
@@ -299,9 +300,10 @@ final class ComposerDraftManager {
   }
   
   // MARK: - Current Account DID
-  
+
+  @MainActor
   private var currentAccountDID: String? {
-    appState?.authManager.state.userDID
+      AppStateManager.shared.lifecycle.userDID
   }
   
   // MARK: - Legacy Migration
@@ -334,46 +336,59 @@ final class ComposerDraftManager {
     }
     
     logger.info("🔄 Starting legacy draft migration to SwiftData")
-    
+
     do {
-      // Check if legacy directory exists
-        logger.debug("📂 Checking legacy drafts directory: \(self.legacyDraftsDirectory.path)")
-      
-      guard fileManager.fileExists(atPath: legacyDraftsDirectory.path) else {
-        logger.info("ℹ️ No legacy drafts directory found - skipping migration")
-        UserDefaults.standard.set(true, forKey: migrationKey)
+      // Perform file I/O on background thread to avoid blocking main thread
+      let legacyDir = legacyDraftsDirectory
+      let fm = fileManager
+
+      let jsonFiles: [URL] = try await Task.detached(priority: .utility) {
+        // Check if legacy directory exists
+        guard fm.fileExists(atPath: legacyDir.path) else {
+          return []
+        }
+
+        let fileURLs = try fm.contentsOfDirectory(
+          at: legacyDir,
+          includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
+          options: .skipsHiddenFiles
+        )
+
+        return fileURLs.filter { $0.pathExtension == "json" }
+      }.value
+
+      guard !jsonFiles.isEmpty else {
+        logger.info("ℹ️ No legacy drafts directory or files found - skipping migration")
+        Task.detached(priority: .utility) {
+          UserDefaults.standard.set(true, forKey: migrationKey)
+        }
         hasMigratedLegacyDrafts = true
         return
       }
-      
-      logger.debug("📂 Legacy directory exists - scanning for JSON files")
-      let fileURLs = try fileManager.contentsOfDirectory(
-        at: legacyDraftsDirectory,
-        includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
-        options: .skipsHiddenFiles
-      )
-      
-      let jsonFiles = fileURLs.filter { $0.pathExtension == "json" }
+
       logger.info("📄 Found \(jsonFiles.count) legacy JSON draft files to migrate")
-      
-      let decoder = JSONDecoder()
-      decoder.dateDecodingStrategy = .iso8601
-      
+
       var migratedCount = 0
       var failedCount = 0
-      
+
       // Use current account DID or a placeholder for orphaned drafts
-      let accountDID = currentAccountDID ?? "unknown_account"
+      let accountDID = await currentAccountDID ?? "unknown_account"
       logger.info("🔑 Using account DID for migration: \(accountDID)")
-      
+
       for fileURL in jsonFiles {
         do {
           logger.debug("📥 Migrating draft from: \(fileURL.lastPathComponent)")
-          let data = try Data(contentsOf: fileURL)
-          let savedDraft = try decoder.decode(SavedDraft.self, from: data)
-          
+
+          // Read file on background thread
+          let savedDraft: SavedDraft = try await Task.detached(priority: .utility) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let data = try Data(contentsOf: fileURL)
+            return try decoder.decode(SavedDraft.self, from: data)
+          }.value
+
           logger.debug("  Draft ID: \(savedDraft.id.uuidString), Created: \(savedDraft.createdDate)")
-          
+
           // Migrate to SwiftData using the actor
           try await persistence.migrateLegacyDraft(
             id: savedDraft.id,
@@ -382,28 +397,32 @@ final class ComposerDraftManager {
             createdDate: savedDraft.createdDate,
             modifiedDate: savedDraft.modifiedDate
           )
-          
-          // Delete legacy JSON file
-          try fileManager.removeItem(at: fileURL)
+
+          // Delete legacy JSON file on background thread
+          try await Task.detached(priority: .utility) {
+            try fm.removeItem(at: fileURL)
+          }.value
           migratedCount += 1
           logger.debug("  ✅ Migrated and deleted: \(fileURL.lastPathComponent)")
-          
+
         } catch {
           logger.error("  ❌ Failed to migrate draft from \(fileURL.lastPathComponent): \(error.localizedDescription)")
           failedCount += 1
         }
       }
-      
+
       logger.info("✅ Migration complete: \(migratedCount) drafts migrated, \(failedCount) failed")
-      
-      // Mark migration as complete
-      UserDefaults.standard.set(true, forKey: migrationKey)
+
+      // Mark migration as complete on background thread
+      Task.detached(priority: .utility) {
+        UserDefaults.standard.set(true, forKey: migrationKey)
+      }
       hasMigratedLegacyDrafts = true
-      
+
       // Reload drafts after migration
       logger.debug("📂 Reloading drafts after migration")
       await loadSavedDrafts()
-      
+
     } catch {
       logger.error("❌ Failed to migrate legacy drafts: \(error.localizedDescription)")
     }
@@ -564,18 +583,42 @@ final class ComposerDraftManager {
   // MARK: - Persistence
   
   private func persistDraft() {
-    logger.debug("💾 Persisting draft to UserDefaults")
-    
+    // Cancel any pending debounced write
+    persistDebounceTask?.cancel()
+
+    // Debounce writes to avoid excessive disk I/O on every keystroke
+    persistDebounceTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: .milliseconds(500))
+      } catch {
+        return  // Task was cancelled
+      }
+
+      guard let self = self else { return }
+
+      // Perform UserDefaults write on background thread
+      await self.performPersistDraft()
+    }
+  }
+
+  private func performPersistDraft() async {
+    logger.debug("💾 Persisting draft to UserDefaults (background)")
+
     guard let draft = currentDraft else {
       logger.debug("  No draft - removing UserDefaults entry")
-      UserDefaults.standard.removeObject(forKey: draftKey)
+      await Task.detached(priority: .utility) {
+        UserDefaults.standard.removeObject(forKey: self.draftKey)
+      }.value
       return
     }
-    
+
     do {
       let encoder = JSONEncoder()
       let data = try encoder.encode(draft)
-      UserDefaults.standard.set(data, forKey: draftKey)
+      let key = draftKey
+      await Task.detached(priority: .utility) {
+        UserDefaults.standard.set(data, forKey: key)
+      }.value
       logger.debug("  ✅ Draft persisted - Size: \(data.count) bytes")
     } catch {
       logger.error("  ❌ Failed to persist composer draft: \(error.localizedDescription)")

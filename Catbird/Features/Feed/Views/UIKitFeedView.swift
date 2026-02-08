@@ -1390,7 +1390,7 @@
 //    switch event {
 //    case .postCreated(let post):
 //      // Add new post optimistically at the top (only for local user posts)
-//      if let userDID = appState.authManager.state.userDID,
+//      if let userDID = AppStateManager.shared.authentication.state.userDID,
 //         post.author.did.didString() == userDID {
 //        await addPostOptimistically(post)
 //      } else {

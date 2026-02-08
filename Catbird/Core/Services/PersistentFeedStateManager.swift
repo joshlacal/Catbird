@@ -29,6 +29,7 @@ final class PersistedFeedState {
   var feedIdentifier: String
   var timestamp: Date
   var totalPostCount: Int
+  var cursor: String?
   
   // Store post IDs for quick reference
   var postIds: [String]
@@ -41,8 +42,9 @@ final class PersistedFeedState {
     Date().timeIntervalSince(timestamp) < 300 // 5 minutes
   }
   
-  init(feedIdentifier: String, postIds: [String]) {
+  init(feedIdentifier: String, postIds: [String], cursor: String?) {
     self.feedIdentifier = feedIdentifier
+    self.cursor = cursor
     self.postIds = postIds
     self.timestamp = Date()
     self.totalPostCount = postIds.count
@@ -71,35 +73,39 @@ final class FeedContinuityInfo {
 // MARK: - Persistent Feed State Manager
 
 /// Manages persistent storage of feed scroll positions and cached data using SwiftData
-/// This is a ModelActor to ensure thread-safe database access
+/// This is a ModelActor to ensure thread-safe database access off the main thread.
 @ModelActor
 actor PersistentFeedStateManager {
-  private static var _shared: PersistentFeedStateManager?
-  private static let lock = NSLock()
+    private static var _shared: PersistentFeedStateManager?
+    private static let lock = NSLock()
 
-  nonisolated static var shared: PersistentFeedStateManager {
-    get {
-      lock.lock()
-      defer { lock.unlock() }
-      if let existing = _shared {
-        return existing
-      }
-      fatalError("PersistentFeedStateManager.shared accessed before initialization. Call initialize(with:) first.")
+    nonisolated static var shared: PersistentFeedStateManager {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            if let existing = _shared {
+                return existing
+            }
+            fatalError("PersistentFeedStateManager.shared accessed before initialization. Call initialize(with:) first.")
+        }
     }
-  }
 
-  nonisolated static func initialize(with container: ModelContainer) {
-    lock.lock()
-    defer { lock.unlock() }
-    if _shared == nil {
-      _shared = PersistentFeedStateManager(modelContainer: container)
+    nonisolated static func initialize(with container: ModelContainer) {
+        lock.lock()
+        defer { lock.unlock() }
+        if _shared == nil {
+            _shared = PersistentFeedStateManager(modelContainer: container)
+        }
+        // Also initialize the DatabaseActorProvider for other components
+        Task { @MainActor in
+            DatabaseActorProvider.initialize(with: container)
+        }
     }
-  }
 
-  private let logger = Logger(
-    subsystem: "blue.catbird",
-    category: "PersistentFeedState"
-  )
+    private let logger = Logger(
+        subsystem: "blue.catbird",
+        category: "PersistentFeedState"
+    )
   
   // MARK: - Scroll Position Persistence
   
@@ -168,9 +174,29 @@ actor PersistentFeedStateManager {
   // MARK: - Feed Data Persistence
   
   func saveFeedData(_ posts: [CachedFeedViewPost], for feedIdentifier: String) {
+    saveFeedData(posts, for: feedIdentifier, cursor: nil)
+  }
+  
+  func saveFeedData(
+    _ posts: [CachedFeedViewPost],
+    for feedIdentifier: String,
+    cursor: String?
+  ) {
     do {
-      // Remove existing feed state for this feed
       let currentFeedId = feedIdentifier
+      
+      // Deduplicate posts by ID to prevent unique constraint violations
+      // Keep the first occurrence of each post (preserves feed order)
+      var seenIds = Set<String>()
+      let uniquePosts = posts.filter { post in
+        if seenIds.contains(post.id) {
+          return false
+        }
+        seenIds.insert(post.id)
+        return true
+      }
+
+      // Handle PersistedFeedState (no unique constraint conflict risk here)
       let stateDescriptor = FetchDescriptor<PersistedFeedState>(
         predicate: #Predicate<PersistedFeedState> { state in
           state.feedIdentifier == currentFeedId
@@ -178,40 +204,68 @@ actor PersistentFeedStateManager {
       )
 
       let existingStates = try modelContext.fetch(stateDescriptor)
+      let existingCursor = existingStates.first?.cursor
       for state in existingStates {
         modelContext.delete(state)
       }
 
-      // Remove old cached posts for this feed type
-      let postsDescriptor = FetchDescriptor<CachedFeedViewPost>(
+      // Collect IDs of new posts
+      let newPostIds = Set(uniquePosts.map { $0.id })
+
+      // Fetch existing posts for this feed (for cleanup of old posts)
+      let feedPostsDescriptor = FetchDescriptor<CachedFeedViewPost>(
         predicate: #Predicate<CachedFeedViewPost> { post in
           post.feedType == currentFeedId
         }
       )
+      let existingFeedPosts = try modelContext.fetch(feedPostsDescriptor)
 
-      let existingPosts = try modelContext.fetch(postsDescriptor)
-      for post in existingPosts {
+      // Delete posts from this feed that are NOT in the new set
+      for post in existingFeedPosts where !newPostIds.contains(post.id) {
         modelContext.delete(post)
       }
 
+      // IMPORTANT: Fetch ALL existing posts by ID (across ALL feeds) to handle unique constraint
+      // The same post can appear in multiple feeds, but has a global unique constraint on id
+      let allPostsDescriptor = FetchDescriptor<CachedFeedViewPost>()
+      let allExistingPosts = try modelContext.fetch(allPostsDescriptor)
+      let existingPostsById = Dictionary(
+        allExistingPosts.map { ($0.id, $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
+
+      // Upsert new posts: update existing records in place, insert new ones
+      // This avoids unique constraint violations by checking against ALL existing posts
+      let (updated, inserted) = modelContext.batchUpsert(
+        uniquePosts,
+        existingModels: Array(existingPostsById.values.filter { newPostIds.contains($0.id) }),
+        uniqueKeyPath: \.id,
+        update: { existing, new in existing.update(from: new) }
+      )
+
       // Save new feed state
-      let postIds = posts.map { $0.id }
-      let feedState = PersistedFeedState(feedIdentifier: feedIdentifier, postIds: postIds)
+      let postIds = uniquePosts.map { $0.id }
+      let feedState = PersistedFeedState(
+        feedIdentifier: feedIdentifier,
+        postIds: postIds,
+        cursor: cursor ?? existingCursor
+      )
       modelContext.insert(feedState)
 
-      // Save new cached posts
-      for post in posts {
-        modelContext.insert(post)
-      }
-
       try modelContext.save()
-      logger.debug("Saved \(posts.count) posts for feed \(feedIdentifier)")
+      let duplicates = posts.count - uniquePosts.count
+      if duplicates > 0 {
+        logger.debug("Saved \(uniquePosts.count) posts for feed \(feedIdentifier) (updated: \(updated), inserted: \(inserted), deduplicated: \(duplicates))")
+      } else {
+        logger.debug("Saved \(uniquePosts.count) posts for feed \(feedIdentifier) (updated: \(updated), inserted: \(inserted))")
+      }
     } catch {
       logger.error("Failed to save feed data for \(feedIdentifier): \(error)")
     }
   }
   
-  func loadFeedData(for feedIdentifier: String) -> [CachedFeedViewPost]? {
+  /// Returns both cached posts and the persisted cursor (if available)
+  func loadFeedBundle(for feedIdentifier: String) -> (posts: [CachedFeedViewPost], cursor: String?)? {
     do {
       // Check if we have a fresh feed state
       let currentFeedId = feedIdentifier
@@ -247,6 +301,12 @@ actor PersistentFeedStateManager {
         return nil
       }
 
+      // Do not surface cache older than the recent freshness window to avoid showing stale content on launch
+      guard feedState.isRecentlyFresh else {
+        logger.debug("Cached feed state for \(feedIdentifier) is older than the freshness window, skipping restore to avoid stale UI")
+        return nil
+      }
+
       // Load cached posts
       let postsDescriptor = FetchDescriptor<CachedFeedViewPost>(
         predicate: #Predicate<CachedFeedViewPost> { post in
@@ -257,11 +317,16 @@ actor PersistentFeedStateManager {
 
       let cachedPosts = try modelContext.fetch(postsDescriptor)
 
-        return cachedPosts
+      return (cachedPosts, feedState.cursor)
     } catch {
       logger.error("Failed to load feed data: \(error)")
       return nil
     }
+  }
+  
+  /// Backward-compatible helper that only returns posts
+  func loadFeedData(for feedIdentifier: String) -> [CachedFeedViewPost]? {
+    return loadFeedBundle(for: feedIdentifier)?.posts
   }
   
   // MARK: - Feed Continuity Management
@@ -446,6 +511,30 @@ actor PersistentFeedStateManager {
       }
     } catch {
       logger.error("Failed to cleanup stale data: \(error)")
+    }
+  }
+
+  // MARK: - Account Switching Support
+
+  /// Clears all persisted feed data to avoid cross-account contamination
+  func clearAll() async {
+    do {
+      let feedStates = try modelContext.fetch(FetchDescriptor<PersistedFeedState>())
+      feedStates.forEach { modelContext.delete($0) }
+
+      let cachedPosts = try modelContext.fetch(FetchDescriptor<CachedFeedViewPost>())
+      cachedPosts.forEach { modelContext.delete($0) }
+
+      let scrollPositions = try modelContext.fetch(FetchDescriptor<PersistedScrollPosition>())
+      scrollPositions.forEach { modelContext.delete($0) }
+
+      let continuityInfo = try modelContext.fetch(FetchDescriptor<FeedContinuityInfo>())
+      continuityInfo.forEach { modelContext.delete($0) }
+
+      try modelContext.save()
+      logger.info("Cleared all persisted feed data after account switch")
+    } catch {
+      logger.error("Failed to clear persisted feed data: \(error)")
     }
   }
 }

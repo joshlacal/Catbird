@@ -12,8 +12,6 @@ struct RecordEmbedView: View {
     // When true, render full post styling for quoted posts (used in thread main post view)
     var useFullPostStyle: Bool = false
     
-    @State private var isExpanded = false
-    
     var body: some View {
         switch record {
         case .appBskyEmbedRecordViewRecord(let post):
@@ -155,11 +153,6 @@ struct RecordEmbedView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .onTapGesture {
-                    withAnimation {
-                        isExpanded.toggle()
-                    }
-                }
                 // Use fixed sizing to prevent layout jumps
                 .fixedSize(horizontal: false, vertical: true)
             }

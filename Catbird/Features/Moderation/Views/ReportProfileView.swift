@@ -14,6 +14,7 @@ struct ReportProfileView: View {
     let onComplete: (Bool) -> Void
     
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
     @State private var selectedReason: ComAtprotoModerationDefs.ReasonType = .comatprotomoderationdefsreasonother
     @State private var customReason: String = ""
     @State private var selectedLabeler: AppBskyLabelerDefs.LabelerViewDetailed?
@@ -188,6 +189,17 @@ struct ReportProfileView: View {
             
             if success {
                 showingSuccessAlert = true
+                
+                // Show report submitted toast
+                await MainActor.run {
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: "Report submitted",
+                            icon: "flag.fill",
+                            duration: 2.5
+                        )
+                    )
+                }
             } else {
                 errorMessage = "Failed to submit report. Please try again."
             }

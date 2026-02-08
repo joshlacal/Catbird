@@ -48,61 +48,72 @@ final class FeedStateStore: StateInvalidationSubscriber {
   func stateManager(for feedType: FetchType, appState: AppState) -> FeedStateManager {
     // Set appState reference on first access for state invalidation subscription
     setAppState(appState)
-    
-    let identifier = feedType.identifier
-    
-    if let existing = stateManagers[identifier] {
-      logger.debug("✅ Reusing existing state manager for \(identifier) (posts: \(existing.posts.count), isLoading: \(existing.isLoading))")
-      
-      // Ensure the existing state manager has the correct feed type
-      // This handles cases where the feed type might have different parameters
-      if existing.currentFeedType.identifier != feedType.identifier {
-        logger.warning("⚠️ Feed type mismatch in existing state manager - updating from \(existing.currentFeedType.identifier) to \(feedType.identifier)")
-        Task {
-          await existing.updateFetchType(feedType, preserveScrollPosition: true)
+
+    // CRITICAL: Cache key must include account identity to prevent cross-account contamination
+    let accountID = appState.userDID ?? "unknown-account"
+    let cacheKey = "\(accountID)-\(feedType.identifier)"
+
+    if let existing = stateManagers[cacheKey] {
+      // CRITICAL: Validate cached manager belongs to the correct account
+      // Without this check, we could return Account B's manager when switching back to Account A
+      if existing.appState === appState {
+        logger.debug("✅ Reusing existing state manager for \(cacheKey) (posts: \(existing.posts.count), isLoading: \(existing.isLoading))")
+
+        // Ensure the existing state manager has the correct feed type
+        // This handles cases where the feed type might have different parameters
+        if existing.currentFeedType.identifier != feedType.identifier {
+          logger.warning("⚠️ Feed type mismatch in existing state manager - updating from \(existing.currentFeedType.identifier) to \(feedType.identifier)")
+          Task {
+            await existing.updateFetchType(feedType, preserveScrollPosition: true)
+          }
         }
+
+        return existing
+      } else {
+        // AppState mismatch - this is a stale cached manager from a different account
+        logger.warning("⚠️ Cached manager for \(cacheKey) has stale AppState reference - removing and creating new")
+        existing.cleanup()
+        stateManagers.removeValue(forKey: cacheKey)
       }
-      
-      return existing
     }
-    
-    logger.debug("🔨 Creating new state manager for \(identifier)")
-    
+
+    logger.debug("🔨 Creating new state manager for \(cacheKey)")
+
     let feedManager = FeedManager(
       client: appState.atProtoClient,
       fetchType: feedType
     )
-    
+
     let feedModel = FeedModel(
       feedManager: feedManager,
       appState: appState
     )
-    
+
     let stateManager = FeedStateManager(
       appState: appState,
       feedModel: feedModel,
       feedType: feedType
     )
-    
-    stateManagers[identifier] = stateManager
-    logger.debug("📦 Stored new state manager for \(identifier) in cache")
-    
+
+    stateManagers[cacheKey] = stateManager
+    logger.debug("📦 Stored new state manager for \(cacheKey) in cache")
+
     // Attempt to restore persisted data
     Task {
-      await restorePersistedData(for: stateManager, feedIdentifier: identifier)
+      await restorePersistedData(for: stateManager, feedIdentifier: cacheKey)
     }
-    
+
     return stateManager
   }
   
   private func restorePersistedData(for stateManager: FeedStateManager, feedIdentifier: String) async {
     // Try to load persisted feed data
-    if let cachedPosts = await PersistentFeedStateManager.shared.loadFeedData(for: feedIdentifier),
-       !cachedPosts.isEmpty {
-      logger.debug("Restored \(cachedPosts.count) cached posts for \(feedIdentifier)")
+    if let bundle = await PersistentFeedStateManager.shared.loadFeedBundle(for: feedIdentifier),
+       !bundle.posts.isEmpty {
+      logger.debug("Restored \(bundle.posts.count) cached posts for \(feedIdentifier)")
 
       // Update the state manager's posts directly
-      await stateManager.restorePersistedPosts(cachedPosts)
+      await stateManager.restorePersistedPosts(bundle.posts, cursor: bundle.cursor)
 
     }
   }
@@ -238,8 +249,14 @@ final class FeedStateStore: StateInvalidationSubscriber {
   }
   
   func clearStateManager(for feedIdentifier: String) {
-    stateManagers.removeValue(forKey: feedIdentifier)
-    logger.debug("Cleared state manager for \(feedIdentifier)")
+    // Clear managers for this feed type across all accounts
+    // Cache keys are now in format "accountID-feedIdentifier"
+    let keysToRemove = stateManagers.keys.filter { $0.hasSuffix("-\(feedIdentifier)") }
+    for key in keysToRemove {
+      stateManagers[key]?.cleanup()
+      stateManagers.removeValue(forKey: key)
+    }
+    logger.debug("Cleared state manager(s) for \(feedIdentifier) (\(keysToRemove.count) instances)")
   }
   
   func clearAllStateManagers() {
@@ -348,8 +365,16 @@ extension FeedStateStore {
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
     switch event {
     case .accountSwitched:
-      logger.debug("🔄 Account switched - clearing all feed state managers")
-      clearAllStateManagers()
+      // CRITICAL FIX: Do NOT clear persistent cache on account switch.
+      // Doing so wipes data for the account we just switched TO if it was previously cached,
+      // and prevents the previous account's data from being available if we switch back.
+      // Data is already namespaced by account DID in the cache keys/database.
+      logger.debug("🔄 Account switched - preserving feed state for seamless transition")
+
+    // We can optionally clear memory for accounts that are no longer active to save RAM,
+    // but we should NOT wipe the persistent store.
+    // For now, we keep managers in memory as AppState eviction handles the heavy lifting
+    // of cleaning up unused AppState instances, which naturally releases their resources.
       
     default:
       // Other events are handled by individual FeedStateManagers

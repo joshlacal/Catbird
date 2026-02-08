@@ -104,6 +104,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   // Optional callback to receive the created UITextView
   // Used to wire up activeRichTextView reference in PostComposerViewModel
   var onTextViewCreated: ((UITextView) -> Void)?
+  // Notify SwiftUI when the intrinsic height changes so the field can grow instead of scrolling
+  var onHeightChange: ((CGFloat) -> Void)?
   
   // Public method to sanitize text (call before submission)
   static func sanitizeTextView(_ textView: UITextView) {
@@ -160,11 +162,15 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       textView.typingAttributes[.foregroundColor] = UIColor.label
     }
     textView.backgroundColor = .clear
-    textView.isScrollEnabled = true
+    textView.isScrollEnabled = false
     textView.isEditable = true
     textView.isUserInteractionEnabled = true
     textView.textContainer.lineFragmentPadding = 0
     textView.textContainerInset = .zero
+    
+    // Prevent text view from expanding beyond its container width
+    textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
     
     // Enable link detection and interaction
     textView.linkTextAttributes = [
@@ -223,6 +229,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
 
     // Notify the callback that the text view was created
     onTextViewCreated?(textView)
+    onHeightChange?(max(textView.contentSize.height, 1))
 
     return textView
   }
@@ -327,6 +334,13 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
         self.pendingSelectionRange = nil
       }
     }
+
+    // Propagate intrinsic height changes so SwiftUI can grow the editor instead of scrolling
+    uiView.layoutIfNeeded()
+    let width = uiView.bounds.width > 0 ? uiView.bounds.width : uiView.superview?.bounds.width ?? UIScreen.main.bounds.width - 84
+    let fittingSize = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+    let measuredHeight = max(fittingSize.height, uiView.contentSize.height, 1)
+    onHeightChange?(measuredHeight)
   }
   
   func makeCoordinator() -> Coordinator {
@@ -345,6 +359,16 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     var needsAttributeSync = false
     var lastTextSnapshot: String = ""
     var hasPerformedInitialCursorPositioning = false
+    private func notifyHeightChange(_ textView: UITextView) {
+      // Force layout to ensure contentSize is accurate
+      textView.layoutIfNeeded()
+      
+      // Use sizeThatFits for more accurate height calculation when width is constrained
+      let width = textView.bounds.width > 0 ? textView.bounds.width : textView.superview?.bounds.width ?? UIScreen.main.bounds.width - 84
+      let fittingSize = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+      let targetHeight = max(fittingSize.height, textView.contentSize.height, 1)
+      parent.onHeightChange?(targetHeight)
+    }
     
   #if targetEnvironment(macCatalyst)
   fileprivate func installCatalystBottomToolbar(for textView: UITextView) {
@@ -456,6 +480,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       
       // Update placeholder visibility
       updatePlaceholder(parent.placeholder, in: textView)
+      notifyHeightChange(textView)
       
       // Detect Genmoji (adaptive image glyphs) and traditional emoji patterns
       if !textView.isFirstResponder {
@@ -994,6 +1019,7 @@ struct EnhancedRichTextEditor: View {
   let onGenmojiDetected: ([String]) -> Void
   let onTextChanged: (NSAttributedString, Int) -> Void
   let onLinkCreationRequested: (String, NSRange) -> Void
+  var onHeightChange: ((CGFloat) -> Void)? = nil
   
   var body: some View {
     Text("Rich text editing not available on macOS")

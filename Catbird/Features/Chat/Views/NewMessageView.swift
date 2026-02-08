@@ -12,121 +12,202 @@ import SwiftUI
 #if os(iOS)
 
 import NukeUI
-import ExyteChat
+// Chat system using unified components
+
+//// MARK: - Profile Protocol
+//protocol ProfileProtocol {
+//  var did: DID { get }
+//}
+
+
+// MARK: - Platform Toolbar Modifier
+private struct PlatformToolbarModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(.inline)
+    #else
+    content
+    #endif
+  }
+}
 
 struct NewMessageView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var searchText = ""
-  @State private var searchResults: [AppBskyActorDefs.ProfileView] = []
+  @State private var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
   @State private var followingProfiles: [AppBskyActorDefs.ProfileView] = []
   @State private var isSearching = false
   @State private var isLoadingFollows = false
   @State private var searchError: String?
   @State private var isStartingConversation = false
+  @State private var searchTask: Task<Void, Never>?
   @FocusState private var isSearchFieldFocused: Bool
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NewMessageView")
+  private let searchDebounceInterval: Duration = .milliseconds(300)
 
   var body: some View {
     NavigationStack {
-      VStack(spacing: 0) {
-        // Search field
-        SearchBarView(searchText: $searchText, placeholder: "Search for people") {
-          // TODO: Implement search functionality
-        }
-          .padding(.horizontal)
-          .padding(.top)
-
-        Divider()
-          .padding(.top, 8)
-
-        // Results list
-        List {
-          if isSearching {
-            ProgressView("Searching...")
-              .frame(maxWidth: .infinity, alignment: .center)
-              .listRowSeparator(.hidden)
-          } else if let error = searchError {
-            Text("Error: \(error)")
-              .foregroundColor(.red)
-              .frame(maxWidth: .infinity, alignment: .center)
-              .listRowSeparator(.hidden)
-          } else if searchResults.isEmpty && !searchText.isEmpty {
-            Text("No users found")
-              .foregroundColor(.secondary)
-              .frame(maxWidth: .infinity, alignment: .center)
-              .listRowSeparator(.hidden)
-          } else if !searchText.isEmpty {
-            // Show search results
-            Section(header: Text("Search Results")) {
-              ForEach(searchResults, id: \.did) { profile in
-                ChatProfileRowView(
-                  profile: profile,
-                  isStartingConversation: isStartingConversation && profile.did.didString() == searchResults.first?.did.didString(),
-                  onSelect: {
-                    startConversation(with: profile)
-                  }
-                )
-              }
-            }
-          } else {
-            // Show people you follow
-            if isLoadingFollows {
-              ProgressView("Loading follows...")
-                .frame(maxWidth: .infinity, alignment: .center)
-                .listRowSeparator(.hidden)
-            } else if followingProfiles.isEmpty {
-              ContentUnavailableView {
-                Label("No Follows", systemImage: "person.2.slash")
-              } description: {
-                Text("You aren't following anyone yet.")
-              }
-              .listRowSeparator(.hidden)
-            } else {
-              Section(header: Text("People You Follow")) {
-                ForEach(followingProfiles, id: \.did) { profile in
-                  ChatProfileRowView(
-                    profile: profile,
-                    isStartingConversation: isStartingConversation && profile.did.didString() == followingProfiles.first?.did.didString(),
-                    onSelect: {
-                      startConversation(with: profile)
-                    }
-                  )
-                }
-              }
-            }
+      contentView
+        .navigationTitle("New Message")
+        .modifier(PlatformToolbarModifier())
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            cancelButton
           }
         }
-        .listStyle(.plain)
-      }
-      .navigationTitle("New Message")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel", systemImage: "xmark") {
-            dismiss()
-          }
-          .disabled(isStartingConversation)
+        .onChange(of: searchText) { _, newValue in
+          handleSearchTextChange(newValue)
         }
+        .disabled(isStartingConversation)
+        .task {
+          loadFollowing()
+          isSearchFieldFocused = true
+        }
+    }
+  }
+
+  @ViewBuilder
+  private var contentView: some View {
+    VStack(spacing: 0) {
+      searchBar
+      Divider().padding(.top, 8)
+      resultsList
+    }
+  }
+
+  @ViewBuilder
+  private var searchBar: some View {
+    SearchBarView(searchText: $searchText, placeholder: "Search for people") {
+      // Search is triggered automatically via onChange of searchText
+    }
+    .padding(.horizontal)
+    .padding(.top)
+  }
+
+  @ViewBuilder
+  private var resultsList: some View {
+    List {
+      if isSearching {
+        searchingView
+      } else if let error = searchError {
+        errorView(error)
+      } else if searchResults.isEmpty && !searchText.isEmpty {
+        noResultsView
+      } else if !searchText.isEmpty {
+        searchResultsSection
+      } else {
+        followingSection
       }
-      .onChange(of: searchText) { _, newValue in
-        if !newValue.isEmpty && newValue.count >= 2 {
+    }
+    .listStyle(.plain)
+  }
+
+  @ViewBuilder
+  private var searchingView: some View {
+    ProgressView("Searching...")
+      .frame(maxWidth: .infinity, alignment: .center)
+      .listRowSeparator(.hidden)
+  }
+
+  @ViewBuilder
+  private func errorView(_ error: String) -> some View {
+    Text("Error: \(error)")
+      .foregroundColor(.red)
+      .frame(maxWidth: .infinity, alignment: .center)
+      .listRowSeparator(.hidden)
+  }
+
+  @ViewBuilder
+  private var noResultsView: some View {
+    Text("No users found")
+      .foregroundColor(.secondary)
+      .frame(maxWidth: .infinity, alignment: .center)
+      .listRowSeparator(.hidden)
+  }
+
+  @ViewBuilder
+  private var searchResultsSection: some View {
+    Section(header: Text("Search Results")) {
+      ForEach(searchResults, id: \.did) { profile in
+        profileRow(profile, isSearchResult: true)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var followingSection: some View {
+    if isLoadingFollows {
+      ProgressView("Loading follows...")
+        .frame(maxWidth: .infinity, alignment: .center)
+        .listRowSeparator(.hidden)
+    } else if followingProfiles.isEmpty {
+      emptyFollowsView
+    } else {
+      followingList
+    }
+  }
+
+  @ViewBuilder
+  private var emptyFollowsView: some View {
+    ContentUnavailableView {
+      Label("No Follows", systemImage: "person.2.slash")
+    } description: {
+      Text("You aren't following anyone yet.")
+    }
+    .listRowSeparator(.hidden)
+  }
+
+  @ViewBuilder
+  private var followingList: some View {
+    Section(header: Text("People You Follow")) {
+      ForEach(followingProfiles, id: \.did) { profile in
+        profileRow(profile, isSearchResult: false)
+      }
+    }
+  }
+
+  @ViewBuilder
+    private func profileRow(_ profile: ProfileDisplayable, isSearchResult: Bool) -> some View {
+    let isSelected = isStartingConversation && isFirstProfile(profile, in: isSearchResult)
+    ChatProfileRowView(
+      profile: profile,
+      isStartingConversation: isSelected,
+      onSelect: {
+        startConversation(with: profile)
+      }
+    )
+  }
+
+  private var cancelButton: some View {
+    Button("Cancel", systemImage: "xmark") {
+      dismiss()
+    }
+    .disabled(isStartingConversation)
+  }
+
+  private func isFirstProfile(_ profile: some ProfileDisplayable, in searchResults: Bool) -> Bool {
+    if searchResults {
+      return profile.did.didString() == self.searchResults.first?.did.didString()
+    } else {
+      return profile.did.didString() == followingProfiles.first?.did.didString()
+    }
+  }
+
+  private func handleSearchTextChange(_ newValue: String) {
+    searchTask?.cancel()
+    if !newValue.isEmpty && newValue.count >= 2 {
+      searchTask = Task {
+        do {
+          try await Task.sleep(for: searchDebounceInterval)
           performSearch(searchText: newValue)
-        } else {
-          searchResults = []
+        } catch {
+          // Task cancelled - ignore
         }
       }
-      .disabled(isStartingConversation)
-      .task {
-        // Load following list when view appears
-        loadFollowing()
-
-        // Auto-focus search field when view appears
-        isSearchFieldFocused = true
-      }
+    } else {
+      searchResults = []
     }
   }
 
@@ -182,8 +263,8 @@ struct NewMessageView: View {
 
       do {
         let searchTerm = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let params = AppBskyActorSearchActors.Parameters(q: searchTerm, limit: 20)
-        let (responseCode, response) = try await client.app.bsky.actor.searchActors(input: params)
+        let params = AppBskyActorSearchActorsTypeahead.Parameters(q: searchTerm, limit: 20)
+        let (responseCode, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
 
         await MainActor.run {
           isSearching = false
@@ -210,7 +291,7 @@ struct NewMessageView: View {
     }
   }
 
-  private func startConversation(with profile: AppBskyActorDefs.ProfileView) {
+    private func startConversation(with profile: some ProfileDisplayable) {
     Task {
       await MainActor.run {
         isStartingConversation = true
