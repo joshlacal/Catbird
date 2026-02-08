@@ -1,33 +1,6 @@
 {
-  "originHash" : "78a0cf08e6bfb26cc2ffdeda66c2728e8b4c5693499ee8038b4d60155e3ebbc5",
+  "originHash" : "0defcb25ec16ae473b74b117532a72e8c48c8c48fa01c1c7470c5323698c9829",
   "pins" : [
-    {
-      "identity" : "activityindicatorview",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/ActivityIndicatorView",
-      "state" : {
-        "revision" : "36140867802ae4a1d2b11490bcbbefe058001d14",
-        "version" : "1.2.1"
-      }
-    },
-    {
-      "identity" : "anchoredpopup",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/AnchoredPopup.git",
-      "state" : {
-        "revision" : "d7478c34e761725ff06ad74e44e675d0d56a4150",
-        "version" : "1.0.7"
-      }
-    },
-    {
-      "identity" : "chat",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/Chat.git",
-      "state" : {
-        "revision" : "d20c960f263777be2f3861749372d594f2f64f8b",
-        "version" : "2.7.1"
-      }
-    },
     {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",
@@ -38,21 +11,21 @@
       }
     },
     {
-      "identity" : "flyingfox",
+      "identity" : "emojikit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swhitty/FlyingFox.git",
+      "location" : "https://github.com/danielsaidi/EmojiKit.git",
       "state" : {
-        "revision" : "f7829d4aca8cbfecb410a1cce872b1b045224aa1",
-        "version" : "0.16.0"
+        "revision" : "463a8f27b340eb5b4e22c3344f406bbd94c28663",
+        "version" : "2.3.1"
       }
     },
     {
-      "identity" : "giphy-ios-sdk",
+      "identity" : "grdb.swift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Giphy/giphy-ios-sdk",
+      "location" : "https://github.com/groue/GRDB.swift.git",
       "state" : {
-        "revision" : "37f5b1ff6cf8bc4a78c0bc5eb1b814381bac9580",
-        "version" : "2.2.16"
+        "revision" : "aa0079aeb82a4bf00324561a40bffe68c6fe1c26",
+        "version" : "7.9.0"
       }
     },
     {
@@ -65,15 +38,6 @@
       }
     },
     {
-      "identity" : "kingfisher",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/onevcat/Kingfisher",
-      "state" : {
-        "revision" : "dd3c422ec3088404d6f7e8c905a8318b3de12d6f",
-        "version" : "8.6.0"
-      }
-    },
-    {
       "identity" : "lazypager",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/gh123man/LazyPager",
@@ -83,30 +47,12 @@
       }
     },
     {
-      "identity" : "libwebp-xcode",
+      "identity" : "mantis",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/SDWebImage/libwebp-Xcode",
+      "location" : "https://github.com/guoyingtao/Mantis",
       "state" : {
-        "revision" : "0d60654eeefd5d7d2bef3835804892c40225e8b2",
-        "version" : "1.5.0"
-      }
-    },
-    {
-      "identity" : "mcemojipicker",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/izyumkin/MCEmojiPicker",
-      "state" : {
-        "revision" : "e5b3ed359b04370287366a7c15ffa7013cdd4eec",
-        "version" : "1.2.5"
-      }
-    },
-    {
-      "identity" : "mediapicker",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/exyte/MediaPicker.git",
-      "state" : {
-        "revision" : "89c95cee740d5f3aa24263dcffcb83ebfd0a12ba",
-        "version" : "3.2.3"
+        "revision" : "d6880eb97267248f89e6cef2dd52785d50627639",
+        "version" : "1.9.0"
       }
     },
     {
@@ -137,11 +83,12 @@
       }
     },
     {
-      "identity" : "simpledebugger",
+      "identity" : "sqlcipher.swift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/EmergeTools/SimpleDebugger",
+      "location" : "https://github.com/sqlcipher/SQLCipher.swift.git",
       "state" : {
-        "revision" : "e0ad1cd304132efa0ab3b4707bd0eea761dbe2b5"
+        "revision" : "7da3c29da67ef5f6dac915647087d966451f00d3",
+        "version" : "4.13.0"
       }
     },
     {
