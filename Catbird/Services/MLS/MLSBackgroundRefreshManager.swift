@@ -6,7 +6,7 @@
 //
 
 import BackgroundTasks
-import CatbirdMLSService
+import CatbirdMLSCore
 import Foundation
 import OSLog
 
@@ -92,6 +92,10 @@ actor MLSBackgroundRefreshManager {
     logger.info("Background refresh starting")
     defer { scheduleBackgroundRefresh() }
 
+    // BGTasks run while the app lifecycle is backgrounded; allow MLS contexts to be created for this work.
+    MLSClient.clearSuspensionFlag(reason: "MLS BGTask \(taskIdentifier)")
+    MLSCoreContext.clearSuspensionFlag()
+
     // RAII background task assertion — auto-released on scope exit
     let bgTask = CatbirdBackgroundTask(name: "MLS BGTask \(taskIdentifier)")
     defer { bgTask.end() }
@@ -100,6 +104,9 @@ actor MLSBackgroundRefreshManager {
     // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
     GRDBSuspensionCoordinator.beginBackgroundWork(reason: "MLS BGTask \(taskIdentifier)")
     defer {
+      // Ensure Rust UniFFI contexts are closed before we re-suspend, or iOS may kill us (0xdead10cc).
+      MLSClient.emergencyCloseAllContexts(reason: "MLS BGTask complete")
+      MLSCoreContext.emergencyCloseAllContexts()
       GRDBSuspensionCoordinator.endBackgroundWork(reason: "MLS BGTask \(taskIdentifier)")
     }
 

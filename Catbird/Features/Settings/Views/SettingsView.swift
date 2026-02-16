@@ -393,6 +393,14 @@ struct SettingsView: View {
         return
       }
       _ = try await apiClient.optIn()
+
+      if let conversationManager = await appState.getMLSConversationManager() {
+        do {
+          try await conversationManager.ensureDeclarationChainReady()
+        } catch {
+          logger.error("Declaration chain initialization after opt-in failed: \(error.localizedDescription)")
+        }
+      }
       
       // Save local setting only after successful server opt-in
       ExperimentalSettings.shared.enableMLSChat(for: userDID)
@@ -410,6 +418,12 @@ struct SettingsView: View {
     
     do {
       _ = try await apiClient.optOut()
+      if let conversationManager = await appState.getMLSConversationManager() {
+        _ = try? await conversationManager.publishDeclarationDeviceRevoke(
+          deviceId: nil,
+          reason: "mls-opt-out"
+        )
+      }
     } catch {
       // Silently fail - the local toggle is already off
     }

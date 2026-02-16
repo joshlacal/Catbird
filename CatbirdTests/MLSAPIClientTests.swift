@@ -51,7 +51,7 @@ final class MLSAPIClientTests: XCTestCase {
         // This is an integration-style test that would need a mock server
         // For now, we test the structure
         
-        let expectedURL = testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.getConvos")
+        let expectedURL = testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.getConvos")
         XCTAssertNotNil(expectedURL)
     }
     
@@ -60,7 +60,7 @@ final class MLSAPIClientTests: XCTestCase {
         let cursor = "test_cursor_123"
         
         // Test URL construction
-        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.getConvos"), resolvingAgainstBaseURL: true)!
+        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.getConvos"), resolvingAgainstBaseURL: true)!
         components.queryItems = [
             URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "cursor", value: cursor),
@@ -74,7 +74,7 @@ final class MLSAPIClientTests: XCTestCase {
     }
     
     func testGetConversationsDefaultParameters() {
-        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.getConvos"), resolvingAgainstBaseURL: true)!
+        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.getConvos"), resolvingAgainstBaseURL: true)!
         components.queryItems = [
             URLQueryItem(name: "limit", value: "50"),
             URLQueryItem(name: "sortBy", value: "lastMessageAt"),
@@ -118,8 +118,8 @@ final class MLSAPIClientTests: XCTestCase {
     }
     
     func testCreateConversationURL() {
-        let url = testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.createConvo")
-        XCTAssertEqual(url.path, "/xrpc/blue.catbird.mls.createConvo")
+        let url = testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.createConvo")
+        XCTAssertEqual(url.path, "/xrpc/blue.catbird.mlsChat.createConvo")
     }
     
     // MARK: - Add Members Tests
@@ -165,7 +165,7 @@ final class MLSAPIClientTests: XCTestCase {
         let limit = 30
         let cursor = "msg_cursor"
         
-        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.getMessages"), resolvingAgainstBaseURL: true)!
+        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.getMessages"), resolvingAgainstBaseURL: true)!
         components.queryItems = [
             URLQueryItem(name: "convoId", value: convoId),
             URLQueryItem(name: "limit", value: String(limit)),
@@ -190,7 +190,7 @@ final class MLSAPIClientTests: XCTestCase {
     }
     
     func testGetMessagesWithEpochFilter() {
-        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.getMessages"), resolvingAgainstBaseURL: true)!
+        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.getMessages"), resolvingAgainstBaseURL: true)!
         components.queryItems = [
             URLQueryItem(name: "convoId", value: "convo123"),
             URLQueryItem(name: "epoch", value: "5")
@@ -273,7 +273,7 @@ final class MLSAPIClientTests: XCTestCase {
         let dids = ["did:plc:user1", "did:plc:user2", "did:plc:user3"]
         let cipherSuite = "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"
         
-        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mls.getKeyPackages"), resolvingAgainstBaseURL: true)!
+        var components = URLComponents(url: testBaseURL.appendingPathComponent("/xrpc/blue.catbird.mlsChat.getKeyPackages"), resolvingAgainstBaseURL: true)!
         var queryItems = dids.map { URLQueryItem(name: "dids", value: $0) }
         queryItems.append(URLQueryItem(name: "cipherSuite", value: cipherSuite))
         components.queryItems = queryItems

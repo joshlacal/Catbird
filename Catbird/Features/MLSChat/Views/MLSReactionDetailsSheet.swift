@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSReactionDetailsSheet.swift
 //  Catbird

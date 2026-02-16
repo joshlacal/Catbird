@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSAdminDashboardView.swift
 //  Catbird
@@ -188,7 +188,7 @@ struct MLSAdminDashboardView: View {
     // MARK: - Overview Section
 
     @ViewBuilder
-    private func overviewSection(stats: BlueCatbirdMlsGetAdminStats.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
+    private func overviewSection(stats: BlueCatbirdMlsChatUpdateConvo.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Overview")
                 .font(.headline)
@@ -199,32 +199,20 @@ struct MLSAdminDashboardView: View {
                 GridItem(.flexible())
             ], spacing: 16) {
                 StatCard(
-                    title: "Total Reports",
-                    value: viewModel.formatCount(stats.stats.totalReports),
-                    icon: "doc.text.fill",
-                    color: .blue
-                )
-
-                StatCard(
-                    title: "Pending",
-                    value: viewModel.formatCount(stats.stats.pendingReports),
-                    icon: "exclamationmark.triangle.fill",
-                    color: .orange
-                )
-
-                StatCard(
-                    title: "Resolved",
-                    value: viewModel.formatCount(stats.stats.resolvedReports),
+                    title: "Success",
+                    value: stats.success ? "Yes" : "No",
                     icon: "checkmark.circle.fill",
-                    color: .green
+                    color: stats.success ? .green : .red
                 )
 
-                StatCard(
-                    title: "Removals",
-                    value: viewModel.formatCount(stats.stats.totalRemovals),
-                    icon: "person.fill.xmark",
-                    color: .red
-                )
+                if let epoch = stats.newEpoch {
+                    StatCard(
+                        title: "Epoch",
+                        value: "\(epoch)",
+                        icon: "number.circle.fill",
+                        color: .blue
+                    )
+                }
             }
             .padding(.horizontal)
         }
@@ -233,7 +221,7 @@ struct MLSAdminDashboardView: View {
     // MARK: - Key Package Section
 
     @ViewBuilder
-    private func keyPackageSection(stats: BlueCatbirdMlsGetKeyPackageStats.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
+    private func keyPackageSection(stats: BlueCatbirdMlsChatPublishKeyPackages.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Key Package Health")
@@ -256,17 +244,19 @@ struct MLSAdminDashboardView: View {
             .padding(.horizontal)
 
             VStack(spacing: 8) {
-                if let byCipherSuite = stats.byCipherSuite {
-                    ForEach(byCipherSuite, id: \.cipherSuite) { stat in
-                        KeyPackageRow(stat: stat)
-                            .glassEffect()
-                    }
-                } else {
-                    Text("No cipher suite data available")
+                HStack {
+                    Text("Published: \(stats.stats.published)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding()
+                    Spacer()
+                    Text("Available: \(stats.stats.available)")
+                        .font(.caption)
+                    Spacer()
+                    Text("Expired: \(stats.stats.expired)")
+                        .font(.caption)
                 }
+                .padding()
+                .background(Color.primary.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .padding(.horizontal)
         }
@@ -323,25 +313,27 @@ struct MLSAdminDashboardView: View {
     // MARK: - Member Activity Section
 
     @ViewBuilder
-    private func memberActivitySection(stats: BlueCatbirdMlsGetAdminStats.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
+    private func memberActivitySection(stats: BlueCatbirdMlsChatUpdateConvo.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent Activity")
                 .font(.headline)
                 .padding(.horizontal)
 
             VStack(spacing: 8) {
-                ActivityRow(
-                    label: "Block Conflicts Resolved",
-                    value: stats.stats.blockConflictsResolved,
-                    icon: "shield.checkered",
-                    color: .blue
-                )
-
-                if let avgResolutionTime = stats.stats.averageResolutionTimeHours {
+                if let epoch = stats.newEpoch {
                     ActivityRow(
-                        label: "Avg Resolution Time (hrs)",
-                        value: avgResolutionTime,
-                        icon: "clock.fill",
+                        label: "Current Epoch",
+                        value: epoch,
+                        icon: "number.circle.fill",
+                        color: .blue
+                    )
+                }
+
+                if let policy = stats.policy {
+                    ActivityRow(
+                        label: "Max Members",
+                        value: policy.maxMembers,
+                        icon: "person.3.fill",
                         color: .purple
                     )
                 }
@@ -386,54 +378,8 @@ private struct StatCard: View {
     }
 }
 
-// MARK: - Key Package Row Component
-
-@available(iOS 26.0, *)
-private struct KeyPackageRow: View {
-    let stat: BlueCatbirdMlsGetKeyPackageStats.CipherSuiteStats
-
-    private var totalPackages: Int {
-        stat.available + (stat.consumed ?? 0)
-    }
-
-    private var availablePercentage: Double {
-        guard totalPackages > 0 else { return 0 }
-        return Double(stat.available) / Double(totalPackages)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(stat.cipherSuite)
-                    .font(.caption)
-                    .fontWeight(.medium)
-
-                Spacer()
-
-                Text("\(stat.available) available")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            // Progress bar
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.2))
-
-                    Rectangle()
-                        .fill(availablePercentage > 0.5 ? Color.green : (availablePercentage > 0.2 ? Color.orange : Color.red))
-                        .frame(width: geometry.size.width * availablePercentage)
-                }
-            }
-            .frame(height: 6)
-            .clipShape(Capsule())
-        }
-        .padding()
-        .background(Color.primary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
+// MARK: - Key Package Summary (Replaces per-cipher-suite KeyPackageRow)
+// Consolidated publishKeyPackages no longer provides CipherSuiteStats breakdown
 
 // MARK: - Activity Row Component
 

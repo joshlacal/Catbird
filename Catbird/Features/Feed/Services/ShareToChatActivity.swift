@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  ShareToChatActivity.swift
 //  Catbird

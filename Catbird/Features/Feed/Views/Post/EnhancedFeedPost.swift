@@ -19,9 +19,17 @@ struct EnhancedFeedPost: View, Equatable {
   let cachedPost: CachedFeedViewPost
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
+  @Environment(\.horizontalSizeClass) private var hSizeClass
+
+  private var contentMaxWidth: CGFloat {
+    hSizeClass == .compact ? .infinity : 600
+  }
 
   // MARK: - Layout Constants
   private static let baseUnit: CGFloat = 3
+
+  // MARK: - Static Formatters
+  private static let isoFormatter = ISO8601DateFormatter()
 
   // MARK: - Computed Properties
 
@@ -31,7 +39,7 @@ struct EnhancedFeedPost: View, Equatable {
       return cachedPost.id
     }
     // Use ISO8601 string for consistent ID generation
-    return "\(cachedPost.id)-repost-\(ISO8601DateFormatter().string(from: repostDate))"
+    return "\(cachedPost.id)-repost-\(Self.isoFormatter.string(from: repostDate))"
   }
 
   private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
@@ -76,7 +84,7 @@ struct EnhancedFeedPost: View, Equatable {
     .fixedSize(horizontal: false, vertical: true)
     .contentShape(Rectangle())
     .allowsHitTesting(true)
-    .frame(maxWidth: 600, alignment: .center)
+    .frame(maxWidth: contentMaxWidth, alignment: .center)
     .frame(maxWidth: .infinity, alignment: .center)
   }
 
@@ -320,16 +328,17 @@ struct EnhancedFeedPost: View, Equatable {
     }
   }
 
+  private func grandparentAuthor(for feedViewPost: AppBskyFeedDefs.FeedViewPost) -> AppBskyActorDefs.ProfileViewBasic? {
+    if case .appBskyFeedDefsReasonRepost = feedViewPost.reason,
+       case let .appBskyFeedDefsPostView(parentPost) = feedViewPost.reply?.parent {
+      return parentPost.author
+    }
+    return nil
+  }
+
   @ViewBuilder
   private func mainPostContent(_ feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
-    let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = {
-      // If this is a repost and the reposted post is a reply, get the parent author
-      if case .appBskyFeedDefsReasonRepost = feedViewPost.reason,
-         case let .appBskyFeedDefsPostView(parentPost) = feedViewPost.reply?.parent {
-        return parentPost.author
-      }
-      return nil
-    }()
+    let grandparentAuthor = grandparentAuthor(for: feedViewPost)
 
     PostView(
       post: feedViewPost.post,

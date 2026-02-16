@@ -340,8 +340,13 @@ extension PostComposerViewModel {
         // Only load card for the first detected URL (which will be the embed)
         // This prevents multiple cards from being loaded and displayed
         if let firstURL = urls.first, urlCards[firstURL] == nil {
-            // Use performance optimizer for debounced URL card loading
-            if let optimizer = performanceOptimizer {
+            // Check if this is a bsky.app post URL — convert to quote post instead of link card
+            if quotedPost == nil, let postInfo = parseBskyAppPostURL(firstURL) {
+                Task {
+                    await convertBskyPostURLToQuote(urlString: firstURL, handle: postInfo.handle, rkey: postInfo.rkey)
+                }
+            } else if let optimizer = performanceOptimizer {
+                // Use performance optimizer for debounced URL card loading
                 optimizer.debounceURLDetection(urls: [firstURL]) { urlsToProcess in
                     Task {
                         await self.loadURLCardsOptimized(urlsToProcess)
@@ -353,6 +358,68 @@ extension PostComposerViewModel {
                     await loadURLCard(for: firstURL)
                 }
             }
+        }
+    }
+    
+    // MARK: - Bluesky Post URL → Quote Post
+    
+    /// Parse a bsky.app post URL into handle and rkey components
+    private func parseBskyAppPostURL(_ urlString: String) -> (handle: String, rkey: String)? {
+        // Match: https://bsky.app/profile/{handle}/post/{rkey}
+        let components = urlString.components(separatedBy: "/")
+        guard components.count >= 7,
+              urlString.hasPrefix("https://bsky.app/"),
+              components[3] == "profile",
+              components[5] == "post" else {
+            return nil
+        }
+        return (handle: components[4], rkey: components[6])
+    }
+    
+    /// Fetch a bsky.app post URL and set it as a quote post
+    @MainActor
+    private func convertBskyPostURLToQuote(urlString: String, handle: String, rkey: String) async {
+        guard let client = appState.atProtoClient else { return }
+        
+        do {
+            // Resolve handle to DID if needed
+            let did: String
+            if handle.hasPrefix("did:") {
+                did = handle
+            } else {
+                did = try await client.resolveHandleToDID(handle: handle)
+            }
+            
+            let atURI = try ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/\(rkey)")
+            let params = AppBskyFeedGetPosts.Parameters(uris: [atURI])
+            let (responseCode, response) = try await client.app.bsky.feed.getPosts(input: params)
+            
+            guard responseCode >= 200 && responseCode < 300,
+                  let posts = response?.posts,
+                  let post = posts.first else {
+                logger.warning("RT: Failed to fetch post for quote from URL: \(urlString)")
+                // Fall back to URL card
+                await loadURLCard(for: urlString)
+                return
+            }
+            
+            // Set as quote post instead of URL card
+            quotedPost = post
+            if isThreadMode && threadEntries.indices.contains(currentThreadIndex) {
+                threadEntries[currentThreadIndex].quotedPost = post
+            }
+            
+            // Remove the URL from the embed selection so it doesn't also show as a link card
+            if selectedEmbedURL == urlString {
+                selectedEmbedURL = nil
+            }
+            urlsKeptForEmbed.remove(urlString)
+            
+            logger.info("RT: Converted bsky.app post URL to quote post: @\(post.author.handle)")
+        } catch {
+            logger.error("RT: Failed to resolve bsky.app post URL to quote: \(error)")
+            // Fall back to URL card
+            await loadURLCard(for: urlString)
         }
     }
     

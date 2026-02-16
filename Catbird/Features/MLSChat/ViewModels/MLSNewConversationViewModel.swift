@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSNewConversationViewModel.swift
 //  Catbird
@@ -12,7 +12,6 @@ import Observation
 import OSLog
 import Combine
 import GRDB
-import CatbirdMLSCore
 
 /// ViewModel for creating a new MLS conversation
 @Observable
@@ -75,11 +74,11 @@ final class MLSNewConversationViewModel {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let conversationCreatedSubject = PassthroughSubject<BlueCatbirdMlsDefs.ConvoView, Never>()
+    private let conversationCreatedSubject = PassthroughSubject<BlueCatbirdMlsChatDefs.ConvoView, Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for successful conversation creation
-    var conversationCreatedPublisher: AnyPublisher<BlueCatbirdMlsDefs.ConvoView, Never> {
+    var conversationCreatedPublisher: AnyPublisher<BlueCatbirdMlsChatDefs.ConvoView, Never> {
         conversationCreatedSubject.eraseToAnyPublisher()
     }
 

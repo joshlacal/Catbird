@@ -11,11 +11,18 @@ struct AppearanceSettingsView: View {
             set: { appState.appSettings.theme = $0 }
         )
     }
-    
+
     private var darkThemeMode: Binding<String> {
         Binding(
             get: { appState.appSettings.darkThemeMode },
             set: { appState.appSettings.darkThemeMode = $0 }
+        )
+    }
+
+    private var accentColor: Binding<String> {
+        Binding(
+            get: { appState.appSettings.accentColor },
+            set: { appState.appSettings.accentColor = $0 }
         )
     }
     
@@ -73,6 +80,11 @@ struct AppearanceSettingsView: View {
             }
             .pickerStyle(.menu)
             
+            // Accent Color Section
+            Section("Accent Color") {
+                AccentColorPicker(selection: accentColor)
+            }
+
             // Typography Section
             Section("Typography") {
                 Picker("Font Style", selection: fontStyle) {
@@ -131,7 +143,8 @@ struct AppearanceSettingsView: View {
                 ColorSchemePreview(
                     theme: theme.wrappedValue,
                     darkThemeMode: darkThemeMode.wrappedValue,
-                    systemIsDark: colorScheme == .dark
+                    systemIsDark: colorScheme == .dark,
+                    accentColorKey: accentColor.wrappedValue
                 )
             }
             
@@ -150,6 +163,44 @@ struct AppearanceSettingsView: View {
     #endif
         .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
         // No manual sync needed - direct binding to AppSettings
+    }
+}
+
+// MARK: - Accent Color Picker
+
+struct AccentColorPicker: View {
+    @Binding var selection: String
+
+    private let columns = [GridItem(.adaptive(minimum: 60), spacing: 12)]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(AccentColorOption.allCases) { option in
+                Button {
+                    selection = option.rawValue
+                } label: {
+                    VStack(spacing: 6) {
+                        Circle()
+                            .fill(option.color)
+                            .frame(width: 36, height: 36)
+                            .overlay {
+                                if selection == option.rawValue {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .shadow(color: option.color.opacity(0.4), radius: 3, y: 1)
+
+                        Text(option.displayName)
+                            .font(.caption2)
+                            .foregroundStyle(selection == option.rawValue ? option.color : .secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 8)
     }
 }
 
@@ -250,6 +301,11 @@ struct ColorSchemePreview: View {
     let theme: String
     let darkThemeMode: String
     let systemIsDark: Bool
+    var accentColorKey: String = "default"
+
+    private var accent: Color {
+        (AccentColorOption(rawValue: accentColorKey) ?? .bluesky).color
+    }
     
     var isDarkMode: Bool {
         switch theme {
@@ -301,7 +357,7 @@ struct ColorSchemePreview: View {
                 VStack(spacing: 12) {
                     HStack {
                         Circle()
-                            .fill(Color.blue)
+                            .fill(accent)
                             .frame(width: 32, height: 32)
                         Text("@username")
                             .foregroundStyle(textColor)

@@ -302,24 +302,24 @@ final class MLSNewConversationViewModelTests: XCTestCase {
     
     // MARK: - Helper Methods
     
-    private func createMockConversation() -> BlueCatbirdMlsDefs.ConvoView {
+    private func createMockConversation() -> BlueCatbirdMlsChatDefs.ConvoView {
         let creator = try! DID(didString: "did:plc:creator")
         let member1 = try! DID(didString: "did:plc:member1")
         let member2 = try! DID(didString: "did:plc:member2")
         
-        return BlueCatbirdMlsDefs.ConvoView(
+        return BlueCatbirdMlsChatDefs.ConvoView(
             id: "test-convo-id",
             groupId: "abcdef0123456789",
             creator: creator,
             members: [
-                BlueCatbirdMlsDefs.MemberView(did: member1, joinedAt: ATProtocolDate(date: Date()), leafIndex: 0),
-                BlueCatbirdMlsDefs.MemberView(did: member2, joinedAt: ATProtocolDate(date: Date()), leafIndex: 1)
+                BlueCatbirdMlsChatDefs.MemberView(did: member1, joinedAt: ATProtocolDate(date: Date()), leafIndex: 0),
+                BlueCatbirdMlsChatDefs.MemberView(did: member2, joinedAt: ATProtocolDate(date: Date()), leafIndex: 1)
             ],
             epoch: 1,
             cipherSuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
             createdAt: ATProtocolDate(date: Date()),
             lastMessageAt: nil,
-            metadata: BlueCatbirdMlsDefs.ConvoMetadataView(name: "Test Group", description: "Test description")
+            metadata: BlueCatbirdMlsChatDefs.ConvoMetadataView(name: "Test Group", description: "Test description")
         )
     }
 }
@@ -327,7 +327,7 @@ final class MLSNewConversationViewModelTests: XCTestCase {
 // MARK: - Mock Conversation Manager
 
 class MockMLSConversationManager: MLSConversationManager {
-    var mockCreatedConversation: BlueCatbirdMlsDefs.ConvoView?
+    var mockCreatedConversation: BlueCatbirdMlsChatDefs.ConvoView?
     var shouldFail = false
     var delayResponse = false
     var createGroupCallCount = 0
@@ -337,7 +337,7 @@ class MockMLSConversationManager: MLSConversationManager {
         name: String,
         description: String? = nil,
         avatarUrl: String? = nil
-    ) async throws -> BlueCatbirdMlsDefs.ConvoView {
+    ) async throws -> BlueCatbirdMlsChatDefs.ConvoView {
         createGroupCallCount += 1
         
         if delayResponse {

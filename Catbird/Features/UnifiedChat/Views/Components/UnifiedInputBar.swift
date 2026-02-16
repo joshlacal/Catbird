@@ -111,6 +111,8 @@ struct UnifiedInputBar: View {
       return "GIF"
     case .post(let post):
       return post.authorHandle ?? "Shared Post"
+    case .tile(let tile):
+      return tile.name
     }
   }
 
@@ -124,6 +126,8 @@ struct UnifiedInputBar: View {
       return gif.url.absoluteString
     case .post(let post):
       return post.text ?? post.uri
+    case .tile(let tile):
+        return tile.tileDescription ?? tile.uri
     }
   }
 

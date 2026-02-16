@@ -30,17 +30,17 @@ struct PostComposerViewUIKit: View {
   private let initialParentPost: AppBskyFeedDefs.PostView?
   private let initialQuotedPost: AppBskyFeedDefs.PostView?
   private let restoringDraftParam: PostComposerDraft?
-  
+
   // Link creation state
   @State var showingLinkCreation = false
   @State var selectedTextForLink: String = ""
   @State var selectedRangeForLink: NSRange = .init(location: 0, length: 0)
   @State var linkFacets: [RichTextFacetUtils.LinkFacet] = []
   @State var pendingSelectionRange: NSRange? = nil
-  
+
   // Submission
   @State var isSubmitting = false
-  
+
   // Media pickers & sheets
   @State var photoPickerVisible = false
   @State var videoPickerVisible = false
@@ -61,11 +61,11 @@ struct PostComposerViewUIKit: View {
   @State var showingThreadgate = false
   @State var showingLabelSelector = false
   @State var showingOutlineTagsEditor = false
-  @State private var suppressAutoSaveOnDismiss = false
+  @State var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false
   @State var mentionOverlayCooldownUntil: Date = .distantPast
-  
+
   @State var autoSaveTask: Task<Void, Never>?
   @State var dismissReason: DismissReason = .none
   

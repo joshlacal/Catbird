@@ -115,8 +115,8 @@ final class MLSMessageOrderingTests: XCTestCase {
     seq: Int64,
     epoch: Int64 = 0,
     convoId: String? = nil
-  ) -> BlueCatbirdMlsDefs.MessageView {
-    BlueCatbirdMlsDefs.MessageView(
+  ) -> BlueCatbirdMlsChatDefs.MessageView {
+    BlueCatbirdMlsChatDefs.MessageView(
       convoId: convoId ?? testConversationID,
       epoch: Int(epoch),
       seq: Int(seq),
@@ -436,7 +436,7 @@ final class MLSMessageOrderingTests: XCTestCase {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let deserializedMessage = try decoder.decode(
-      BlueCatbirdMlsDefs.MessageView.self,
+      BlueCatbirdMlsChatDefs.MessageView.self,
       from: buffered.messageViewJSON
     )
 

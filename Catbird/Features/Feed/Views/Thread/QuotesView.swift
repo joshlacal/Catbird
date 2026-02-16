@@ -11,7 +11,12 @@ import SwiftUI
 struct QuotesView: View {
     let postUri: String
     @Environment(AppState.self) private var appState
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var quotes: [AppBskyFeedDefs.PostView] = []
+
+    private var contentMaxWidth: CGFloat {
+        hSizeClass == .compact ? .infinity : 600
+    }
     @State private var loading: Bool = true
     @State private var error: Error?
     @State private var cursor: String?
@@ -54,7 +59,7 @@ struct QuotesView: View {
                     }
                 }
                 .listStyle(.plain)
-                .frame(maxWidth: 600)
+                .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }

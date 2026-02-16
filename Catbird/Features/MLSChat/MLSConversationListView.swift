@@ -3,7 +3,6 @@ import GRDB
 import OSLog
 import Petrel
 import SwiftUI
-import CatbirdMLSService
 
 #if os(iOS)
 
@@ -799,7 +798,7 @@ struct MLSConversationListView: View {
         }
         .pickerStyle(.segmented)
         .frame(height: 36)
-        .frame(maxWidth: 600)
+        .frame(maxWidth: horizontalSizeClass == .compact ? .infinity : 600)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

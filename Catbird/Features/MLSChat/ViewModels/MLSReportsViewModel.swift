@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSReportsViewModel.swift
 //  Catbird
@@ -17,15 +17,15 @@ final class MLSReportsViewModel {
     // MARK: - Properties
 
     /// All reports (pending + resolved)
-    private(set) var allReports: [BlueCatbirdMlsGetReports.ReportView] = []
+    private(set) var allReports: [BlueCatbirdMlsChatReport.ReportView] = []
 
     /// Pending reports (requiring action)
-    var pendingReports: [BlueCatbirdMlsGetReports.ReportView] {
+    var pendingReports: [BlueCatbirdMlsChatReport.ReportView] {
         allReports.filter { $0.status == "pending" }
     }
 
     /// Resolved reports (for audit trail)
-    var resolvedReports: [BlueCatbirdMlsGetReports.ReportView] {
+    var resolvedReports: [BlueCatbirdMlsChatReport.ReportView] {
         allReports.filter { $0.status != "pending" }
     }
 
@@ -66,12 +66,6 @@ final class MLSReportsViewModel {
     /// Load reports for the conversation
     @MainActor
     func loadReports(refresh: Bool = false) async {
-        // TODO: Re-enable when reports feature is implemented on server
-        isLoadingReports = false
-        hasMoreReports = false
-        return
-        
-        /* Reports disabled - uncomment when ready
         guard !isLoadingReports else { return }
 
         if refresh {
@@ -82,15 +76,14 @@ final class MLSReportsViewModel {
 
         isLoadingReports = true
         error = nil
+        defer { isLoadingReports = false }
 
         do {
-            let (reports, newCursor) = try await Task.detached(priority: .userInitiated) {
-                try await self.conversationManager.loadReports(
-                    for: self.conversationId,
-                    limit: 50,
-                    cursor: self.cursor
-                )
-            }.value
+            let (reports, newCursor) = try await conversationManager.loadReports(
+                for: conversationId,
+                limit: 50,
+                cursor: cursor
+            )
 
             if refresh {
                 allReports = reports
@@ -106,9 +99,6 @@ final class MLSReportsViewModel {
             self.error = error
             logger.error("Failed to load reports: \(error.localizedDescription)")
         }
-
-        isLoadingReports = false
-        */
     }
 
     /// Load more reports (pagination)
@@ -121,7 +111,7 @@ final class MLSReportsViewModel {
     /// Resolve a report
     @MainActor
     func resolveReport(
-        _ report: BlueCatbirdMlsGetReports.ReportView,
+        _ report: BlueCatbirdMlsChatReport.ReportView,
         action: ResolutionAction,
         notes: String?
     ) async throws {
@@ -133,18 +123,18 @@ final class MLSReportsViewModel {
         do {
             try await Task.detached(priority: .userInitiated) {
                 try await self.conversationManager.resolveReport(
-                    report.id,
+                    report.reportId,
                     action: action.rawValue,
                     notes: notes
                 )
             }.value
 
             // Remove the resolved report from our list and reload
-            if let index = allReports.firstIndex(where: { $0.id == report.id }) {
+            if let index = allReports.firstIndex(where: { $0.reportId == report.reportId }) {
                 allReports.remove(at: index)
             }
 
-            logger.info("Successfully resolved report: \(report.id) with action: \(action.rawValue)")
+            logger.info("Successfully resolved report: \(report.reportId) with action: \(action.rawValue)")
 
             // Reload to get updated status
             await loadReports(refresh: true)
@@ -241,25 +231,10 @@ extension MLSReportsViewModel {
     /// - Parameter report: The report containing encrypted content
     /// - Returns: Decrypted content string, or nil if decryption fails
     @MainActor
-    func decryptReportContent(report: BlueCatbirdMlsGetReports.ReportView) async -> String? {
-        logger.debug("Attempting to decrypt report content for report: \(report.id)")
-
-        // Extract encrypted content bytes from report
-        let encryptedData = report.encryptedContent.data
-
-        do {
-            // Decrypt using the conversation's MLS context
-            // The encrypted content should be plain UTF-8 text encrypted with the conversation's keys
-            if let decryptedString = String(data: encryptedData, encoding: .utf8) {
-                logger.debug("Successfully decrypted report content (\(decryptedString.count) chars)")
-                return decryptedString
-            } else {
-                logger.warning("Failed to decode decrypted content as UTF-8 for report: \(report.id)")
-                return nil
-            }
-        } catch {
-            logger.error("Failed to decrypt report content: \(error.localizedDescription)")
-            return nil
-        }
+    func decryptReportContent(report: BlueCatbirdMlsChatReport.ReportView) async -> String? {
+        logger.debug("Attempting to decrypt report content for report: \(report.reportId)")
+        // New BlueCatbirdMlsChatReport.ReportView no longer includes encryptedContent
+        logger.warning("Encrypted content not available in consolidated report type for report: \(report.reportId)")
+        return nil
     }
 }

@@ -9,7 +9,6 @@ import Petrel
 import SwiftData
 import SwiftUI
 import UserNotifications
-import CatbirdMLSService
 
 #if os(iOS)
 import UIKit
@@ -1174,18 +1173,10 @@ final class AppState {
     func getMLSConversationManager(timeout: TimeInterval = 30.0) async -> MLSConversationManager? {
       // Use this AppState's userDID (AppState represents single authenticated account)
       let userDid = self.userDID
+      let declarationRolloutMode = ExperimentalSettings.shared.declarationRolloutMode(for: userDid)
 
-      // NOTE: We intentionally do NOT check against AppStateManager.shared.lifecycle.userDID here.
-      // Each AppState manages its own MLS resources independently. The lifecycle check was causing
-      // false positives when push notifications for other accounts temporarily accessed MLS storage,
-      // making the active user's view think it was "stale" and blocking manager retrieval.
-      //
-      // Per-user isolation is already ensured by:
-      // 1. Each AppState has its own mlsConversationManagerStorage
-      // 2. MLSConversationManager is initialized with a specific userDid
-      // 3. MLSClient contexts are per-user isolated
-      //
-      // The isUserUnderStorageMaintenance check below handles actual account switching scenarios.
+      // Each AppState owns isolated MLS resources, but during account switches we must avoid creating
+      // NEW managers for inactive cached AppStates because that can contend with active account init.
 
       // CRITICAL FIX: Block manager access during account transition
       // This prevents sync operations from grabbing a stale manager while switch is in progress.
@@ -1219,6 +1210,16 @@ final class AppState {
         return nil
       }
 
+      // Skip NEW manager creation for inactive cached accounts.
+      // This prevents cross-account SQLCipher churn and repeated init timeout loops after switches.
+      if let activeUserDID = AppStateManager.shared.lifecycle.userDID,
+        activeUserDID != userDid,
+        mlsConversationManagerStorage == nil
+      {
+        logger.debug("MLS: ⏭️ Skipping manager creation for inactive account: \(userDid)")
+        return nil
+      }
+
       // Check if existing manager is for the same user
       if let existing = mlsConversationManagerStorage {
         // Verify the manager is for the current user
@@ -1227,6 +1228,7 @@ final class AppState {
           // If generation has bumped (e.g. from a background switch or re-auth), this manager is stale
           let globalGen = MLSCoordinationStore.shared.currentGeneration
           if existing.currentCoordinationGeneration == globalGen {
+            await existing.setDeclarationRolloutMode(declarationRolloutMode)
             logger.debug("MLS: ♻️ Reusing existing conversation manager for user: \(userDid)")
             mlsServiceState.status = .ready
             return existing
@@ -1339,11 +1341,13 @@ final class AppState {
         
         // Create trust checker to determine if incoming conversations are requests
         let trustChecker = FollowingTrustChecker(client: atProtoClient, currentUserDID: userDid)
+        let configuration = MLSConfiguration(declarationRolloutMode: declarationRolloutMode)
         
         let manager = MLSConversationManager(
           apiClient: apiClient,
           database: database,
           userDid: userDid,
+          configuration: configuration,
           atProtoClient: atProtoClient,
           trustChecker: trustChecker
         )
@@ -1847,9 +1851,9 @@ final class AppState {
     logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
 
     // Apply theme settings (now that SwiftData is available, this will use the persisted values)
-    _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode)
+    _themeManager.applyTheme(theme: appSettings.theme, darkThemeMode: appSettings.darkThemeMode, accentColor: appSettings.accentColor)
     logger.info(
-      "Theme reapplied after SwiftData initialization: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode)"
+      "Theme reapplied after SwiftData initialization: theme=\(self.appSettings.theme), darkMode=\(self.appSettings.darkThemeMode), accent=\(self.appSettings.accentColor)"
     )
 
     // Apply initial font settings
@@ -1967,7 +1971,8 @@ final class AppState {
         // Apply theme when settings change
         self._themeManager.applyTheme(
           theme: self.appSettings.theme,
-          darkThemeMode: self.appSettings.darkThemeMode
+          darkThemeMode: self.appSettings.darkThemeMode,
+          accentColor: self.appSettings.accentColor
         )
 
         // Apply font settings when they change
@@ -2162,6 +2167,14 @@ final class AppState {
 
       // Initialize the MLS crypto context
       try await manager.initialize()
+
+      // Declaration bootstrap is idempotent and needs to run even when the manager is already
+      // initialized (for example, after an opt-in toggle on an existing session).
+      do {
+        try await manager.ensureDeclarationChainReady()
+      } catch {
+        logger.error("MLS: Declaration chain readiness check failed: \(error.localizedDescription)")
+      }
       
       // CRITICAL FIX: Start global WebSocket subscription for group info updates
       // This ensures we receive groupInfoRefresh events even if no conversation is open
@@ -2172,8 +2185,9 @@ final class AppState {
           let handler = MLSWebSocketManager.EventHandler(
             onGroupInfoRefreshRequested: { [weak self] event in
               guard let self else { return }
-              if let manager = await self.getMLSConversationManager() {
-                await manager.handleGroupInfoRefreshRequest(convoId: event.convoId)
+              if let convoId = event.convoId,
+                let manager = await self.getMLSConversationManager() {
+                await manager.handleGroupInfoRefreshRequest(convoId: convoId)
               }
             }
           )

@@ -232,8 +232,9 @@ struct EnhancedNewPostsIndicator: View {
 // MARK: - New Posts Indicator Manager
 
 /// Manages the display logic and state for new posts indicators
+@Observable
 @MainActor
-final class NewPostsIndicatorManager: ObservableObject {
+final class NewPostsIndicatorManager {
   private let logger = Logger(subsystem: "blue.catbird", category: "NewPostsIndicatorManager")
   
   // MARK: - Indicator State
@@ -259,7 +260,7 @@ final class NewPostsIndicatorManager: ObservableObject {
   
   // MARK: - Properties
   
-  @Published private(set) var currentIndicator: IndicatorState?
+  private(set) var currentIndicator: IndicatorState?
   private var showTask: Task<Void, Never>?
   
   // Configuration
@@ -488,8 +489,9 @@ struct EnhancedNewPostsIndicator: View {
 }
 
 /// macOS stub for EnhancedNewPostsIndicatorManager
+@Observable
 @MainActor
-class EnhancedNewPostsIndicatorManager: ObservableObject {
+class EnhancedNewPostsIndicatorManager {
   static let shared = EnhancedNewPostsIndicatorManager()
   
   private init() {}

@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSMemberActionsSheet.swift
 //  Catbird
@@ -20,7 +20,7 @@ struct MLSMemberActionsSheet: View {
     // MARK: - Dependencies
 
     let conversationId: String
-    let member: BlueCatbirdMlsDefs.MemberView
+    let member: BlueCatbirdMlsChatDefs.MemberView
     let currentUserDid: String
     let isCurrentUserAdmin: Bool
     let isCurrentUserCreator: Bool
@@ -105,7 +105,7 @@ struct MLSMemberActionsSheet: View {
         isCurrentUserAdmin && member.isAdmin && !isSelf && !isCreator
     }
 
-    // Note: Moderator role is in the local MLSMemberModel but not yet in BlueCatbirdMlsDefs.MemberView
+    // Note: Moderator role is in the local MLSMemberModel but not yet in BlueCatbirdMlsChatDefs.MemberView
     // These will be enabled once the server supports the moderator role
     private var canPromoteModerator: Bool {
         false // isCurrentUserAdmin && !member.isAdmin && !isModerator && !isSelf

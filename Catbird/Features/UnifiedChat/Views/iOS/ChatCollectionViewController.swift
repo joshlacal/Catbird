@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 #if os(iOS)
 import SwiftUI
 import UIKit

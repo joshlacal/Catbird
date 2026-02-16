@@ -1,5 +1,5 @@
 import SwiftUI
-import CatbirdMLSService
+import CatbirdMLSCore
 
 struct DiagnosticsSettingsView: View {
   @Environment(AppState.self) private var appState

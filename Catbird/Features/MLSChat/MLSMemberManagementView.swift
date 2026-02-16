@@ -1,7 +1,7 @@
 import SwiftUI
 import Petrel
 import OSLog
-import CatbirdMLSService
+import CatbirdMLSCore
 
 #if os(iOS)
 
@@ -28,11 +28,20 @@ struct MLSMemberManagementView: View {
     @State private var errorMessage: String?
     @State private var memberRoles: [String: MemberRole] = [:]
     @State private var showingMemberActions = false
-    @State private var selectedMemberForActions: BlueCatbirdMlsDefs.MemberView?
+    @State private var selectedMemberForActions: BlueCatbirdMlsChatDefs.MemberView?
     @State private var enrichedProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
     @State private var showMemberHistory = false
+    @State private var declarationApprovalRequest: DeclarationApprovalRequest?
+    @State private var pendingParticipantForDeclarationApproval: MLSParticipantViewModel?
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSMemberManagement")
+    
+    struct DeclarationApprovalRequest: Identifiable {
+        let id = UUID()
+        let targetDid: String
+        let operation: String
+        let warning: String?
+    }
     
     var body: some View {
         NavigationStack {
@@ -64,6 +73,30 @@ struct MLSMemberManagementView: View {
             }
         } message: {
             errorAlertMessage
+        }
+        .alert(item: $declarationApprovalRequest) { request in
+            Alert(
+                title: Text("Unverified Identity"),
+                message: Text(request.warning ?? "Identity verification for \(request.targetDid) requires explicit confirmation."),
+                primaryButton: .destructive(Text("Add Anyway")) {
+                    Task {
+                        declarationApprovalRequest = nil
+                        if let manager = await appState.getMLSConversationManager() {
+                            manager.approveDeclarationUserFriction(
+                                targetDid: request.targetDid,
+                                operation: request.operation
+                            )
+                            if let participant = pendingParticipantForDeclarationApproval {
+                                await addMember(participant)
+                            }
+                        }
+                    }
+                },
+                secondaryButton: .cancel({
+                    declarationApprovalRequest = nil
+                    pendingParticipantForDeclarationApproval = nil
+                })
+            )
         }
         .sheet(item: $selectedMemberForActions) { member in
             memberActionsSheet(for: member)
@@ -160,7 +193,7 @@ struct MLSMemberManagementView: View {
     }
 
     @ViewBuilder
-    private func memberActionsSheet(for member: BlueCatbirdMlsDefs.MemberView) -> some View {
+    private func memberActionsSheet(for member: BlueCatbirdMlsChatDefs.MemberView) -> some View {
         MLSMemberActionsSheetWrapper(
             conversationId: conversationId,
             member: member,
@@ -441,7 +474,7 @@ struct MLSMemberManagementView: View {
     
     // MARK: - Actions
     
-    private func updateMemberRoles(from members: [BlueCatbirdMlsDefs.MemberView]?) {
+    private func updateMemberRoles(from members: [BlueCatbirdMlsChatDefs.MemberView]?) {
         if let members {
             var roles: [String: MemberRole] = [:]
             for member in members {
@@ -471,7 +504,7 @@ struct MLSMemberManagementView: View {
     }
 
     /// Enrich member profiles with handle, display name, and avatar from Bluesky
-    private func enrichMemberProfiles(_ members: [BlueCatbirdMlsDefs.MemberView]) async {
+    private func enrichMemberProfiles(_ members: [BlueCatbirdMlsChatDefs.MemberView]) async {
         guard let client = appState.atProtoClient else {
             logger.warning("Cannot enrich member profiles: no AT Proto client")
             return
@@ -503,11 +536,26 @@ struct MLSMemberManagementView: View {
         await viewModel?.addMembers([participant.id])
         
         if let error = viewModel?.error {
+            if case let MLSConversationError.declarationUserConfirmationRequired(
+                targetDid: targetDid,
+                operation: operation,
+                warning: warning
+            ) = error {
+                logger.warning("Declaration confirmation required before adding \(participant.id)")
+                pendingParticipantForDeclarationApproval = participant
+                declarationApprovalRequest = DeclarationApprovalRequest(
+                    targetDid: targetDid,
+                    operation: operation,
+                    warning: warning
+                )
+                return
+            }
             logger.error("Failed to add member: \(error.localizedDescription)")
             errorMessage = "Failed to add member: \(error.localizedDescription)"
             showingError = true
         } else {
             logger.info("Successfully added member to MLS group")
+            pendingParticipantForDeclarationApproval = nil
             searchText = ""
             updateMemberRoles(from: viewModel?.members)
         }
@@ -606,14 +654,14 @@ enum MemberRole {
 // MARK: - Enhanced Member Row with Admin Badges
 
 struct MemberRowEnhanced: View {
-    let member: BlueCatbirdMlsDefs.MemberView
+    let member: BlueCatbirdMlsChatDefs.MemberView
     let isCurrentUser: Bool
     let isCreator: Bool
     let enrichedProfile: MLSProfileEnricher.ProfileData?
     let deviceCount: Int?
 
     init(
-        member: BlueCatbirdMlsDefs.MemberView,
+        member: BlueCatbirdMlsChatDefs.MemberView,
         isCurrentUser: Bool,
         isCreator: Bool,
         enrichedProfile: MLSProfileEnricher.ProfileData?,
@@ -801,7 +849,7 @@ struct MemberRowEnhanced: View {
 
 private struct MLSMemberActionsSheetWrapper: View {
     let conversationId: String
-    let member: BlueCatbirdMlsDefs.MemberView
+    let member: BlueCatbirdMlsChatDefs.MemberView
     let currentUserDid: String
     let isCurrentUserAdmin: Bool
     let isCurrentUserCreator: Bool
@@ -830,7 +878,7 @@ private struct MLSMemberActionsSheetWrapper: View {
     }
 }
 
-extension BlueCatbirdMlsDefs.MemberView: Identifiable {
+extension BlueCatbirdMlsChatDefs.MemberView: Identifiable {
     public var id: String {
         did.description
     }

@@ -1,3 +1,3 @@
-// Moved to CatbirdMLSService.
+// Moved to CatbirdMLSCore.
 // This file is intentionally empty to keep Xcode file references stable.
-import CatbirdMLSService
+import CatbirdMLSCore

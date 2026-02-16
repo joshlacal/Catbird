@@ -6,7 +6,7 @@
 //  Supports resumable subscriptions per MLS_HYBRID_MESSAGING_PLAN.md
 //
 
-import CatbirdMLSService
+import CatbirdMLSCore
 import Foundation
 import SwiftData
 import OSLog

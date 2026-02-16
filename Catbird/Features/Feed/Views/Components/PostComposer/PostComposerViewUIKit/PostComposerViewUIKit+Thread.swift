@@ -170,6 +170,7 @@ extension PostComposerViewUIKit {
             vm.enterThreadMode()
             vm.addNewThreadEntry()
             activeEditorFocusID = UUID()
+            activeEditorFocusID = UUID()
           }
         }
       },

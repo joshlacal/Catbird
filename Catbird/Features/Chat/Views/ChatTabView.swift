@@ -1,7 +1,7 @@
 import SwiftUI
 import OSLog
 import Petrel
-import CatbirdMLSService
+import CatbirdMLSCore
 
 #if os(iOS)
 
@@ -11,6 +11,11 @@ struct ChatTabView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.composerTransitionNamespace) private var composerNamespace
+
+  private var contentMaxWidth: CGFloat {
+    horizontalSizeClass == .compact ? .infinity : 600
+  }
+
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
   @State private var selectedConvoId: String?
@@ -261,6 +266,14 @@ struct ChatTabView: View {
         return
       }
       _ = try await apiClient.optIn()
+
+      if let conversationManager = await appState.getMLSConversationManager() {
+        do {
+          try await conversationManager.ensureDeclarationChainReady()
+        } catch {
+          logger.error("Declaration chain initialization after opt-in failed: \(error.localizedDescription)")
+        }
+      }
       
       // Save local setting only after successful server opt-in
       ExperimentalSettings.shared.enableMLSChat(for: userDID)
@@ -282,6 +295,12 @@ struct ChatTabView: View {
     do {
       let success = try await apiClient.optOut()
       if success {
+        if let conversationManager = await appState.getMLSConversationManager() {
+          _ = try? await conversationManager.publishDeclarationDeviceRevoke(
+            deviceId: nil,
+            reason: "mls-opt-out"
+          )
+        }
         logger.info("Successfully opted out from MLS on server")
       } else {
         logger.warning("Opt-out returned false (user may not have been opted in)")
@@ -484,14 +503,14 @@ struct ChatTabView: View {
     }
     .pickerStyle(.segmented)
     .frame(height: 36)
-    .frame(maxWidth: 600)
+    .frame(maxWidth: contentMaxWidth)
     .frame(maxWidth: .infinity, alignment: .center)
     .padding(.horizontal, 16)
     .padding(.vertical, 8)
     .listRowInsets(EdgeInsets())
     .listRowSeparator(.hidden)
   }
-  
+
   // MARK: - Helper Properties
   
   private var shouldShowChatFAB: Bool {
@@ -612,4 +631,3 @@ private struct ConditionalSwipeActions: ViewModifier {
 }
 
 #endif
-

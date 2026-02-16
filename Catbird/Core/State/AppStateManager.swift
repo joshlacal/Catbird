@@ -1,5 +1,4 @@
 import CatbirdMLSCore
-import CatbirdMLSService
 import Foundation
 import OSLog
 import SwiftData
@@ -640,6 +639,11 @@ final class AppStateManager {
   /// - Returns: True if state exists in memory
   func hasState(for userDID: String) -> Bool {
     return authenticatedStates[userDID] != nil
+  }
+
+  /// All DIDs that have cached authenticated state
+  var authenticatedDIDs: [String] {
+    return Array(authenticatedStates.keys)
   }
 
   // MARK: - MLS Storage Maintenance

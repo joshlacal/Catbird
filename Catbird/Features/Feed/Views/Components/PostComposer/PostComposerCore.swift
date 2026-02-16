@@ -68,6 +68,7 @@ extension PostComposerViewModel {
         urlCards = [:]
         outlineTags = []
         richAttributedText = NSAttributedString()
+        quotedPost = nil
         
         // Clear mention suggestions
         mentionSuggestions = []
@@ -230,9 +231,7 @@ extension PostComposerViewModel {
         threadEntries[0].detectedURLs = detectedURLs
         threadEntries[0].urlCards = urlCards
         threadEntries[0].hashtags = outlineTags
-
-        // Preserve reply/quote references in thread entries
-        // This ensures parentPost and quotedPost are maintained when toggling thread mode
+        threadEntries[0].quotedPost = quotedPost
 
         isThreadMode = true
         isThread = true
@@ -258,6 +257,7 @@ extension PostComposerViewModel {
             selectedEmbedURL = firstEntry.selectedEmbedURL
             urlsKeptForEmbed = firstEntry.urlsKeptForEmbed
             outlineTags = firstEntry.hashtags
+            quotedPost = firstEntry.quotedPost
             
             // Preserve font attributes when exiting thread mode
             #if os(iOS)
@@ -429,7 +429,41 @@ extension PostComposerViewModel {
         var allEmbeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?] = []
         for (idx, entry) in validEntries.enumerated() {
             var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
-            if let gif = entry.selectedGif {
+            
+            // Each entry can have its own quote post
+            if let entryQuote = entry.quotedPost {
+                let strongRef = ComAtprotoRepoStrongRef(
+                    uri: entryQuote.uri,
+                    cid: entryQuote.cid
+                )
+                let record = AppBskyEmbedRecord(record: strongRef)
+                
+                // Quote + media → recordWithMedia
+                if let gif = entry.selectedGif {
+                    if let gifEmbed = try await createGifEmbed(gif),
+                       case .appBskyEmbedExternal(let external) = gifEmbed {
+                        let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedExternal(external)
+                        embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                    }
+                } else if !entry.mediaItems.isEmpty {
+                    if let imagesEmbed = try await createImagesEmbedForEntry(entry),
+                       case .appBskyEmbedImages(let images) = imagesEmbed {
+                        let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedImages(images)
+                        embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                    }
+                } else if let videoItem = entry.videoItem {
+                    self.videoItem = videoItem
+                    if let videoEmbed = try await createVideoEmbed(),
+                       case .appBskyEmbedVideo(let video) = videoEmbed {
+                        let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedVideo(video)
+                        embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
+                    }
+                    self.videoItem = nil
+                } else {
+                    // Quote-only embed
+                    embed = .appBskyEmbedRecord(record)
+                }
+            } else if let gif = entry.selectedGif {
                 embed = try await createGifEmbed(gif)
             } else if !entry.mediaItems.isEmpty {
                 // Create images embed from the entry's media items
@@ -762,6 +796,7 @@ extension PostComposerViewModel {
         threadEntries[currentThreadIndex].hashtags = outlineTags
         threadEntries[currentThreadIndex].selectedLanguages = selectedLanguages
         threadEntries[currentThreadIndex].outlineTags = outlineTags
+        threadEntries[currentThreadIndex].quotedPost = quotedPost
     }
     
     func loadEntryState() {
@@ -800,6 +835,7 @@ extension PostComposerViewModel {
         urlsKeptForEmbed = entry.urlsKeptForEmbed
         outlineTags = entry.hashtags.isEmpty ? entry.outlineTags : entry.hashtags
         selectedLanguages = entry.selectedLanguages
+        quotedPost = entry.quotedPost
         
         // Sync attributed text with proper font attributes
         #if os(iOS)

@@ -9,7 +9,7 @@ import Petrel
 struct ConversationListView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-  @State var chatManager: ChatManager
+  @State private var chatManager: ChatManager
   var searchText: String = ""
   var selectedConvoId: String?
   var onSelectConvo: (String) -> Void

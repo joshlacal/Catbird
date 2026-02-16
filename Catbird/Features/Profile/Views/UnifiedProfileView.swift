@@ -34,13 +34,14 @@ struct UnifiedProfileView: View {
   @State private var hasAttemptedLoadPosts = false
   @State private var hasAttemptedLoadReplies = false
   @State private var hasAttemptedLoadMedia = false
+  @State private var contentMaxWidth: CGFloat
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedProfileView")
   #if DEBUG
   private let layoutLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
   #endif
 
   // MARK: - Computed Properties
-  
+
   /// Computed property to convert the viewModel's pinned post to a cached version
   /// This prevents recreating the CachedFeedViewPost on every render
   private var cachedPinnedPost: CachedFeedViewPost? {
@@ -67,6 +68,7 @@ struct UnifiedProfileView: View {
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
     _navigationPath = path
+    self._contentMaxWidth = State(initialValue: .infinity)
   }
 
   init(did: String, selectedTab: Binding<Int>, appState: AppState, path: Binding<NavigationPath>) {
@@ -82,6 +84,7 @@ struct UnifiedProfileView: View {
     self._selectedTab = selectedTab
     self._lastTappedTab = Binding.constant(nil)
     _navigationPath = path
+    self._contentMaxWidth = State(initialValue: .infinity)
   }
 
   var body: some View {
@@ -103,7 +106,7 @@ struct UnifiedProfileView: View {
                     bannerHeaderView(profile: profile)
                         .flexibleHeaderContent()
                         .background(Color.accentColor.opacity(0.05))
-                        .frame(maxWidth: 600, alignment: .center)
+                        .frame(maxWidth: contentMaxWidth, alignment: .center)
                         .frame(maxWidth: .infinity, alignment: .center)
 
                     // Content section - using NotificationsView pattern
@@ -115,24 +118,24 @@ struct UnifiedProfileView: View {
                             appState: appState,
                             isEditingProfile: $isEditingProfile,
                             path: $navigationPath,
-                            screenWidth: 600, // Use constrained width like NotificationsView
+                            screenWidth: contentMaxWidth == .infinity ? UIScreen.main.bounds.width : contentMaxWidth,
                             hideAvatar: false
                         )
                         .padding(.horizontal, 16)
-                        .frame(maxWidth: 600, alignment: .center)
+                        .frame(maxWidth: contentMaxWidth, alignment: .center)
                         .frame(maxWidth: .infinity, alignment: .center)
                         
                         // Followed by section
                         followedBySection(profile: profile)
                             .padding(.horizontal, 16)
-                            .frame(maxWidth: 600, alignment: .center)
+                            .frame(maxWidth: contentMaxWidth, alignment: .center)
                             .frame(maxWidth: .infinity, alignment: .center)
                         
                         // Tab selector
                         tabSelectorSection()
                             .padding(.top, 12)
                             .padding(.horizontal, 16)
-                            .frame(maxWidth: 600, alignment: .center)
+                            .frame(maxWidth: contentMaxWidth, alignment: .center)
                             .frame(maxWidth: .infinity, alignment: .center)
                         
                         // Posts content with full-width dividers
@@ -234,7 +237,7 @@ struct UnifiedProfileView: View {
         case .labelerInfo:
             if let labelerDetails = viewModel.labelerDetails {
                 LabelerInfoTab(labelerDetails: labelerDetails)
-                    .frame(maxWidth: 600, alignment: .center)
+                    .frame(maxWidth: contentMaxWidth, alignment: .center)
                     .frame(maxWidth: .infinity, alignment: .center)
             } else {
                 ProgressView("Loading labeler information...")
@@ -273,12 +276,12 @@ struct UnifiedProfileView: View {
         ProgressView("Loading...")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
-          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
       } else if viewModel.posts.isEmpty && viewModel.pinnedPost == nil {
         emptyContentView("No Content", "No posts")
           .padding(.top, 40)
-          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
       } else {
         // Show pinned post first if it exists
@@ -289,7 +292,7 @@ struct UnifiedProfileView: View {
               cachedPost: cachedPinned,
               path: $navigationPath
             )
-            .frame(maxWidth: 600, alignment: .center)
+            .frame(maxWidth: contentMaxWidth, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .center)
             
             Divider()
@@ -323,12 +326,12 @@ struct UnifiedProfileView: View {
         ProgressView("Loading...")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
-          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
       } else if posts.isEmpty {
         emptyContentView("No Content", emptyMessage)
           .padding(.top, 40)
-          .frame(maxWidth: 600, alignment: .center)
+          .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
       } else {
         // Use cached SwiftData objects and EnhancedFeedPost for consistency
@@ -350,8 +353,10 @@ struct UnifiedProfileView: View {
     let isLoadingMore: Bool
     let loadMore: @MainActor () async -> Void
     @Binding var path: NavigationPath
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     @Query private var cached: [CachedFeedViewPost]
+    @State private var contentMaxWidth: CGFloat
 
     init(
       feedKey: String,
@@ -368,6 +373,7 @@ struct UnifiedProfileView: View {
           post.feedType == feedKey
         }
       )
+      self._contentMaxWidth = State(initialValue: .infinity)
     }
     
     // Sort posts: feedOrder first (if present), then by createdAt
@@ -391,32 +397,37 @@ struct UnifiedProfileView: View {
     }
 
     var body: some View {
-      ForEach(sortedCached) { cachedPost in
-        VStack(spacing: 0) {
-          EnhancedFeedPost(
-            cachedPost: cachedPost,
-            path: $path
-          )
-          .frame(maxWidth: 600, alignment: .center)
-          .frame(maxWidth: .infinity, alignment: .center)
+      Group {
+        ForEach(sortedCached) { cachedPost in
+          VStack(spacing: 0) {
+            EnhancedFeedPost(
+              cachedPost: cachedPost,
+              path: $path
+            )
+            .frame(maxWidth: contentMaxWidth, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .center)
 
-          Divider()
-            .padding(.top, 8)
-        }
-        .contentShape(Rectangle())
-        .onAppear {
-          // Load more when reaching the end
-          if cachedPost == sortedCached.last && !isLoadingMore {
-            Task { await loadMore() }
+            Divider()
+              .padding(.top, 8)
+          }
+          .contentShape(Rectangle())
+          .onAppear {
+            // Load more when reaching the end
+            if cachedPost == sortedCached.last && !isLoadingMore {
+              Task { await loadMore() }
+            }
           }
         }
-      }
 
-      if isLoadingMore {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: 600, alignment: .center)
-          .frame(maxWidth: .infinity, alignment: .center)
+        if isLoadingMore {
+          ProgressView()
+            .padding()
+            .frame(maxWidth: contentMaxWidth, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+      }
+      .onChange(of: hSizeClass) { _, newValue in
+        contentMaxWidth = (newValue == .compact ? .infinity : 600)
       }
     }
   }
@@ -804,14 +815,10 @@ struct UnifiedProfileView: View {
     }
   }
   
-  // Responsive banner height based on screen size
+  // Responsive banner height based on size class
   private var responsiveBannerHeight: CGFloat {
     #if os(iOS)
-    switch UIScreen.main.bounds.width {
-    case ..<375: return 120  // Small iPhones (SE)
-    case ..<430: return 140  // Standard iPhones (iPhone 16, 15, etc.)
-    default: return 160      // Large phones (iPhone 16 Pro Max, etc.)
-    }
+    hSizeClass == .compact ? 140 : 160
     #else
     return 180 // macOS - slightly larger for desktop experience
     #endif
@@ -1009,6 +1016,9 @@ struct UnifiedProfileView: View {
     }
     .onChange(of: lastTappedTab) { _, newValue in
       handleTabChange(newValue)
+    }
+    .onChange(of: hSizeClass) { _, newValue in
+      contentMaxWidth = (newValue == .compact ? .infinity : 600)
     }
     .task {
       // Wrap in error handling to prevent crashes
@@ -2130,11 +2140,7 @@ private extension View {
       }
     )
     .onPreferenceChange(_SizePreferenceKey.self) { size in
-      #if os(iOS)
-      let screenW = UIScreen.main.bounds.width
-      #else
       let screenW = size.width
-      #endif
       _layoutDebugLogger.debug("[\(tag)] width=\(size.width, privacy: .public), screen=\(screenW, privacy: .public), overflow=\(size.width > screenW ? "YES" : "no", privacy: .public)")
     }
   }
@@ -2271,7 +2277,9 @@ struct ProfileImageViewerView: View {
         let pinnedPost: AppBskyFeedDefs.PostView
         @Binding var path: NavigationPath
         @Environment(AppState.self) private var appState
-        
+        @Environment(\.horizontalSizeClass) private var hSizeClass
+        @State private var contentMaxWidth: CGFloat = .infinity
+
         var body: some View {
             VStack(spacing: 0) {
                 // Pinned badge indicator
@@ -2287,7 +2295,7 @@ struct ProfileImageViewerView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 6)
-                .frame(maxWidth: 600, alignment: .leading)
+                .frame(maxWidth: contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
                 
                 // Post content using PostView with appropriate parameters
@@ -2302,8 +2310,11 @@ struct ProfileImageViewerView: View {
                 )
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .frame(maxWidth: 600, alignment: .center)
+                .frame(maxWidth: contentMaxWidth, alignment: .center)
                 .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .onChange(of: hSizeClass) { _, newValue in
+                contentMaxWidth = (newValue == .compact ? .infinity : 600)
             }
         }
     }

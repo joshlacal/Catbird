@@ -1,5 +1,4 @@
 import CatbirdMLSCore
-import CatbirdMLSService
 import OSLog
 import Petrel
 import SwiftUI
@@ -15,7 +14,7 @@ import SwiftUI
     let onSend: (String, MLSEmbedData?) -> Void
     var supportsEmbeds: Bool = true
     var showsAttachmentMenu: Bool = true
-    var dismissKeyboardOnSend: Bool = true
+    var dismissKeyboardOnSend: Bool = false
     var placeholderText: String = "Message"
 
     @State private var showingGifPicker = false
@@ -36,6 +35,10 @@ import SwiftUI
 
     private var composerStroke: Color {
       Color.primary.opacity(colorScheme == .dark ? 0.3 : 0.12)
+    }
+
+    private var composerCornerRadius: CGFloat {
+      DesignTokens.Size.radiusXXL + DesignTokens.Spacing.sm
     }
 
     private var panelTint: Color {
@@ -122,47 +125,18 @@ import SwiftUI
 
     @ViewBuilder
     private var composerContainer: some View {
-      ZStack {
-        
-
-        composerContent
-              .background {
-                  composerBackground
-              }      }
-      .accessibilityIdentifier("mls.composer.\(accessibilityConvoIdPrefix)")
-    }
-
-    @ViewBuilder
-    private var composerBackground: some View {
-      // Edge-to-edge glass background (flush to bezel)
-      // On Catalyst, don't ignore safe area to stay within detail view bounds
-      if #available(iOS 26.0, *) {
-        Color.clear
-          .background {
-            ConcentricRectangle(corners: .concentric, isUniform: true)
-              .stroke(composerStroke, lineWidth: DesignTokens.Size.borderThin)
-
-          }
-          #if !targetEnvironment(macCatalyst)
-          .ignoresSafeArea(.container, edges: [.horizontal, .bottom])
-          #endif
-      } else {
-        RoundedRectangle(
-          cornerRadius: DesignTokens.Size.radiusXXL + DesignTokens.Spacing.sm,
-          style: .continuous
-        )
-        .fill(.ultraThinMaterial)
-        .overlay {
-          RoundedRectangle(
-            cornerRadius: DesignTokens.Size.radiusXXL + DesignTokens.Spacing.sm,
-            style: .continuous
+      composerContent
+        .modifier(
+          GlassPanelModifier(
+            tint: composerTint,
+            strokeColor: composerStroke,
+            cornerRadius: composerCornerRadius
           )
-          .strokeBorder(composerStroke, lineWidth: DesignTokens.Size.borderThin)
-        }
+        )
         #if !targetEnvironment(macCatalyst)
         .ignoresSafeArea(.container, edges: [.horizontal, .bottom])
         #endif
-      }
+      .accessibilityIdentifier("mls.composer.\(accessibilityConvoIdPrefix)")
     }
 
     private var composerContent: some View {
@@ -200,6 +174,7 @@ import SwiftUI
           .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
           .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
           .accessibilityLabel("Add attachment")
+          .offset(y: -2)
       }
       .disabled(!isEnabled)  // Only one embed at a time
     }
@@ -211,6 +186,7 @@ import SwiftUI
           Text(placeholderText)
             .designBody()
             .foregroundColor(.secondary)
+            .padding(.top, 6)
             .padding(.leading, 5)  // Match TextEditor's internal leading inset
             .padding(.top, 8)  // Match TextEditor's internal top inset
         }
@@ -220,6 +196,7 @@ import SwiftUI
           .frame(minHeight: 36, maxHeight: 120)
           .scrollContentBackground(.hidden)
           .background(Color.clear)
+          .padding(.top, 6)
           .focused($isTextFieldFocused)
           .accessibilityIdentifier("mls.composer.textInput.\(accessibilityConvoIdPrefix)")
           .onChange(of: text) { _, newValue in
@@ -241,14 +218,16 @@ import SwiftUI
           .font(.system(size: 15, weight: .semibold))
           .foregroundStyle(Color.white)
           .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
-          .background(Color.accentColor)
+          .background(canSend ? Color.accentColor : Color.secondary.opacity(0.25))
           .clipShape(.circle)
 
       }
       .contentShape(Circle())
       .disabled(!canSend)
+      .opacity(canSend ? 1.0 : 0.5)
       .accessibilityLabel("Send message")
       .accessibilityIdentifier("mls.composer.sendButton.\(accessibilityConvoIdPrefix)")
+      .padding(.bottom, 3)
     }
 
     private func accessibilitySafeIdPrefix(_ value: String, maxLength: Int = 12) -> String {
@@ -529,15 +508,14 @@ import SwiftUI
     func body(content: Content) -> some View {
       if #available(iOS 26.0, *) {
         content
-          .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+              
+          .clipShape(ConcentricRectangle())
           .glassEffect(
-            .regular.tint(tint).interactive(),
-            in: .rect(cornerRadius: cornerRadius)
+            .regular.interactive().tint(tint),
+            in: .containerRelative
           )
-          .overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-              .strokeBorder(strokeColor, lineWidth: DesignTokens.Size.borderThin)
-          }
+          .shadow(color: Color.black.opacity(0.08), radius: 4)
+          .padding(12)
       } else {
         content
           .background(

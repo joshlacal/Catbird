@@ -449,9 +449,7 @@ extension PostComposerViewModel {
         threadEntries[currentThreadIndex].selectedEmbedURL = selectedEmbedURL
         threadEntries[currentThreadIndex].urlsKeptForEmbed = urlsKeptForEmbed
         threadEntries[currentThreadIndex].hashtags = outlineTags
-        
-        // Note: Attributed text and link facets are not persisted for thread entries yet.
-        // Extending ThreadEntry to include attributed text will enable full preservation.
+        threadEntries[currentThreadIndex].quotedPost = quotedPost
     }
     
     /// Load entry state with link preservation
@@ -471,8 +469,7 @@ extension PostComposerViewModel {
         detectedURLs = []
         urlCards = [:]
         outlineTags = []
-        
-        // Load entry state
+        quotedPost = nil
         postText = entry.text
         mediaItems = entry.mediaItems.map { item in
             var newItem = PostComposerViewModel.MediaItem()
@@ -494,8 +491,7 @@ extension PostComposerViewModel {
         selectedEmbedURL = entry.selectedEmbedURL
         urlsKeptForEmbed = entry.urlsKeptForEmbed
         outlineTags = entry.hashtags
-        
-        // Restore attributed text with proper font attributes
+        quotedPost = entry.quotedPost
         #if os(iOS)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)

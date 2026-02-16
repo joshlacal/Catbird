@@ -20,6 +20,11 @@ struct FeedPost: View, Equatable {
   let post: AppBskyFeedDefs.FeedViewPost
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
+  @Environment(\.horizontalSizeClass) private var hSizeClass
+
+  private var contentMaxWidth: CGFloat {
+    hSizeClass == .compact ? .infinity : 600
+  }
 
   // MARK: - Layout Constants
   private static let baseUnit: CGFloat = 3
@@ -77,7 +82,7 @@ struct FeedPost: View, Equatable {
     .padding(.horizontal, FeedPost.baseUnit * 2)
     .padding(.vertical, FeedPost.baseUnit * 1)
     .fixedSize(horizontal: false, vertical: true)
-    .frame(maxWidth: 600, alignment: .center)
+    .frame(maxWidth: contentMaxWidth, alignment: .center)
     .frame(maxWidth: .infinity, alignment: .center)
   }
 

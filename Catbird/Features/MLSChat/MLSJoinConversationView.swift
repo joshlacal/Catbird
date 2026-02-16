@@ -1,7 +1,7 @@
 import SwiftUI
 import Petrel
 import OSLog
-import CatbirdMLSService
+import CatbirdMLSCore
 
 #if os(iOS)
 

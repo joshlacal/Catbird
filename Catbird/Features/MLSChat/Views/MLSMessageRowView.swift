@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSMessageRowView.swift
 //  Catbird
@@ -6,7 +6,6 @@ import CatbirdMLSService
 //  Message row for displaying pre-decrypted MLS messages
 //
 
-import CatbirdMLSCore
 import OSLog
 import SwiftUI
 

@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 import Petrel
 import SwiftUI
-import CatbirdMLSService
+import CatbirdMLSCore
 
 #if os(iOS)
   import CatbirdMLSCore
@@ -419,6 +419,32 @@ import CatbirdMLSService
         var adapters: [MLSMessageAdapter] = []
         var unknownDIDs: Set<String> = []
 
+        // Find the latest read receipt from other users to determine read state
+        // Read receipts reference a messageId; all current-user messages up to that point are read
+        var latestReadReceiptMessageID: String?
+        for model in messageModels {
+          guard let payload = model.parsedPayload, !model.payloadExpired else { continue }
+          if payload.messageType == .readReceipt,
+            let receipt = payload.readReceipt,
+            MLSStorageHelpers.normalizeDID(model.senderID) != currentUserDID
+          {
+            latestReadReceiptMessageID = receipt.messageId
+          }
+        }
+
+        // Build set of current-user message IDs that should be marked as .read
+        var readMessageIDs = Set<String>()
+        if let targetID = latestReadReceiptMessageID {
+          for model in messageModels {
+            guard let payload = model.parsedPayload, !model.payloadExpired else { continue }
+            guard payload.messageType == .text else { continue }
+            if MLSStorageHelpers.normalizeDID(model.senderID) == currentUserDID {
+              readMessageIDs.insert(model.messageID)
+            }
+            if model.messageID == targetID { break }
+          }
+        }
+
         for model in messageModels {
           guard let payload = model.parsedPayload, !model.payloadExpired else {
             continue
@@ -477,6 +503,12 @@ import CatbirdMLSService
             unknownDIDs.insert(canonicalSenderDID)
           }
 
+          // Determine send state: if a read receipt references this message or a later one,
+          // mark current-user's messages as .read
+          let isFromCurrentUser = MLSStorageHelpers.normalizeDID(model.senderID) == currentUserDID
+          let sendState: MessageSendState =
+            (isFromCurrentUser && readMessageIDs.contains(model.messageID)) ? .read : .sent
+
           let adapter = MLSMessageAdapter(
             id: model.messageID,
             convoID: conversationId,
@@ -487,7 +519,7 @@ import CatbirdMLSService
             senderProfile: senderProfile,
             reactions: reactions,
             embed: payload.embed,
-            sendState: .sent,
+            sendState: sendState,
             epoch: Int(model.epoch),
             sequence: Int(model.sequenceNumber),
             processingError: model.processingError,
@@ -986,6 +1018,55 @@ import CatbirdMLSService
         validationFailureReason: oldAdapter.validationFailureReason
       )
       messages[index] = newAdapter
+    }
+
+    /// Apply an incoming read receipt to update message send states.
+    /// Marks all current user's sent messages up to (and including) the referenced message as `.read`.
+    func applyReadReceipt(readUpToMessageID: String, readerDID: String) {
+      // Only process receipts from other users (not our own)
+      let normalizedReaderDID = MLSStorageHelpers.normalizeDID(readerDID)
+      guard normalizedReaderDID != currentUserDID else { return }
+
+      // Find the target message to get its position in the list
+      guard let targetIndex = messages.firstIndex(where: { $0.id == readUpToMessageID }) else {
+        logger.debug(
+          "📬 [READ_RECEIPTS] Target message \(readUpToMessageID.prefix(16)) not found in loaded messages"
+        )
+        return
+      }
+
+      var didUpdate = false
+      for i in 0...targetIndex {
+        let adapter = messages[i]
+        // Only update current user's messages that aren't already read
+        guard adapter.isFromCurrentUser, adapter.sendState != .read else { continue }
+
+        let updatedAdapter = MLSMessageAdapter(
+          id: adapter.id,
+          convoID: adapter.mlsConversationID,
+          text: adapter.text,
+          senderDID: adapter.senderID,
+          currentUserDID: currentUserDID,
+          sentAt: adapter.sentAt,
+          senderProfile: adapter.mlsProfile,
+          reactions: localReactions[adapter.id] ?? [],
+          embed: adapter.mlsEmbed,
+          sendState: .read,
+          epoch: adapter.mlsEpoch,
+          sequence: adapter.mlsSequence,
+          processingError: adapter.processingError,
+          processingAttempts: adapter.processingAttempts,
+          validationFailureReason: adapter.validationFailureReason
+        )
+        messages[i] = updatedAdapter
+        didUpdate = true
+      }
+
+      if didUpdate {
+        logger.info(
+          "📬 [READ_RECEIPTS] Updated message states to .read up to \(readUpToMessageID.prefix(16))"
+        )
+      }
     }
 
 

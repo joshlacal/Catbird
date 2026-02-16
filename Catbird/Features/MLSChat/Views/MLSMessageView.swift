@@ -1,6 +1,5 @@
 import SwiftUI
 import CatbirdMLSCore
-import CatbirdMLSService
 
 #if os(iOS)
 

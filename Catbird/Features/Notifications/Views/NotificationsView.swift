@@ -6,6 +6,7 @@ import SwiftUI
 
 struct NotificationsView: View {
   @Environment(AppState.self) private var appState: AppState
+  @Environment(\.horizontalSizeClass) private var hSizeClass
   @State private var viewModel: NotificationsViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
@@ -109,7 +110,7 @@ struct NotificationsView: View {
     }
     .pickerStyle(.segmented)
     .frame(height: 36)
-    .frame(maxWidth: 600)
+    .frame(maxWidth: hSizeClass == .compact ? .infinity : 600)
     .frame(maxWidth: .infinity, alignment: .center)
     .padding(.horizontal, 16)
     .padding(.vertical, 8)
@@ -354,6 +355,11 @@ struct NotificationCard: View {
   let onTap: (NavigationDestination) -> Void
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState: AppState
+  @Environment(\.horizontalSizeClass) private var hSizeClass
+
+  private var contentMaxWidth: CGFloat {
+    hSizeClass == .compact ? .infinity : 600
+  }
 
   @State private var isFollowExpanded = false
 
@@ -387,7 +393,7 @@ struct NotificationCard: View {
     }
     .padding(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
     .animation(.none, value: isFollowExpanded)
-    .frame(maxWidth: 600, alignment: .center)
+    .frame(maxWidth: contentMaxWidth, alignment: .center)
     .frame(maxWidth: .infinity, alignment: .center)
     .background(
       group.hasUnreadNotifications ? Color.accentColor.opacity(0.2) : Color.clear

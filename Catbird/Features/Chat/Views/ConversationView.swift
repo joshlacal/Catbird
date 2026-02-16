@@ -1,7 +1,7 @@
 import SwiftUI
 import OSLog
 import Petrel
-import CatbirdMLSService
+import CatbirdMLSCore
 #if os(iOS)
 //import MCEmojiPicker
 #endif
@@ -12,7 +12,12 @@ import CatbirdMLSService
 struct ConversationView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.horizontalSizeClass) private var hSizeClass
   let convoId: String
+
+  private var contentMaxWidth: CGFloat {
+    hSizeClass == .compact ? .infinity : 600
+  }
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
 
@@ -58,7 +63,7 @@ struct ConversationView: View {
             isInitialized = true
           }
     }
-    .frame(maxWidth: 600)
+    .frame(maxWidth: contentMaxWidth)
     .navigationTitle(conversationTitle)
     .toolbarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)

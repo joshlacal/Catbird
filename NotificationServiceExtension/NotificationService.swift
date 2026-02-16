@@ -1,4 +1,5 @@
 import CatbirdMLSCore
+import CryptoKit
 import Foundation
 import GRDB
 import Petrel
@@ -138,13 +139,26 @@ class NotificationService: UNNotificationServiceExtension {
     // - ciphertext: Base64 encoded encrypted message
     // - convo_id: Conversation ID (usually hex encoded group ID)
     // - message_id: Unique message ID
-    // - recipient_did: The DID of the user this message is for (CRITICAL for multi-account)
+    // - recipient_account: SHA-256 hash of recipient DID (privacy-preserving)
+    // - recipient_did: Legacy field (fallback for backward compatibility)
     // NOTE: sender_did is NOT included in push payload to preserve E2EE privacy
     // The sender is only revealed after decryption from the MLS credentials
     let ciphertext = userInfo["ciphertext"] as? String
     let convoId = userInfo["convo_id"] as? String
     let messageId = userInfo["message_id"] as? String
-    let recipientDid = userInfo["recipient_did"] as? String
+    let recipientAccountHash = userInfo["recipient_account"] as? String
+    let legacyRecipientDid = userInfo["recipient_did"] as? String
+
+    // Resolve recipient DID: prefer hash-based lookup, fall back to legacy field
+    let recipientDid: String? = {
+      if let hash = recipientAccountHash {
+        if let resolved = resolveRecipientDID(fromHash: hash) {
+          return resolved
+        }
+        logger.warning("⚠️ [NSE] Could not resolve recipient_account hash to local account")
+      }
+      return legacyRecipientDid
+    }()
 
     // Extract sequence number from push payload (server-side enhancement)
     // NOTE: Server should include "seq" in push payload for message ordering
@@ -171,7 +185,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     // Log which fields are present/missing
     logger.info(
-      "📦 [NSE] Fields: ciphertext=\(ciphertext != nil), convo_id=\(convoId != nil), message_id=\(messageId != nil), recipient_did=\(recipientDid != nil), seq=\(sequenceNumber != nil ? String(sequenceNumber!) : "nil"), epoch=\(epoch != nil ? String(epoch!) : "nil")"
+      "📦 [NSE] Fields: ciphertext=\(ciphertext != nil), convo_id=\(convoId != nil), message_id=\(messageId != nil), recipient_account=\(recipientAccountHash != nil), recipient_did=\(recipientDid != nil), seq=\(sequenceNumber != nil ? String(sequenceNumber!) : "nil"), epoch=\(epoch != nil ? String(epoch!) : "nil")"
     )
 
     guard let ciphertext = ciphertext,
@@ -184,7 +198,7 @@ class NotificationService: UNNotificationServiceExtension {
       if ciphertext == nil { missing.append("ciphertext") }
       if convoId == nil { missing.append("convo_id") }
       if messageId == nil { missing.append("message_id") }
-      if recipientDid == nil { missing.append("recipient_did") }
+      if recipientDid == nil { missing.append("recipient_account/recipient_did") }
 
       logger.error("❌ [NSE] Missing required fields: \(missing.joined(separator: ", "))")
       bestAttemptContent.title = "New Message"
@@ -1145,14 +1159,14 @@ class NotificationService: UNNotificationServiceExtension {
     convoId: String,
     client: ATProtoClient
   ) async throws -> Data {
-    let input = BlueCatbirdMlsGetWelcome.Parameters(convoId: convoId)
-    let (responseCode, output) = try await client.blue.catbird.mls.getWelcome(input: input)
+    let input = BlueCatbirdMlsChatGetGroupState.Parameters(convoId: convoId, include: "welcome")
+    let (responseCode, output) = try await client.blue.catbird.mlschat.getGroupState(input: input)
 
     guard responseCode == 200, let output = output else {
       throw NSEWelcomeError.httpError(statusCode: responseCode)
     }
 
-    guard let welcomeData = Data(base64Encoded: output.welcome) else {
+    guard let welcome = output.welcome, let welcomeData = Data(base64Encoded: welcome) else {
       throw NSEWelcomeError.invalidBase64
     }
 
@@ -1163,14 +1177,13 @@ class NotificationService: UNNotificationServiceExtension {
     convoId: String,
     client: ATProtoClient
   ) async {
-    let input = BlueCatbirdMlsConfirmWelcome.Input(
+    let input = BlueCatbirdMlsChatCommitGroupChange.Input(
       convoId: convoId,
-      success: true,
-      errorDetails: nil
+      action: "confirmWelcome"
     )
 
     do {
-      let (responseCode, _) = try await client.blue.catbird.mls.confirmWelcome(input: input)
+      let (responseCode, _) = try await client.blue.catbird.mlschat.commitGroupChange(input: input)
       if responseCode == 200 {
         logger.info("✅ [NSE] Confirmed Welcome processing with server")
       } else {
@@ -1670,5 +1683,78 @@ class NotificationService: UNNotificationServiceExtension {
     // Take first 8 characters of the identifier
     let identifier = String(lastPart.prefix(8))
     return identifier.isEmpty ? nil : "\(identifier)..."
+  }
+
+  // MARK: - Privacy-Preserving Account Matching
+
+  /// Compute SHA-256 hash of a DID for push notification account matching.
+  /// Must produce the same output as `hash_for_push` on the server.
+  private func hashForAccountMatching(_ did: String) -> String {
+    let digest = SHA256.hash(data: Data(did.utf8))
+    return digest.map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// Resolve a recipient DID from a SHA-256 hash by enumerating local account databases.
+  /// Each account has a database file named `mls_messages_{sanitized_did}.db` in the
+  /// App Group container. We reverse the sanitization to recover the DID, hash it,
+  /// and compare against the received hash.
+  private func resolveRecipientDID(fromHash hash: String) -> String? {
+    guard
+      let appGroup = FileManager.default.containerURL(
+        forSecurityApplicationGroupIdentifier: Self.appGroupSuite)
+    else {
+      logger.error("❌ [NSE] Cannot access App Group container for account resolution")
+      return nil
+    }
+
+    let mlsDir = appGroup.appendingPathComponent(
+      "Application Support/MLS", isDirectory: true)
+
+    guard let contents = try? FileManager.default.contentsOfDirectory(
+      at: mlsDir, includingPropertiesForKeys: nil)
+    else {
+      logger.error("❌ [NSE] Cannot list MLS database directory")
+      return nil
+    }
+
+    for fileURL in contents {
+      let filename = fileURL.lastPathComponent
+      // Pattern: mls_messages_{sanitized_did}.db
+      guard filename.hasPrefix("mls_messages_"), filename.hasSuffix(".db") else { continue }
+
+      let sanitized = String(
+        filename
+          .dropFirst("mls_messages_".count)
+          .dropLast(".db".count))
+
+      // Reverse sanitization: the sanitizer replaces :, /, #, ? with -
+      // DIDs are formatted as did:plc:xxx or did:web:xxx
+      // "did-plc-xxx" → "did:plc:xxx"
+      let did = unsanitizeDID(sanitized)
+      if hashForAccountMatching(did) == hash {
+        logger.info("✅ [NSE] Resolved recipient_account hash to local account")
+        return did
+      }
+    }
+
+    logger.warning("⚠️ [NSE] No local account matched recipient_account hash")
+    return nil
+  }
+
+  /// Reverse the DID sanitization applied by MLSGRDBManager.
+  /// Converts "did-plc-xxx" back to "did:plc:xxx" by restoring the first two
+  /// hyphens to colons (matching the `did:method:identifier` structure).
+  private func unsanitizeDID(_ sanitized: String) -> String {
+    var result = sanitized
+    // Restore first two hyphens to colons: "did-plc-..." → "did:plc:..."
+    if let firstDash = result.firstIndex(of: "-") {
+      result.replaceSubrange(firstDash...firstDash, with: ":")
+      // Find next dash (now after first colon)
+      let afterFirst = result.index(after: result.firstIndex(of: ":")!)
+      if let secondDash = result[afterFirst...].firstIndex(of: "-") {
+        result.replaceSubrange(secondDash...secondDash, with: ":")
+      }
+    }
+    return result
   }
 }

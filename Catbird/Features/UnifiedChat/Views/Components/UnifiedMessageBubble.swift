@@ -1,6 +1,6 @@
 import SwiftUI
 import NukeUI
-import CatbirdMLSService
+import CatbirdMLSCore
 
 enum UnifiedMessageGroupPosition: Sendable {
   case single

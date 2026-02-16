@@ -35,6 +35,9 @@ struct UnifiedEmbedView: View {
         subtitle: post.text,
         navigationPath: $navigationPath
       )
+
+    case .tile(let tile):
+      TileCardView(tile: tile)
     }
   }
 

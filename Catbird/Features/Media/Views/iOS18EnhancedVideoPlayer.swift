@@ -25,7 +25,7 @@ struct iOS18EnhancedVideoPlayer: View {
     let autoPlay: Bool
     let showControls: Bool
     
-    @StateObject private var playerController: EnhancedVideoPlayerController
+    @State private var playerController: EnhancedVideoPlayerController
     @State private var isFullScreen: Bool = false
     @State private var showShareSheet: Bool = false
     @State private var currentPlaybackSpeed: PlaybackSpeed = .normal
@@ -42,7 +42,7 @@ struct iOS18EnhancedVideoPlayer: View {
         self.videoURL = videoURL
         self.autoPlay = autoPlay
         self.showControls = showControls
-        self._playerController = StateObject(wrappedValue: EnhancedVideoPlayerController(url: videoURL))
+        self._playerController = State(initialValue: EnhancedVideoPlayerController(url: videoURL))
     }
     
     var body: some View {
@@ -122,18 +122,19 @@ struct iOS18EnhancedVideoPlayer: View {
 // MARK: - Enhanced Video Player Controller
 
 @available(iOS 18.0, *)
+@Observable
 @MainActor
-class EnhancedVideoPlayerController: ObservableObject {
-    @Published var player: AVPlayer
-    @Published var isPlaying: Bool = false
-    @Published var isLoading: Bool = true
-    @Published var currentTime: Double = 0
-    @Published var duration: Double = 0
-    @Published var bufferedTime: Double = 0
-    @Published var hasHDRContent: Bool = false
-    @Published var isUsingSystemControls: Bool = false
-    @Published var videoBitrate: Double = 0
-    @Published var droppedFrameCount: Int = 0
+class EnhancedVideoPlayerController {
+    var player: AVPlayer
+    var isPlaying: Bool = false
+    var isLoading: Bool = true
+    var currentTime: Double = 0
+    var duration: Double = 0
+    var bufferedTime: Double = 0
+    var hasHDRContent: Bool = false
+    var isUsingSystemControls: Bool = false
+    var videoBitrate: Double = 0
+    var droppedFrameCount: Int = 0
     
     private var playerItem: AVPlayerItem?
     private var timeObserver: Any?
@@ -540,7 +541,7 @@ struct VideoPlayerViewRepresentable: UIViewControllerRepresentable {
 
 @available(iOS 18.0, *)
 struct CustomVideoControlsOverlay: View {
-    @ObservedObject var playerController: EnhancedVideoPlayerController
+    var playerController: EnhancedVideoPlayerController
     @Binding var isFullScreen: Bool
     @Binding var playbackSpeed: PlaybackSpeed
     let onShare: () -> Void

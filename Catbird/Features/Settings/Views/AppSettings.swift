@@ -118,6 +118,7 @@ import OSLog
         // Save theme settings
         defaults.set(theme, forKey: "theme")
         defaults.set(darkThemeMode, forKey: "darkThemeMode")
+        defaults.set(accentColor, forKey: "accentColor")
         
         // Save font settings for reliability
         defaults.set(fontStyle, forKey: "fontStyle")
@@ -228,7 +229,7 @@ import OSLog
     }
     
     var darkThemeMode: String {
-        get { 
+        get {
             // Try SwiftData first, then UserDefaults fallback
             if let darkMode = settingsModel?.darkThemeMode {
                 return darkMode
@@ -237,6 +238,19 @@ import OSLog
         }
         set {
             settingsModel?.darkThemeMode = newValue
+            saveChanges()
+        }
+    }
+
+    var accentColor: String {
+        get {
+            if let settingsModel = settingsModel {
+                return settingsModel.accentColor
+            }
+            return UserDefaults.standard.string(forKey: "accentColor") ?? "default"
+        }
+        set {
+            settingsModel?.accentColor = newValue
             saveChanges()
         }
     }
@@ -760,9 +774,11 @@ import OSLog
         
         logger.info("Applying initial theme settings from UserDefaults: theme=\(themeSettings.theme), darkMode=\(themeSettings.darkThemeMode)")
         
+        let savedAccentColor = UserDefaults.standard.string(forKey: "accentColor") ?? "default"
         themeManager.applyTheme(
             theme: themeSettings.theme,
-            darkThemeMode: themeSettings.darkThemeMode
+            darkThemeMode: themeSettings.darkThemeMode,
+            accentColor: savedAccentColor
         )
     }
     

@@ -6,18 +6,64 @@ import AppKit
 #endif
 import OSLog
 
+/// Sky-themed accent color options
+enum AccentColorOption: String, CaseIterable, Identifiable {
+    case bluesky = "default"
+    case twilight = "twilight"
+    case lavender = "lavender"
+    case sunrise = "sunrise"
+    case aurora = "aurora"
+    case dusk = "dusk"
+    case midnight = "midnight"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .bluesky: return "Bluesky"
+        case .twilight: return "Twilight"
+        case .lavender: return "Lavender"
+        case .sunrise: return "Sunrise"
+        case .aurora: return "Aurora"
+        case .dusk: return "Dusk"
+        case .midnight: return "Midnight"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .bluesky: return Color(red: 0.0, green: 0.478, blue: 1.0)
+        case .twilight: return Color(red: 0.345, green: 0.337, blue: 0.839)
+        case .lavender: return Color(red: 0.608, green: 0.447, blue: 0.812)
+        case .sunrise: return Color(red: 1.0, green: 0.584, blue: 0.369)
+        case .aurora: return Color(red: 0.188, green: 0.690, blue: 0.682)
+        case .dusk: return Color(red: 0.839, green: 0.376, blue: 0.569)
+        case .midnight: return Color(red: 0.192, green: 0.329, blue: 0.647)
+        }
+    }
+
+    #if os(iOS)
+    var uiColor: UIColor {
+        UIColor(color)
+    }
+    #endif
+}
+
 /// Manages theme application throughout the app
 @Observable final class ThemeManager {
     private let logger = Logger(subsystem: "blue.catbird", category: "ThemeManager")
     private let fontManager: FontManager
-    
+
     // MARK: - Properties
-    
+
     /// Current color scheme override (nil means follow system)
     var colorSchemeOverride: ColorScheme?
-    
+
     /// Current dark theme mode (dim or black)
     var darkThemeMode: DarkThemeMode = .dim
+
+    /// Current accent color
+    var currentAccentColor: AccentColorOption = .bluesky
     
     // MARK: - Caching Properties
     
@@ -53,9 +99,14 @@ import OSLog
     ///   - theme: user selected theme (light/dark/system)
     ///   - darkThemeMode: dim/black preference
     ///   - forceImmediateNavigationTypography: when true, navigation title fonts are applied right away to avoid the initial width flicker before the debounced pass runs
-    func applyTheme(theme: String, darkThemeMode: String, forceImmediateNavigationTypography: Bool = false) {
+    func applyTheme(theme: String, darkThemeMode: String, accentColor: String = "default", forceImmediateNavigationTypography: Bool = false) {
+        // Update accent color
+        let newAccent = AccentColorOption(rawValue: accentColor) ?? .bluesky
+        let accentChanged = newAccent != currentAccentColor
+        currentAccentColor = newAccent
+
         // Skip if settings haven't changed
-        if theme == currentTheme && darkThemeMode == currentDarkThemeMode {
+        if theme == currentTheme && darkThemeMode == currentDarkThemeMode && !accentChanged {
             return
         }
 
@@ -137,18 +188,11 @@ import OSLog
                     window.overrideUserInterfaceStyle = .unspecified
                 }
                 
-                // Set window tint color based on theme
-                Task {
-                    let isDarkMode = await getCurrentEffectiveDarkMode()
-                    await MainActor.run {
-                        if isDarkMode && darkThemeMode == .black {
-                            // Slightly brighter accent for better visibility on black
-                            window.tintColor = UIColor.systemBlue.withAlphaComponent(1.0)
-                        } else {
-                            // Reset to system default for all other cases
-                            window.tintColor = nil
-                        }
-                    }
+                // Set window tint color based on accent color selection
+                if currentAccentColor == .bluesky {
+                    window.tintColor = nil  // System default blue
+                } else {
+                    window.tintColor = currentAccentColor.uiColor
                 }
             }
             
@@ -625,10 +669,11 @@ import OSLog
 struct ThemeModifier: ViewModifier {
     @Environment(\.colorScheme) private var systemColorScheme
     let themeManager: ThemeManager
-    
+
     func body(content: Content) -> some View {
         content
             .preferredColorScheme(themeManager.colorSchemeOverride)
+            .tint(themeManager.currentAccentColor == .bluesky ? nil : themeManager.currentAccentColor.color)
             .environment(\.themeManager, themeManager)
     }
 }

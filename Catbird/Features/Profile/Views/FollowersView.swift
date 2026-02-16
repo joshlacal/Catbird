@@ -11,12 +11,12 @@ import SwiftUI
 struct FollowersView: View {
     let userDID: String
     @Environment(AppState.self) private var appState
-    @State var viewModel: FollowViewModel
+    @State private var viewModel: FollowViewModel
     @Binding var path: NavigationPath
-    
+
     init(userDID: String, client: ATProtoClient?, path: Binding<NavigationPath>) {
         self.userDID = userDID
-        self.viewModel = FollowViewModel(client: client, userDID: userDID)
+        _viewModel = State(initialValue: FollowViewModel(client: client, userDID: userDID))
         self._path = path
     }
 

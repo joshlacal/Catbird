@@ -8,6 +8,7 @@ enum UnifiedEmbed: Hashable, Sendable {
   case link(LinkEmbedData)
   case gif(GIFEmbedData)
   case post(PostEmbedData)
+  case tile(TileEmbedData)
 }
 
 // MARK: - BlueskyRecordEmbedData

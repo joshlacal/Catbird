@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSMemberManagementViewModel.swift
 //  Catbird
@@ -12,7 +12,6 @@ import Observation
 import OSLog
 import Combine
 import GRDB
-import CatbirdMLSCore
 
 /// ViewModel for managing members in an MLS conversation
 @Observable
@@ -20,10 +19,10 @@ final class MLSMemberManagementViewModel {
     // MARK: - Properties
 
     /// Current conversation
-    private(set) var conversation: BlueCatbirdMlsDefs.ConvoView?
+    private(set) var conversation: BlueCatbirdMlsChatDefs.ConvoView?
 
     /// Members in the conversation (server or local)
-    private(set) var members: [BlueCatbirdMlsDefs.MemberView] = []
+    private(set) var members: [BlueCatbirdMlsChatDefs.MemberView] = []
 
     /// Grouped members by user DID (combines multiple devices per user)
     /// Sorted by join date (oldest first) with stable secondary sort by userDid
@@ -109,17 +108,17 @@ final class MLSMemberManagementViewModel {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let membersUpdatedSubject = PassthroughSubject<[BlueCatbirdMlsDefs.MemberView], Never>()
-    private let conversationUpdatedSubject = PassthroughSubject<BlueCatbirdMlsDefs.ConvoView, Never>()
+    private let membersUpdatedSubject = PassthroughSubject<[BlueCatbirdMlsChatDefs.MemberView], Never>()
+    private let conversationUpdatedSubject = PassthroughSubject<BlueCatbirdMlsChatDefs.ConvoView, Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for member updates
-    var membersUpdatedPublisher: AnyPublisher<[BlueCatbirdMlsDefs.MemberView], Never> {
+    var membersUpdatedPublisher: AnyPublisher<[BlueCatbirdMlsChatDefs.MemberView], Never> {
         membersUpdatedSubject.eraseToAnyPublisher()
     }
 
     /// Publisher for conversation updates
-    var conversationUpdatedPublisher: AnyPublisher<BlueCatbirdMlsDefs.ConvoView, Never> {
+    var conversationUpdatedPublisher: AnyPublisher<BlueCatbirdMlsChatDefs.ConvoView, Never> {
         conversationUpdatedSubject.eraseToAnyPublisher()
     }
 
@@ -207,11 +206,11 @@ final class MLSMemberManagementViewModel {
                 )
             }.value
 
-            let converted = localMembers.compactMap { model -> BlueCatbirdMlsDefs.MemberView? in
+            let converted = localMembers.compactMap { model -> BlueCatbirdMlsChatDefs.MemberView? in
                 do {
                     let did = try DID(didString: model.did)
                     let userDid = try DID(didString: model.currentUserDID)
-                    return BlueCatbirdMlsDefs.MemberView(
+                    return BlueCatbirdMlsChatDefs.MemberView(
                         did: did,
                         userDid: userDid,
                         deviceId: nil,
@@ -430,7 +429,7 @@ final class MLSMemberManagementViewModel {
     }
 
     /// Get member display name
-    func getMemberDisplayName(_ member: BlueCatbirdMlsDefs.MemberView) -> String {
+    func getMemberDisplayName(_ member: BlueCatbirdMlsChatDefs.MemberView) -> String {
         // In production, this would resolve the DID to a display name
         // For now, return the DID
         return member.did.description

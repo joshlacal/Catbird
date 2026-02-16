@@ -15,7 +15,12 @@ struct BookmarksView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.horizontalSizeClass) private var hSizeClass
   @Binding var path: NavigationPath
+
+  private var contentMaxWidth: CGFloat {
+    hSizeClass == .compact ? .infinity : 600
+  }
   
   // State
   @State private var bookmarks: [AppBskyBookmarkDefs.BookmarkView] = []
@@ -134,7 +139,7 @@ struct BookmarksView: View {
       .fixedSize(horizontal: false, vertical: true)
       .contentShape(Rectangle())
       .allowsHitTesting(true)
-      .frame(maxWidth: 600, alignment: .center)
+      .frame(maxWidth: contentMaxWidth, alignment: .center)
       .frame(maxWidth: .infinity, alignment: .center)
       .onTapGesture { path.append(NavigationDestination.post(postView.uri)) }
       .alignmentGuide(.listRowSeparatorLeading) { _ in 0}

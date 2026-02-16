@@ -1,7 +1,6 @@
 import Foundation
 import Petrel
 import CatbirdMLSCore
-import CatbirdMLSService
 
 #if os(iOS)
 
@@ -49,7 +48,7 @@ struct OptimisticMessage: Identifiable, Sendable {
 /// comes from MLSMessageModel cache and is displayed separately in the UI.
 enum DisplayMessage: Identifiable {
   case optimistic(OptimisticMessage)
-  case confirmed(BlueCatbirdMlsDefs.MessageView)
+  case confirmed(BlueCatbirdMlsChatDefs.MessageView)
   case system(MLSSystemMessage)
 
   var id: String {

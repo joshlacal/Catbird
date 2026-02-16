@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSConversationDetailViewModel.swift
 //  Catbird
@@ -12,7 +12,6 @@ import Observation
 import OSLog
 import Combine
 import GRDB
-import CatbirdMLSCore
 
 /// Conversation initialization state
 enum ConversationState: Sendable, Equatable {
@@ -31,10 +30,10 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
     private(set) var conversationState: ConversationState = .loading
 
     /// Current conversation
-    private(set) var conversation: BlueCatbirdMlsDefs.ConvoView?
+    private(set) var conversation: BlueCatbirdMlsChatDefs.ConvoView?
 
     /// Messages in the conversation
-    private(set) var messages: [BlueCatbirdMlsDefs.MessageView] = []
+    private(set) var messages: [BlueCatbirdMlsChatDefs.MessageView] = []
 
     /// Optimistic messages (pending server confirmation)
     private(set) var optimisticMessages: [OptimisticMessage] = []
@@ -84,17 +83,17 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let messagesSubject = PassthroughSubject<[BlueCatbirdMlsDefs.MessageView], Never>()
-    private let conversationSubject = PassthroughSubject<BlueCatbirdMlsDefs.ConvoView, Never>()
+    private let messagesSubject = PassthroughSubject<[BlueCatbirdMlsChatDefs.MessageView], Never>()
+    private let conversationSubject = PassthroughSubject<BlueCatbirdMlsChatDefs.ConvoView, Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for message updates
-    var messagesPublisher: AnyPublisher<[BlueCatbirdMlsDefs.MessageView], Never> {
+    var messagesPublisher: AnyPublisher<[BlueCatbirdMlsChatDefs.MessageView], Never> {
         messagesSubject.eraseToAnyPublisher()
     }
 
     /// Publisher for conversation updates
-    var conversationPublisher: AnyPublisher<BlueCatbirdMlsDefs.ConvoView, Never> {
+    var conversationPublisher: AnyPublisher<BlueCatbirdMlsChatDefs.ConvoView, Never> {
         conversationSubject.eraseToAnyPublisher()
     }
 

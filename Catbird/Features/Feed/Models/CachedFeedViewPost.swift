@@ -46,6 +46,9 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Indicates if this is a temporary/optimistic post that hasn't been confirmed by the server
     @Transient var isTemporary: Bool = false
+
+    /// Cached decoded FeedViewPost to avoid repeated JSON decoding
+    @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
     
     /// Initializer from a FeedViewPost with backwards compatibility
     init?(feedViewPost: AppBskyFeedDefs.FeedViewPost) {
@@ -281,14 +284,20 @@ final class CachedFeedViewPost: Identifiable {
         )
     }
     
-    /// Reconstructs the original FeedViewPost
+    /// Reconstructs the original FeedViewPost, caching the result to avoid repeated JSON decoding
     var feedViewPost: AppBskyFeedDefs.FeedViewPost {
         get throws {
+            if let cached = _cachedFeedViewPost {
+                return cached
+            }
+
             let decoder = JSONDecoder()
             
             // First, try standard decoding
             do {
-                return try decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: serializedPost)
+                let result = try decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: serializedPost)
+                _cachedFeedViewPost = result
+                return result
             } catch let DecodingError.keyNotFound(key, context) {
                 // Check if this is a deeply nested embed issue
                 let path = context.codingPath.map { $0.stringValue }.joined(separator: ".")
@@ -421,6 +430,7 @@ extension CachedFeedViewPost {
     func update(from source: CachedFeedViewPost) {
         self.feedType = source.feedType
         self.serializedPost = source.serializedPost
+        self._cachedFeedViewPost = nil  // Invalidate cache when data changes
         self.cursor = source.cursor
         self.cachedAt = source.cachedAt
         self.createdAt = source.createdAt

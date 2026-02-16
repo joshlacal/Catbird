@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSAdminDashboardViewModel.swift
 //  Catbird
@@ -17,10 +17,10 @@ final class MLSAdminDashboardViewModel {
     // MARK: - Properties
 
     /// Admin statistics
-    private(set) var adminStats: BlueCatbirdMlsGetAdminStats.Output?
+    private(set) var adminStats: BlueCatbirdMlsChatUpdateConvo.Output?
 
     /// Key package statistics
-    private(set) var keyPackageStats: BlueCatbirdMlsGetKeyPackageStats.Output?
+    private(set) var keyPackageStats: BlueCatbirdMlsChatPublishKeyPackages.Output?
 
     /// Pending reports count
     private(set) var pendingReportsCount = 0
@@ -85,19 +85,15 @@ final class MLSAdminDashboardViewModel {
         guard !isLoadingStats else { return }
 
         isLoadingStats = true
+        defer { isLoadingStats = false }
 
         do {
-            let stats = try await Task.detached(priority: .userInitiated) {
-                try await self.apiClient.getAdminStats(convoId: self.conversationId)
-            }.value
-            adminStats = stats
+            adminStats = try await apiClient.getAdminStats(convoId: conversationId)
             logger.debug("Loaded admin stats for conversation: \(self.conversationId)")
         } catch {
             self.error = error
             logger.error("Failed to load admin stats: \(error.localizedDescription)")
         }
-
-        isLoadingStats = false
     }
 
     /// Load key package statistics
@@ -106,53 +102,40 @@ final class MLSAdminDashboardViewModel {
         guard !isLoadingKeyPackages else { return }
 
         isLoadingKeyPackages = true
+        defer { isLoadingKeyPackages = false }
 
         do {
-            let stats = try await Task.detached(priority: .userInitiated) {
-                try await self.apiClient.getKeyPackageStats()
-            }.value
-            keyPackageStats = stats
+            keyPackageStats = try await apiClient.getKeyPackageStats()
             logger.debug("Loaded key package stats for conversation: \(self.conversationId)")
         } catch {
             self.error = error
             logger.error("Failed to load key package stats: \(error.localizedDescription)")
         }
-
-        isLoadingKeyPackages = false
     }
 
     /// Load pending reports count
     @MainActor
     private func loadPendingReportsCount() async {
-        // TODO: Re-enable when reports feature is implemented on server
-        pendingReportsCount = 0
-        isLoadingReports = false
-        return
-        
-        /* Reports disabled - uncomment when ready
         guard !isLoadingReports else { return }
 
         isLoadingReports = true
+        defer { isLoadingReports = false }
 
         do {
             // Load first page of reports to get count
-            let (reports, _) = try await Task.detached(priority: .userInitiated) {
-                try await self.conversationManager.loadReports(
-                    for: self.conversationId,
-                    limit: 50,
-                    cursor: nil as String?
-                )
-            }.value
+            let (reports, _) = try await conversationManager.loadReports(
+                for: conversationId,
+                limit: 50,
+                cursor: nil as String?
+            )
 
             pendingReportsCount = reports.filter { $0.status == "pending" }.count
             logger.debug("Loaded \(self.pendingReportsCount) pending reports")
         } catch {
+            pendingReportsCount = 0
             self.error = error
             logger.error("Failed to load reports: \(error.localizedDescription)")
         }
-
-        isLoadingReports = false
-        */
     }
 
     /// Refresh all data
@@ -178,8 +161,8 @@ final class MLSAdminDashboardViewModel {
     var keyPackageHealth: HealthStatus {
         guard let stats = keyPackageStats else { return .unknown }
 
-        let availableCount = stats.available
-        let threshold = stats.threshold
+        let availableCount = stats.stats.available
+        let threshold = 10 // default threshold; publishKeyPackages doesn't provide one
 
         if availableCount == 0 {
             return .critical
@@ -283,26 +266,13 @@ extension MLSAdminDashboardViewModel {
 extension MLSAdminDashboardViewModel {
     /// Get member activity data for chart (joins vs leaves)
     func getMemberActivityData() -> [(label: String, joins: Int, leaves: Int)] {
-        guard let stats = adminStats else { return [] }
-
-        // For now, show simplified data
-        // In production, would have daily breakdown from API
-        return [
-            ("Today", 0, 0) // memberActivity is not available in Output
-        ]
+        // Current updateConvo(getAdminStats) response is summary-only and does not include joins/leaves timeseries.
+        return []
     }
 
     /// Get key package distribution data
     func getKeyPackageDistribution() -> [(cipherSuite: String, available: Int, consumed: Int)] {
-        guard let stats = keyPackageStats,
-              let byCipherSuite = stats.byCipherSuite else { return [] }
-
-        return byCipherSuite.map { stat in
-            (
-                cipherSuite: stat.cipherSuite,
-                available: stat.available,
-                consumed: stat.consumed ?? 0
-            )
-        }
+        // publishKeyPackages(stats) currently returns aggregate counters without per-cipher-suite breakdown.
+        return []
     }
 }

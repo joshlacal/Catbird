@@ -270,10 +270,25 @@ struct ChatSettingsView: View {
           
           // Now call optIn to mark the user as available on the server
           _ = try await mlsClient.optIn()
+
+          if let conversationManager = await appState.getMLSConversationManager() {
+            do {
+              try await conversationManager.ensureDeclarationChainReady()
+            } catch {
+              logger.error("Declaration chain initialization after opt-in failed: \(error.localizedDescription)")
+            }
+          }
+
           ExperimentalSettings.shared.enableMLSChat(for: userDID)
           logger.info("Successfully opted in to MLS chat for account: \(userDID.prefix(20))...")
         } else {
           _ = try await mlsClient.optOut()
+          if let conversationManager = await appState.getMLSConversationManager() {
+            _ = try? await conversationManager.publishDeclarationDeviceRevoke(
+              deviceId: nil,
+              reason: "mls-opt-out"
+            )
+          }
           ExperimentalSettings.shared.disableMLSChat(for: userDID)
           logger.info("Successfully opted out of MLS chat for account: \(userDID.prefix(20))...")
         }

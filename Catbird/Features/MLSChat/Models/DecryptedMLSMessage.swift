@@ -1,7 +1,6 @@
 import CatbirdMLSCore
 import Foundation
 import Petrel
-import CatbirdMLSService
 
 #if os(iOS)
 
@@ -31,7 +30,7 @@ import CatbirdMLSService
 
     /// Initialize from MessageView after decryption
     init(
-      messageView: BlueCatbirdMlsDefs.MessageView,
+      messageView: BlueCatbirdMlsChatDefs.MessageView,
       payload: MLSMessagePayload,
       senderDID: String
     ) {

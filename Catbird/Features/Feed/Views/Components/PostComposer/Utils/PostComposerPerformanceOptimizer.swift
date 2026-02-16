@@ -16,8 +16,9 @@ import AppKit
 import Combine
 
 @available(iOS 16.0, macOS 13.0, *)
+@Observable
 @MainActor
-final class PostComposerPerformanceOptimizer: ObservableObject {
+final class PostComposerPerformanceOptimizer {
     private let logger = Logger(subsystem: "blue.catbird", category: "PostComposer.Performance")
     
     // MARK: - Debouncing Properties
@@ -38,7 +39,7 @@ final class PostComposerPerformanceOptimizer: ObservableObject {
     
     private let maxCachedURLCards = 50
     private let maxThumbnailCacheSize = 100
-    private var memoryPressureObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var memoryPressureObserver: NSObjectProtocol?
     
     // MARK: - Performance Metrics
     

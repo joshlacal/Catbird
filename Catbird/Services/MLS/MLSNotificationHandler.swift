@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 import UserNotifications
 import OSLog
 
@@ -51,6 +51,31 @@ actor MLSNotificationHandler {
     }
   }
 
+  /// Handle a peer-triggered request to replenish key packages.
+  ///
+  /// This is sent when another user attempts to add us and cannot find
+  /// usable key packages for our devices.
+  func handleKeyPackageReplenishRequest(userInfo: [AnyHashable: Any], appState: AppState) async {
+    let requestedBy = userInfo["requestedBy"] as? String ?? "unknown"
+    let reason = userInfo["reason"] as? String ?? "unspecified"
+
+    logger.info(
+      "Received peer key package replenish request (requestedBy: \(requestedBy), reason: \(reason))")
+
+    do {
+      guard let manager = await appState.getMLSConversationManager() else {
+        logger.error("MLS conversation manager not initialized - cannot replenish key packages")
+        return
+      }
+
+      // Generate a slightly larger batch for peer-triggered replenishment.
+      try await manager.smartRefreshKeyPackages(maxGeneratedPackages: 10)
+      logger.info("Successfully replenished key packages for peer request")
+    } catch {
+      logger.error("Failed to replenish key packages for peer request: \(error)")
+    }
+  }
+
   /// Handle any MLS notification based on type
   ///
   /// - Parameters:
@@ -67,6 +92,8 @@ actor MLSNotificationHandler {
     switch notificationType {
     case "keyPackageLowInventory":
       await handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+    case "keyPackageReplenishRequested":
+      await handleKeyPackageReplenishRequest(userInfo: userInfo, appState: appState)
 
     default:
       logger.warning("Unknown MLS notification type: \(notificationType)")

@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSConversationDetailView+SystemMessages.swift
 //  Catbird

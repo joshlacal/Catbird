@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import Sentry
 
 import CoreText
@@ -10,7 +11,6 @@ import SwiftData
 import SwiftUI
 import TipKit
 import CatbirdMLSCore
-import CatbirdMLSService
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
@@ -137,9 +137,24 @@ struct CatbirdApp: App {
       let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
       logger.info("Received remote notification")
 
-      // Check if this is an MLS notification
-      if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
-        logger.info("Processing MLS key package low inventory notification")
+      // Check if this is an MLS key package inventory notification
+      if let type = userInfo["type"] as? String,
+         type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested"
+      {
+        logger.info("Processing MLS key package notification (\(type))")
+
+        guard application.applicationState == .active else {
+          logger.info(
+            "Deferring key package replenishment while app state=\(application.applicationState.rawValue)"
+          )
+          if #available(iOS 13.0, *) {
+            Task {
+              await MLSBackgroundRefreshManager.shared.scheduleBackgroundRefresh(delay: 5 * 60)
+            }
+          }
+          completionHandler(.noData)
+          return
+        }
 
         Task { @MainActor in
           guard let activeState = AppStateManager.shared.lifecycle.appState else {
@@ -147,11 +162,22 @@ struct CatbirdApp: App {
             completionHandler(.noData)
             return
           }
-          await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: activeState)
+          await MLSNotificationHandler.shared.handleNotification(
+            userInfo: userInfo,
+            appState: activeState
+          )
           completionHandler(.newData)
         }
       } else if let convoId = userInfo["convoId"] as? String ?? userInfo["conversationId"] as? String {
         logger.info("Processing MLS chat notification for conversation: \(convoId)")
+        
+        guard application.applicationState == .active else {
+          logger.info(
+            "Deferring MLS catchup while app state=\(application.applicationState.rawValue) to avoid app/NSE races"
+          )
+          completionHandler(.noData)
+          return
+        }
         
         // Trigger a sync for this conversation if possible
         Task { @MainActor in
@@ -1061,6 +1087,11 @@ private extension CatbirdApp {
   }
 
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+    MLSSuspensionFlightRecorder.shared.record(
+      .scenePhaseChange,
+      details: "\(String(describing: oldPhase)) → \(String(describing: newPhase))",
+      process: "app"
+    )
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL FIX (0xdead10cc): Cancel MLS tasks BEFORE GRDB suspension
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1080,6 +1111,11 @@ private extension CatbirdApp {
           appState.mlsConversationManager?.suspendMLSOperations()
         }
       }
+
+      // Block new MLS FFI work immediately while we transition to background.
+      // (MLSClient + MLSCoreContext each maintain their own UniFFI MlsContext caches.)
+      MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
+      MLSCoreContext.markSuspensionInProgress()
     }
 
     // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
@@ -1129,10 +1165,11 @@ private extension CatbirdApp {
       // SwiftData autosave handles persistence. Only Rust FFI needs explicit close
       // because it holds WAL locks in the App Group container with no suspension mechanism.
       // ═══════════════════════════════════════════════════════════════════════════
-      if oldPhase == .active, newPhase == .inactive {
+      if oldPhase == .active, (newPhase == .inactive || newPhase == .background) {
         // RAII background task protects the Rust close operation
-        let bgTask = CatbirdBackgroundTask(name: "MLSContextClose")
-        // Close Rust FFI connections — releases WAL locks in App Group
+        let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose")
+        // Close Rust FFI connections (MLSClient + MLSCoreContext) — releases WAL locks in App Group
+        MLSClient.emergencyCloseAllContexts(reason: "scenePhase active→\(String(describing: newPhase))")
         MLSCoreContext.emergencyCloseAllContexts()
         bgTask.end()
         logger.info("✅ [0xdead10cc-FIX] Rust FFI contexts closed for suspension")
@@ -1143,6 +1180,7 @@ private extension CatbirdApp {
       if (oldPhase == .background || oldPhase == .inactive), newPhase == .active {
         // CRITICAL: Clear suspension flag FIRST so getContext() works
         MLSCoreContext.clearSuspensionFlag()
+        MLSClient.clearSuspensionFlag(reason: "scenePhase → active")
 
         // Resume GRDB and coordination
         MLSDatabaseCoordinator.shared.resumeFromSuspension()
@@ -1685,6 +1723,15 @@ private extension CatbirdApp {
     case "cleanup-stale":
       await handleCleanupStale(params: params, manager: manager, logger: e2eLogger)
 
+    case "drain-key-packages":
+      await handleDrainKeyPackages(params: params, manager: manager, logger: e2eLogger)
+
+    case "keypackage-state":
+      await handleKeyPackageState(params: params, manager: manager, logger: e2eLogger)
+
+    case "request-keypackage-replenish":
+      await handleRequestKeyPackageReplenish(params: params, manager: manager, logger: e2eLogger)
+
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
       await writeE2EResult(command: command, success: false, error: "Unknown command")
@@ -1712,6 +1759,7 @@ private extension CatbirdApp {
       e2eLogger.error("[E2E-REGISTER] Calling optIn on MLSAPIClient")
       let (optedIn, optedInAt) = try await conversationManager.apiClient.optIn()
       e2eLogger.error("[E2E-REGISTER] optIn result: optedIn=\(optedIn), at=\(optedInAt)")
+      try await conversationManager.ensureDeclarationChainReady()
       
       // Step 2: Check if already registered to avoid invalidating existing key packages
       if let existingDeviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID), !forceReregister {
@@ -1728,6 +1776,13 @@ private extension CatbirdApp {
       e2eLogger.error("[E2E-REGISTER] \(forceReregister ? "Force re-registering" : "Registering") device for MLS")
       let deviceId = try await conversationManager.mlsClient.reregisterDevice(for: appState.userDID)
       e2eLogger.error("[E2E-REGISTER] Device registered: \(deviceId)")
+
+      // Ensure declaration chain is fully initialized after registration so deviceAdd is published.
+      do {
+        try await conversationManager.ensureDeclarationChainReady()
+      } catch {
+        e2eLogger.error("[E2E-REGISTER] Declaration chain readiness after registration failed: \(error.localizedDescription)")
+      }
       
       await writeE2EResult(command: "register-device", success: true, data: [
         "status": "registered",
@@ -2233,6 +2288,157 @@ private extension CatbirdApp {
     }
   }
 
+  /// E2E: Delete all local key packages for the current device and sync hashes to server.
+  private func handleDrainKeyPackages(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "drain-key-packages", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      let userDid = appState.userDID
+      let localHashes = try await conversationManager.mlsClient.getLocalKeyPackageHashes(for: userDid)
+      let hashRefs: [Data] = localHashes.compactMap { Data(hexEncoded: $0) }
+      let deletedLocal = try await conversationManager.mlsClient.deleteKeyPackageBundles(
+        for: userDid,
+        hashRefs: hashRefs
+      )
+      let syncResult = try await conversationManager.mlsClient.syncKeyPackageHashes(for: userDid)
+      let stats = try await conversationManager.apiClient.getKeyPackageStats()
+      let currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
+
+      await writeE2EResult(command: "drain-key-packages", success: true, data: [
+        "userDid": userDid,
+        "deviceId": currentDeviceId,
+        "localHashesBefore": "\(localHashes.count)",
+        "deletedLocalBundles": "\(deletedLocal)",
+        "serverOrphaned": "\(syncResult.orphanedCount)",
+        "serverDeleted": "\(syncResult.deletedCount)",
+        "serverRemainingAvailable": "\(syncResult.remainingAvailable)",
+        "aggregateAvailableAfter": "\(stats.stats.available)"
+      ])
+    } catch {
+      e2eLogger.error("[E2E] drain-key-packages failed: \(error.localizedDescription)")
+      await writeE2EResult(
+        command: "drain-key-packages",
+        success: false,
+        error: error.localizedDescription
+      )
+    }
+  }
+
+  /// E2E: Capture aggregate and per-device key package inventory for current account.
+  private func handleKeyPackageState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated")
+      await writeE2EResult(command: "keypackage-state", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      let userDid = appState.userDID
+      let currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId
+        ?? "unknown"
+
+      let stats = try await conversationManager.apiClient.getKeyPackageStats()
+      let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlschat.listDevices(
+        input: BlueCatbirdMlsChatListDevices.Parameters()
+      )
+      guard statusCode == 200, let listOutput else {
+        throw NSError(
+          domain: "E2E",
+          code: statusCode,
+          userInfo: [NSLocalizedDescriptionKey: "listDevices failed with HTTP \(statusCode)"]
+        )
+      }
+
+      let devices = listOutput.devices
+      let currentDevicePackages = devices.first(where: { $0.deviceId == currentDeviceId })?.keyPackageCount ?? -1
+      let deviceCounts = devices.map { "\($0.deviceId):\($0.keyPackageCount)" }.joined(separator: ",")
+
+      await writeE2EResult(command: "keypackage-state", success: true, data: [
+        "userDid": userDid,
+        "currentDeviceId": currentDeviceId,
+        "aggregateAvailable": "\(stats.stats.available)",
+        "currentDeviceAvailable": "\(currentDevicePackages)",
+        "totalDevices": "\(devices.count)",
+        "deviceCounts": deviceCounts
+      ])
+    } catch {
+      e2eLogger.error("[E2E] keypackage-state failed: \(error.localizedDescription)")
+      await writeE2EResult(
+        command: "keypackage-state",
+        success: false,
+        error: error.localizedDescription
+      )
+    }
+  }
+
+  /// E2E: Explicitly request peer key package replenishment signal.
+  private func handleRequestKeyPackageReplenish(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    let rawTargets = params["targetDIDs"] ?? params["targetDID"] ?? ""
+    let targetStrings = rawTargets
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+
+    guard !targetStrings.isEmpty else {
+      await writeE2EResult(
+        command: "request-keypackage-replenish",
+        success: false,
+        error: "Missing targetDID or targetDIDs"
+      )
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      await writeE2EResult(
+        command: "request-keypackage-replenish",
+        success: false,
+        error: "Not authenticated"
+      )
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      let targetDIDs = try targetStrings.map { try DID(didString: $0) }
+      let reason = params["reason"] ?? "e2e"
+      let convoId = params["conversationId"]
+      let result = try await conversationManager.apiClient.requestKeyPackageReplenish(
+        dids: targetDIDs,
+        reason: reason,
+        convoId: convoId
+      )
+
+      await writeE2EResult(command: "request-keypackage-replenish", success: true, data: [
+        "targetCount": "\(result.targetCount)",
+        "deviceCount": "\(result.deviceCount)",
+        "deliveredCount": "\(result.deliveredCount)",
+        "requested": "\(result.requested)"
+      ])
+    } catch {
+      e2eLogger.error("[E2E] request-keypackage-replenish failed: \(error.localizedDescription)")
+      await writeE2EResult(
+        command: "request-keypackage-replenish",
+        success: false,
+        error: error.localizedDescription
+      )
+    }
+  }
+
   /// Write E2E command result to a file the harness can read
   private func writeE2EResult(command: String, success: Bool, error: String? = nil, data: [String: String]? = nil) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Results")
@@ -2395,15 +2601,17 @@ extension CatbirdApp.AppDelegate {
 
     logger.info("User tapped notification")
 
-    // 1. Handle silent background notifications (key inventory)
-    if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
+    // 1. Handle key package notifications
+    if let type = userInfo["type"] as? String,
+       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested"
+    {
       Task { @MainActor in
         guard let appState = AppStateManager.shared.lifecycle.appState else {
           logger.warning("AppState not available for MLS notification handling")
           completionHandler()
           return
         }
-        await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+        await MLSNotificationHandler.shared.handleNotification(userInfo: userInfo, appState: appState)
         completionHandler()
       }
       return
@@ -2430,7 +2638,17 @@ extension CatbirdApp.AppDelegate {
           return
         }
         
-        let recipientDid = userInfo["recipient_did"] as? String
+        let recipientDid: String? = {
+          // Prefer recipient_did (set by NSE after resolving hash, or legacy payload)
+          if let did = userInfo["recipient_did"] as? String {
+            return did
+          }
+          // Fall back to resolving recipient_account hash against local accounts
+          if let hash = userInfo["recipient_account"] as? String {
+            return Self.resolveRecipientDID(fromHash: hash)
+          }
+          return nil
+        }()
         
         Task { @MainActor in
           // Switch to the correct account if needed
@@ -2468,6 +2686,32 @@ extension CatbirdApp.AppDelegate {
     logger.info("🔄 Switching account to \(did.prefix(24))... for notification navigation")
     _ = await appStateManager.switchAccount(to: did)
     logger.info("✅ Account switched for notification navigation")
+  }
+
+  /// Compute SHA-256 hash of a DID for push notification account matching.
+  private static func hashForAccountMatching(_ did: String) -> String {
+    let digest = SHA256.hash(data: Data(did.utf8))
+    return digest.map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// Resolve a recipient DID from a SHA-256 hash by checking locally known accounts.
+  private static func resolveRecipientDID(fromHash hash: String) -> String? {
+    return MainActor.assumeIsolated {
+      let appStateManager = AppStateManager.shared
+      // Check the active account first
+      if let activeDID = appStateManager.lifecycle.userDID,
+        hashForAccountMatching(activeDID) == hash
+      {
+        return activeDID
+      }
+      // Check all authenticated accounts
+      for did in appStateManager.authenticatedDIDs {
+        if hashForAccountMatching(did) == hash {
+          return did
+        }
+      }
+      return nil
+    }
   }
   
   /// Navigate to an MLS conversation
@@ -2543,15 +2787,17 @@ extension CatbirdApp.AppDelegate {
   ) {
     let userInfo = notification.request.content.userInfo
     
-    // 1. Handle silent background notifications (key inventory)
-    if let type = userInfo["type"] as? String, type == "keyPackageLowInventory" {
+    // 1. Handle key package notifications
+    if let type = userInfo["type"] as? String,
+       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested"
+    {
       Task { @MainActor in
         guard let appState = AppStateManager.shared.lifecycle.appState else {
           let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
           logger.warning("AppState not available for MLS notification handling")
           return
         }
-        await MLSNotificationHandler.shared.handleKeyPackageLowInventory(userInfo: userInfo, appState: appState)
+        await MLSNotificationHandler.shared.handleNotification(userInfo: userInfo, appState: appState)
       }
       completionHandler([]) // No presentation
       return

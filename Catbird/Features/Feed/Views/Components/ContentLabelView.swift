@@ -319,62 +319,50 @@ struct ContentLabelManager<Content: View>: View {
     }
     
     private var strongBlurOverlay: some View {
-        // Create adaptive overlay that respects parent constraints
-        GeometryReader { geometry in
-            let isCompact = geometry.size.height < 200
-            let outerPadding: CGFloat = isCompact ? 8 : 20
-            let innerPadding: CGFloat = isCompact ? 8 : 16
-            let iconBottomPadding: CGFloat = isCompact ? 2 : 4
-            let textBottomPadding: CGFloat = isCompact ? 2 : 4
-            let buttonBottomPadding: CGFloat = isCompact ? 8 : 12
-            
-            Rectangle()
-                .fill(Color.black.opacity(0.95))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    VStack(spacing: 0) {
-                        Image(systemName: "eye.slash.fill")
-                            .appFont(isCompact ? AppTextRole.body : AppTextRole.title2)
-                            .foregroundStyle(.white)
-                            .padding(.bottom, iconBottomPadding)
-                        
-                        Text(warningTitle)
-                            .appFont(isCompact ? AppTextRole.caption : AppTextRole.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.white)
-                            .padding(.bottom, textBottomPadding)
-                        
-                        if !isCompact {
-                            Text("May contain \(warningLabels)")
-                                .appFont(AppTextRole.caption)
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.white.opacity(0.8))
-                                .padding(.bottom, buttonBottomPadding)
+        Rectangle()
+            .fill(Color.black.opacity(0.95))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                VStack(spacing: 0) {
+                    Image(systemName: "eye.slash.fill")
+                        .appFont(AppTextRole.title2)
+                        .foregroundStyle(.white)
+                        .padding(.bottom, 4)
+
+                    Text(warningTitle)
+                        .appFont(AppTextRole.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                        .padding(.bottom, 4)
+
+                    Text("May contain \(warningLabels)")
+                        .appFont(AppTextRole.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.bottom, 12)
+
+                    Button {
+                        withAnimation {
+                            isBlurred = false
                         }
-                        
-                        Button {
-                            withAnimation {
-                                isBlurred = false
-                            }
-                        } label: {
-                            Text("Show Content")
-                                .appFont(isCompact ? AppTextRole.caption2 : AppTextRole.footnote)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, isCompact ? 12 : 16)
-                                .padding(.vertical, isCompact ? 6 : 8)
-                                .background(Color.gray.opacity(0.6))
-                                .cornerRadius(isCompact ? 14 : 18)
-                        }
+                    } label: {
+                        Text("Show Content")
+                            .appFont(AppTextRole.footnote)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.gray.opacity(0.6))
+                            .cornerRadius(18)
                     }
-                    .padding(innerPadding)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.black.opacity(0.8))
-                    )
-                    .padding(outerPadding)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.black.opacity(0.8))
                 )
-        }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            )
     }
     
     var body: some View {
@@ -395,13 +383,14 @@ struct ContentLabelManager<Content: View>: View {
                     // Content with conditional blur
                     if isBlurred {
                         ZStack {
-                            content
-                            
-                            // Strong blur overlay that completely obscures content
+                            // Placeholder instead of actual content to avoid rendering videos/GIFs under overlay
+                            Rectangle()
+                                .fill(Color(platformColor: .platformSystemGray6))
+                                .frame(minHeight: 200)
+
                             strongBlurOverlay
                         }
                         .onTapGesture {
-                            // Double tap anywhere to reveal
                             withAnimation {
                                 isBlurred = false
                             }
@@ -462,12 +451,6 @@ struct ContentLabelManager<Content: View>: View {
         .task {
             // Update visibility immediately when view appears
             await updateContentVisibility()
-        }
-        .onAppear {
-            // Also update when view appears (in case task doesn't run immediately)
-            Task {
-                await updateContentVisibility()
-            }
         }
     }
     

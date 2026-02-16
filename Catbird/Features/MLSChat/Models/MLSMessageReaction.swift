@@ -1,5 +1,5 @@
 import Foundation
-import CatbirdMLSService
+import CatbirdMLSCore
 
 /// Represents a reaction on an MLS message
 struct MLSMessageReaction: Identifiable, Equatable, Hashable {

@@ -1,5 +1,5 @@
 {
-  "originHash" : "0defcb25ec16ae473b74b117532a72e8c48c8c48fa01c1c7470c5323698c9829",
+  "originHash" : "69d26e8aec2ddc829d62f3426227108816effa4ba569832b1152510848507475",
   "pins" : [
     {
       "identity" : "cryptoswift",
@@ -33,13 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/beatt83/jose-swift.git",
       "state" : {
-<<<<<<< HEAD
-        "revision" : "8d087c7d8333310449aff4c9eb2431fbb4f1eb9f",
-        "version" : "6.0.0"
-=======
         "revision" : "13e5ae6f23ef1487b0dad72540eff414272bd7ca",
         "version" : "6.0.2"
->>>>>>> feature/mls-integration
       }
     },
     {

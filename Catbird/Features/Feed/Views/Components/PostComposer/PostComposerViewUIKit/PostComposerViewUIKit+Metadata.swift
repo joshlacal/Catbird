@@ -226,6 +226,9 @@ extension PostComposerViewUIKit {
         Button(action: {
           pcMetadataLogger.info("PostComposerMetadata: Removing quoted post")
           vm.quotedPost = nil
+          if vm.isThreadMode && vm.threadEntries.indices.contains(vm.currentThreadIndex) {
+            vm.threadEntries[vm.currentThreadIndex].quotedPost = nil
+          }
         }) {
           Image(systemName: "xmark.circle.fill")
             .foregroundColor(.secondary)

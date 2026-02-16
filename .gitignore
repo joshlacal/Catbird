@@ -263,9 +263,6 @@ update_linkmap_path.sh
 verify_fault_ordering_setup.sh
 
 # Session documentation
-docs/MLS_*.md
-docs/FaultOrdering-Setup.md
-FAULTORDERING_FIXED.md
-FAULTORDERING_STATUS.md
-FaultOrdering-QuickRef.md
-MLS_SECURITY_AUDIT.md
+docs/
+.letta/
+.vscode/

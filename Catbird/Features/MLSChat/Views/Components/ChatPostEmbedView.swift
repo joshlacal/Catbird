@@ -3,7 +3,6 @@ import SwiftUI
 import Petrel
 import NukeUI
 import OSLog
-import CatbirdMLSService
 
 #if os(iOS)
 

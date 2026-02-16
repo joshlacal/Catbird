@@ -1,5 +1,4 @@
 import CatbirdMLSCore
-import CatbirdMLSService
 import CryptoKit
 import DeviceCheck
 import Foundation
@@ -2941,6 +2940,19 @@ final class NotificationManager: NSObject {
         // This creates the device record on the server if it doesn't exist
         _ = try await MLSClient.shared.ensureDeviceRegistered(userDid: did)
 
+        // Ensure declaration chain exists for this now-registered/opted-in device.
+        // Notification token registration can run before chat UI paths, so this
+        // closes the gap where users become opted-in without declaration records.
+        if let conversationManager = await appState.getMLSConversationManager() {
+          do {
+            try await conversationManager.ensureDeclarationChainReady()
+          } catch {
+            notificationLogger.error(
+              "❌ Failed to ensure declaration chain during token registration: \(error.localizedDescription)"
+            )
+          }
+        }
+
         // Get the correct deviceId from the manager (it might differ from IDFV if server assigns it)
         guard let deviceInfo = await MLSClient.shared.getDeviceInfo(for: did) else {
           notificationLogger.error("❌ Failed to retrieve device info after registration")
@@ -3200,7 +3212,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       let ciphertext = userInfo["ciphertext"] as? String
       let convoId = userInfo["convo_id"] as? String
       let messageId = userInfo["message_id"] as? String
-      let recipientDid = userInfo["recipient_did"] as? String
+      let recipientDid: String? = resolveRecipientDID(from: userInfo)
       let senderDid = userInfo["sender_did"] as? String
 
       // Server ordering fields (more reliable than message_id for cache lookup)
@@ -3586,7 +3598,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       // Sync group state AND capture plaintext if target message is decrypted
       notificationLogger.info(
         "🔄 [FG] Syncing group state for recipient (may capture target message)...")
-      let targetCiphertext = CatbirdMLSCore.MLSPaddingUtility.stripPaddingIfPresent(ciphertextData)
+      // Padding is stripped by catbird-mls process_message internally.
+      let targetCiphertext = ciphertextData
       let syncResult = await syncGroupStateForRecipient(
         convoId: convoId,
         recipientDid: recipientDid,
@@ -3822,9 +3835,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         // ciphertext is already Bytes (Data)
         let ciphertextData = message.ciphertext.data
 
-        // Strip padding if present
-        let actualCiphertext = CatbirdMLSCore.MLSPaddingUtility.stripPaddingIfPresent(
-          ciphertextData)
+        // Padding is stripped by catbird-mls process_message internally.
+        let actualCiphertext = ciphertextData
 
         do {
           let processResult = try context.processMessage(
@@ -4090,7 +4102,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   }
 
   /// Check if a group exists in the MLS context
-  private func checkGroupExists(context: MLSFFI.MlsContext, groupId: Data) async -> Bool {
+  private func checkGroupExists(context: CatbirdMLS.MlsContext, groupId: Data) async -> Bool {
     do {
       // Try to get the epoch - if it fails, the group doesn't exist
       _ = try context.getEpoch(groupId: groupId)
@@ -4104,7 +4116,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   /// - Returns: true if the group was successfully joined, false otherwise
   private func attemptWelcomeJoin(
     apiClient: MLSAPIClient,
-    context: MLSFFI.MlsContext,
+    context: CatbirdMLS.MlsContext,
     convoId: String,
     recipientDid: String
   ) async -> Bool {
@@ -4220,7 +4232,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       notificationLogger.warning("⚠️ [FG] Failed to fetch Welcome: \(error.localizedDescription)")
       return false
-    } catch let error as MLSFFI.MlsError {
+    } catch let error as CatbirdMLS.MlsError {
       // Handle specific MLS errors
       switch error {
       case .NoMatchingKeyPackage(let msg):
@@ -4659,7 +4671,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     // Handle MLS message notifications (from NSE)
     if let type = typeString, type == "mls_message" || type == "mls_message_decrypted" {
-      let recipientDid = userInfo["recipient_did"] as? String
+      let recipientDid = resolveRecipientDID(from: userInfo)
       let convoId = userInfo["convo_id"] as? String
 
       Task {
@@ -4877,6 +4889,40 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     // Use AppStateManager to switch accounts - it manages multiple AppState instances
     _ = await appStateManager.switchAccount(to: did)
     notificationLogger.info("✅ Switched to account \(did) for notification navigation")
+  }
+
+  // MARK: - Privacy-Preserving Account Matching
+
+  /// Compute SHA-256 hash of a DID for push notification account matching.
+  private func hashForAccountMatching(_ did: String) -> String {
+    let digest = SHA256.hash(data: Data(did.utf8))
+    return digest.map { String(format: "%02x", $0) }.joined()
+  }
+
+  /// Resolve recipient DID from push payload, supporting both hash-based and legacy fields.
+  private func resolveRecipientDID(from userInfo: [AnyHashable: Any]) -> String? {
+    // Prefer explicit DID (set by NSE after resolving hash, or legacy payload)
+    if let did = userInfo["recipient_did"] as? String {
+      return did
+    }
+    // Fall back to resolving recipient_account hash against local accounts
+    if let hash = userInfo["recipient_account"] as? String {
+      return MainActor.assumeIsolated {
+        let appStateManager = AppStateManager.shared
+        if let activeDID = appStateManager.lifecycle.userDID,
+          hashForAccountMatching(activeDID) == hash
+        {
+          return activeDID
+        }
+        for did in appStateManager.authenticatedDIDs {
+          if hashForAccountMatching(did) == hash {
+            return did
+          }
+        }
+        return nil
+      }
+    }
+    return nil
   }
 
   /// Handle navigation from a notification tap

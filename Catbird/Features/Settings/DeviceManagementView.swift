@@ -1,7 +1,7 @@
 import SwiftUI
 import Petrel
 import OSLog
-import CatbirdMLSService
+import CatbirdMLSCore
 
 @available(iOS 18.0, macOS 13.0, *)
 struct DeviceManagementView: View {
@@ -96,7 +96,7 @@ struct DeviceManagementView: View {
 }
 
 struct DeviceRow: View {
-    let device: BlueCatbirdMlsListDevices.DeviceInfo
+    let device: BlueCatbirdMlsChatListDevices.DeviceInfo
     let isCurrentDevice: Bool
     let onDelete: () -> Void
 
@@ -192,12 +192,12 @@ struct DeviceRow: View {
 final class DeviceManagementViewModel {
     private let logger = Logger(subsystem: "blue.catbird", category: "DeviceManagement")
 
-    var devices: [BlueCatbirdMlsListDevices.DeviceInfo] = []
+    var devices: [BlueCatbirdMlsChatListDevices.DeviceInfo] = []
     var isLoading = false
     var error: Error?
     var deleteError: Error?
     var showDeleteConfirmation = false
-    var deviceToDelete: BlueCatbirdMlsListDevices.DeviceInfo?
+    var deviceToDelete: BlueCatbirdMlsChatListDevices.DeviceInfo?
     var currentDeviceId: String?
 
     private var appState: AppState?
@@ -220,7 +220,7 @@ final class DeviceManagementViewModel {
 
         do {
             logger.info("Loading devices...")
-            let (_, output) = try await client.blue.catbird.mls.listDevices(input: .init())
+            let (_, output) = try await client.blue.catbird.mlschat.listDevices(input: .init())
             devices = output?.devices ?? []
             logger.info("Loaded \(self.devices.count) devices")
         } catch {
@@ -232,7 +232,7 @@ final class DeviceManagementViewModel {
     }
 
     @MainActor
-    func deleteDevice(_ device: BlueCatbirdMlsListDevices.DeviceInfo) async {
+    func deleteDevice(_ device: BlueCatbirdMlsChatListDevices.DeviceInfo) async {
         guard let client = appState?.client else {
             logger.error("No authenticated client available")
             return
@@ -241,12 +241,18 @@ final class DeviceManagementViewModel {
         do {
             logger.info("Deleting device: \(device.deviceId)")
 
-            let input = BlueCatbirdMlsDeleteDevice.Input(deviceId: device.deviceId)
-            let (_, output) = try await client.blue.catbird.mls.deleteDevice(input: input)
+            let input = BlueCatbirdMlsChatCommitGroupChange.Input(convoId: "", action: "removeDevice", deviceId: device.deviceId)
+            let (_, output) = try await client.blue.catbird.mlschat.commitGroupChange(input: input)
 
-            let deleted = output?.deleted ?? false
-            let packagesDeleted = output?.keyPackagesDeleted ?? 0
-            logger.info("Device deleted: \(deleted), key packages deleted: \(packagesDeleted)")
+            let deleted = output?.success ?? false
+            logger.info("Device deleted: \(deleted)")
+
+            if deleted, let conversationManager = await appState?.getMLSConversationManager() {
+                _ = try? await conversationManager.publishDeclarationDeviceRevoke(
+                    deviceId: device.deviceId,
+                    reason: "device-removed"
+                )
+            }
 
             // Remove from local list
             devices.removeAll { $0.deviceId == device.deviceId }
@@ -256,4 +262,3 @@ final class DeviceManagementViewModel {
         }
     }
 }
-

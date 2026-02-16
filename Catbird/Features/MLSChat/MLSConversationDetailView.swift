@@ -1,5 +1,4 @@
 import CatbirdMLSCore
-import CatbirdMLSService
 import GRDB
 import OSLog
 import Petrel
@@ -18,6 +17,45 @@ enum RecoveryState: Equatable {
   case inProgress
   case success
   case failed(String)
+}
+
+struct RejoinStatusPresentation: Equatable {
+  let title: String
+  let detail: String
+  let iconName: String
+  let showsProgress: Bool
+  let showsRetry: Bool
+}
+
+func rejoinStatusPresentation(for recoveryState: RecoveryState) -> RejoinStatusPresentation? {
+  switch recoveryState {
+  case .inProgress:
+    return RejoinStatusPresentation(
+      title: "Updating secure session",
+      detail: "Rejoining to keep forward secrecy up to date.",
+      iconName: "arrow.triangle.2.circlepath.circle.fill",
+      showsProgress: true,
+      showsRetry: false
+    )
+  case .success:
+    return RejoinStatusPresentation(
+      title: "Secure session restored",
+      detail: "You're rejoined and can continue chatting.",
+      iconName: "checkmark.shield.fill",
+      showsProgress: false,
+      showsRetry: false
+    )
+  case .failed:
+    return RejoinStatusPresentation(
+      title: "Secure rejoin not completed",
+      detail: "Your messages remain protected. Try rejoining again.",
+      iconName: "exclamationmark.shield.fill",
+      showsProgress: false,
+      showsRetry: true
+    )
+  case .none, .needed:
+    return nil
+  }
 }
 
 // MARK: - Message Error Info
@@ -46,7 +84,7 @@ struct MLSConversationDetailView: View {
   @State private var isLoadingProfiles = true
   @State private var memberCount: Int = 0
   @State private var members: [MLSMemberModel] = []
-  @State var participantProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
+  @State private var participantProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
   @State private var isSendingMessage = false
   @State private var showingMemberManagement = false
   @State private var showingEncryptionInfo = false
@@ -54,8 +92,8 @@ struct MLSConversationDetailView: View {
   @State private var stateObserver: MLSStateObserver?  // Observer for encrypted MLS events (reactions)
   @State private var serverError: String?
   @State private var hasStartedSubscription = false
-  @State var sendError: String?
-  @State var showingSendError = false
+  @State private var sendError: String?
+  @State private var showingSendError = false
   @State private var pipelineError: String?
   @State private var showingLeaveConfirmation = false
   @State private var showingAdminDashboard = false
@@ -218,6 +256,15 @@ struct MLSConversationDetailView: View {
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding()
+      }
+
+      if let status = rejoinStatusPresentation(for: recoveryState) {
+        VStack {
+          secureRejoinStatusBanner(status)
+            .padding(.horizontal)
+            .padding(.top, 8)
+          Spacer()
+        }
       }
 
       // Show initialization overlay when conversation is initializing
@@ -520,6 +567,43 @@ struct MLSConversationDetailView: View {
     .accessibilityElement(children: .contain)
   }
 
+  @ViewBuilder
+  private func secureRejoinStatusBanner(_ status: RejoinStatusPresentation) -> some View {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      if status.showsProgress {
+        ProgressView()
+          .scaleEffect(0.8)
+      } else {
+        Image(systemName: status.iconName)
+          .foregroundStyle(status.showsRetry ? .orange : .green)
+      }
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(status.title)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.primary)
+        Text(status.detail)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+
+      Spacer()
+
+      if status.showsRetry {
+        Button("Retry") {
+          Task { await performRecovery() }
+        }
+        .font(.caption.weight(.semibold))
+      }
+    }
+    .padding(.horizontal, DesignTokens.Spacing.base)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .background(.ultraThinMaterial)
+    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusLG))
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(status.title). \(status.detail)")
+  }
+
   var body: some View {
     contentWithNavigation
       .task {
@@ -528,6 +612,10 @@ struct MLSConversationDetailView: View {
       .onDisappear {
         isViewActive = false
         stopMessagePolling()
+        // Final mark-as-read sweep to catch messages that arrived while viewing
+        Task {
+          await markMessagesAsRead()
+        }
         // Cleanup state observer
         Task {
           if let observer = stateObserver,
@@ -940,11 +1028,6 @@ struct MLSConversationDetailView: View {
 
   @MainActor
   private func loadPendingReportsCount() async {
-    // TODO: Re-enable when reports feature is implemented on server
-    pendingReportsCount = 0
-    return
-    
-    /* Reports disabled - uncomment when ready
     guard isCurrentUserAdmin,
       let conversationManager = viewModel?.conversationManager
     else {
@@ -964,7 +1047,6 @@ struct MLSConversationDetailView: View {
       logger.error("Failed to load pending reports count: \(error.localizedDescription)")
       pendingReportsCount = 0
     }
-    */
   }
 
   // MARK: - Encryption Status Header
@@ -1202,7 +1284,7 @@ struct MLSConversationDetailView: View {
     return nil
   }
 
-  private func resolveConversationView() async -> BlueCatbirdMlsDefs.ConvoView? {
+  private func resolveConversationView() async -> BlueCatbirdMlsChatDefs.ConvoView? {
     guard let manager = await appState.getMLSConversationManager() else {
       logger.error("Cannot resolve conversation metadata: manager unavailable")
       return nil
@@ -1673,14 +1755,32 @@ struct MLSConversationDetailView: View {
             logger.debug(
               "Using cached plaintext for message \(messageView.id) (hasEmbed: \(embed != nil))")
           } else {
-            // No cached plaintext - this can happen for own messages (MLS prevents self-decryption)
-            if isCurrentUser {
-              logger.warning(
-                "⚠️ Message \(messageView.id) from current user has no cached plaintext")
-              logger.warning("   Self-decryption is impossible by MLS design - skipping message")
-              continue
-            } else {
-              logger.error("❌ Message \(messageView.id) has no cached plaintext after Phase 1")
+            // No cached plaintext — attempt decryption
+            // Multi-device: messages from another device of the same user ARE decryptable
+            // (only same-device sends can't be self-decrypted)
+            do {
+              let decryptedMessage = try await manager.decryptMessage(messageView, source: "multidevice-phase2")
+              displayText = decryptedMessage.text ?? ""
+              embed = decryptedMessage.embed
+              // Cache the decrypted plaintext for future loads
+              if let database = appState.mlsDatabase {
+                let payload = CatbirdMLSCore.MLSMessagePayload.text(displayText, embed: embed)
+                _ = try? await storage.savePayloadForMessage(
+                  messageID: messageView.id,
+                  conversationID: conversationId,
+                  payload: payload,
+                  senderID: senderDID,
+                  currentUserDID: currentUserDID,
+                  epoch: Int64(messageView.epoch),
+                  sequenceNumber: Int64(messageView.seq),
+                  timestamp: messageView.createdAt.date,
+                  database: database
+                )
+              }
+              logger.info("✅ Multi-device message \(messageView.id) decrypted successfully")
+            } catch {
+              // Decryption failed — expected for same-device sends without cache
+              logger.debug("ℹ️ Message \(messageView.id) could not be decrypted (likely same-device send without cache): \(error.localizedDescription)")
               continue
             }
           }
@@ -2135,15 +2235,32 @@ struct MLSConversationDetailView: View {
             logger.debug(
               "Using cached plaintext for message \(messageView.id) (hasEmbed: \(embed != nil))")
           } else {
-            // No cached plaintext - this can happen for own messages (MLS prevents self-decryption)
-            if isCurrentUser {
-              logger.warning(
-                "⚠️ Message \(messageView.id) from current user has no cached plaintext")
-              logger.warning("   Self-decryption is impossible by MLS design - skipping message")
-              continue
-            } else {
-              // Unexpected: Phase 1 should have decrypted this
-              logger.error("❌ Message \(messageView.id) has no cached plaintext after Phase 1")
+            // No cached plaintext — attempt decryption
+            // Multi-device: messages from another device of the same user ARE decryptable
+            // (only same-device sends can't be self-decrypted)
+            do {
+              let decryptedMessage = try await manager.decryptMessage(messageView, source: "multidevice-phase2")
+              displayText = decryptedMessage.text ?? ""
+              embed = decryptedMessage.embed
+              // Cache the decrypted plaintext for future loads
+              if let database = appState.mlsDatabase {
+                let payload = CatbirdMLSCore.MLSMessagePayload.text(displayText, embed: embed)
+                _ = try? await storage.savePayloadForMessage(
+                  messageID: messageView.id,
+                  conversationID: conversationId,
+                  payload: payload,
+                  senderID: senderDID,
+                  currentUserDID: currentUserDID,
+                  epoch: Int64(messageView.epoch),
+                  sequenceNumber: Int64(messageView.seq),
+                  timestamp: messageView.createdAt.date,
+                  database: database
+                )
+              }
+              logger.info("✅ Multi-device message \(messageView.id) decrypted successfully")
+            } catch {
+              // Decryption failed — expected for same-device sends without cache
+              logger.debug("ℹ️ Message \(messageView.id) could not be decrypted (likely same-device send without cache): \(error.localizedDescription)")
               continue
             }
           }
@@ -3362,7 +3479,7 @@ struct MLSConversationDetailView: View {
   }
 
   @MainActor
-  private func handleNewMessage(_ event: BlueCatbirdMlsSubscribeConvoEvents.MessageEvent) async {
+  private func handleNewMessage(_ event: BlueCatbirdMlsChatSubscribeEvents.MessageEvent) async {
     logger.debug("🔍 MLS_OWNERSHIP: ====== Processing SSE message \(event.message.id) ======")
 
     _ = await ensureConversationMetadata()
@@ -3453,6 +3570,21 @@ struct MLSConversationDetailView: View {
 
       // Skip control messages (reactions, etc.) - they don't appear in message list
       if result.isControlMessage {
+        // Check if this is a read receipt — process it before skipping
+        if let data = result.displayText.data(using: .utf8),
+          let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(data),
+          payload.messageType == .readReceipt,
+          let readReceipt = payload.readReceipt
+        {
+          let senderDID = result.senderDID
+          logger.info(
+            "📬 [READ_RECEIPTS] Received read receipt from \(senderDID) for message \(readReceipt.messageId)"
+          )
+          await unifiedDataSource?.applyReadReceipt(
+            readUpToMessageID: readReceipt.messageId,
+            readerDID: senderDID
+          )
+        }
         logger.debug("Skipping SSE control message \(event.message.id)")
         return
       }
@@ -3526,6 +3658,22 @@ struct MLSConversationDetailView: View {
       sortMessagesByMLSOrder()
       ensureProfileLoaded(for: senderDID)
 
+      // Mark the message as read immediately since the user is actively viewing this conversation
+      if !isCurrentUser, let database = appState.mlsDatabase {
+        Task {
+          do {
+            try await database.write { db in
+              try db.execute(
+                sql: "UPDATE MLSMessageModel SET isRead = 1 WHERE messageID = ? AND currentUserDID = ? AND isRead = 0",
+                arguments: [event.message.id, currentUserDID]
+              )
+            }
+          } catch {
+            logger.warning("Failed to mark incoming message as read: \(error.localizedDescription)")
+          }
+        }
+      }
+
       // Notify unified data source to refresh from storage
       await unifiedDataSource?.onMessagesDecrypted()
 
@@ -3551,7 +3699,7 @@ struct MLSConversationDetailView: View {
   }
 
   @MainActor
-  private func handleReaction(_ event: BlueCatbirdMlsSubscribeConvoEvents.ReactionEvent) async {
+  private func handleReaction(_ event: BlueCatbirdMlsChatSubscribeEvents.ReactionEvent) async {
     logger.debug(
       "Received reaction via SSE: \(event.action) \(event.reaction) on \(event.messageId)")
 
@@ -3612,7 +3760,7 @@ struct MLSConversationDetailView: View {
   /// Handle new device events from SSE stream
   /// Forwards to MLSDeviceSyncManager for processing multi-device additions
   @MainActor
-  private func handleNewDeviceEvent(_ event: BlueCatbirdMlsSubscribeConvoEvents.NewDeviceEvent)
+  private func handleNewDeviceEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.NewDeviceEvent)
     async
   {
     logger.info(
@@ -3634,10 +3782,20 @@ struct MLSConversationDetailView: View {
   /// didn't make this request ourselves, we export and upload fresh GroupInfo.
   @MainActor
   private func handleGroupInfoRefreshRequested(
-    _ event: BlueCatbirdMlsSubscribeConvoEvents.GroupInfoRefreshRequestedEvent
+    _ event: BlueCatbirdMlsChatSubscribeEvents.InfoEvent
   ) async {
+    guard let convoId = event.convoId else {
+      logger.warning("⚠️ [GroupInfoRefresh] Missing convoId in InfoEvent")
+      return
+    }
+
+    guard let requestedBy = event.requestedBy else {
+      logger.warning("⚠️ [GroupInfoRefresh] Missing requestedBy in InfoEvent")
+      return
+    }
+
     logger.info(
-      "🔄 [GroupInfoRefresh] Received request for convo \(event.convoId) from \(event.requestedBy)")
+      "🔄 [GroupInfoRefresh] Received request for convo \(convoId) from \(requestedBy)")
 
     // Get current user DID to check if this is our own request
     guard
@@ -3648,8 +3806,8 @@ struct MLSConversationDetailView: View {
     }
 
     // Don't respond to our own requests
-    if event.requestedBy.didString().hasPrefix(currentUserDID)
-      || currentUserDID.hasPrefix(event.requestedBy.didString())
+    if requestedBy.didString().hasPrefix(currentUserDID)
+      || currentUserDID.hasPrefix(requestedBy.didString())
     {
       logger.info("🔄 [GroupInfoRefresh] Ignoring own request")
       return
@@ -3661,7 +3819,7 @@ struct MLSConversationDetailView: View {
     }
 
     // Forward to manager for processing (export GroupInfo and upload to server)
-    await manager.handleGroupInfoRefreshRequest(convoId: event.convoId)
+    await manager.handleGroupInfoRefreshRequest(convoId: convoId)
   }
 
   /// Handle re-addition request events from SSE stream
@@ -3669,10 +3827,20 @@ struct MLSConversationDetailView: View {
   /// active members to re-add them. If we're an active member, we re-add the user.
   @MainActor
   private func handleReadditionRequested(
-    _ event: BlueCatbirdMlsSubscribeConvoEvents.ReadditionRequestedEvent
+    _ event: BlueCatbirdMlsChatSubscribeEvents.InfoEvent
   ) async {
+    guard let convoId = event.convoId else {
+      logger.warning("⚠️ [Readdition] Missing convoId in InfoEvent")
+      return
+    }
+
+    guard let requestedBy = event.requestedBy else {
+      logger.warning("⚠️ [Readdition] Missing requestedBy in InfoEvent")
+      return
+    }
+
     logger.info(
-      "🆘 [Readdition] Received request for user \(event.userDid.didString().prefix(20))... in convo \(event.convoId)"
+      "🆘 [Readdition] Received request for user \(requestedBy.didString().prefix(20))... in convo \(convoId)"
     )
 
     // Get current user DID to check if this is our own request
@@ -3684,8 +3852,8 @@ struct MLSConversationDetailView: View {
     }
 
     // Don't respond to our own requests
-    if event.userDid.didString().hasPrefix(currentUserDID)
-      || currentUserDID.hasPrefix(event.userDid.didString())
+    if requestedBy.didString().hasPrefix(currentUserDID)
+      || currentUserDID.hasPrefix(requestedBy.didString())
     {
       logger.info("🆘 [Readdition] Ignoring own request")
       return
@@ -3698,12 +3866,12 @@ struct MLSConversationDetailView: View {
 
     // Forward to manager for processing (re-add the user with fresh KeyPackages)
     await manager.handleReadditionRequest(
-      convoId: event.convoId, userDidToAdd: event.userDid.didString())
+      convoId: convoId, userDidToAdd: requestedBy.didString())
   }
 
   /// Handle info events from SSE stream
   @MainActor
-  private func handleInfoEvent(_ event: BlueCatbirdMlsSubscribeConvoEvents.InfoEvent) async {
+  private func handleInfoEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.InfoEvent) async {
     logger.info("ℹ️ [InfoEvent] Received for convo \(conversationId)")
     // Handle any informational events from the server
     // Currently a no-op, but can be extended for server-side announcements
@@ -3804,13 +3972,14 @@ struct MLSConversationDetailView: View {
   @MainActor
   private func performRecovery() async {
     logger.info("Starting key package desync recovery for conversation: \(conversationId)")
+    pipelineError = nil
+    sendError = nil
+    showingRecoveryError = false
     recoveryState = .inProgress
 
-    guard let manager = await appState.getMLSConversationManager(),
-      let apiClient = await appState.getMLSAPIClient()
-    else {
+    guard let manager = await appState.getMLSConversationManager() else {
       logger.error("Recovery failed: MLS services unavailable")
-      recoveryState = .failed("MLS service unavailable. Please restart the app.")
+      recoveryState = .failed("Secure rejoin is unavailable right now. Please restart the app and try again.")
       showingRecoveryError = true
       return
     }
@@ -3820,7 +3989,7 @@ struct MLSConversationDetailView: View {
       logger.debug("Joining via External Commit for recovery...")
       guard let userDid = manager.userDid else {
         logger.error("Recovery failed: No user DID available")
-        recoveryState = .failed("User authentication required")
+        recoveryState = .failed("Sign in is required to update your secure session.")
         showingRecoveryError = true
         return
       }
@@ -3830,21 +3999,64 @@ struct MLSConversationDetailView: View {
 
       logger.info("Successfully rejoined conversation via External Commit")
 
-      // Step 2: Mark success
-      recoveryState = .success
-      logger.info("Recovery successful - reinitializing conversation")
-
-      // Step 3: Reload conversation and messages
+      // Step 2: Reload conversation and messages to confirm recovery
+      logger.info("Rejoin accepted - verifying secure session state")
       await loadConversationAndMessages()
 
-      // Reset recovery state after successful reload
-      recoveryState = .none
+      if case .needed = recoveryState {
+        recoveryState = .failed("Secure rejoin is still pending. Please try again in a moment.")
+        showingRecoveryError = true
+        return
+      }
+
+      if let pipelineError, !pipelineError.isEmpty {
+        recoveryState = .failed(
+          "We couldn't finish updating your secure session. Please try rejoining again.")
+        showingRecoveryError = true
+        return
+      }
+
+      if let sendError, !sendError.isEmpty {
+        recoveryState = .failed(
+          "We couldn't finish updating your secure session. Please try rejoining again.")
+        showingRecoveryError = true
+        return
+      }
+
+      // Step 3: Confirm success only after post-rejoin reload succeeds
+      recoveryState = .success
+      logger.info("Recovery confirmed - secure session restored")
+
+      try? await Task.sleep(for: .seconds(2.5))
+      if recoveryState == .success {
+        recoveryState = .none
+      }
 
     } catch {
       logger.error("Recovery failed: \(error.localizedDescription)")
-      recoveryState = .failed(error.localizedDescription)
+      recoveryState = .failed(recoveryFailureMessage(for: error))
       showingRecoveryError = true
     }
+  }
+
+  private func recoveryFailureMessage(for error: Error) -> String {
+    let normalizedError = error.localizedDescription.lowercased()
+
+    if normalizedError.contains("network")
+      || normalizedError.contains("timeout")
+      || normalizedError.contains("timed out")
+    {
+      return "Network connection was interrupted while updating your secure session. Please try again."
+    }
+
+    if normalizedError.contains("auth")
+      || normalizedError.contains("token")
+      || normalizedError.contains("sign in")
+    {
+      return "Please sign in again to update your secure session."
+    }
+
+    return "We couldn't update your secure session yet. Your messages remain protected."
   }
 
   // MARK: - Message Ordering

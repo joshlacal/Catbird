@@ -100,11 +100,12 @@ struct Language: Identifiable, Hashable, Codable {
 
 // MARK: - Language Manager
 
+@Observable
 @MainActor
-class LanguageManager: ObservableObject {
-    @Published var isLoading = false
-    @Published var error: String?
-    @Published var recentlyUsedLanguages: [String] = []
+class LanguageManager {
+    var isLoading = false
+    var error: String?
+    var recentlyUsedLanguages: [String] = []
     
     private let preferencesManager: PreferencesManager?
     private let maxRecentLanguages = 5

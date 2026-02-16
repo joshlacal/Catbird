@@ -1,7 +1,7 @@
 import SwiftUI
 import Petrel
 import OSLog
-import CatbirdMLSService
+import CatbirdMLSCore
 
 #if os(iOS)
 
@@ -27,6 +27,7 @@ struct MLSNewConversationView: View {
     @State private var currentStep: CreationStep = .selectParticipants
     @State private var searchTask: Task<Void, Never>?
     @State private var participantOptInStatus: [String: Bool] = [:]  // Track which participants have opted into MLS
+    @State private var declarationApprovalRequest: DeclarationApprovalRequest?
     let onConversationCreated: (@Sendable () async -> Void)?
     
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSNewConversation")
@@ -56,6 +57,13 @@ struct MLSNewConversationView: View {
             case .creating: return "Setting up end-to-end encryption..."
             }
         }
+    }
+    
+    struct DeclarationApprovalRequest: Identifiable {
+        let id = UUID()
+        let targetDid: String
+        let operation: String
+        let warning: String?
     }
 
     private var orderedSelectedParticipants: [MLSParticipantViewModel] {
@@ -95,6 +103,27 @@ struct MLSNewConversationView: View {
                 if let errorMessage = errorMessage {
                     Text(errorMessage)
                 }
+            }
+            .alert(item: $declarationApprovalRequest) { request in
+                Alert(
+                    title: Text("Unverified Identity"),
+                    message: Text(request.warning ?? "Identity verification for \(request.targetDid) requires explicit confirmation before adding this participant."),
+                    primaryButton: .destructive(Text("Continue Anyway")) {
+                        Task {
+                            declarationApprovalRequest = nil
+                            if let manager = await appState.getMLSConversationManager() {
+                                manager.approveDeclarationUserFriction(
+                                    targetDid: request.targetDid,
+                                    operation: request.operation
+                                )
+                                await createMLSConversation()
+                            }
+                        }
+                    },
+                    secondaryButton: .cancel({
+                        declarationApprovalRequest = nil
+                    })
+                )
             }
         }
         .autocorrectionDisabled()
@@ -681,6 +710,21 @@ struct MLSNewConversationView: View {
             dismiss()
             
         } catch {
+            if case let MLSConversationError.declarationUserConfirmationRequired(
+                targetDid: targetDid,
+                operation: operation,
+                warning: warning
+            ) = error {
+                logger.warning("Declaration confirmation required for \(targetDid)")
+                declarationApprovalRequest = DeclarationApprovalRequest(
+                    targetDid: targetDid,
+                    operation: operation,
+                    warning: warning
+                )
+                currentStep = .configure
+                isCreatingConversation = false
+                return
+            }
             logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             showingError = true

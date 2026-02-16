@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSViewModels.swift
 //  Catbird
@@ -94,7 +94,7 @@ struct MLSMemberViewModel: Identifiable {
 
 // MARK: - Server Model to ViewModel Conversion
 
-extension BlueCatbirdMlsDefs.ConvoView {
+extension BlueCatbirdMlsChatDefs.ConvoView {
   func toViewModel(unreadCount: Int = 0) -> MLSConversationViewModel {
     // Split complex map to prevent type checker explosion
     let participants: [MLSParticipantViewModel] = members.map { member in

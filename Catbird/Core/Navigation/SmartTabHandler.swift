@@ -257,8 +257,9 @@ extension SmartTabHandler.TabAction: CustomStringConvertible {
 // MARK: - Smart Tab Coordinator
 
 /// Coordinates smart tab behavior across the entire app
+@Observable
 @MainActor
-final class SmartTabCoordinator: ObservableObject {
+final class SmartTabCoordinator {
   private let logger = Logger(subsystem: "blue.catbird", category: "SmartTabCoordinator")
   
   // MARK: - Properties

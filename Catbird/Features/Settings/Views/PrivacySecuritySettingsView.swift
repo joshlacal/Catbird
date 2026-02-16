@@ -3,7 +3,6 @@ import Petrel
 import LocalAuthentication
 import OSLog
 import CatbirdMLSCore
-import CatbirdMLSService
 
 // MARK: - Protocols
 

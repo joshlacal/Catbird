@@ -16,6 +16,7 @@ final class AppSettingsModel {
     // Appearance
     var theme: String = "system"
     var darkThemeMode: String = "dim"
+    var accentColor: String = "default"  // default, twilight, lavender, sunrise, aurora, dusk, midnight
     
     // Typography Settings
     var fontStyle: String = "system"  // system, serif, rounded, monospaced
@@ -121,6 +122,7 @@ final class AppSettingsModel {
         // Appearance
         if let value = defaults.string(forKey: "theme") { theme = value }
         if let value = defaults.string(forKey: "darkThemeMode") { darkThemeMode = value }
+        if let value = defaults.string(forKey: "accentColor") { accentColor = value }
         
         // Ensure theme settings are also saved to app group for widgets
         let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
@@ -240,6 +242,7 @@ final class AppSettingsModel {
         // Appearance
         theme = "system"
         darkThemeMode = "dim"
+        accentColor = "default"
         
         // Also update UserDefaults
         let defaults = UserDefaults.standard

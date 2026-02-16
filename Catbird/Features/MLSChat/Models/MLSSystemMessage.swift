@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSSystemMessage.swift
 //  Catbird
@@ -66,7 +66,7 @@ struct MLSSystemMessage: Identifiable, Sendable {
   }
 
   /// Create a system message from an InfoEvent
-  static func from(infoEvent: BlueCatbirdMlsSubscribeConvoEvents.InfoEvent, conversationId: String) -> MLSSystemMessage {
+  static func from(infoEvent: BlueCatbirdMlsChatSubscribeEvents.InfoEvent, conversationId: String) -> MLSSystemMessage {
     return MLSSystemMessage(
       id: infoEvent.cursor,
       conversationId: conversationId,
@@ -79,7 +79,7 @@ struct MLSSystemMessage: Identifiable, Sendable {
   }
 
   /// Create a system message from a NewDeviceEvent
-  static func from(deviceEvent: BlueCatbirdMlsSubscribeConvoEvents.NewDeviceEvent) -> MLSSystemMessage {
+  static func from(deviceEvent: BlueCatbirdMlsChatSubscribeEvents.NewDeviceEvent) -> MLSSystemMessage {
     return MLSSystemMessage(
       id: deviceEvent.cursor,
       conversationId: deviceEvent.convoId,

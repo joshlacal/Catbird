@@ -15,20 +15,39 @@ final class CatbirdBackgroundTask: @unchecked Sendable {
   init(name: String, expirationHandler: (@Sendable () -> Void)? = nil) {
     state = Mutex(.invalid)
     // beginBackgroundTask's expiration closure escapes — capture self weakly.
-    let taskId = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
-      expirationHandler?()
-      self?.end()
-    }
+    let taskId: UIBackgroundTaskIdentifier = {
+      let begin = {
+        UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+          expirationHandler?()
+          self?.end()
+        }
+      }
+      if Thread.isMainThread {
+        return begin()
+      } else {
+        return DispatchQueue.main.sync(execute: begin)
+      }
+    }()
     state.withLock { $0 = taskId }
   }
 
   deinit { end() }
 
   func end() {
-    state.withLock { id in
-      guard id != .invalid else { return }
-      UIApplication.shared.endBackgroundTask(id)
+    let taskId: UIBackgroundTaskIdentifier? = state.withLock { id in
+      guard id != .invalid else { return nil }
+      let captured = id
       id = .invalid
+      return captured
+    }
+
+    guard let taskId else { return }
+    if Thread.isMainThread {
+      UIApplication.shared.endBackgroundTask(taskId)
+    } else {
+      DispatchQueue.main.async {
+        UIApplication.shared.endBackgroundTask(taskId)
+      }
     }
   }
 }

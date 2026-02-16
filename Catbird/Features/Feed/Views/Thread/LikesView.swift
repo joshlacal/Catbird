@@ -12,7 +12,12 @@ struct LikesView: View {
     let postUri: String
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var likes: [AppBskyFeedGetLikes.Like] = []
+
+    private var contentMaxWidth: CGFloat {
+        hSizeClass == .compact ? .infinity : 600
+    }
     @State private var loading: Bool = true
     @State private var error: Error?
     @State private var cursor: String?
@@ -49,7 +54,7 @@ struct LikesView: View {
                     }
                 }
                 .listStyle(.plain)
-                .frame(maxWidth: 600)
+                .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }

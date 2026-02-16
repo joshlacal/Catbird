@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSGroupedMember.swift
 //  Catbird
@@ -12,12 +12,12 @@ import Petrel
 /// Represents a user's presence in an MLS conversation, grouping all their devices together
 struct MLSGroupedMember: Identifiable, Equatable {
     let userDid: String
-    let devices: [BlueCatbirdMlsDefs.MemberView]
+    let devices: [BlueCatbirdMlsChatDefs.MemberView]
     let isAdmin: Bool
     let isCreator: Bool
     let firstJoinedAt: Date
 
     var id: String { userDid }
     var deviceCount: Int { devices.count }
-    var primaryDevice: BlueCatbirdMlsDefs.MemberView? { devices.first }
+    var primaryDevice: BlueCatbirdMlsChatDefs.MemberView? { devices.first }
 }

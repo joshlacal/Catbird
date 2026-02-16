@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSConversationListViewModel.swift
 //  Catbird
@@ -12,7 +12,6 @@ import Observation
 import OSLog
 import Combine
 import GRDB
-import CatbirdMLSCore
 
 /// ViewModel for managing the list of MLS conversations
 @Observable
@@ -20,7 +19,7 @@ final class MLSConversationListViewModel {
     // MARK: - Properties
 
     /// List of conversations
-    private(set) var conversations: [BlueCatbirdMlsDefs.ConvoView] = []
+    private(set) var conversations: [BlueCatbirdMlsChatDefs.ConvoView] = []
 
     /// Loading state
     private(set) var isLoading = false
@@ -44,7 +43,7 @@ final class MLSConversationListViewModel {
     }
 
     /// Filtered conversations based on search
-    var filteredConversations: [BlueCatbirdMlsDefs.ConvoView] {
+    var filteredConversations: [BlueCatbirdMlsChatDefs.ConvoView] {
         guard !searchQuery.isEmpty else { return conversations }
         let query = searchQuery.lowercased()
         return conversations.filter { convo in
@@ -77,11 +76,11 @@ final class MLSConversationListViewModel {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let conversationsSubject = PassthroughSubject<[BlueCatbirdMlsDefs.ConvoView], Never>()
+    private let conversationsSubject = PassthroughSubject<[BlueCatbirdMlsChatDefs.ConvoView], Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for conversation updates
-    var conversationsPublisher: AnyPublisher<[BlueCatbirdMlsDefs.ConvoView], Never> {
+    var conversationsPublisher: AnyPublisher<[BlueCatbirdMlsChatDefs.ConvoView], Never> {
         conversationsSubject.eraseToAnyPublisher()
     }
 
@@ -206,7 +205,7 @@ final class MLSConversationListViewModel {
 
     /// Update conversation after changes
     @MainActor
-    func updateConversation(_ conversation: BlueCatbirdMlsDefs.ConvoView) {
+    func updateConversation(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) {
         if let index = conversations.firstIndex(where: { $0.groupId == conversation.groupId }) {
             conversations[index] = conversation
             conversationsSubject.send(conversations)
@@ -216,7 +215,7 @@ final class MLSConversationListViewModel {
 
     /// Add new conversation to the list
     @MainActor
-    func addConversation(_ conversation: BlueCatbirdMlsDefs.ConvoView) {
+    func addConversation(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) {
         // Add to beginning of list (most recent)
         conversations.insert(conversation, at: 0)
         conversationsSubject.send(conversations)

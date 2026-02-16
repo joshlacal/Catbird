@@ -182,7 +182,7 @@ struct ModernVideoPlayerView: View {
     if let player = player {
       let playerView = PlayerLayerView(
         player: player,
-        gravity: model.type.isGif ? .resizeAspectFill : .resizeAspect,
+        gravity: .resizeAspect,
         // Loop in-feed so videos don’t freeze on the last frame
         // For GIFs, VideoCoordinator handles looping manually to ensure it works even if the view is recycled
         // For HLS, we let the layer handle it

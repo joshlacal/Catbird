@@ -60,6 +60,7 @@ struct ThreadEntry: Identifiable, Hashable {
     var hashtags: [String] = []
     var selectedLanguages: [LanguageCodeContainer] = []
     var outlineTags: [String] = []
+    var quotedPost: AppBskyFeedDefs.PostView?
 }
 
 // MARK: - Platform Compatibility

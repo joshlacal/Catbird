@@ -35,9 +35,9 @@ struct MLSModerationAPITests {
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
     // Mock successful response
-    let expectedOutput = BlueCatbirdMlsRemoveMember.Output(
-      ok: true,
-      epochHint: 5
+    let expectedOutput = BlueCatbirdMlsChatCommitGroupChange.Output(
+      success: true,
+      newEpoch: 5
     )
     mockClient.mockRemoveMemberResponse = (200, expectedOutput)
 
@@ -51,8 +51,8 @@ struct MLSModerationAPITests {
     // Verify
     #expect(responseCode == 200)
     #expect(output != nil)
-    #expect(output?.ok == true)
-    #expect(output?.epochHint == 5)
+    #expect(output?.success == true)
+    #expect(output?.newEpoch == 5)
   }
 
   @Test("removeMember - not admin error")
@@ -98,10 +98,8 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let promotedAt = ATProtocolDate(date: Date())
-    let expectedOutput = BlueCatbirdMlsPromoteAdmin.Output(
-      ok: true,
-      promotedAt: promotedAt
+    let expectedOutput = BlueCatbirdMlsChatUpdateConvo.Output(
+      success: true
     )
     mockClient.mockPromoteAdminResponse = (200, expectedOutput)
 
@@ -111,8 +109,7 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.ok == true)
-    #expect(output?.promotedAt == promotedAt)
+    #expect(output?.success == true)
   }
 
   @Test("promoteAdmin - target already admin")
@@ -138,10 +135,8 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let demotedAt = ATProtocolDate(date: Date())
-    let expectedOutput = BlueCatbirdMlsDemoteAdmin.Output(
-      ok: true,
-      demotedAt: demotedAt
+    let expectedOutput = BlueCatbirdMlsChatUpdateConvo.Output(
+      success: true
     )
     mockClient.mockDemoteAdminResponse = (200, expectedOutput)
 
@@ -151,8 +146,7 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.ok == true)
-    #expect(output?.demotedAt == demotedAt)
+    #expect(output?.success == true)
   }
 
   @Test("demoteAdmin - not admin error")
@@ -179,7 +173,7 @@ struct MLSModerationAPITests {
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
     let submittedAt = ATProtocolDate(date: Date())
-    let expectedOutput = BlueCatbirdMlsReportMember.Output(
+    let expectedOutput = BlueCatbirdMlsChatReport.Output(
       reportId: testReportId,
       submittedAt: submittedAt
     )
@@ -228,18 +222,19 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let report1 = BlueCatbirdMlsGetReports.ReportView(
-      id: "report-1",
+    let report1 = BlueCatbirdMlsChatReport.ReportView(
+      reportId: "report-1",
+      convoId: testConvoId,
       reporterDid: try DID(didString: testDid),
       reportedDid: try DID(didString: testTargetDid),
-      encryptedContent: Data("encrypted1".utf8),
-      createdAt: ATProtocolDate(date: Date()),
+      category: "harassment",
       status: "pending",
-      resolvedBy: nil,
-      resolvedAt: nil
+      submittedAt: ATProtocolDate(date: Date()),
+      resolvedAt: nil,
+      resolvedBy: nil
     )
 
-    let expectedOutput = BlueCatbirdMlsGetReports.Output(reports: [report1])
+    let expectedOutput = BlueCatbirdMlsChatReport.Output(reports: [report1])
     mockClient.mockGetReportsResponse = (200, expectedOutput)
 
     let (responseCode, output) = try await apiClient.getReports(
@@ -249,9 +244,9 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.reports.count == 1)
-    #expect(output?.reports.first?.id == "report-1")
-    #expect(output?.reports.first?.status == "pending")
+    #expect(output?.reports?.count == 1)
+    #expect(output?.reports?.first?.reportId == "report-1")
+    #expect(output?.reports?.first?.status == "pending")
   }
 
   @Test("getReports - not admin error")
@@ -278,7 +273,7 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let expectedOutput = BlueCatbirdMlsResolveReport.Output(ok: true)
+    let expectedOutput = BlueCatbirdMlsChatReport.Output(success: true)
     mockClient.mockResolveReportResponse = (200, expectedOutput)
 
     let (responseCode, output) = try await apiClient.resolveReport(
@@ -288,7 +283,7 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.ok == true)
+    #expect(output?.success == true)
   }
 
   @Test("resolveReport - report not found")
@@ -315,14 +310,14 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let blockRelationship = BlueCatbirdMlsCheckBlocks.BlockRelationship(
+    let blockRelationship = BlueCatbirdMlsChatBlocks.BlockRelationship(
       blockerDid: try DID(didString: testDid),
       blockedDid: try DID(didString: testTargetDid),
       createdAt: ATProtocolDate(date: Date()),
       blockUri: try? ATProtocolURI(uriString: "at://did:plc:test123/app.bsky.graph.block/xyz")
     )
 
-    let expectedOutput = BlueCatbirdMlsCheckBlocks.Output(
+    let expectedOutput = BlueCatbirdMlsChatBlocks.Output(
       blocks: [blockRelationship],
       checkedAt: ATProtocolDate(date: Date())
     )
@@ -333,8 +328,8 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.blocks.count == 1)
-    #expect(output?.blocks.first?.blockerDid.description == testDid)
+    #expect(output?.blocks?.count == 1)
+    #expect(output?.blocks?.first?.blockerDid.description == testDid)
   }
 
   @Test("checkBlocks - too many DIDs error")
@@ -360,18 +355,14 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let cipherSuiteStats = BlueCatbirdMlsGetKeyPackageStats.CipherSuiteStats(
-      cipherSuite: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+    let stats = BlueCatbirdMlsChatPublishKeyPackages.KeyPackageStats(
+      published: 20,
       available: 15,
-      consumed: 5
+      expired: 5
     )
 
-    let expectedOutput = BlueCatbirdMlsGetKeyPackageStats.Output(
-      available: 15,
-      threshold: 10,
-      needsReplenish: false,
-      oldestExpiresIn: "720h",
-      byCipherSuite: [cipherSuiteStats]
+    let expectedOutput = BlueCatbirdMlsChatPublishKeyPackages.Output(
+      stats: stats
     )
     mockClient.mockGetKeyPackageStatsResponse = (200, expectedOutput)
 
@@ -381,10 +372,9 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.available == 15)
-    #expect(output?.threshold == 10)
-    #expect(output?.needsReplenish == false)
-    #expect(output?.byCipherSuite?.count == 1)
+    #expect(output?.stats.available == 15)
+    #expect(output?.stats.published == 20)
+    #expect(output?.stats.expired == 5)
   }
 
   @Test("getKeyPackageStats - needs replenish")
@@ -392,12 +382,13 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let expectedOutput = BlueCatbirdMlsGetKeyPackageStats.Output(
-      available: 5,
-      threshold: 10,
-      needsReplenish: true,
-      oldestExpiresIn: "48h",
-      byCipherSuite: nil
+    let stats = BlueCatbirdMlsChatPublishKeyPackages.KeyPackageStats(
+      published: 5,
+      available: 2,
+      expired: 3
+    )
+    let expectedOutput = BlueCatbirdMlsChatPublishKeyPackages.Output(
+      stats: stats
     )
     mockClient.mockGetKeyPackageStatsResponse = (200, expectedOutput)
 
@@ -407,8 +398,8 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.needsReplenish == true)
-    #expect(output?.available < (output?.threshold ?? 0))
+    #expect(output?.stats.available == 2)
+    #expect(output?.stats.expired == 3)
   }
 
   // MARK: - Get Admin Stats Tests
@@ -418,31 +409,8 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let reportCategories = BlueCatbirdMlsGetAdminStats.ReportCategoryCounts(
-      harassment: 5,
-      spam: 3,
-      hateSpeech: 2,
-      violence: 1,
-      sexualContent: 0,
-      impersonation: 0,
-      privacyViolation: 1,
-      otherCategory: 2
-    )
-
-    let moderationStats = BlueCatbirdMlsGetAdminStats.ModerationStats(
-      totalReports: 14,
-      pendingReports: 3,
-      resolvedReports: 11,
-      totalRemovals: 8,
-      blockConflictsResolved: 2,
-      reportsByCategory: reportCategories,
-      averageResolutionTimeHours: 4
-    )
-
-    let expectedOutput = BlueCatbirdMlsGetAdminStats.Output(
-      stats: moderationStats,
-      generatedAt: ATProtocolDate(date: Date()),
-      convoId: testConvoId
+    let expectedOutput = BlueCatbirdMlsChatUpdateConvo.Output(
+      success: true
     )
     mockClient.mockGetAdminStatsResponse = (200, expectedOutput)
 
@@ -452,13 +420,7 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.stats.totalReports == 14)
-    #expect(output?.stats.pendingReports == 3)
-    #expect(output?.stats.resolvedReports == 11)
-    #expect(output?.stats.totalRemovals == 8)
-    #expect(output?.stats.reportsByCategory?.harassment == 5)
-    #expect(output?.stats.averageResolutionTimeHours == 4)
-    #expect(output?.convoId == testConvoId)
+    #expect(output?.success == true)
   }
 
   @Test("getAdminStats - not authorized")
@@ -490,7 +452,7 @@ struct MLSModerationAPITests {
       capturedKeys.append(input.idempotencyKey)
     }
 
-    let expectedOutput = BlueCatbirdMlsRemoveMember.Output(ok: true, epochHint: 1)
+    let expectedOutput = BlueCatbirdMlsChatCommitGroupChange.Output(success: true, newEpoch: 1)
     mockClient.mockRemoveMemberResponse = (200, expectedOutput)
 
     // Make two calls
@@ -511,23 +473,23 @@ struct MLSModerationAPITests {
 final class MockATProtoClient: ATProtoClient {
 
   // Mock responses
-  var mockRemoveMemberResponse: (Int, BlueCatbirdMlsRemoveMember.Output?)?
-  var mockPromoteAdminResponse: (Int, BlueCatbirdMlsPromoteAdmin.Output?)?
-  var mockDemoteAdminResponse: (Int, BlueCatbirdMlsDemoteAdmin.Output?)?
-  var mockReportMemberResponse: (Int, BlueCatbirdMlsReportMember.Output?)?
-  var mockGetReportsResponse: (Int, BlueCatbirdMlsGetReports.Output?)?
-  var mockResolveReportResponse: (Int, BlueCatbirdMlsResolveReport.Output?)?
-  var mockCheckBlocksResponse: (Int, BlueCatbirdMlsCheckBlocks.Output?)?
-  var mockGetBlockStatusResponse: (Int, BlueCatbirdMlsGetBlockStatus.Output?)?
-  var mockHandleBlockChangeResponse: (Int, BlueCatbirdMlsHandleBlockChange.Output?)?
-  var mockGetKeyPackageStatsResponse: (Int, BlueCatbirdMlsGetKeyPackageStats.Output?)?
-  var mockGetAdminStatsResponse: (Int, BlueCatbirdMlsGetAdminStats.Output?)?
+  var mockRemoveMemberResponse: (Int, BlueCatbirdMlsChatCommitGroupChange.Output?)?
+  var mockPromoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
+  var mockDemoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
+  var mockReportMemberResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
+  var mockGetReportsResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
+  var mockResolveReportResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
+  var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
+  var mockGetBlockStatusResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
+  var mockHandleBlockChangeResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
+  var mockGetKeyPackageStatsResponse: (Int, BlueCatbirdMlsChatPublishKeyPackages.Output?)?
+  var mockGetAdminStatsResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
 
   // Callback hooks for verifying request parameters
-  var onRemoveMember: ((BlueCatbirdMlsRemoveMember.Input) -> Void)?
-  var onPromoteAdmin: ((BlueCatbirdMlsPromoteAdmin.Input) -> Void)?
-  var onDemoteAdmin: ((BlueCatbirdMlsDemoteAdmin.Input) -> Void)?
-  var onReportMember: ((BlueCatbirdMlsReportMember.Input) -> Void)?
+  var onRemoveMember: ((BlueCatbirdMlsChatCommitGroupChange.Input) -> Void)?
+  var onPromoteAdmin: ((BlueCatbirdMlsChatUpdateConvo.Input) -> Void)?
+  var onDemoteAdmin: ((BlueCatbirdMlsChatUpdateConvo.Input) -> Void)?
+  var onReportMember: ((BlueCatbirdMlsChatReport.Input) -> Void)?
 
   // Override ATProtoClient initializer
   init() {

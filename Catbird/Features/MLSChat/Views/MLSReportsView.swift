@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSReportsView.swift
 //  Catbird
@@ -35,10 +35,10 @@ struct MLSReportsView: View {
     // Wrapper to make ReportView Identifiable for sheet presentation
     private struct IdentifiableReport: Identifiable {
         let id: String
-        let report: BlueCatbirdMlsGetReports.ReportView
+        let report: BlueCatbirdMlsChatReport.ReportView
 
-        init(_ report: BlueCatbirdMlsGetReports.ReportView) {
-            self.id = report.id
+        init(_ report: BlueCatbirdMlsChatReport.ReportView) {
+            self.id = report.reportId
             self.report = report
         }
     }
@@ -128,7 +128,7 @@ struct MLSReportsView: View {
             // Pending reports section
             if !viewModel.pendingReports.isEmpty {
                 Section {
-                    ForEach(viewModel.pendingReports, id: \.id) { report in
+                    ForEach(viewModel.pendingReports, id: \.reportId) { report in
                         ReportRow(report: report, viewModel: viewModel)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -175,7 +175,7 @@ struct MLSReportsView: View {
             // Resolved reports section
             if !viewModel.resolvedReports.isEmpty {
                 Section {
-                    ForEach(viewModel.resolvedReports, id: \.id) { report in
+                    ForEach(viewModel.resolvedReports, id: \.reportId) { report in
                         ReportRow(report: report, viewModel: viewModel, isResolved: true)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -238,7 +238,7 @@ struct MLSReportsView: View {
 
 @available(iOS 26.0, *)
 private struct ReportRow: View {
-    let report: BlueCatbirdMlsGetReports.ReportView
+    let report: BlueCatbirdMlsChatReport.ReportView
     let viewModel: MLSReportsViewModel
     var isResolved: Bool = false
 
@@ -273,7 +273,7 @@ private struct ReportRow: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(viewModel.getRelativeTime(for: report.createdAt))
+                    Text(viewModel.getRelativeTime(for: report.submittedAt))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -352,7 +352,7 @@ private struct ReportRow: View {
 
 @available(iOS 26.0, *)
 private struct ReportResolutionSheet: View {
-    let report: BlueCatbirdMlsGetReports.ReportView
+    let report: BlueCatbirdMlsChatReport.ReportView
     let viewModel: MLSReportsViewModel
     let onDismiss: () -> Void
 
@@ -378,7 +378,7 @@ private struct ReportResolutionSheet: View {
                 Section("Report Details") {
                     LabeledContent("Reporter", value: viewModel.getDisplayName(for: report.reporterDid))
                     LabeledContent("Reported", value: viewModel.getDisplayName(for: report.reportedDid))
-                    LabeledContent("Created", value: viewModel.getAbsoluteDate(for: report.createdAt))
+                    LabeledContent("Created", value: viewModel.getAbsoluteDate(for: report.submittedAt))
                     LabeledContent("Status", value: report.status.capitalized)
                 }
 
@@ -543,7 +543,7 @@ private struct ReportResolutionSheet: View {
                 notes: resolutionNotes.isEmpty ? nil : resolutionNotes
             )
 
-            logger.info("Successfully resolved report: \(self.report.id)")
+            logger.info("Successfully resolved report: \(self.report.reportId)")
             onDismiss()
             dismiss()
         } catch {

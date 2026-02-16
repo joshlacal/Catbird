@@ -104,6 +104,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // UICollectionView invalid item count crashes under rapid updates.
   private var isApplyingSnapshot = false
   private var pendingSnapshot: NSDiffableDataSourceSnapshot<Section, Item>?
+  private var temporarySectionEstimatedHeights: [Section: CGFloat] = [:]
+  private var hasLoggedInitialRevealFirstPaintDiagnostics = false
 
   private static let mainPostID = "main-post-id"
   
@@ -198,10 +200,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
 
     isApplyingSnapshot = true
+    let shouldLogTemporaryInitialDiagnostics = !hasScrolledToMainPost
+    if shouldLogTemporaryInitialDiagnostics {
+      controllerLogger.debug(
+        "🧪 TEMP THREAD JUMP: applySnapshot begin - sections: \(snapshot.sectionIdentifiers.count), items: \(snapshot.itemIdentifiers.count), contentOffsetY: \(self.collectionView.contentOffset.y)"
+      )
+    }
 
     UIView.performWithoutAnimation {
       dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
         guard let self else { return }
+        if shouldLogTemporaryInitialDiagnostics {
+          self.controllerLogger.debug(
+            "🧪 TEMP THREAD JUMP: applySnapshot completion - contentOffsetY: \(self.collectionView.contentOffset.y), hasPendingSnapshot: \(self.pendingSnapshot != nil)"
+          )
+        }
         self.isApplyingSnapshot = false
 
         // If another snapshot arrived while applying, apply the latest now
@@ -560,64 +573,43 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   private func createCompositionalLayout() -> UICollectionViewLayout {
-    // Cache height estimates to avoid redundant calculations
-    let heightCache = NSCache<NSString, NSNumber>()
+    let parentPostsEstimatedHeightFloor: CGFloat = 200
+    let mainPostEstimatedHeightFloor: CGFloat = 400
+    let repliesEstimatedHeightFloor: CGFloat = 250
 
     let layoutProvider: UICollectionViewCompositionalLayoutSectionProvider = {
       [weak self] (sectionIndex, _) -> NSCollectionLayoutSection? in
       guard let self = self, let section = Section(rawValue: sectionIndex) else { return nil }
 
-      // Check cache first to avoid redundant calculations
-      let cacheKey = "section_\(sectionIndex)" as NSString
-      if let cachedHeight = heightCache.object(forKey: cacheKey) {
-        return self.createSection(with: cachedHeight.doubleValue, for: section)
-      }
-
-      // Get snapshot for item-specific height calculations
       var estimatedHeight: CGFloat
 
-      // Use more accurate height estimates based on content
+      // Use pessimistic (max) height estimates across all items in each section.
+      // Overestimates cause cells to shrink (invisible), while underestimates cause
+      // cells to grow and push content down (the visible "jump scare").
       switch section {
       case .loadMoreParents:
         estimatedHeight = 50  // Fixed height for load more button
 
       case .parentPosts:
-        if !self.parentPosts.isEmpty {
-          // Try to use real content for better estimates
-          if let firstParent = self.parentPosts.first {
-            estimatedHeight = self.heightCalculator.calculateParentPostHeight(for: firstParent)
-          } else {
-            estimatedHeight = 150  // Fallback
-          }
-        } else {
-          estimatedHeight = 150  // Default if no parents
-        }
+        let computedHeight = self.parentPosts
+            .map { self.heightCalculator.calculateParentPostHeight(for: $0) }
+            .max() ?? parentPostsEstimatedHeightFloor
+        estimatedHeight = max(computedHeight, parentPostsEstimatedHeightFloor)
 
       case .mainPost:
-        if let mainPost = self.mainPost {
-          // Calculate main post height including any special styling
-          estimatedHeight = self.heightCalculator.calculateHeight(
-            for: mainPost,
+        let computedHeight = self.mainPost.map {
+          self.heightCalculator.calculateHeight(
+            for: $0,
             mode: .mainPost
           )
-        } else {
-          estimatedHeight = 300  // Default fallback
-        }
+        } ?? mainPostEstimatedHeightFloor
+        estimatedHeight = max(computedHeight, mainPostEstimatedHeightFloor)
 
       case .replies:
-        if !self.replyWrappers.isEmpty {
-          // Get estimated height from first reply
-          if let firstReply = self.replyWrappers.first {
-            estimatedHeight = self.heightCalculator.calculateReplyHeight(
-              for: firstReply,
-              showingNestedReply: firstReply.hasReplies
-            )
-          } else {
-            estimatedHeight = 180  // Fallback
-          }
-        } else {
-          estimatedHeight = 180  // Default if no replies
-        }
+        let computedHeight = self.replyWrappers
+            .map { self.heightCalculator.calculateReplyHeight(for: $0, showingNestedReply: $0.hasReplies) }
+            .max() ?? repliesEstimatedHeightFloor
+        estimatedHeight = max(computedHeight, repliesEstimatedHeightFloor)
         
       case .showMoreReplies:
         estimatedHeight = 50  // Fixed height for show more button
@@ -626,8 +618,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         estimatedHeight = 600
       }
 
-      // Cache for future use
-      heightCache.setObject(NSNumber(value: Double(estimatedHeight)), forKey: cacheKey)
+      self.temporarySectionEstimatedHeights[section] = estimatedHeight
 
       return self.createSection(with: estimatedHeight, for: section)
     }
@@ -792,6 +783,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       loadingView.isHidden = true
       
       // Apply snapshot synchronously without animations
+      controllerLogger.debug(
+        "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyWrappers.count), hasMainPost: \(self.mainPost != nil)"
+      )
       updateDataSnapshot(animatingDifferences: false)
       
       isLoading = false
@@ -799,32 +793,48 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       if mainPost != nil && !hasScrolledToMainPost {
         // Wait for collection view to complete layout after snapshot application
         // This is crucial when load more cell is present
+        controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: initial layout pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        )
         UIView.performWithoutAnimation {
           collectionView.performBatchUpdates({
             // Force layout update
+            self.controllerLogger.debug("🧪 TEMP THREAD JUMP: initial layoutIfNeeded begin")
             self.collectionView.layoutIfNeeded()
+            self.controllerLogger.debug(
+              "🧪 TEMP THREAD JUMP: initial layoutIfNeeded end - contentOffsetY: \(self.collectionView.contentOffset.y)"
+            )
           }) { _ in }
         }
+        controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: initial layout pass end - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        )
         // Proceed immediately after ensuring layout without animations
         do {
           // Now scroll to main post after layout is complete
-          self.scrollToMainPostWithPartialParentVisibility(animated: false)
+          self.controllerLogger.debug(
+            "🧪 TEMP THREAD JUMP: before scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
+          )
+          self.scrollToMainPostWithPartialParentVisibility(animated: false) { [weak self] in
+            guard let self else { return }
+            self.controllerLogger.debug(
+              "🧪 TEMP THREAD JUMP: initial stabilization complete - contentOffsetY: \(self.collectionView.contentOffset.y)"
+            )
+            // Fade in collection view only after stabilization completes
+            self.runInitialRevealAnimation(sequence: "initial-scroll-path")
+            // If VoiceOver is running, post focus to main post
+            if UIAccessibility.isVoiceOverRunning {
+              self.focusVoiceOverOnMainPost()
+            }
+          }
+          self.controllerLogger.debug(
+            "🧪 TEMP THREAD JUMP: after scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
+          )
           self.hasScrolledToMainPost = true
-          
-          // Fade in collection view to mask any layout settling animations
-          UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut]) {
-            self.collectionView.alpha = 1
-          }
-          // If VoiceOver is running, post focus to main post
-          if UIAccessibility.isVoiceOverRunning {
-            self.focusVoiceOverOnMainPost()
-          }
         }
       } else {
         // Fade in collection view to mask any layout settling animations
-        UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut]) {
-          self.collectionView.alpha = 1
-        }
+        self.runInitialRevealAnimation(sequence: "initial-no-scroll-path")
         // If VoiceOver is running, post focus to main post
         if UIAccessibility.isVoiceOverRunning {
           self.focusVoiceOverOnMainPost()
@@ -1111,6 +1121,59 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return false
   }
 
+  private func runInitialRevealAnimation(sequence: String) {
+    controllerLogger.debug(
+      "🧪 TEMP THREAD JUMP: \(sequence) reveal animation about to start - alpha: \(self.collectionView.alpha)"
+    )
+    UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut]) {
+      self.collectionView.alpha = 1
+    } completion: { [weak self] finished in
+      guard let self else { return }
+      self.controllerLogger.debug(
+        "🧪 TEMP THREAD JUMP: \(sequence) reveal animation completion begin - finished: \(finished), alpha: \(self.collectionView.alpha)"
+      )
+      self.logInitialRevealFirstPaintDiagnosticsIfNeeded()
+      self.controllerLogger.debug("🧪 TEMP THREAD JUMP: \(sequence) reveal animation completion end")
+    }
+    controllerLogger.debug("🧪 TEMP THREAD JUMP: \(sequence) reveal animation started")
+  }
+
+  private func logInitialRevealFirstPaintDiagnosticsIfNeeded() {
+    guard !hasLoggedInitialRevealFirstPaintDiagnostics else { return }
+    hasLoggedInitialRevealFirstPaintDiagnostics = true
+
+    collectionView.layoutIfNeeded()
+
+    let visibleIndexPaths = collectionView.indexPathsForVisibleItems.sorted {
+      if $0.section == $1.section {
+        return $0.item < $1.item
+      }
+      return $0.section < $1.section
+    }
+
+    guard !visibleIndexPaths.isEmpty else {
+      controllerLogger.debug("🧪 TEMP THREAD JUMP: first-paint diagnostic - no visible cells")
+      return
+    }
+
+    let visibleSections = Set(visibleIndexPaths.compactMap { Section(rawValue: $0.section) })
+    for section in visibleSections.sorted(by: { $0.rawValue < $1.rawValue }) {
+      let estimatedHeightText = temporarySectionEstimatedHeights[section].map { "\($0)" } ?? "unavailable"
+      controllerLogger.debug(
+        "🧪 TEMP THREAD JUMP: first-paint section estimate - section: \(String(describing: section)), estimatedHeight: \(estimatedHeightText)"
+      )
+    }
+
+    for indexPath in visibleIndexPaths {
+      guard let section = Section(rawValue: indexPath.section) else { continue }
+      let estimatedHeightText = temporarySectionEstimatedHeights[section].map { "\($0)" } ?? "unavailable"
+      let actualHeightText = collectionView.layoutAttributesForItem(at: indexPath).map { "\($0.frame.height)" } ?? "unavailable"
+      controllerLogger.debug(
+        "🧪 TEMP THREAD JUMP: first-paint cell metrics - section: \(String(describing: section)), item: \(indexPath.item), estimatedSectionHeight: \(estimatedHeightText), actualFrameHeight: \(actualHeightText)"
+      )
+    }
+  }
+
   // MARK: - Scrolling
     private func focusVoiceOverOnMainPost() {
         guard let mainPost = mainPost else { return }
@@ -1131,22 +1194,28 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         }
     }
     
-    private func scrollToMainPostWithPartialParentVisibility(animated: Bool) {
-        guard mainPost != nil else { return }
+    private func scrollToMainPostWithPartialParentVisibility(animated: Bool, completion: (() -> Void)? = nil) {
+        guard mainPost != nil else {
+            completion?()
+            return
+        }
         
         // If VoiceOver is running and not animated, delay slightly
         if UIAccessibility.isVoiceOverRunning && !animated {
             // Give VoiceOver time to initialize before scrolling
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.performScrollToMainPost(animated: false)
+                self.performScrollToMainPost(animated: false, completion: completion)
             }
         } else {
-            performScrollToMainPost(animated: animated)
+            performScrollToMainPost(animated: animated, completion: completion)
         }
     }
     
-    private func performScrollToMainPost(animated: Bool) {
-        guard let mainPost = mainPost else { return }
+    private func performScrollToMainPost(animated: Bool, completion: (() -> Void)? = nil) {
+        guard let mainPost = mainPost else {
+            completion?()
+            return
+        }
         
         // Find the index path for the main post
         let snapshot = dataSource.snapshot()
@@ -1155,6 +1224,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         guard let sectionIndex = snapshot.indexOfSection(.mainPost),
               snapshot.numberOfItems(inSection: .mainPost) > 0
         else {
+            completion?()
             return
         }
         
@@ -1222,16 +1292,37 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           withDuration: 0.2,
           animations: {
             _ = calculateAndApplyOffset(true)
+          },
+          completion: { _ in
+            completion?()
           })
       } else {
         // For non-animated scrolling, do multiple passes to ensure stability
 
         // First pass - calculate initial position
-        _ = calculateAndApplyOffset(true)
+        self.controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: non-animated first pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        )
+        let firstPassOffset = calculateAndApplyOffset(true)
+        let firstPassVisibleTop = self.collectionView.layoutAttributesForItem(at: indexPath).map {
+          $0.frame.origin.y - self.collectionView.contentOffset.y
+        }
+        self.controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: non-animated first pass end - targetOffsetY: \(firstPassOffset.map { "\($0)" } ?? "nil"), contentOffsetY: \(self.collectionView.contentOffset.y), mainVisibleTop: \(firstPassVisibleTop.map { "\($0)" } ?? "unavailable")"
+        )
 
         // Second immediate pass - recalculate and apply refined position
         // This helps account for any layout adjustments after the first scroll
-        _ = calculateAndApplyOffset(true)
+        self.controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: non-animated second pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        )
+        let secondPassOffset = calculateAndApplyOffset(true)
+        let secondPassVisibleTop = self.collectionView.layoutAttributesForItem(at: indexPath).map {
+          $0.frame.origin.y - self.collectionView.contentOffset.y
+        }
+        self.controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: non-animated second pass end - targetOffsetY: \(secondPassOffset.map { "\($0)" } ?? "nil"), contentOffsetY: \(self.collectionView.contentOffset.y), mainVisibleTop: \(secondPassVisibleTop.map { "\($0)" } ?? "unavailable")"
+        )
 
         // Log position after immediate passes
         if let attrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
@@ -1254,10 +1345,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
         // Add a delayed verification pass to catch any post-layout position drift
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+          self.controllerLogger.debug(
+            "🧪 TEMP THREAD JUMP: delayed verification pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
+          )
           if let attrs = self.collectionView.layoutAttributesForItem(at: indexPath) {
             let visibleTop = attrs.frame.origin.y - self.collectionView.contentOffset.y
             self.controllerLogger.debug(
               "DELAYED position check - Main post visible top offset: \(visibleTop)pt")
+            self.controllerLogger.debug(
+              "🧪 TEMP THREAD JUMP: delayed verification pass metrics - contentOffsetY: \(self.collectionView.contentOffset.y), mainVisibleTop: \(visibleTop)"
+            )
 
             // If position has drifted, correct it again
             let adjustedContentInset = self.collectionView.adjustedContentInset
@@ -1285,7 +1382,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
               self.collectionView.setContentOffset(CGPoint(x: 0, y: correctedOffset), animated: false)
               CATransaction.commit()
             }
+          } else {
+            self.controllerLogger.debug(
+              "🧪 TEMP THREAD JUMP: delayed verification pass metrics unavailable - contentOffsetY: \(self.collectionView.contentOffset.y)"
+            )
           }
+          completion?()
         }
       }
     }
@@ -2338,6 +2440,8 @@ extension ThreadViewController: UICollectionViewDelegate, UICollectionViewDataSo
 // MARK: - Cell Types
 @available(iOS 18.0, *)
 final class ParentPostCell: UICollectionViewCell {
+  private var configuredIdentity: String?
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     // Background color will be set in configure method
@@ -2378,10 +2482,9 @@ final class ParentPostCell: UICollectionViewCell {
 
     // Only reconfigure if needed (using post id as identity check)
     if contentConfiguration == nil
-      || parentPost.id != (contentView.tag != 0 ? String(contentView.tag) : nil) {
+      || parentPost.id != configuredIdentity {
 
-      // Store post ID in tag for comparison on reuse
-      contentView.tag = parentPost.id.hashValue
+      configuredIdentity = parentPost.id
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
@@ -2395,11 +2498,14 @@ final class ParentPostCell: UICollectionViewCell {
     super.prepareForReuse()
     // Clean up resources when cell is reused
     contentConfiguration = nil
+    configuredIdentity = nil
   }
 }
 
 @available(iOS 18.0, *)
 final class MainPostCell: UICollectionViewCell {
+  private var configuredIdentity: String?
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     // Background color will be set in configure method
@@ -2427,6 +2533,8 @@ final class MainPostCell: UICollectionViewCell {
   }
 
   func configure(post: AppBskyFeedDefs.PostView, appState: AppState, path: Binding<NavigationPath>) {
+    let postIdentity = post.uri.uriString()
+
     // Set themed background color
       contentView.backgroundColor = UIColor(
         Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
@@ -2451,14 +2559,13 @@ final class MainPostCell: UICollectionViewCell {
         Divider()
           .padding(.bottom, 9)
       }
-    .id(post.uri.uriString())
+    .id(postIdentity)
 
     // Only reconfigure if needed (using post URI as identity check)
     if contentConfiguration == nil
-      || post.uri.uriString() != (contentView.tag != 0 ? String(contentView.tag) : nil) {
+      || postIdentity != configuredIdentity {
 
-      // Store identity in tag for comparison on reuse
-      contentView.tag = post.uri.uriString().hashValue
+      configuredIdentity = postIdentity
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
@@ -2471,11 +2578,14 @@ final class MainPostCell: UICollectionViewCell {
   override func prepareForReuse() {
     super.prepareForReuse()
     contentConfiguration = nil
+    configuredIdentity = nil
   }
 }
 
 @available(iOS 18.0, *)
 final class ReplyCell: UICollectionViewCell {
+  private var configuredIdentity: String?
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     // Background color will be set in configure method
@@ -2529,10 +2639,9 @@ final class ReplyCell: UICollectionViewCell {
 
     // Only reconfigure if needed (using reply id as identity check)
     if contentConfiguration == nil
-      || replyWrapper.id != (contentView.tag != 0 ? String(contentView.tag) : nil) {
+      || replyWrapper.id != configuredIdentity {
 
-      // Store reply ID in tag for comparison on reuse
-      contentView.tag = replyWrapper.id.hashValue
+      configuredIdentity = replyWrapper.id
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
@@ -2545,6 +2654,7 @@ final class ReplyCell: UICollectionViewCell {
   override func prepareForReuse() {
     super.prepareForReuse()
     contentConfiguration = nil
+    configuredIdentity = nil
   }
 }
 
@@ -2766,8 +2876,13 @@ final class SpacerCell: UICollectionViewCell {
 /// Centers its content and constrains it to a maximum width while allowing the
 /// surrounding container (e.g., collection view cell) to be full-width.
 struct WidthLimitedContainer<Content: View>: View {
+  @Environment(\.horizontalSizeClass) private var hSizeClass
   let maxWidth: CGFloat
   @ViewBuilder var content: Content
+
+  private var effectiveMaxWidth: CGFloat {
+    hSizeClass == .compact ? .infinity : maxWidth
+  }
 
   init(maxWidth: CGFloat = 600, @ViewBuilder content: () -> Content) {
     self.maxWidth = maxWidth
@@ -2778,7 +2893,7 @@ struct WidthLimitedContainer<Content: View>: View {
     HStack(spacing: 0) {
       Spacer(minLength: 0)
       content
-        .frame(maxWidth: maxWidth, alignment: .center)
+        .frame(maxWidth: effectiveMaxWidth, alignment: .center)
       Spacer(minLength: 0)
     }
     .frame(maxWidth: .infinity)
@@ -3010,4 +3125,3 @@ extension ReplyWrapper {
     return threadItem.uri
   }
 }
-

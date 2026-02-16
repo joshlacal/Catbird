@@ -1,7 +1,6 @@
 import CatbirdMLSCore
 import Foundation
 import Petrel
-import CatbirdMLSService
 
 /// Adapter that conforms MLS messages to UnifiedChatMessage
 struct MLSMessageAdapter: UnifiedChatMessage {
@@ -47,7 +46,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   #endif
 
   init(
-    messageView: BlueCatbirdMlsDefs.MessageView,
+    messageView: BlueCatbirdMlsChatDefs.MessageView,
     payload: MLSMessagePayload,
     senderDID: String,
     currentUserDID: String,

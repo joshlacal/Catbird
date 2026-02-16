@@ -8,6 +8,7 @@
 
 import SwiftUI
 import OSLog
+import CatbirdMLSCore
 
 /// Global settings manager for experimental features
 /// Features here are considered "highly experimental" and require explicit opt-in
@@ -24,6 +25,9 @@ final class ExperimentalSettings {
     
     /// Storage key prefix for per-account MLS warning acknowledgment
     private static let mlsWarningAcknowledgedKeyPrefix = "blue.catbird.mls.warningAcknowledged."
+    
+    /// Storage key prefix for per-account declaration rollout mode
+    private static let mlsDeclarationRolloutModeKeyPrefix = "blue.catbird.mlsChat.declaration.rollout."
     
     private init() {}
     
@@ -90,6 +94,24 @@ final class ExperimentalSettings {
                 let did = String(key.dropFirst(prefix.count))
                 return UserDefaults.standard.bool(forKey: key) ? did : nil
             }
+    }
+
+    /// Declaration rollout mode for a specific account.
+    /// Defaults to `.shadow` for safe rollout when unset.
+    func declarationRolloutMode(for accountDID: String) -> MLSDeclarationRolloutMode {
+        let key = Self.mlsDeclarationRolloutModeKeyPrefix + accountDID
+        guard let raw = UserDefaults.standard.string(forKey: key),
+              let mode = MLSDeclarationRolloutMode(rawValue: raw) else {
+            return .shadow
+        }
+        return mode
+    }
+
+    /// Persist declaration rollout mode for a specific account.
+    func setDeclarationRolloutMode(_ mode: MLSDeclarationRolloutMode, for accountDID: String) {
+        let key = Self.mlsDeclarationRolloutModeKeyPrefix + accountDID
+        UserDefaults.standard.set(mode.rawValue, forKey: key)
+        logger.info("Declaration rollout mode set to \(mode.rawValue, privacy: .public) for account: \(accountDID.prefix(20))...")
     }
     
     // MARK: - Legacy Compatibility (deprecated, use per-account methods)

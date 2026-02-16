@@ -98,33 +98,37 @@ class LanguageDetector {
 
 // MARK: - Content Language Filter
 
+@Observable
 @MainActor
-class ContentLanguageFilter: ObservableObject {
-    @Published var isEnabled: Bool = true
-    @Published var contentLanguages: [String] = []
+class ContentLanguageFilter {
+    var isEnabled: Bool = true
+    var contentLanguages: [String] = []
     
     private let detector = LanguageDetector.shared
     
+    nonisolated(unsafe) private var notificationTask: Task<Void, Never>?
+
     init() {
         loadPreferences()
-        
+
         // Listen for language preference changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(languagePreferencesChanged),
-            name: NSNotification.Name("LanguagePreferencesChanged"),
-            object: nil
-        )
+        notificationTask = Task { [weak self] in
+            let notifications = NotificationCenter.default.notifications(named: NSNotification.Name("LanguagePreferencesChanged"))
+            for await _ in notifications {
+                guard !Task.isCancelled else { break }
+                await self?.loadPreferences()
+            }
+        }
     }
-    
+
+    deinit {
+        notificationTask?.cancel()
+    }
+
     private func loadPreferences() {
         let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
         contentLanguages = defaults?.stringArray(forKey: "contentLanguages") ?? ["en"]
         isEnabled = defaults?.bool(forKey: "enableLanguageFilter") ?? true
-    }
-    
-    @objc private func languagePreferencesChanged() {
-        loadPreferences()
     }
     
     /// Check if a post should be shown based on language filters

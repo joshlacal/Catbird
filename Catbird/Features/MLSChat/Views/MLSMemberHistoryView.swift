@@ -1,4 +1,4 @@
-import CatbirdMLSService
+import CatbirdMLSCore
 //
 //  MLSMemberHistoryView.swift
 //  Catbird
@@ -8,7 +8,6 @@ import CatbirdMLSService
 
 #if os(iOS)
 import SwiftUI
-import CatbirdMLSCore
 import OSLog
 
 
