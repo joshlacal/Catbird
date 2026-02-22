@@ -482,3 +482,10 @@ private func colorFromString(_ colorName: String) -> Color {
         return .primary
     }
 }
+
+#Preview("AccountSettingsView") {
+  NavigationStack {
+    AccountSettingsView()
+  }
+  .previewWithAuthenticatedState()
+}

@@ -392,3 +392,14 @@ struct ListDetailView: View {
     }
   }
 }
+
+#Preview("ListDetailView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    ListDetailView(
+      listURIString: "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.graph.list/example",
+      path: $path
+    )
+  }
+  .previewWithAuthenticatedState()
+}

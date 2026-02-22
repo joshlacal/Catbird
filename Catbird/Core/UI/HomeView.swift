@@ -209,3 +209,15 @@ struct HomeView: View {
     )
   }
 }
+
+#Preview("Home View") {
+  HomeView(
+    selectedTab: .constant(0),
+    lastTappedTab: .constant(nil),
+    selectedFeed: .constant(.timeline),
+    currentFeedName: .constant("Following"),
+    isDrawerOpen: .constant(false),
+    isRootView: .constant(true)
+  )
+  .previewWithAuthenticatedState()
+}

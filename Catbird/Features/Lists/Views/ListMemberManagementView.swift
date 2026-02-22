@@ -696,3 +696,10 @@ enum InitializationError: LocalizedError {
     }
   }
 }
+
+#Preview("ListMemberManagementView") {
+  NavigationStack {
+    ListMemberManagementView(listURI: "at://did:plc:example/app.bsky.graph.list/example")
+  }
+  .previewWithAuthenticatedState()
+}

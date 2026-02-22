@@ -567,3 +567,10 @@ actor ImageProcessor {
     #endif
   }
 }
+
+#Preview("EditListView") {
+  NavigationStack {
+    EditListView(listURI: "at://did:plc:example/app.bsky.graph.list/example")
+  }
+  .previewWithAuthenticatedState()
+}

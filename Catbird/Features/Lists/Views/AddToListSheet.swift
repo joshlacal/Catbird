@@ -360,3 +360,12 @@ struct ListSelectionRow: View {
       }
   }
 }
+
+#Preview("AddToListSheet") {
+  AddToListSheet(
+    userDID: "did:plc:example",
+    userHandle: "example.bsky.social",
+    userDisplayName: "Example User"
+  )
+  .previewWithAuthenticatedState()
+}

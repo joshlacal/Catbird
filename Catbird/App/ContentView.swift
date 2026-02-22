@@ -1044,3 +1044,8 @@ private struct AppStateThemeModifier: ViewModifier {
     }
   }
 }
+
+#Preview {
+    ContentView()
+        .previewWithAuthenticatedState()
+}

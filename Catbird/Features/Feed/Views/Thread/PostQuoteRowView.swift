@@ -67,3 +67,12 @@ struct PostQuoteRowView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
+
+#Preview("PostQuoteRowView") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { _, postView in
+    PostQuoteRowView(post: postView, path: .constant(NavigationPath()))
+      .padding()
+  }
+}

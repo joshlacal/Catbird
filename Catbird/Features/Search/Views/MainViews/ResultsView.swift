@@ -810,3 +810,15 @@ struct ResultsView: View {
 //        return "now"
 //    }
 // }
+
+#Preview("ResultsView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      ResultsView(
+        viewModel: RefinedSearchViewModel(appState: appState),
+        path: .constant(NavigationPath()),
+        selectedContentType: .constant(.all)
+      )
+    }
+  }
+}

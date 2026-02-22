@@ -76,3 +76,15 @@ struct FollowingView: View {
         await viewModel.loadFollowing()
     }
 }
+
+#Preview("FollowingView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      FollowingView(
+        userDID: appState.userDID,
+        client: appState.atProtoClient,
+        path: .constant(NavigationPath())
+      )
+    }
+  }
+}

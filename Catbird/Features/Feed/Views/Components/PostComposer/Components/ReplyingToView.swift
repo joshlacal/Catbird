@@ -24,3 +24,10 @@ struct ReplyingToView: View {
     .padding(.horizontal, 12)
   }
 }
+#Preview("Replying To") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { _, post in
+    ReplyingToView(parentPost: post)
+  }
+}

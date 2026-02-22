@@ -224,3 +224,33 @@ struct PostEmbed: View {
         } ?? false
     }
 }
+
+#Preview("Post Embed") {
+  AsyncPreviewContent { appState in
+    PostEmbedPreviewLoader(appState: appState)
+  }
+}
+
+private struct PostEmbedPreviewLoader: View {
+  let appState: AppState
+  @State private var data: (post: AppBskyFeedDefs.PostView, embed: AppBskyFeedDefs.PostViewEmbedUnion)?
+
+  var body: some View {
+    Group {
+      if let data {
+        PostEmbed(
+          embed: data.embed,
+          labels: data.post.labels,
+          path: .constant(NavigationPath())
+        )
+        .environment(\.postID, data.post.cid.string)
+        .padding()
+      } else {
+        ProgressView("Loading embed...")
+      }
+    }
+    .task {
+      data = await PreviewData.firstPostWithEmbed(from: appState)
+    }
+  }
+}

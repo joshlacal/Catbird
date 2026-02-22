@@ -227,3 +227,19 @@ struct SuggestedProfilesSection: View {
         }
     }
 }
+
+#Preview("Suggested Profiles") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.suggestedProfiles(from: appState)
+  } content: { _, profiles in
+    NavigationStack {
+      ScrollView {
+        SuggestedProfilesSection(
+          profiles: Array(profiles.prefix(5)),
+          onSelect: { _ in },
+          onRefresh: {}
+        )
+      }
+    }
+  }
+}

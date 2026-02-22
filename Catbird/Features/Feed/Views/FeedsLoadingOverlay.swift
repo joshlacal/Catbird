@@ -20,3 +20,8 @@ struct FeedsLoadingOverlay: View {
     }
   }
 }
+
+#Preview("FeedsLoadingOverlay") {
+  FeedsLoadingOverlay(isLoading: true)
+    .previewWithAuthenticatedState()
+}

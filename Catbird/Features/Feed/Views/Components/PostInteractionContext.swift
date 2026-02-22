@@ -39,3 +39,12 @@ struct PostInteractionContext: View {
         .appFont(AppTextRole.caption)
     }
 }
+
+#Preview("PostInteractionContext") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { _, postView in
+    PostInteractionContext(post: postView)
+      .padding()
+  }
+}

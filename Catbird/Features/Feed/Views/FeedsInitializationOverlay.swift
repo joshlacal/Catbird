@@ -21,3 +21,8 @@ struct FeedsInitializationOverlay: View {
     }
   }
 }
+
+#Preview("FeedsInitializationOverlay") {
+  FeedsInitializationOverlay(isInitialized: false)
+    .previewWithAuthenticatedState()
+}

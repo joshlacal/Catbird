@@ -1379,3 +1379,30 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   }
 }
 #endif
+
+#Preview("Image Grid") {
+  AsyncPreviewContent { appState in
+    ImageGridPreviewLoader(appState: appState)
+  }
+}
+
+private struct ImageGridPreviewLoader: View {
+  let appState: AppState
+  @State private var images: [AppBskyEmbedImages.ViewImage]?
+
+  var body: some View {
+    Group {
+      if let images {
+        ViewImageGridView(viewImages: images, shouldBlur: false)
+          .frame(height: 300)
+      } else {
+        ProgressView("Loading images...")
+      }
+    }
+    .task {
+      if let data = await PreviewData.firstPostWithImages(from: appState) {
+        images = data.images
+      }
+    }
+  }
+}

@@ -168,3 +168,16 @@ struct FAB: View {
     }
     
 }
+
+#Preview("FAB") {
+  ZStack {
+    Color(.systemGroupedBackground).ignoresSafeArea()
+    FAB(
+      composeAction: {},
+      feedsAction: {},
+      showFeedsButton: true,
+      hasMinimizedComposer: false,
+      clearDraftAction: nil
+    )
+  }
+}

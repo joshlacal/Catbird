@@ -28,14 +28,15 @@ import SwiftUI
 
   enum VideoType: Equatable {
     case hlsStream(playlistURL: URL, cid: CID, aspectRatio: AspectRatio?)
+    case bskyGif(playlistURL: URL, cid: CID, aspectRatio: AspectRatio?)
     case tenorGif(URI)
     case giphyGif(URI)
 
     var isGif: Bool {
       switch self {
-      case .tenorGif, .giphyGif:
+      case .tenorGif, .giphyGif, .bskyGif:
         return true
-      case .hlsStream(_, _, _):
+      case .hlsStream:
         return false
       }
     }
@@ -47,6 +48,9 @@ import SwiftUI
           && lAspect?.height == rAspect?.height
       case let (.tenorGif(lURI), .tenorGif(rURI)):
         return lURI == rURI
+      case let (.bskyGif(lURL, lCID, lAspect), .bskyGif(rURL, rCID, rAspect)):
+        return lURL == rURL && lCID == rCID && lAspect?.width == rAspect?.width
+          && lAspect?.height == rAspect?.height
       case let (.giphyGif(lURI), .giphyGif(rURI)):
         return lURI == rURI
       default:

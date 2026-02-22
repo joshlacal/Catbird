@@ -501,3 +501,8 @@ struct DiscoveryListRow: View {
     }
   }
 }
+
+#Preview("ListDiscoveryView") {
+  ListDiscoveryView()
+    .previewWithAuthenticatedState()
+}

@@ -184,4 +184,9 @@ struct CloudView: NSViewRepresentable {
         }
     }
 }
+
+#Preview("Cloud View") {
+  CloudView()
+    .frame(width: 300, height: 200)
+}
 #endif

@@ -593,3 +593,10 @@ extension AppBskyFeedDefs.GeneratorView: Identifiable {
         return uri.uriString()
     }
 }
+
+#Preview("AddFeedSheet") {
+  NavigationStack {
+    AddFeedSheet()
+  }
+  .previewWithAuthenticatedState()
+}

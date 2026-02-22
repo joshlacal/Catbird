@@ -447,3 +447,10 @@ struct CreateListView: View {
       .foregroundStyle(.secondary)
   }
 }
+
+#Preview("CreateListView") {
+  NavigationStack {
+    CreateListView()
+  }
+  .previewWithAuthenticatedState()
+}

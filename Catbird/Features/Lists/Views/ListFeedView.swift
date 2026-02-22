@@ -365,3 +365,11 @@ struct ListFeedView: View {
     }
   }
 }
+
+#Preview("ListFeedView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    ListFeedView(listURIString: "at://did:plc:example/app.bsky.graph.list/example", path: $path)
+  }
+  .previewWithAuthenticatedState()
+}

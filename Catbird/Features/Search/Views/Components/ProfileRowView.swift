@@ -244,3 +244,15 @@ struct ProfileRowView: View {
         return nil
     }
 }
+
+#Preview("Profile Row") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.myProfile(from: appState)
+  } content: { _, profile in
+    NavigationStack {
+      List {
+        ProfileRowView(profile: profile, path: .constant(NavigationPath()))
+      }
+    }
+  }
+}

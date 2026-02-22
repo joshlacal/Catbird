@@ -85,3 +85,9 @@ struct ShimmeringViewModifier: ViewModifier {
 }
 
 // Note: shimmering() extension is defined elsewhere in the codebase
+
+#Preview("LoadingRowsView") {
+  List {
+    LoadingRowsView(count: 5)
+  }
+}

@@ -71,3 +71,9 @@ struct LanguagePickerSheet: View {
   }
 }
 
+
+#Preview("LanguagePickerSheet") {
+  NavigationStack {
+    LanguagePickerSheet(selectedLanguages: .constant([]))
+  }
+}

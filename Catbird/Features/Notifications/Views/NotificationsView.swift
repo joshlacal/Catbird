@@ -1011,3 +1011,13 @@ struct AvatarStack: View {
     .offset(x: -3)
   }
 }
+
+#Preview("NotificationsView") {
+  AsyncPreviewContent { appState in
+    NotificationsView(
+      appState: appState,
+      selectedTab: .constant(2),
+      lastTappedTab: .constant(nil)
+    )
+  }
+}

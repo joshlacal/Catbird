@@ -908,3 +908,11 @@ struct ProfileAvatarView: View {
     }
   }
 }
+
+#Preview("AccountSwitcherView") {
+  NavigationStack {
+    AccountSwitcherView()
+  }
+  .environment(AppStateManager.shared)
+  .previewWithAuthenticatedState()
+}

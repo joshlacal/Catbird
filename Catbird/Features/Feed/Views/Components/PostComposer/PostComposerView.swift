@@ -1567,3 +1567,11 @@ struct DraftSavingModifier: ViewModifier {
             }
     }
 }
+
+#Preview("PostComposerView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      PostComposerView(appState: appState)
+    }
+  }
+}

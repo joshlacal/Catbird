@@ -118,7 +118,7 @@ final class VideoAssetManager {
           // Different loading strategy based on content type
           try await self.withTimeout(seconds: self.assetLoadTimeout) {
             switch model.type {
-            case .hlsStream(_, _, _):
+            case .hlsStream, .bskyGif:
               self.logger.debug("📹 Loading HLS stream asset for \(model.id)")
               // For HLS streams, ensure basic playability
               _ = try await asset.load(.isPlayable)
@@ -175,7 +175,7 @@ final class VideoAssetManager {
 
     // Create appropriate player based on content type
     switch model.type {
-    case .hlsStream(_, _, _):
+    case .hlsStream, .bskyGif:
       logger.debug("📹 Preparing HLS player for \(model.id)")
       return try await prepareHLSPlayer(for: model)
     case .tenorGif, .giphyGif:

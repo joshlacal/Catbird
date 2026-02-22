@@ -388,3 +388,15 @@ private struct ReplyZoomDestination: ViewModifier {
   }
 }
 #endif
+
+#Preview("ActionButtonsView") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { appState, postView in
+    ActionButtonsView(
+      post: postView,
+      postViewModel: PostViewModel(post: postView, appState: appState),
+      path: .constant(NavigationPath())
+    )
+  }
+}

@@ -225,4 +225,11 @@ struct ConversationSelectionRow: View {
     .buttonStyle(.plain)
   }
 }
+
+#Preview("Batch Message") {
+  NavigationStack {
+    BatchMessageView()
+  }
+  .previewWithAuthenticatedState()
+}
 #endif

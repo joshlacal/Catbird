@@ -55,3 +55,13 @@ struct PatternOverlay: View {
         .allowsHitTesting(false)
     }
 }
+
+#Preview("NoiseTextureView") {
+  NoiseTextureView()
+    .frame(width: 300, height: 300)
+}
+
+#Preview("PatternOverlay") {
+  PatternOverlay()
+    .frame(width: 300, height: 300)
+}

@@ -454,3 +454,14 @@ struct StarterPackView: View {
         isLoadingMore = false
     }
 }
+
+#Preview("StarterPackView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    StarterPackView(
+      uri: try! ATProtocolURI(uriString: "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.graph.starterpack/example"),
+      path: $path
+    )
+  }
+  .previewWithAuthenticatedState()
+}

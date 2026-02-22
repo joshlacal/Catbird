@@ -293,4 +293,16 @@ struct WaveformView_Previews: PreviewProvider {
     return (0..<32).map { _ in Float.random(in: 0...1) }
   }
 }
+
+#Preview("WaveformView") {
+  WaveformView(
+    samples: (0..<50).map { _ in Float.random(in: 0...1) },
+    currentLevel: 0.6,
+    isRecording: true,
+    accentColor: .blue
+  )
+  .frame(height: 60)
+  .padding()
+}
+
 #endif

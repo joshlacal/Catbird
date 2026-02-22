@@ -336,5 +336,13 @@ private struct MLSChatRequestRow: View {
   }
 }
 
+
+#Preview("MLSChatRequestsView") {
+  NavigationStack {
+    MLSChatRequestsView(onAcceptedConversation: nil)
+  }
+  .previewWithAuthenticatedState()
+}
+
 #endif
 

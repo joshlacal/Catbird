@@ -74,3 +74,10 @@ struct DiagnosticsSettingsView: View {
     }
   }
 }
+
+#Preview("DiagnosticsSettingsView") {
+  NavigationStack {
+    DiagnosticsSettingsView()
+  }
+  .previewWithAuthenticatedState()
+}

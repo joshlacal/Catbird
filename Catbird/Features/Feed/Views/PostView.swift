@@ -972,3 +972,20 @@ enum PostViewError {
     case parseError
     case permissionDenied
 }
+
+#Preview("PostView") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { appState, postView in
+    ScrollView {
+      PostView(
+        post: postView,
+        grandparentAuthor: nil,
+        isParentPost: false,
+        isSelectable: true,
+        path: .constant(NavigationPath()),
+        appState: appState
+      )
+    }
+  }
+}

@@ -224,4 +224,7 @@ struct ConversationListView: View {
   }
 }
 
+
+// ConversationListView requires ChatManager state; preview from ChatTabView instead
+
 #endif

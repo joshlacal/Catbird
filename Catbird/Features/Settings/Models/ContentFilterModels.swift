@@ -187,3 +187,14 @@ struct ContentVisibilitySelector: View {
         .padding(.vertical, 8)
     }
 }
+
+#Preview("Content Visibility Selector") {
+  @Previewable @State var selection: ContentVisibility = .warn
+  List {
+    ContentVisibilitySelector(
+      title: "Adult Content",
+      description: "Content that is sexual in nature",
+      selection: $selection
+    )
+  }
+}

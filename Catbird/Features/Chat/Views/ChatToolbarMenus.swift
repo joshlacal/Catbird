@@ -190,4 +190,18 @@ struct MessageRequestsButton: View {
       MessageRequestsView()
     }
   }
-}#endif
+}
+
+#Preview("ChatToolbarMenu") {
+  NavigationStack {
+    Text("Chat")
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          ChatToolbarMenu()
+        }
+      }
+  }
+  .previewWithAuthenticatedState()
+}
+
+#endif

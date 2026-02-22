@@ -74,3 +74,11 @@ struct MoreView: View {
         Spacer(minLength: 100)
     }
 }
+
+#Preview("MoreView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    MoreView(path: $path)
+  }
+  .previewWithAuthenticatedState()
+}

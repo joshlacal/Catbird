@@ -433,3 +433,19 @@ struct FeedDiscoveryHeaderView: View {
     }
   }
 }
+
+#Preview("Feed Discovery Header") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.popularFeeds(from: appState).first
+  } content: { appState, feed in
+    NavigationStack {
+      ScrollView {
+        FeedDiscoveryHeaderView(
+          feed: feed,
+          isSubscribed: false,
+          onSubscriptionToggle: {}
+        )
+      }
+    }
+  }
+}

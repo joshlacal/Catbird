@@ -65,3 +65,12 @@ struct EnhancedResultsSection<Content: View>: View {
     }
 }
 
+
+#Preview("EnhancedResultsSection") {
+  EnhancedResultsSection(title: "Posts", icon: "text.bubble", count: 42) {
+    ForEach(0..<3, id: \.self) { i in
+      Text("Result \(i)")
+        .padding()
+    }
+  }
+}

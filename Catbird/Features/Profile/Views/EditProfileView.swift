@@ -375,3 +375,17 @@ struct EditProfileView: View {
     }
   }
 }
+
+#Preview("EditProfileView") {
+  AsyncPreviewContent { appState in
+    EditProfileView(
+      isPresented: .constant(true),
+      viewModel: ProfileViewModel(
+        client: appState.atProtoClient,
+        userDID: appState.userDID,
+        currentUserDID: appState.userDID,
+        stateInvalidationBus: appState.stateInvalidationBus
+      )
+    )
+  }
+}

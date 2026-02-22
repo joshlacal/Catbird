@@ -119,3 +119,15 @@ struct TypeaheadView: View {
     }
     
 }
+
+#Preview("TypeaheadView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      TypeaheadView(
+        viewModel: RefinedSearchViewModel(appState: appState),
+        path: .constant(NavigationPath()),
+        searchText: .constant("swift")
+      )
+    }
+  }
+}

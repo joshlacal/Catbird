@@ -26,3 +26,8 @@ struct EmptyConversationView: View {
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 }
+
+#Preview("EmptyConversationView") {
+  EmptyConversationView()
+    .previewWithAuthenticatedState()
+}

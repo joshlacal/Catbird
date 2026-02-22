@@ -64,4 +64,15 @@ struct ChatProfileAvatarView: View {
     return String(profile.handle.description).uppercased()
 
   }
-}#endif
+}
+
+
+#Preview("ChatProfileAvatarView") {
+  HStack(spacing: 16) {
+    ChatProfileAvatarView(profile: nil, size: 40)
+    ChatProfileAvatarView(profile: nil, size: 60)
+  }
+  .padding()
+}
+
+#endif

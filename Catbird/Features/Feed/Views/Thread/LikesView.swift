@@ -113,3 +113,14 @@ struct LikesView: View {
         loading = false
     }
 }
+
+#Preview("LikesView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    LikesView(
+      postUri: "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3l2s5xxv6fn2c",
+      path: $path
+    )
+  }
+  .previewWithAuthenticatedState()
+}

@@ -266,3 +266,6 @@ verify_fault_ordering_setup.sh
 docs/
 .letta/
 .vscode/
+
+# Preview credentials (contains app password)
+PreviewSecrets.xcconfig

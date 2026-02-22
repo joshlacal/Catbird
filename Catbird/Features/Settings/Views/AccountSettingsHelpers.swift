@@ -301,3 +301,19 @@ struct HandleUpdateSheet: View {
         }
     }
 }
+
+#Preview("Email Update Sheet") {
+  EmailUpdateSheet(
+    currentEmail: "user@example.com",
+    onEmailUpdated: { _ in }
+  )
+  .previewWithAuthenticatedState()
+}
+
+#Preview("Handle Update Sheet") {
+  HandleUpdateSheet(
+    currentHandle: "user.bsky.social",
+    onHandleUpdated: {}
+  )
+  .previewWithAuthenticatedState()
+}

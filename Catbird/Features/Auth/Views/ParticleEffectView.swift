@@ -128,3 +128,9 @@ struct ParticleEffectView: View {
         }
     }
 }
+
+#Preview("ParticleEffectView") {
+  ParticleEffectView()
+    .frame(width: 300, height: 400)
+    .background(.black)
+}

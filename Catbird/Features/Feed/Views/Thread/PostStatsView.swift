@@ -283,3 +283,12 @@ private struct FlowMetrics {
     let lines: [Line]
     let size: CGSize
 }
+
+#Preview("PostStatsView") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { _, postView in
+    PostStatsView(post: postView, path: .constant(NavigationPath()))
+      .padding()
+  }
+}

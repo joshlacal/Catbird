@@ -199,3 +199,13 @@ extension EnvironmentValues {
     set { self[FeedPostIDKey.self] = newValue }
   }
 }
+
+#Preview("FeedPost") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPost(from: appState)
+  } content: { _, feedViewPost in
+    ScrollView {
+      FeedPost(post: feedViewPost, path: .constant(NavigationPath()))
+    }
+  }
+}

@@ -27,6 +27,14 @@ private struct PlatformToolbarModifier: ViewModifier {
     content.toolbarTitleDisplayMode(.inline)
     #else
     content
+
+#Preview("NewMessageView") {
+  NavigationStack {
+    NewMessageView()
+  }
+  .previewWithAuthenticatedState()
+}
+
     #endif
   }
 }
@@ -340,6 +348,14 @@ struct NewMessageView: View {
     }
     .padding()
   }
+}
+
+
+#Preview("NewMessageView") {
+  NavigationStack {
+    NewMessageView()
+  }
+  .previewWithAuthenticatedState()
 }
 
 #endif

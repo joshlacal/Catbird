@@ -208,3 +208,15 @@ struct SuggestedProfilesSheet: View {
         }
     }
 }
+
+#Preview("Suggested Profiles Sheet") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.suggestedProfiles(from: appState)
+  } content: { _, profiles in
+    SuggestedProfilesSheet(
+      profiles: profiles,
+      onSelect: { _ in },
+      onRefresh: {}
+    )
+  }
+}

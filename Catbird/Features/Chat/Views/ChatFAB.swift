@@ -41,4 +41,12 @@ struct ChatFAB: View {
   }
 }
 
+
+#Preview("ChatFAB") {
+  ZStack {
+    Color(.systemGroupedBackground).ignoresSafeArea()
+    ChatFAB(newMessageAction: {})
+  }
+}
+
 #endif

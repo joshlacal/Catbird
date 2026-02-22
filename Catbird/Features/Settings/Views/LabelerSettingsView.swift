@@ -262,3 +262,10 @@ struct LabelerSettingsView: View {
         }
     }
 }
+
+#Preview("LabelerSettingsView") {
+  NavigationStack {
+    LabelerSettingsView()
+  }
+  .previewWithAuthenticatedState()
+}

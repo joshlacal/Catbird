@@ -28,3 +28,10 @@ struct SectionHeaderView: View {
         .padding(.bottom, 4)
     }
 }
+
+#Preview("SectionHeaderView") {
+  List {
+    SectionHeaderView(title: "Recent Posts")
+    SectionHeaderView(title: "Trending")
+  }
+}

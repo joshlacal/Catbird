@@ -894,4 +894,12 @@ struct EmptyStateRow: View {
     }
 }
 
+
+#Preview("MLSNewConversationView") {
+  NavigationStack {
+    MLSNewConversationView()
+  }
+  .previewWithAuthenticatedState()
+}
+
 #endif

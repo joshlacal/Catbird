@@ -89,3 +89,10 @@ struct LabelSelectorView: View {
     }
   }
 }
+
+#Preview("LabelSelectorView") {
+  NavigationStack {
+    LabelSelectorView(selectedLabels: .constant([]))
+  }
+  .previewWithAuthenticatedState()
+}

@@ -239,3 +239,12 @@ extension String {
         }
     }
 }
+
+#Preview("Tappable Text") {
+  VStack(spacing: 16) {
+    TappableTextView(attributedString: AttributedString("Hello world! This is a sample post with some text content."))
+    TappableTextView(attributedString: AttributedString("🎉🎊��"))
+  }
+  .padding()
+  .previewWithAuthenticatedState()
+}

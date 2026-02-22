@@ -332,4 +332,12 @@ struct ConversationView: View {
   }
 }
 
+
+#Preview("ConversationView") {
+  NavigationStack {
+    ConversationView(convoId: "preview-conversation-id")
+  }
+  .previewWithAuthenticatedState()
+}
+
 #endif

@@ -66,3 +66,11 @@ struct EnhancedFollowButton: View {
         }
     }
 }
+
+#Preview("Follow Button") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.suggestedProfiles(from: appState).first
+  } content: { _, profile in
+    EnhancedFollowButton(profile: profile)
+  }
+}

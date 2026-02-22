@@ -68,10 +68,19 @@ struct ModernVideoPlayerView: View {
     // Build a stable ID without embedding large payloads
     let id = "\(postID)-\(bskyVideo.cid)"
 
+    let videoType: VideoModel.VideoType
+    if bskyVideo.presentation == "gif" {
+      videoType = .bskyGif(
+        playlistURL: playlistURL, cid: bskyVideo.cid, aspectRatio: aspectRatioStruct)
+    } else {
+      videoType = .hlsStream(
+        playlistURL: playlistURL, cid: bskyVideo.cid, aspectRatio: aspectRatioStruct)
+    }
+
     self.model = VideoModel(
       id: id,
       url: playlistURL,
-      type: .hlsStream(playlistURL: playlistURL, cid: bskyVideo.cid, aspectRatio: aspectRatioStruct),
+      type: videoType,
       aspectRatio: ar,
       thumbnailURL: bskyVideo.thumbnail?.url
     )
@@ -296,7 +305,7 @@ struct ModernVideoPlayerView: View {
           model.volume = 0
           // Ensure audio session is configured for silent playback only
           AudioSessionManager.shared.configureForSilentPlayback()
-        case .tenorGif, .giphyGif:
+        case .tenorGif, .giphyGif, .bskyGif:
           model.isMuted = true
           model.volume = 0
           // GIFs don't need audio session configuration

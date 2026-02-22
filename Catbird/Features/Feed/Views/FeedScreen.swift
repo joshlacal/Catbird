@@ -114,3 +114,14 @@ extension EnvironmentValues {
     set { self[FeedHeaderEnvironmentKey.self] = newValue }
   }
 }
+
+#Preview("FeedScreen") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    FeedScreen(
+      path: $path,
+      uri: try! ATProtocolURI(uriString: "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot")
+    )
+  }
+  .previewWithAuthenticatedState()
+}

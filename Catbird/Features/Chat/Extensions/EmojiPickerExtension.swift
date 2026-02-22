@@ -353,3 +353,11 @@ private struct EmojiKitPickerSheet: View {
 //        }
 //    }
 //}
+
+#Preview("Emoji Picker") {
+  @Previewable @State var showPicker = true
+  Text("Tap to show emoji picker")
+    .customEmojiPicker(isPresented: $showPicker, title: "Add Reaction") { emoji in
+      print(emoji)
+    }
+}

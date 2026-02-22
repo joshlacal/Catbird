@@ -191,3 +191,23 @@ private extension View {
     }
   }
 }
+
+#Preview("Toast Notification") {
+  ZStack {
+    Color(.systemBackground).ignoresSafeArea()
+    ToastView(
+      toast: ToastItem(message: "Post published successfully"),
+      onDismiss: {}
+    )
+  }
+}
+
+#Preview("Toast - Warning") {
+  ZStack {
+    Color(.systemBackground).ignoresSafeArea()
+    ToastView(
+      toast: ToastItem(message: "Connection lost", icon: "wifi.slash"),
+      onDismiss: {}
+    )
+  }
+}

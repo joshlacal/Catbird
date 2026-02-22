@@ -83,3 +83,12 @@ struct ListRow: View {
     .padding()
   }
 }
+
+#Preview("ProfileTabSelector") {
+  @Previewable @State var tab = ProfileTab.posts
+  ProfileTabSelector(
+    path: .constant(NavigationPath()),
+    selectedTab: $tab,
+    isLabeler: false
+  )
+}

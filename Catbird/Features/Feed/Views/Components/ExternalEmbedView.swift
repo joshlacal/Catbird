@@ -905,3 +905,32 @@ extension URL {
         }
     }
 }
+
+#Preview("External Embed") {
+  AsyncPreviewContent { appState in
+    ExternalEmbedPreviewLoader(appState: appState)
+  }
+}
+
+private struct ExternalEmbedPreviewLoader: View {
+  let appState: AppState
+  @State private var data: (post: AppBskyFeedDefs.PostView, external: AppBskyEmbedExternal.ViewExternal)?
+
+  var body: some View {
+    Group {
+      if let data {
+        ExternalEmbedView(
+          external: data.external,
+          shouldBlur: false,
+          postID: data.post.cid.string
+        )
+        .padding()
+      } else {
+        ProgressView("Loading embed...")
+      }
+    }
+    .task {
+      data = await PreviewData.firstPostWithExternalEmbed(from: appState)
+    }
+  }
+}

@@ -262,3 +262,10 @@ final class DeviceManagementViewModel {
         }
     }
 }
+
+#Preview("DeviceManagementView") {
+  NavigationStack {
+    DeviceManagementView()
+  }
+  .previewWithAuthenticatedState()
+}

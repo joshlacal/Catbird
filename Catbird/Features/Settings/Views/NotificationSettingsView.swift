@@ -477,3 +477,10 @@ private struct DiagnosticRow: View {
         }
     }
 }
+
+#Preview("NotificationSettingsView") {
+  NavigationStack {
+    NotificationSettingsView()
+  }
+  .previewWithAuthenticatedState()
+}

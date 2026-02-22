@@ -609,3 +609,9 @@ struct GifGridItemView: View {
         GifVideoView(gif: gif, onTap: onTap)
     }
 }
+
+#Preview("GIF Picker") {
+  NavigationStack {
+    GifPickerView(onGifSelected: { _ in })
+  }
+}

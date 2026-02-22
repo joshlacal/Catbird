@@ -631,3 +631,10 @@ private struct ConditionalSwipeActions: ViewModifier {
 }
 
 #endif
+
+#Preview("ChatTabView") {
+  @Previewable @State var selectedTab = 3
+  @Previewable @State var lastTappedTab: Int? = nil
+  ChatTabView(selectedTab: $selectedTab, lastTappedTab: $lastTappedTab)
+    .previewWithAuthenticatedState()
+}

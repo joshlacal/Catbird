@@ -1416,3 +1416,14 @@ private extension View {
             }
     }
 }
+
+#Preview("FeedsStartPage") {
+  AsyncPreviewContent { appState in
+    FeedsStartPage(
+      appState: appState,
+      selectedFeed: .constant(.timeline),
+      currentFeedName: .constant("Following"),
+      isDrawerOpen: .constant(false)
+    )
+  }
+}

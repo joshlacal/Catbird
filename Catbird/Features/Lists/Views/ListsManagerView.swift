@@ -449,3 +449,10 @@ struct ListManagerRow: View {
     }
   }
 }
+
+#Preview("ListsManagerView") {
+  NavigationStack {
+    ListsManagerView()
+  }
+  .previewWithAuthenticatedState()
+}

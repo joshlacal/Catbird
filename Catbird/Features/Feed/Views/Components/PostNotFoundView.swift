@@ -290,3 +290,8 @@ enum PostNotFoundReason {
     case permissionDenied      // Access restricted
     case temporarilyUnavailable // Server issues, rate limiting, etc.
 }
+
+#Preview("PostNotFoundView") {
+  PostNotFoundView(uri: nil, reason: .deleted, path: .constant(NavigationPath()))
+    .previewWithAuthenticatedState()
+}

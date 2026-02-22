@@ -430,3 +430,13 @@ struct FeedContinuityView: View {
     }
   }
 }
+
+#Preview("FeedContinuityBanner") {
+  VStack(spacing: 16) {
+    FeedContinuityBanner(type: .newContentAvailable(count: 5), onTap: {}, onDismiss: {})
+    FeedContinuityBanner(type: .connectionRestored, onTap: {}, onDismiss: {})
+    FeedContinuityBanner(type: .cacheFallback, onTap: nil, onDismiss: {})
+  }
+  .padding()
+  .previewWithAuthenticatedState()
+}

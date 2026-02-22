@@ -396,3 +396,18 @@ extension String {
         }
     }
 }
+
+#Preview("ThreadViewMainPostView") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.firstPostView(from: appState)
+  } content: { appState, postView in
+    ScrollView {
+      ThreadViewMainPostView(
+        post: postView,
+        showLine: false,
+        path: .constant(NavigationPath()),
+        appState: appState
+      )
+    }
+  }
+}

@@ -146,3 +146,14 @@ extension SearchBarView {
     .solariumShimmer(intensity: 0.2, angle: 45)
   }
 }
+
+#Preview("SearchBarView") {
+  SearchBarView(
+    searchText: .constant(""),
+    placeholder: "Search posts...",
+    intensity: .medium,
+    autoFocus: false,
+    onSearchChange: {}
+  )
+  .padding()
+}

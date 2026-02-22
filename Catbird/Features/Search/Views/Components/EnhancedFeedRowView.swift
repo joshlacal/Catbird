@@ -84,3 +84,13 @@ struct EnhancedFeedRowView: View {
         }
     }
 }
+
+#Preview("Enhanced Feed Row") {
+  AsyncPreviewDataContent { appState in
+    await PreviewData.popularFeeds(from: appState).first
+  } content: { _, feed in
+    List {
+      EnhancedFeedRowView(feed: feed)
+    }
+  }
+}

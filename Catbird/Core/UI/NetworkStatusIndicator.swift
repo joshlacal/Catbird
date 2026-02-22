@@ -79,3 +79,8 @@ extension View {
         modifier(WithNetworkStatus())
     }
 }
+
+#Preview("NetworkStatusIndicator") {
+  NetworkStatusIndicator()
+    .previewWithAuthenticatedState()
+}

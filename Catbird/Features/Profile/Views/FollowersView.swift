@@ -77,3 +77,15 @@ struct FollowersView: View {
         await viewModel.loadFollowers()
     }
 }
+
+#Preview("FollowersView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      FollowersView(
+        userDID: appState.userDID,
+        client: appState.atProtoClient,
+        path: .constant(NavigationPath())
+      )
+    }
+  }
+}

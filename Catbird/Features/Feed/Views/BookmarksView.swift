@@ -263,3 +263,12 @@ struct BookmarksView: View {
     }
   }
 }
+
+@available(iOS 26.0, macOS 26.0, *)
+#Preview("BookmarksView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    BookmarksView(path: $path)
+  }
+  .previewWithAuthenticatedState()
+}

@@ -534,3 +534,24 @@ extension Material {
         }
     }
 }
+
+#Preview("Themed Background") {
+  let fontManager = FontManager()
+  let themeManager = ThemeManager(fontManager: fontManager)
+  VStack(spacing: 20) {
+    ThemedBackground(
+      themeManager: themeManager,
+      colorProvider: { _ in .blue }
+    )
+    .frame(height: 100)
+    .overlay(Text("Themed Background"))
+
+    ThemedGlassBackground(
+      themeManager: themeManager,
+      intensity: .medium
+    )
+    .frame(height: 100)
+    .overlay(Text("Glass Background"))
+  }
+  .padding()
+}

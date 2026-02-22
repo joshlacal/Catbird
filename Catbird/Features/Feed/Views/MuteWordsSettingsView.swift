@@ -443,3 +443,10 @@ struct MuteWordsSettingsView: View {
     appState.feedFilterSettings.updateMuteWordProcessor(processor)
   }
 }
+
+#Preview("MuteWordsSettingsView") {
+  NavigationStack {
+    MuteWordsSettingsView()
+  }
+  .previewWithAuthenticatedState()
+}

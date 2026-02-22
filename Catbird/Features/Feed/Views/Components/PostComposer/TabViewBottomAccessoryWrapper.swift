@@ -211,3 +211,9 @@ struct TabViewBottomAccessoryWrapper: View {
     return nil
   }
 }
+
+@available(iOS 26.0, macOS 26.0, *)
+#Preview("Tab Accessory Wrapper") {
+  TabViewBottomAccessoryWrapper()
+    .previewWithAuthenticatedState()
+}

@@ -209,3 +209,10 @@ private struct ActivitySubscriptionRow: View {
     }
   }
 }
+
+#Preview("ActivitySubscriptionsView") {
+  NavigationStack {
+    ActivitySubscriptionsView()
+  }
+  .previewWithAuthenticatedState()
+}

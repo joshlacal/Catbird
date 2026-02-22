@@ -21,3 +21,9 @@ struct FollowsBadgeView: View {
             )
     }
 }
+
+#Preview("FollowsBadgeView") {
+  FollowsBadgeView()
+    .padding()
+    .previewWithMockEnvironment()
+}

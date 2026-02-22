@@ -328,3 +328,10 @@ struct ThreadgateOptionsView: View {
     }
   }
 }
+
+#Preview("ThreadgateOptionsView") {
+  NavigationStack {
+    ThreadgateOptionsView(settings: .constant(ThreadgateSettings()))
+  }
+  .previewWithAuthenticatedState()
+}

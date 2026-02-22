@@ -691,3 +691,18 @@ private struct InlineTopicSummaryLine: View {
     }
 }
 
+
+#Preview("DiscoveryView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      DiscoveryView(
+        viewModel: RefinedSearchViewModel(appState: appState),
+        path: .constant(NavigationPath()),
+        showAllTrendingTopics: .constant(false),
+        showAllSavedSearches: .constant(false),
+        showSuggestedProfiles: .constant(false),
+        showAddFeedSheet: .constant(false)
+      )
+    }
+  }
+}

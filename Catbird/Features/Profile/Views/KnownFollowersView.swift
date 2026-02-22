@@ -112,3 +112,14 @@ struct KnownFollowersView: View {
         }
     }
 }
+
+#Preview("KnownFollowersView") {
+  AsyncPreviewContent { appState in
+    NavigationStack {
+      KnownFollowersView(
+        userDID: appState.userDID,
+        path: .constant(NavigationPath())
+      )
+    }
+  }
+}

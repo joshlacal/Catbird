@@ -35,3 +35,34 @@ struct RepostHeaderView: View {
         .padding(.leading, 3)
     }
 }
+
+#Preview("Repost Header") {
+  AsyncPreviewContent { appState in
+    RepostHeaderPreviewLoader(appState: appState)
+  }
+}
+
+private struct RepostHeaderPreviewLoader: View {
+  let appState: AppState
+  @State private var reposter: AppBskyActorDefs.ProfileViewBasic?
+
+  var body: some View {
+    Group {
+      if let reposter {
+        RepostHeaderView(
+          reposter: reposter,
+          path: .constant(NavigationPath())
+        )
+        .padding()
+      } else {
+        ProgressView("Loading...")
+      }
+    }
+    .task {
+      if let feedPost = await PreviewData.firstRepost(from: appState),
+         case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedPost.reason {
+        reposter = reasonRepost.by
+      }
+    }
+  }
+}
