@@ -42,12 +42,13 @@ struct TypeaheadView: View {
     }
     
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: DesignTokens.Spacing.lg) {
+            Spacer()
+            
             Image(systemName: "magnifyingglass")
                 .appFont(size: 48)
                 .foregroundColor(.secondary)
-                .padding(.bottom, 8)
-                .padding(.top, 60)
+                .padding(.bottom, DesignTokens.Spacing.sm)
             
             Text("Start typing to search")
                 .appFont(AppTextRole.headline)
@@ -56,7 +57,10 @@ struct TypeaheadView: View {
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .padding(.horizontal, DesignTokens.Spacing.section)
+            
+            Spacer()
+            Spacer()
         }
         .frame(maxWidth: .infinity)
     }

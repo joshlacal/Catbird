@@ -40,7 +40,6 @@ struct SearchLoadingSkeletonView: View {
                 )
             }
             .mainContentFrame()
-            .padding(.horizontal, 16)
             .padding(.top, 8)
         }
         .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
@@ -212,7 +211,8 @@ extension View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     SearchLoadingSkeletonView()
-        .applyAppStateEnvironment(appState)
+  }
 }
+

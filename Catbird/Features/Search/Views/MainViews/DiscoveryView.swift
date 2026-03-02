@@ -21,8 +21,7 @@ struct DiscoveryView: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 32) {
-                
+            VStack(spacing: DesignTokens.Spacing.section) {
                 // SRCH-015: Saved Searches Section
                 if !viewModel.savedSearches.isEmpty {
                     SavedSearchesSection(
@@ -61,12 +60,10 @@ struct DiscoveryView: View {
                 // SRCH-007: Quick Actions Section
                 quickActionsSection
                 
-                // Spacer for bottom safe area
-                Spacer(minLength: 32)
             }
             .mainContentFrame()
-            .padding(.top, 16)
-            .padding(.bottom, 32)
+            .padding(.top, DesignTokens.Spacing.lg)
+            .padding(.bottom, DesignTokens.Spacing.section)
         }
         .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
         .scrollDismissesKeyboard(.immediately)
@@ -79,7 +76,7 @@ struct DiscoveryView: View {
     // SRCH-007: Quick Actions for common searches
     @ViewBuilder
     private var quickActionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .appFont(AppTextRole.subheadline)

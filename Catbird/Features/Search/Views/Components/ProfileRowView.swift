@@ -44,15 +44,12 @@ struct ProfileRowView: View {
                                 .foregroundColor(.secondary)
                                 .opacity(0.9)
                                 .textScale(.secondary)
-                                .padding(2)
-                                .padding(.top, 2)
-                                .padding(.bottom, 4)
+                                .padding(.vertical, 2)
+                                .padding(.horizontal, 4)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
                                         .fill(Color.secondary.opacity(0.1))
                                 )
-                            
-                            
                         }
                     }
                         } else {
@@ -73,15 +70,12 @@ struct ProfileRowView: View {
                                         .foregroundColor(.secondary)
                                         .opacity(0.9)
                                         .textScale(.secondary)
-                                        .padding(1)
+                                        .padding(.vertical, 2)
                                         .padding(.horizontal, 4)
-                                        .padding(.bottom, 2)
                                         .background(
                                             RoundedRectangle(cornerRadius: 12)
                                                 .fill(Color.secondary.opacity(0.1))
                                         )
-
-
                                 }
 
                             }
@@ -91,7 +85,6 @@ struct ProfileRowView: View {
                         Text("@\(profile.handle)")
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
-
 
                         // Handle "Follows you" badge if available
                         if let profileView = profile as? AppBskyActorDefs.ProfileView,

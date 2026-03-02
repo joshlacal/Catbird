@@ -453,7 +453,7 @@ struct RefinedSearchView: View {
                     .mainContentFrame()
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                        .contentShape(Rectangle())
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -667,9 +667,10 @@ struct RefinedSearchView: View {
 
 // MARK: - Preview
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-
+  AsyncPreviewContent { appState in
     let selectedTab = Binding.constant(1)
     
-    RefinedSearchView(appState: appState, selectedTab: selectedTab, lastTappedTab: .constant(1))
+        RefinedSearchView(appState: appState, selectedTab: selectedTab, lastTappedTab: .constant(1))
+  }
 }
+

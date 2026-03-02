@@ -147,7 +147,11 @@ struct ResultsView: View {
             if showSeeAll, viewModel.profileResults.count > (limit ?? 0) {
                 Button { selectedContentType = .profiles } label: {
                     Text("See all \(viewModel.profileResults.count) profiles")
-                        .appFont(AppTextRole.subheadline)
+                        .appFont(AppTextRole.subheadline.weight(.semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
                         .foregroundColor(.accentColor)
                 }
                 .buttonStyle(.plain)
@@ -254,7 +258,11 @@ struct ResultsView: View {
             if showSeeAll, viewModel.feedResults.count > (limit ?? 0) {
                 Button { selectedContentType = .feeds } label: {
                     Text("See all \(viewModel.feedResults.count) feeds")
-                        .appFont(AppTextRole.subheadline)
+                        .appFont(AppTextRole.subheadline.weight(.semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
                         .foregroundColor(.accentColor)
                 }
                 .buttonStyle(.plain)
