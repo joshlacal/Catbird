@@ -16,7 +16,7 @@ class NotificationService: UNNotificationServiceExtension {
 
   // MARK: - Database Manager (NSE-owned instance)
   // NSE runs in a separate process from main app - each process needs its own instance.
-  // Cross-process coordination handled via advisory file locks in MLSGRDBManager.
+  // Cross-process coordination is handled by MLSNotificationCoordinator (Darwin + versioning).
   private let databaseManager = MLSGRDBManager()
   private var activeRecipientDID: String?
   private var isObservingAppStop = false
@@ -28,7 +28,7 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Key prefix for profile cache entries
   private static let profileCacheKeyPrefix = "profile_cache_"
-  private static let mlsServiceDID = "did:web:mls.catbird.blue#atproto_mls"
+  private static let mlsServiceDID = "did:web:mlschat.catbird.blue#atproto_mls"
   private static let mlsServiceNamespace = "blue.catbird.mls"
 
   /// Cached profile info for notification display (matches MLSProfileEnricher.SharedCachedProfile)
@@ -103,6 +103,9 @@ class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    // Reset suspension flag from previous notification's cleanup (NSE process reuse)
+    MLSCoreContext.clearSuspensionFlag()
+
     self.contentHandler = contentHandler
     bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
 
@@ -211,44 +214,21 @@ class NotificationService: UNNotificationServiceExtension {
       "✅ [NSE] All required fields present - convoId=\(convoId.prefix(16))..., messageId=\(messageId.prefix(16))..., recipientDid=\(recipientDid.prefix(24))..."
     )
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CRITICAL FIX: Check for account switching FIRST, before any other checks
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Account switching affects BOTH the old and new user. During the switch window,
-    // the database may be in an inconsistent state, or we may have the wrong
-    // encryption key loaded. Skip decryption entirely during this period.
-    // ═══════════════════════════════════════════════════════════════════════════
-    if MLSAppActivityState.isSwitchingAffecting(userDID: recipientDid) {
-      logger.info(
-        "⏭️ [NSE] Account switch in progress affecting recipient - skipping decryption")
+    let routingDecision = MLSNotificationCoordinator.routingDecision(
+      context: .nseBackground,
+      recipientUserDID: recipientDid
+    )
+    logger.info(
+      "🧭 [NSE] routing_action=\(routingDecision.action.rawValue), policy_reason=\(routingDecision.reason.rawValue), decryption_owner=\(routingDecision.owner?.rawValue ?? "none")"
+    )
+
+    guard routingDecision.action == .decrypt else {
+      logger.info("⏭️ [NSE] Routing policy skipped decryption")
       bestAttemptContent.title = "New Message"
       bestAttemptContent.body = "New Encrypted Message"
       contentHandler(bestAttemptContent)
       return
     }
-
-    // NSE YIELD: If the main app is active for this recipient, don't touch MLS/SQLCipher.
-    // This avoids ratchet desync + lock contention during rapid switching.
-    if !MLSAppActivityState.shouldNSEDecrypt(recipientUserDID: recipientDid) {
-      logger.info("⏭️ [NSE] Main app active for recipient - skipping decryption")
-      bestAttemptContent.title = "New Message"
-      bestAttemptContent.body = "New Encrypted Message"
-      contentHandler(bestAttemptContent)
-      return
-    }
-
-    // NSE YIELD: If the main app is shutting down (account switch in progress), skip decryption
-    // This prevents database access during the critical shutdown window
-    if MLSAppActivityState.isShuttingDown(for: recipientDid) {
-      logger.info("⏭️ [NSE] Main app shutting down for recipient - skipping decryption")
-      bestAttemptContent.title = "New Message"
-      bestAttemptContent.body = "New Encrypted Message"
-      contentHandler(bestAttemptContent)
-      return
-    }
-
-    // NOTE: Advisory lock removed - SQLite WAL handles concurrent access.
-    // Darwin notifications (MLSCrossProcess) coordinate cache invalidation across processes.
 
     // Decrypt using shared MLS core context
     // CRITICAL FIX: We must ensure the MLS context is for the correct recipient user.
@@ -262,7 +242,15 @@ class NotificationService: UNNotificationServiceExtension {
 
     Task { @MainActor in
       self.activeRecipientDID = recipientDid
-      defer { self.activeRecipientDID = nil }
+      defer {
+        // ═══════════════════════════════════════════════════════════════
+        // GUARANTEED CLEANUP: Runs on every exit path (cache-hit, error,
+        // timeout, expiry, normal completion). Prevents leaked SQLite
+        // handles in the App Group container that cause 0xdead10cc.
+        // ═══════════════════════════════════════════════════════════════
+        self.activeRecipientDID = nil
+        self.bestEffortNSECleanup(recipientDid: recipientDid)
+      }
 
       // Cache-first (pre-lock): If the main app just decrypted the message, it may not
       // be persisted yet; avoid taking the lock and consuming MLS secrets unnecessarily.
@@ -282,15 +270,16 @@ class NotificationService: UNNotificationServiceExtension {
         if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
       }
 
-      // NOTE: Advisory lock removed (2026-02) - SQLite WAL handles concurrent access.
-      // Darwin notifications (MLSCrossProcess) coordinate cache invalidation across processes.
-      // No lock acquisition needed - WAL mode is designed for concurrent readers/writers.
-
-      // Cross-process shutdown check: If main app signaled shutdown, skip decryption
-      // This uses the shared App Group state
-      if MLSAppActivityState.isShuttingDown(for: recipientDid) {
+      // Re-evaluate routing policy right before decrypting. This catches account-switch
+      // and shutdown windows that may have started after initial routing.
+      let inFlightDecision = MLSNotificationCoordinator.routingDecision(
+        context: .nseBackground,
+        recipientUserDID: recipientDid
+      )
+      if inFlightDecision.action != .decrypt {
         self.logger.info(
-          "⏭️ [NSE] Shutdown file detected for recipient - skipping decryption")
+          "⏭️ [NSE] In-flight routing denied decrypt (action=\(inFlightDecision.action.rawValue), reason=\(inFlightDecision.reason.rawValue))"
+        )
         capturedBestAttemptContent.title = "New Message"
         capturedBestAttemptContent.body = "New Encrypted Message"
         capturedContentHandler(capturedBestAttemptContent)
@@ -456,6 +445,13 @@ class NotificationService: UNNotificationServiceExtension {
           return
         }
 
+        MLSNotificationMetrics.increment(
+          .decryptAttempt,
+          owner: .nse,
+          context: .nseBackground,
+          source: "nse_direct_decrypt"
+        )
+
         self.logger.info(
           "🔓 [NSE] Starting decryption for message=\(messageId.prefix(16))..., user=\(recipientDid.prefix(24))..."
         )
@@ -481,11 +477,18 @@ class NotificationService: UNNotificationServiceExtension {
         // When the main app resumes, it should check this flag and reload MLS state
         // from disk before processing any messages. This prevents SecretReuseError.
         // ═══════════════════════════════════════════════════════════════════════════
-        MLSAppActivityState.signalNSEProcessed(for: recipientDid)
+        MLSNotificationCoordinator.recordNSEProcessed(for: recipientDid)
         self.logger.info("📡 [NSE] Signaled foreground to reload MLS state")
 
-        // Notify main app via Darwin notifications that we've made changes
-        MLSCrossProcess.shared.notifyChanged()
+        _ = MLSNotificationCoordinator.publishMutation(
+          userDID: recipientDid,
+          source: "nse_decrypt_success",
+          decryptionOwner: .nse,
+          routingAction: routingDecision.action,
+          routingReason: routingDecision.reason,
+          incrementVersion: false,
+          postStateChanged: false
+        )
 
         // ═══════════════════════════════════════════════════════════════════════════
         // 🛡️ READ-ONLY NSE (2024-12-24): Do not record epoch checkpoint
@@ -526,6 +529,13 @@ class NotificationService: UNNotificationServiceExtension {
         //
         // ═══════════════════════════════════════════════════════════════════════════
         if case .secretReuseSkipped(let messageID) = error {
+          MLSNotificationMetrics.increment(
+            .secretReuseRecovery,
+            owner: .nse,
+            context: .nseBackground,
+            source: "nse_secret_reuse"
+          )
+
           self.logger.info(
             "ℹ️ [NSE] SecretReuseSkipped for message \(messageID) - already decrypted by Main App"
           )
@@ -761,10 +771,10 @@ class NotificationService: UNNotificationServiceExtension {
 
       // Step 1: Post nseWillClose notification
       self.logger.info("📢 [NSE] Posting nseWillClose notification")
-      let token = MLSStateChangeNotifier.postNSEWillClose(userDID: recipientDid)
+      let token = MLSNotificationCoordinator.prepareNSECloseHandshake(userDID: recipientDid)
 
       // Step 2: Wait for app acknowledgment (with timeout)
-      let acked = await MLSStateChangeNotifier.waitForAppAcknowledgment(
+      let acked = await MLSNotificationCoordinator.waitForAppAcknowledgment(
         userDID: recipientDid,
         token: token,
         timeout: .milliseconds(1500)
@@ -798,7 +808,7 @@ class NotificationService: UNNotificationServiceExtension {
       }
 
       // Step 4: Post stateChanged notification - tells app to reload
-      MLSStateChangeNotifier.postStateChanged()
+      MLSNotificationCoordinator.postStateChanged()
       self.logger.info("📢 [NSE] Posted state change notification to main app")
     }
   }
@@ -807,10 +817,11 @@ class NotificationService: UNNotificationServiceExtension {
     logger.warning(
       "⏱️ [NSE] serviceExtensionTimeWillExpire called - system is terminating extension")
 
-    // Called just before the extension will be terminated by the system.
-    // Use this as an opportunity to deliver your "best attempt" at modified content, otherwise the original push payload will be used.
+    // Emergency cleanup before system kills us
+    MLSCoreContext.emergencyCloseAllContexts()
+    MLSGRDBManager.emergencyCloseAllDatabases()
+
     if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
-      // If we haven't decrypted yet (body still shows placeholder), show fallback
       if bestAttemptContent.body.isEmpty || bestAttemptContent.body == "Decrypting..." {
         bestAttemptContent.title = "New Message"
         bestAttemptContent.body = "New Encrypted Message"
@@ -820,6 +831,33 @@ class NotificationService: UNNotificationServiceExtension {
       }
       contentHandler(bestAttemptContent)
     }
+  }
+
+  // MARK: - NSE Cleanup
+
+  /// Best-effort cleanup of all process-local MLS state.
+  ///
+  /// Called from the processing task's `defer` block to ensure DB handles
+  /// are released even on early-return paths (cache hit, error, timeout).
+  /// Safe to call multiple times — the emergency close APIs are idempotent.
+  private func bestEffortNSECleanup(recipientDid: String) {
+    logger.info("🧹 [NSE] Best-effort cleanup for \(recipientDid.prefix(24))...")
+
+    // 1. Close all Rust FFI contexts (flushes ratchet state to disk)
+    // NOTE: This sets suspensionInProgress = true. We clear it at the top
+    // of didReceive so the next notification in a reused NSE process works.
+    MLSCoreContext.emergencyCloseAllContexts()
+
+    // 2. Close all GRDB DatabasePools registered in the static emergency list.
+    // The NSE's own databaseManager uses lightweight DatabaseQueues (nseRead/nseWrite)
+    // that self-close via defer — they are NOT in this list. The pools that ARE
+    // registered here come from MLSCoreContext's private databaseManager when it
+    // calls getEphemeralDatabasePool() (which caches pools in uncachedEphemeralPools
+    // and registers them via registerForEmergencyClose). This is the primary leak
+    // this cleanup is targeting.
+    MLSGRDBManager.emergencyCloseAllDatabases()
+
+    logger.info("✅ [NSE] Cleanup complete")
   }
 
   // MARK: - Cached Message Lookup
@@ -996,6 +1034,12 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     logger.info("📦 [NSE] Cache HIT (\(cached.source.rawValue)) - message already stored")
+    MLSNotificationMetrics.increment(
+      .cacheHitBeforeDecrypt,
+      owner: .nse,
+      context: .nseBackground,
+      source: "nse_cache_lookup"
+    )
 
     if let payloadText = cached.payloadText, !payloadText.isEmpty {
       let shouldShow = await configureRichNotification(
@@ -1213,16 +1257,29 @@ class NotificationService: UNNotificationServiceExtension {
 
     let client: ATProtoClient
     do {
+        #if DEBUG
       client = try await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
-        gatewayURL: URL(string: "https://api.catbird.blue")!,
+        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
         bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
         accessGroup: accessGroup
       )
+        #else
+        client = try await ATProtoClient(
+          oauthConfig: oauthConfig,
+          namespace: "blue.catbird",
+          authMode: .gateway,
+          gatewayURL: URL(string: "https://api.catbird.blue")!,
+          userAgent: "Catbird/1.0",
+          bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
+          bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
+          accessGroup: accessGroup
+        )
+#endif
     } catch {
       logger.error("❌ [NSE] Failed to create ATProtoClient: \(error.localizedDescription)")
       return nil
