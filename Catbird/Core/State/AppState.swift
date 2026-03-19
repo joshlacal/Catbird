@@ -236,13 +236,6 @@ final class AppState {
   /// Feed filter settings manager
   @ObservationIgnored let feedFilterSettings = FeedFilterSettings()
 
-  /// Persisted App Attest metadata shared with the notification service.
-  var appAttestInfo: AppAttestInfo? {
-    didSet {
-      persistAppAttestInfo(appAttestInfo)
-    }
-  }
-
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
 
@@ -340,6 +333,17 @@ final class AppState {
     @ObservationIgnored var mlsServiceState = MLSServiceState()
   #endif
 
+  // MARK: - Backup & Repository
+
+  /// Backup manager for local data backup operations (per-account)
+  @ObservationIgnored private var backupManagerStorage: BackupManager?
+
+  /// Repository parsing service for CAR file parsing
+  @ObservationIgnored private(set) var repositoryParsingService: RepositoryParsingService?
+
+  /// Accessor for backup manager
+  var backupManager: BackupManager? { backupManagerStorage }
+
   /// Network monitor for tracking connectivity status
   @ObservationIgnored let networkMonitor = NetworkMonitor()
 
@@ -358,12 +362,6 @@ final class AppState {
   @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?
   @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
   @ObservationIgnored private var chatPollingTimer: Timer?
-
-  @ObservationIgnored private let appAttestDefaultsKey = "catbird.appAttestInfo"
-
-  private var appAttestDefaults: UserDefaults {
-    UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
-  }
 
   // MARK: - Initialization
 
@@ -409,8 +407,6 @@ final class AppState {
     {
       self.isAdultContentEnabled = storedContentSetting
     }
-
-    self.appAttestInfo = loadPersistedAppAttestInfo()
 
     // Configure notification manager with app state reference (skip for FaultOrdering)
       notificationManager.configure(with: self)
@@ -631,7 +627,7 @@ final class AppState {
 
       // Stop observing for NSE state change notifications
       // This prevents callbacks to a cleaned-up AppState
-      MLSStateChangeNotifier.shared.stopObserving()
+      MLSNotificationCoordinator.stopAppObservers()
       logger.debug("🔕 Stopped observing for MLS state change notifications")
 
       // Capture references for async cleanup
@@ -666,6 +662,28 @@ final class AppState {
     #endif
 
     logger.debug("AppState cleanup complete")
+  }
+
+  // MARK: - Data Services Configuration
+
+  /// Configure backup and repository parsing services.
+  /// Called after authentication when the ModelContainer is available.
+  func configureDataServices(modelContainer: ModelContainer) {
+    guard backupManagerStorage == nil else { return }
+
+    let parsingService = RepositoryParsingService()
+    parsingService.configure(with: ModelContext(modelContainer))
+    self.repositoryParsingService = parsingService
+
+    let mgr = BackupManager(
+      userDID: userDID,
+      client: client,
+      modelContainer: modelContainer
+    )
+    mgr.setRepositoryParsingService(parsingService)
+    self.backupManagerStorage = mgr
+
+    logger.info("Backup and repository parsing services configured")
   }
 
   // MARK: - Background Polling
@@ -907,7 +925,7 @@ final class AppState {
       
       // CRITICAL FIX: Signal NSE to yield BEFORE stopping event streams
       // This prevents new NSE decryption attempts during shutdown, avoiding race conditions
-      MLSAppActivityState.setShuttingDown(true, userDID: self.userDID)
+      MLSNotificationCoordinator.setShuttingDown(true, userDID: self.userDID)
 
       // Step 2: Stop WebSocket subscriptions FIRST and WAIT for completion
       // CRITICAL FIX: WebSocket tasks may still be writing to the database. We must wait
@@ -981,7 +999,7 @@ final class AppState {
       
       // Step 4: Clear API client reference
       mlsAPIClientStorage = nil
-      
+
       // CRITICAL FIX: Add a small delay between cleanup and initialization
       // This ensures iOS has time to release file handles and memory locks
       try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
@@ -993,7 +1011,7 @@ final class AppState {
         logger.info("✅ MLS: Initialized successfully")
         
         // Clear shutdown flag after successful init - NSE can resume normal operations
-        MLSAppActivityState.setShuttingDown(false, userDID: self.userDID)
+        MLSNotificationCoordinator.setShuttingDown(false, userDID: self.userDID)
 
         // CRITICAL: Validate bundle state after account switch
         // This catches the desync where local storage shows 0 bundles but server has more
@@ -1173,7 +1191,7 @@ final class AppState {
     func getMLSConversationManager(timeout: TimeInterval = 30.0) async -> MLSConversationManager? {
       // Use this AppState's userDID (AppState represents single authenticated account)
       let userDid = self.userDID
-      let declarationRolloutMode = ExperimentalSettings.shared.declarationRolloutMode(for: userDid)
+      // Device record system replaces declaration chains (no rollout mode needed)
 
       // Each AppState owns isolated MLS resources, but during account switches we must avoid creating
       // NEW managers for inactive cached AppStates because that can contend with active account init.
@@ -1228,7 +1246,7 @@ final class AppState {
           // If generation has bumped (e.g. from a background switch or re-auth), this manager is stale
           let globalGen = MLSCoordinationStore.shared.currentGeneration
           if existing.currentCoordinationGeneration == globalGen {
-            await existing.setDeclarationRolloutMode(declarationRolloutMode)
+            // Reuse existing manager (no declaration rollout mode to set)
             logger.debug("MLS: ♻️ Reusing existing conversation manager for user: \(userDid)")
             mlsServiceState.status = .ready
             return existing
@@ -1341,7 +1359,7 @@ final class AppState {
         
         // Create trust checker to determine if incoming conversations are requests
         let trustChecker = FollowingTrustChecker(client: atProtoClient, currentUserDID: userDid)
-        let configuration = MLSConfiguration(declarationRolloutMode: declarationRolloutMode)
+        let configuration = MLSConfiguration()
         
         let manager = MLSConversationManager(
           apiClient: apiClient,
@@ -1638,7 +1656,7 @@ final class AppState {
     // CRITICAL FIX: Stop observing Darwin notifications from NSE before shutdown
     // This prevents stale notifications from User A's NSE from triggering
     // state reloads when we've switched to User B
-    MLSStateChangeNotifier.shared.stopObserving()
+    MLSNotificationCoordinator.stopAppObservers()
     logger.info("🔕 [MLS] Stopped Darwin notification observer during shutdown")
 
     // Clear local reference first to prevent any new operations
@@ -2168,12 +2186,12 @@ final class AppState {
       // Initialize the MLS crypto context
       try await manager.initialize()
 
-      // Declaration bootstrap is idempotent and needs to run even when the manager is already
+      // Device record publish is idempotent and needs to run even when the manager is already
       // initialized (for example, after an opt-in toggle on an existing session).
       do {
-        try await manager.ensureDeclarationChainReady()
+        try await manager.ensureDeviceRecordPublished()
       } catch {
-        logger.error("MLS: Declaration chain readiness check failed: \(error.localizedDescription)")
+        logger.error("MLS: Device record publish failed: \(error.localizedDescription)")
       }
       
       // CRITICAL FIX: Start global WebSocket subscription for group info updates
@@ -2211,40 +2229,30 @@ final class AppState {
       // the app is already in foreground.
       //
       // ═══════════════════════════════════════════════════════════════════════════
-        MLSStateChangeNotifier.shared.observeWithAsyncHandler({ [weak self] in
-        guard let self = self else { return }
-        self.logger.info("📥 [MLS] Received state change notification from NSE")
-        self.logger.info("   NSE advanced the ratchet - reloading state from disk")
-        await self.reloadMLSStateFromDisk()
-      })
-      logger.info("🔔 MLS: Observing for NSE state change notifications")
-      
-      // ═══════════════════════════════════════════════════════════════════════════
-      // PHASE 5: Observe nseWillClose for coordinated handshake
-      // ═══════════════════════════════════════════════════════════════════════════
-      //
-      // When NSE is about to close and checkpoint the database, it posts nseWillClose.
-      // We need to release our database readers to prevent WAL/SHM locking conflicts
-      // during the TRUNCATE checkpoint. After releasing, we acknowledge so NSE can proceed.
-      //
-      // ═══════════════════════════════════════════════════════════════════════════
-      MLSStateChangeNotifier.shared.observeNSEWillCloseWithAsyncHandler { [weak self] _ in
-        guard let self = self else { return false }
-        self.logger.info("📥 [Handshake] App received nseWillClose, releasing readers")
-        
-        // Release database readers by closing our cached connection
-        // This allows NSE to perform a clean TRUNCATE checkpoint
-        let released = await self.releaseMLSDatabaseReaders()
-        
-        if released {
-          self.logger.info("📤 [Handshake] App acknowledged nseWillClose")
-        } else {
-          self.logger.warning("🚫 [Handshake] Did not release DB readers in time; not acknowledging")
+      MLSNotificationCoordinator.configureAppObservers(
+        onStateChanged: { [weak self] in
+          guard let self else { return }
+          self.logger.info("📥 [MLS] Received state change notification from NSE")
+          self.logger.info("   NSE advanced the ratchet - reloading state from disk")
+          await self.reloadMLSStateFromDisk()
+        },
+        onNSEWillClose: { [weak self] _ in
+          guard let self else { return false }
+          self.logger.info("📥 [Handshake] App received nseWillClose, releasing readers")
+
+          // Release database readers by closing our cached connection.
+          let released = await self.releaseMLSDatabaseReaders()
+
+          if released {
+            self.logger.info("📤 [Handshake] App acknowledged nseWillClose")
+          } else {
+            self.logger.warning("🚫 [Handshake] Did not release DB readers in time; not acknowledging")
+          }
+
+          return released
         }
-        
-        return released
-      }
-      logger.info("🔔 MLS: Observing for NSE nseWillClose handshake notifications")
+      )
+      logger.info("🔔 MLS: Observing for NSE state/handshake notifications")
 
       // ✅ Reconcile key packages with server to detect storage corruption
       logger.info("MLS: Reconciling key packages with server...")
@@ -2780,45 +2788,6 @@ final class AppState {
   func notifyThreadUpdated(_ rootUri: String) {
     logger.debug("Thread updated notification: \(rootUri)")
     stateInvalidationBus.notifyThreadUpdated(rootUri)
-  }
-
-  // MARK: - App Attest Persistence
-
-  private func loadPersistedAppAttestInfo() -> AppAttestInfo? {
-    let defaults = appAttestDefaults
-    guard let storedData = defaults.data(forKey: appAttestDefaultsKey) else {
-      return nil
-    }
-
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-
-    do {
-      return try decoder.decode(AppAttestInfo.self, from: storedData)
-    } catch {
-      logger.error("Failed to decode App Attest info: \(error.localizedDescription)")
-      defaults.removeObject(forKey: appAttestDefaultsKey)
-      return nil
-    }
-  }
-
-  private func persistAppAttestInfo(_ info: AppAttestInfo?) {
-    let defaults = appAttestDefaults
-
-    guard let info else {
-      defaults.removeObject(forKey: appAttestDefaultsKey)
-      return
-    }
-
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
-
-    do {
-      let data = try encoder.encode(info)
-      defaults.set(data, forKey: appAttestDefaultsKey)
-    } catch {
-      logger.error("Failed to encode App Attest info: \(error.localizedDescription)")
-    }
   }
 
   // MARK: - Content Filtering Helper

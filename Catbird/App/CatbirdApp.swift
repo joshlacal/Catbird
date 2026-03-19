@@ -286,7 +286,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   /// Current schema version - increment this when making breaking schema changes
   /// This forces a database reset for users with older incompatible schemas
-  private static let currentSchemaVersion = 2  // Increment when schema changes break migration
+  private static let currentSchemaVersion = 3  // Increment when schema changes break migration
 
   /// Checks if database needs reset due to schema version mismatch
   private func shouldResetDatabase() -> Bool {
@@ -541,6 +541,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     return try ModelContainer(
       for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
       FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+      BackupRecord.self, BackupConfiguration.self, RepositoryRecord.self,
+      ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
+      ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
       configurations: config
     )
   }
@@ -551,6 +554,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     return try ModelContainer(
       for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
       FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+      BackupRecord.self, BackupConfiguration.self, RepositoryRecord.self,
+      ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
+      ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
       configurations: config
     )
   }
@@ -1154,9 +1160,12 @@ private extension CatbirdApp {
 
 #if os(iOS)
       if let appState = appStateManager.lifecycle.appState {
-        MLSAppActivityState.setMainAppActive(newPhase == .active, activeUserDID: appState.userDID)
+        MLSNotificationCoordinator.setMainAppActive(
+          newPhase == .active,
+          activeUserDID: appState.userDID
+        )
       } else {
-        MLSAppActivityState.setMainAppActive(newPhase == .active, activeUserDID: nil)
+        MLSNotificationCoordinator.setMainAppActive(newPhase == .active, activeUserDID: nil)
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -1192,6 +1201,11 @@ private extension CatbirdApp {
           // Resume MLS operations that were suspended during backgrounding
           if let manager = await appState.getMLSConversationManager() {
             await manager.resumeMLSOperations()
+          }
+
+          // Check if auto-backup is needed
+          if let backupManager = appState.backupManager {
+            await backupManager.checkAndPerformAutoBackupIfNeeded()
           }
         }
       }
@@ -1258,6 +1272,7 @@ private extension CatbirdApp {
     // If authenticated, initialize preferences manager and app services
     if let appState = appStateManager.lifecycle.appState {
       appState.initializePreferencesManager(with: modelContext)
+      appState.configureDataServices(modelContainer: modelContext.container)
 
       #if canImport(FoundationModels)
       if #available(iOS 26.0, macOS 15.0, *) {
@@ -1759,8 +1774,8 @@ private extension CatbirdApp {
       e2eLogger.error("[E2E-REGISTER] Calling optIn on MLSAPIClient")
       let (optedIn, optedInAt) = try await conversationManager.apiClient.optIn()
       e2eLogger.error("[E2E-REGISTER] optIn result: optedIn=\(optedIn), at=\(optedInAt)")
-      try await conversationManager.ensureDeclarationChainReady()
-      
+      try await conversationManager.ensureDeviceRecordPublished()
+
       // Step 2: Check if already registered to avoid invalidating existing key packages
       if let existingDeviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID), !forceReregister {
         e2eLogger.error("[E2E-REGISTER] Already registered with deviceId: \(existingDeviceInfo.deviceId) - skipping reregistration to preserve key packages")
@@ -1777,11 +1792,11 @@ private extension CatbirdApp {
       let deviceId = try await conversationManager.mlsClient.reregisterDevice(for: appState.userDID)
       e2eLogger.error("[E2E-REGISTER] Device registered: \(deviceId)")
 
-      // Ensure declaration chain is fully initialized after registration so deviceAdd is published.
+      // Ensure device record is published after registration.
       do {
-        try await conversationManager.ensureDeclarationChainReady()
+        try await conversationManager.ensureDeviceRecordPublished()
       } catch {
-        e2eLogger.error("[E2E-REGISTER] Declaration chain readiness after registration failed: \(error.localizedDescription)")
+        e2eLogger.error("[E2E-REGISTER] Device record publish after registration failed: \(error.localizedDescription)")
       }
       
       await writeE2EResult(command: "register-device", success: true, data: [
@@ -2814,5 +2829,4 @@ extension CatbirdApp.AppDelegate {
   }
 }
 #endif 
-
 

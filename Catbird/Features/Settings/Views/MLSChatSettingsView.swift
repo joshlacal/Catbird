@@ -15,15 +15,10 @@ struct MLSChatSettingsView: View {
   @State private var allowFollowingBypass: Bool = false
   @State private var whoCanMessageMe: MLSWhoCanMessageMe = .everyone
   @State private var autoExpireDays: Int = 7
-  @State private var declarationRolloutMode: MLSDeclarationRolloutMode = .shadow
 
   // Loading and error states
   @State private var isLoading = true
   @State private var isSaving = false
-  @State private var isUpdatingRolloutMode = false
-  @State private var isRepairingDeclaration = false
-  @State private var isRotatingDeclarationRoot = false
-  @State private var isRecoveringDeclarationRoot = false
   @State private var errorMessage: String?
   @State private var showingErrorAlert = false
 
@@ -89,89 +84,6 @@ struct MLSChatSettingsView: View {
 
         Text(
           "Pending message requests from users you don't follow will automatically expire after this period."
-        )
-        .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("Identity Verification Rollout") {
-        Picker("Mode", selection: $declarationRolloutMode) {
-          Text("Shadow").tag(MLSDeclarationRolloutMode.shadow)
-          Text("Soft").tag(MLSDeclarationRolloutMode.soft)
-          Text("Enforce").tag(MLSDeclarationRolloutMode.full)
-        }
-        .disabled(isUpdatingRolloutMode || isSaving)
-        .onChange(of: declarationRolloutMode) { _, newValue in
-          Task { await updateDeclarationRolloutMode(newValue) }
-        }
-
-        Text(
-          "Shadow logs only. Soft asks for explicit trust confirmation. Enforce blocks unverified devices."
-        )
-        .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      Section("Declaration Identity Chain") {
-        Button {
-          Task { await repairDeclarationChain() }
-        } label: {
-          HStack {
-            if isRepairingDeclaration {
-              ProgressView()
-                .controlSize(.small)
-              Text("Repairing...")
-            } else {
-              Text("Repair Declaration Chain")
-            }
-            Spacer()
-          }
-        }
-        .disabled(
-          isLoading || isSaving || isUpdatingRolloutMode || isRepairingDeclaration || isRotatingDeclarationRoot
-            || isRecoveringDeclarationRoot
-        )
-
-        Button {
-          Task { await rotateDeclarationOnlineRoot() }
-        } label: {
-          HStack {
-            if isRotatingDeclarationRoot {
-              ProgressView()
-                .controlSize(.small)
-              Text("Rotating Root...")
-            } else {
-              Text("Rotate Online Root")
-            }
-            Spacer()
-          }
-        }
-        .disabled(
-          isLoading || isSaving || isUpdatingRolloutMode || isRepairingDeclaration || isRotatingDeclarationRoot
-            || isRecoveringDeclarationRoot
-        )
-
-        Button(role: .destructive) {
-          Task { await recoverDeclarationOnlineRoot() }
-        } label: {
-          HStack {
-            if isRecoveringDeclarationRoot {
-              ProgressView()
-                .controlSize(.small)
-              Text("Recovering Root...")
-            } else {
-              Text("Recover Online Root")
-            }
-            Spacer()
-          }
-        }
-        .disabled(
-          isLoading || isSaving || isUpdatingRolloutMode || isRepairingDeclaration || isRotatingDeclarationRoot
-            || isRecoveringDeclarationRoot
-        )
-
-        Text(
-          "Repair publishes missing declaration steps. Rotate performs normal continuity rotation. Recover uses the recovery root when online root continuity is broken."
         )
         .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
@@ -254,10 +166,9 @@ struct MLSChatSettingsView: View {
       allowFollowersBypass = settings.allowFollowersBypass ?? false
       allowFollowingBypass = settings.allowFollowingBypass ?? false
       autoExpireDays = settings.autoExpireDays ?? 0
-      declarationRolloutMode = ExperimentalSettings.shared.declarationRolloutMode(for: appState.userDID)
-      
+
       if let conversationManager = await appState.getMLSConversationManager() {
-        if let policy = await conversationManager.getDeclarationChatPolicy() {
+        if let policy = await conversationManager.getChatPolicy() {
           if let who = policy.whoCanMessageMe { whoCanMessageMe = who }
           if let followers = policy.allowFollowersBypass { allowFollowersBypass = followers }
           if let following = policy.allowFollowingBypass { allowFollowingBypass = following }
@@ -303,7 +214,6 @@ struct MLSChatSettingsView: View {
     defer { isSaving = false }
 
     do {
-      // Legacy update - ignore whoCanMessageMe as it's declaration-only
       _ = try await apiClient.updateChatRequestSettings(
         allowFollowersBypass: allowFollowersBypass,
         allowFollowingBypass: allowFollowingBypass,
@@ -314,17 +224,16 @@ struct MLSChatSettingsView: View {
         let effectiveFollowing = allowFollowingBypass ?? self.allowFollowingBypass
         let effectiveAutoExpire = autoExpireDays ?? self.autoExpireDays
         let effectiveWhoCanMessageMe = whoCanMessageMe ?? self.whoCanMessageMe
-        
+
         do {
-          try await conversationManager.ensureDeclarationChainReady()
-          try await conversationManager.publishDeclarationChatPolicyUpdate(
+          try await conversationManager.publishChatPolicy(
+            whoCanMessageMe: effectiveWhoCanMessageMe,
             allowFollowersBypass: effectiveFollowers,
             allowFollowingBypass: effectiveFollowing,
-            whoCanMessageMe: effectiveWhoCanMessageMe,
             autoExpireDays: effectiveAutoExpire
           )
         } catch {
-          logger.error("Failed to publish declaration chat policy update: \(error.localizedDescription)")
+          logger.error("Failed to publish chat policy: \(error.localizedDescription)")
         }
       }
       logger.debug("Chat settings saved successfully")
@@ -350,10 +259,11 @@ struct MLSChatSettingsView: View {
       let success = try await apiClient.optOut()
       if success {
         if let conversationManager = await appState.getMLSConversationManager() {
-          _ = try? await conversationManager.publishDeclarationDeviceRevoke(
-            deviceId: nil,
-            reason: "mls-opt-out"
-          )
+          // Get current device ID and remove its record
+          if let did = conversationManager.userDid,
+             let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
+            try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
+          }
         }
         // Also update local settings
         ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
@@ -371,81 +281,6 @@ struct MLSChatSettingsView: View {
     }
   }
 
-  @MainActor
-  private func updateDeclarationRolloutMode(_ mode: MLSDeclarationRolloutMode) async {
-    isUpdatingRolloutMode = true
-    defer { isUpdatingRolloutMode = false }
-
-    ExperimentalSettings.shared.setDeclarationRolloutMode(mode, for: appState.userDID)
-    if let manager = await appState.getMLSConversationManager() {
-      await manager.setDeclarationRolloutMode(mode)
-    }
-  }
-
-  @MainActor
-  private func repairDeclarationChain() async {
-    guard let manager = await appState.getMLSConversationManager() else {
-      errorMessage = "MLS service is not available."
-      showingErrorAlert = true
-      return
-    }
-
-    isRepairingDeclaration = true
-    defer { isRepairingDeclaration = false }
-
-    do {
-      try await manager.ensureDeclarationChainReady()
-      logger.info("Declaration chain repair completed")
-    } catch {
-      logger.error("Declaration chain repair failed: \(error.localizedDescription)")
-      errorMessage = "Declaration repair failed: \(error.localizedDescription)"
-      showingErrorAlert = true
-    }
-  }
-
-  @MainActor
-  private func rotateDeclarationOnlineRoot() async {
-    guard let manager = await appState.getMLSConversationManager() else {
-      errorMessage = "MLS service is not available."
-      showingErrorAlert = true
-      return
-    }
-
-    isRotatingDeclarationRoot = true
-    defer { isRotatingDeclarationRoot = false }
-
-    do {
-      _ = try await manager.rotateDeclarationOnlineRoot()
-      try await manager.ensureDeclarationChainReady()
-      logger.info("Declaration online root rotation completed")
-    } catch {
-      logger.error("Declaration online root rotation failed: \(error.localizedDescription)")
-      errorMessage = "Root rotation failed: \(error.localizedDescription)"
-      showingErrorAlert = true
-    }
-  }
-
-  @MainActor
-  private func recoverDeclarationOnlineRoot() async {
-    guard let manager = await appState.getMLSConversationManager() else {
-      errorMessage = "MLS service is not available."
-      showingErrorAlert = true
-      return
-    }
-
-    isRecoveringDeclarationRoot = true
-    defer { isRecoveringDeclarationRoot = false }
-
-    do {
-      _ = try await manager.recoverDeclarationOnlineRoot(reason: "manual-recovery")
-      try await manager.ensureDeclarationChainReady()
-      logger.info("Declaration online root recovery completed")
-    } catch {
-      logger.error("Declaration online root recovery failed: \(error.localizedDescription)")
-      errorMessage = "Root recovery failed: \(error.localizedDescription)"
-      showingErrorAlert = true
-    }
-  }
 }
 
 #Preview {

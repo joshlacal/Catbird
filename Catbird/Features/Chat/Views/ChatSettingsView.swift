@@ -273,9 +273,9 @@ struct ChatSettingsView: View {
 
           if let conversationManager = await appState.getMLSConversationManager() {
             do {
-              try await conversationManager.ensureDeclarationChainReady()
+              try await conversationManager.ensureDeviceRecordPublished()
             } catch {
-              logger.error("Declaration chain initialization after opt-in failed: \(error.localizedDescription)")
+              logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
             }
           }
 
@@ -284,10 +284,10 @@ struct ChatSettingsView: View {
         } else {
           _ = try await mlsClient.optOut()
           if let conversationManager = await appState.getMLSConversationManager() {
-            _ = try? await conversationManager.publishDeclarationDeviceRevoke(
-              deviceId: nil,
-              reason: "mls-opt-out"
-            )
+            if let did = conversationManager.userDid,
+               let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
+              try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
+            }
           }
           ExperimentalSettings.shared.disableMLSChat(for: userDID)
           logger.info("Successfully opted out of MLS chat for account: \(userDID.prefix(20))...")
@@ -442,8 +442,10 @@ struct ChatDataExportView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  ChatSettingsView()
-    .environment(AppStateManager.shared)
+  AsyncPreviewContent { appState in
+    ChatSettingsView()
+        .environment(AppStateManager.shared)
+  }
 }
+
 #endif

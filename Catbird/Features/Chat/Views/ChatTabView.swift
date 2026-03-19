@@ -269,12 +269,12 @@ struct ChatTabView: View {
 
       if let conversationManager = await appState.getMLSConversationManager() {
         do {
-          try await conversationManager.ensureDeclarationChainReady()
+          try await conversationManager.ensureDeviceRecordPublished()
         } catch {
-          logger.error("Declaration chain initialization after opt-in failed: \(error.localizedDescription)")
+          logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
         }
       }
-      
+
       // Save local setting only after successful server opt-in
       ExperimentalSettings.shared.enableMLSChat(for: userDID)
       logger.info("Successfully opted in to MLS chat")
@@ -296,10 +296,10 @@ struct ChatTabView: View {
       let success = try await apiClient.optOut()
       if success {
         if let conversationManager = await appState.getMLSConversationManager() {
-          _ = try? await conversationManager.publishDeclarationDeviceRevoke(
-            deviceId: nil,
-            reason: "mls-opt-out"
-          )
+          if let did = conversationManager.userDid,
+             let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
+            try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
+          }
         }
         logger.info("Successfully opted out from MLS on server")
       } else {

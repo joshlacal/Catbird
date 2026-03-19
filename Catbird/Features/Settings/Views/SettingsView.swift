@@ -71,6 +71,15 @@ struct SettingsView: View {
                         .foregroundStyle(.purple)
                 }
             }
+
+            NavigationLink(destination: DataBackupSettingsView()) {
+                Label {
+                    Text("Data & Backup")
+                } icon: {
+                    Image(systemName: "externaldrive.fill")
+                        .foregroundStyle(.cyan)
+                }
+            }
         }
 
         Section {
@@ -396,12 +405,12 @@ struct SettingsView: View {
 
       if let conversationManager = await appState.getMLSConversationManager() {
         do {
-          try await conversationManager.ensureDeclarationChainReady()
+          try await conversationManager.ensureDeviceRecordPublished()
         } catch {
-          logger.error("Declaration chain initialization after opt-in failed: \(error.localizedDescription)")
+          logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
         }
       }
-      
+
       // Save local setting only after successful server opt-in
       ExperimentalSettings.shared.enableMLSChat(for: userDID)
     } catch {
@@ -419,10 +428,10 @@ struct SettingsView: View {
     do {
       _ = try await apiClient.optOut()
       if let conversationManager = await appState.getMLSConversationManager() {
-        _ = try? await conversationManager.publishDeclarationDeviceRevoke(
-          deviceId: nil,
-          reason: "mls-opt-out"
-        )
+        if let did = conversationManager.userDid,
+           let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
+          try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
+        }
       }
     } catch {
       // Silently fail - the local toggle is already off
@@ -617,8 +626,8 @@ extension Bundle {
 // MARK: - Previews
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-
-  SettingsView()
-    .applyAppStateEnvironment(appState)
+  AsyncPreviewContent { appState in
+    SettingsView()
+  }
 }
+

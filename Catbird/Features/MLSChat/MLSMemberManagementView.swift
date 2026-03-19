@@ -31,17 +31,7 @@ struct MLSMemberManagementView: View {
     @State private var selectedMemberForActions: BlueCatbirdMlsChatDefs.MemberView?
     @State private var enrichedProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
     @State private var showMemberHistory = false
-    @State private var declarationApprovalRequest: DeclarationApprovalRequest?
-    @State private var pendingParticipantForDeclarationApproval: MLSParticipantViewModel?
-
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSMemberManagement")
-    
-    struct DeclarationApprovalRequest: Identifiable {
-        let id = UUID()
-        let targetDid: String
-        let operation: String
-        let warning: String?
-    }
     
     var body: some View {
         NavigationStack {
@@ -73,30 +63,6 @@ struct MLSMemberManagementView: View {
             }
         } message: {
             errorAlertMessage
-        }
-        .alert(item: $declarationApprovalRequest) { request in
-            Alert(
-                title: Text("Unverified Identity"),
-                message: Text(request.warning ?? "Identity verification for \(request.targetDid) requires explicit confirmation."),
-                primaryButton: .destructive(Text("Add Anyway")) {
-                    Task {
-                        declarationApprovalRequest = nil
-                        if let manager = await appState.getMLSConversationManager() {
-                            manager.approveDeclarationUserFriction(
-                                targetDid: request.targetDid,
-                                operation: request.operation
-                            )
-                            if let participant = pendingParticipantForDeclarationApproval {
-                                await addMember(participant)
-                            }
-                        }
-                    }
-                },
-                secondaryButton: .cancel({
-                    declarationApprovalRequest = nil
-                    pendingParticipantForDeclarationApproval = nil
-                })
-            )
         }
         .sheet(item: $selectedMemberForActions) { member in
             memberActionsSheet(for: member)
@@ -536,26 +502,11 @@ struct MLSMemberManagementView: View {
         await viewModel?.addMembers([participant.id])
         
         if let error = viewModel?.error {
-            if case let MLSConversationError.declarationUserConfirmationRequired(
-                targetDid: targetDid,
-                operation: operation,
-                warning: warning
-            ) = error {
-                logger.warning("Declaration confirmation required before adding \(participant.id)")
-                pendingParticipantForDeclarationApproval = participant
-                declarationApprovalRequest = DeclarationApprovalRequest(
-                    targetDid: targetDid,
-                    operation: operation,
-                    warning: warning
-                )
-                return
-            }
             logger.error("Failed to add member: \(error.localizedDescription)")
             errorMessage = "Failed to add member: \(error.localizedDescription)"
             showingError = true
         } else {
             logger.info("Successfully added member to MLS group")
-            pendingParticipantForDeclarationApproval = nil
             searchText = ""
             updateMemberRoles(from: viewModel?.members)
         }
@@ -838,10 +789,12 @@ struct MemberRowEnhanced: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     MLSMemberManagementView(conversationId: "sample-convo-id")
-        .environment(AppStateManager.shared)
+            .environment(AppStateManager.shared)
+  }
 }
+
 
 #endif
 
