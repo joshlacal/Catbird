@@ -86,7 +86,6 @@ struct MLSConversationDetailView: View {
   @State private var members: [MLSMemberModel] = []
   @State private var participantProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
   @State private var isSendingMessage = false
-  @State private var showingMemberManagement = false
   @State private var showingEncryptionInfo = false
   @State private var webSocketManager: MLSWebSocketManager?
   @State private var stateObserver: MLSStateObserver?  // Observer for encrypted MLS events (reactions)
@@ -96,6 +95,7 @@ struct MLSConversationDetailView: View {
   @State private var showingSendError = false
   @State private var pipelineError: String?
   @State private var showingLeaveConfirmation = false
+  @State private var showingGroupDetail = false
   @State private var showingAdminDashboard = false
   @State private var showingReportsView = false
   @State private var pendingReportsCount = 0
@@ -125,6 +125,9 @@ struct MLSConversationDetailView: View {
   // Composer state
   @State private var composerText = ""
   @State private var attachedEmbed: MLSEmbedData?
+
+  // Image DM support
+  @State private var imageSender: MLSImageSender?
 
   // Delete/Report state
   @State private var messageToReport: Message?
@@ -168,69 +171,65 @@ struct MLSConversationDetailView: View {
     conversationModel?.requestState == .pendingInbound
   }
 
+  /// Whether we currently have any message content visible in either legacy or unified chat state.
+  private var hasVisibleMessages: Bool {
+    if !messages.isEmpty {
+      return true
+    }
+    if let dataSource = unifiedDataSource {
+      return !dataSource.messages.isEmpty
+    }
+    return false
+  }
+
   private var mainContent: some View {
     ZStack {
       // Use unified UICollectionView-based chat
-      if #available(iOS 16.0, *), let dataSource = unifiedDataSource {
-        VStack(spacing: 0) {
-          ChatCollectionViewBridge(
-            dataSource: dataSource,
-            navigationPath: chatNavigationPath,
-            onMessageLongPress: { message in
-              handleMessageLongPress(message)
-            },
-            onRequestEmojiPicker: { messageID in
-              emojiPickerMessageID = messageID
-              showingEmojiPicker = true
-            }
-          )
-          .ignoresSafeArea()
-          .onChange(of: selectedEmoji) { _, newEmoji in
-            guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
-            dataSource.addReaction(messageID: messageID, emoji: newEmoji)
-            showingEmojiPicker = false
+      if let dataSource = unifiedDataSource {
+        ChatCollectionViewBridge(
+          dataSource: dataSource,
+          navigationPath: chatNavigationPath,
+          onMessageLongPress: { message in
+            handleMessageLongPress(message)
+          },
+          onRequestEmojiPicker: { messageID in
+            emojiPickerMessageID = messageID
+            showingEmojiPicker = true
+          }
+        )
+        .ignoresSafeArea(.container)
+        .onChange(of: selectedEmoji) { _, newEmoji in
+          guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
+          dataSource.addReaction(messageID: messageID, emoji: newEmoji)
+          showingEmojiPicker = false
+          selectedEmoji = ""
+          emojiPickerMessageID = nil
+        }
+        .onChange(of: showingEmojiPicker) { _, isPresented in
+          if !isPresented {
             selectedEmoji = ""
             emojiPickerMessageID = nil
           }
-          .onChange(of: showingEmojiPicker) { _, isPresented in
-            if !isPresented {
-              selectedEmoji = ""
-              emojiPickerMessageID = nil
-            }
-          }
-          .task {
-            await dataSource.loadMessages()
-          }
-
-          // Input bar at bottom with keyboard avoidance
+        }
+        .task {
+          await dataSource.loadMessages()
+        }
+        .safeAreaInset(edge: .bottom) {
           mlsInputBar
         }
         .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
           selectedEmoji = emoji
         }
-      } else {
-        // Fallback for iOS < 16
-        VStack(spacing: DesignTokens.Spacing.base) {
-          Image(systemName: "message.fill")
-            .font(.system(size: 48))
-            .foregroundColor(.secondary)
-          Text("Please update to iOS 16 or later for the full chat experience.")
-            .designBody()
-            .foregroundColor(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
 
-      if isLoadingMessages && !isLoadingProfiles {
+      if isLoadingMessages && !isLoadingProfiles && !hasVisibleMessages {
         ProgressView("Loading messages...")
           .padding()
           .background(.regularMaterial)
           .clipShape(RoundedRectangle(cornerRadius: 10))
       }
 
-      if let pipelineError, !isLoadingMessages {
+      if let pipelineError, !isLoadingMessages, !hasVisibleMessages {
         VStack(spacing: 12) {
           Text("Couldn't load messages")
             .font(.headline)
@@ -320,11 +319,14 @@ struct MLSConversationDetailView: View {
   @available(iOS 16.0, *)
   @ViewBuilder
   private var mlsInputBar: some View {
-    if isChatTabActive {
+    if isChatTabActive && chatNavigationPath.wrappedValue.isEmpty {
       MLSMessageComposerView(
         text: Binding(
           get: { unifiedDataSource?.draftText ?? "" },
-          set: { unifiedDataSource?.draftText = $0 }
+          set: { newValue in
+            unifiedDataSource?.draftText = newValue
+            unifiedDataSource?.handleComposerTextChanged(newValue)
+          }
         ),
         attachedEmbed: Binding(
           get: { unifiedDataSource?.attachedEmbed },
@@ -338,7 +340,8 @@ struct MLSConversationDetailView: View {
               await dataSource.sendMessage(text: text)
             }
           }
-        }
+        },
+        imageSender: imageSender
       )
     }
   }
@@ -405,7 +408,7 @@ struct MLSConversationDetailView: View {
       }
     }
     .safeAreaInset(edge: .bottom) {
-      if isChatTabActive {
+      if isChatTabActive && chatNavigationPath.wrappedValue.isEmpty {
         VStack(spacing: 0) {
           if isPendingRequest {
             // Show accept/decline buttons for pending chat requests
@@ -425,13 +428,13 @@ struct MLSConversationDetailView: View {
               conversationId: conversationId,
               onSend: { text, embed in
                 Task { await sendMLSMessage(text: text, embed: embed) }
-              }
+              },
+              imageSender: imageSender
             )
           }
         }
       }
     }
-    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
   // MARK: - Reaction Handling
@@ -453,7 +456,7 @@ struct MLSConversationDetailView: View {
         let reaction = MLSMessageReaction(
           messageId: messageId,
           reaction: emoji,
-          senderDID: appState.userDID ?? "",
+          senderDID: appState.userDID,
           reactedAt: Date()
         )
 
@@ -465,7 +468,7 @@ struct MLSConversationDetailView: View {
 
         // Persist to local storage
         persistReaction(
-          messageId: messageId, emoji: emoji, actorDID: appState.userDID ?? "", action: "add")
+            messageId: messageId, emoji: emoji, actorDID: appState.userDID, action: "add")
       } catch {
         logger.error("Failed to add encrypted reaction: \(error.localizedDescription)")
       }
@@ -611,6 +614,7 @@ struct MLSConversationDetailView: View {
       }
       .onDisappear {
         isViewActive = false
+        unifiedDataSource?.stopLocalTypingIndicatorIfNeeded()
         stopMessagePolling()
         // Final mark-as-read sweep to catch messages that arrived while viewing
         Task {
@@ -661,11 +665,11 @@ struct MLSConversationDetailView: View {
       .toolbar {
         conversationToolbar
       }
-      .sheet(isPresented: $showingMemberManagement) {
-        memberManagementSheet
-      }
       .sheet(isPresented: $showingEncryptionInfo) {
         encryptionInfoSheet
+      }
+      .sheet(isPresented: $showingGroupDetail) {
+        groupDetailSheet
       }
       .sheet(isPresented: $showingAdminDashboard) {
         adminDashboardSheet
@@ -701,13 +705,6 @@ struct MLSConversationDetailView: View {
       } message: {
         recoveryFailedMessage
       }
-  }
-
-  @ViewBuilder
-  private var memberManagementSheet: some View {
-    NavigationStack {
-      MLSMemberManagementView(conversationId: conversationId)
-    }
   }
 
   @ViewBuilder
@@ -765,12 +762,38 @@ struct MLSConversationDetailView: View {
     }
   }
 
+  private func resolveSetupDependencies() async -> (
+    database: DatabasePool,
+    apiClient: MLSAPIClient,
+    conversationManager: MLSConversationManager
+  )? {
+    let maxAttempts = 2
+    for attempt in 1...maxAttempts {
+      let database = appState.mlsDatabase
+      async let apiClientTask = appState.getMLSAPIClient()
+      async let managerTask = appState.getMLSConversationManager(timeout: 12.0)
+
+      let apiClient = await apiClientTask
+      let conversationManager = await managerTask
+
+      if let database, let apiClient, let conversationManager {
+        return (database, apiClient, conversationManager)
+      }
+
+      if attempt < maxAttempts {
+        logger.warning(
+          "MLS setup dependencies unavailable for \(conversationId) on attempt \(attempt)/\(maxAttempts); retrying"
+        )
+        try? await Task.sleep(nanoseconds: 400_000_000)
+      }
+    }
+    return nil
+  }
+
   private func setupView() async {
     isViewActive = true
     if viewModel == nil {
-      guard let database = appState.mlsDatabase,
-        let apiClient = await appState.getMLSAPIClient(),
-        let conversationManager = await appState.getMLSConversationManager()
+      guard let dependencies = await resolveSetupDependencies()
       else {
         logger.error("Cannot initialize view: dependencies not available")
         sendError = "MLS service not available. Please restart the app."
@@ -781,9 +804,9 @@ struct MLSConversationDetailView: View {
 
       let newViewModel = MLSConversationDetailViewModel(
         conversationId: conversationId,
-        database: database,
-        apiClient: apiClient,
-        conversationManager: conversationManager
+        database: dependencies.database,
+        apiClient: dependencies.apiClient,
+        conversationManager: dependencies.conversationManager
       )
       viewModel = newViewModel
 
@@ -808,14 +831,24 @@ struct MLSConversationDetailView: View {
       )
     }
 
+    // Initialize image sender
+    if imageSender == nil {
+      imageSender = MLSImageSender(client: appState.client)
+    }
+
     // Setup observer for encrypted MLS events (reactions, read receipts, typing)
     await setupStateObserver()
 
+    // Start WebSocket subscription before the bootstrap pipeline so ephemeral typing events
+    // aren't missed while initial fetch/decrypt work is running.
+    if !hasStartedSubscription {
+      startMessagePolling()
+      hasStartedSubscription = true
+    }
+
     // Fire-and-forget MLS pipeline that outlives the view
     // This ensures MLS state updates complete even if user navigates away
-    Task.detached(priority: .userInitiated) { [self] in
-      await self.runConversationPipeline()
-    }
+    launchConversationPipeline()
 
     // UI-only work that can be cancelled if view disappears
     await loadMemberCount()
@@ -930,6 +963,9 @@ struct MLSConversationDetailView: View {
 
     // Read receipts and typing indicators have been removed
 
+    case .syncCompleted:
+      await reloadConversationMetadata(userDID: userDID)
+
     default:
       // Ignore other events
       break
@@ -976,31 +1012,11 @@ struct MLSConversationDetailView: View {
     // }
 
     ToolbarItem(placement: .primaryAction) {
-      Menu {
-        if canShowMemberManagement {
-          Button {
-            showingMemberManagement = true
-          } label: {
-            Label("Manage Members", systemImage: "person.2")
-          }
-        }
-
-        Button {
-          showingEncryptionInfo = true
-        } label: {
-          Label("Encryption Info", systemImage: "info.circle")
-        }
-
-        Divider()
-
-        Button(role: .destructive) {
-          showingLeaveConfirmation = true
-        } label: {
-          Label("Leave Conversation", systemImage: "arrow.right.square")
-        }
+      Button {
+        showingGroupDetail = true
       } label: {
-        Image(systemName: "ellipsis.circle")
-          .accessibilityLabel("Conversation options")
+        Image(systemName: "info.circle")
+          .accessibilityLabel("Conversation details")
       }
     }
   }
@@ -1054,6 +1070,16 @@ struct MLSConversationDetailView: View {
   @ViewBuilder
   private var encryptionStatusHeader: some View {
     HStack(spacing: DesignTokens.Spacing.xs) {
+      if let avatarData = conversationModel?.avatarImageData,
+        let uiImage = UIImage(data: avatarData)
+      {
+        Image(uiImage: uiImage)
+          .resizable()
+          .scaledToFill()
+          .frame(width: 28, height: 28)
+          .clipShape(Circle())
+      }
+
       VStack(spacing: 2) {
         Text(navigationTitle)
           .designCallout()
@@ -1088,10 +1114,10 @@ struct MLSConversationDetailView: View {
       }
     }
     .onTapGesture {
-      showingEncryptionInfo = true
+      showingGroupDetail = true
     }
     .accessibilityLabel("End-to-end encrypted conversation")
-    .accessibilityHint("Tap to view encryption details")
+    .accessibilityHint("Tap to view conversation details")
   }
 
   // MARK: - Encryption Info Sheet
@@ -1173,6 +1199,37 @@ struct MLSConversationDetailView: View {
     }
   }
 
+  // MARK: - Group Detail Sheet
+
+  @ViewBuilder
+  private var groupDetailSheet: some View {
+    if let model = conversationModel,
+      let conversationManager = viewModel?.conversationManager
+    {
+      MLSGroupDetailView(
+        conversationId: conversationId,
+        conversationModel: model,
+        conversationManager: conversationManager,
+        currentUserDID: appState.userDID,
+        participants: participantViewModels,
+        participantProfiles: participantProfiles
+      )
+    }
+  }
+
+  private var participantViewModels: [MLSParticipantViewModel] {
+    members.filter(\.isActive).map { member in
+      let canonical = MLSProfileEnricher.canonicalDID(member.did)
+      let profile = participantProfiles[member.did] ?? participantProfiles[canonical]
+      return MLSParticipantViewModel(
+        id: member.did,
+        handle: profile?.handle ?? member.handle ?? member.did,
+        displayName: profile?.displayName ?? member.displayName,
+        avatarURL: profile?.avatarURL
+      )
+    }
+  }
+
   // MARK: - Computed Properties
 
   private var navigationTitle: String {
@@ -1180,7 +1237,18 @@ struct MLSConversationDetailView: View {
       return title
     }
 
-    // Use member count to determine if group chat or 1-on-1
+    // For 1:1, show the other participant's display name
+     let currentUserDID = appState.userDID 
+      let others = members.filter { $0.did.lowercased() != currentUserDID.lowercased() && $0.isActive }
+      if others.count == 1, let other = others.first {
+        let canonical = MLSProfileEnricher.canonicalDID(other.did)
+        if let profile = participantProfiles[other.did] ?? participantProfiles[canonical] {
+          return profile.displayName ?? profile.handle
+        }
+        return other.displayName ?? other.handle ?? "Secure Chat"
+      }
+    
+
     if memberCount > 1 {
       return "Secure Group Chat"
     } else {
@@ -1284,6 +1352,37 @@ struct MLSConversationDetailView: View {
     return nil
   }
 
+  @MainActor
+  private func reloadConversationMetadata(userDID: String?) async {
+    guard let database = appState.mlsDatabase else {
+      logger.warning("Cannot reload conversation metadata: database unavailable")
+      return
+    }
+
+    guard
+      let currentUserDID = userDID ?? appState.userDID
+        ?? AppStateManager.shared.authentication.state.userDID
+    else {
+      logger.warning("Cannot reload conversation metadata: missing user DID")
+      return
+    }
+
+    do {
+      if let stored = try await storage.fetchConversation(
+        conversationID: conversationId,
+        currentUserDID: currentUserDID,
+        database: database
+      ) {
+        conversationModel = stored
+        logger.debug("Reloaded conversation metadata for \(conversationId.prefix(16))...")
+      } else {
+        _ = await ensureConversationMetadata()
+      }
+    } catch {
+      logger.error("Failed to reload conversation metadata: \(error.localizedDescription)")
+    }
+  }
+
   private func resolveConversationView() async -> BlueCatbirdMlsChatDefs.ConvoView? {
     guard let manager = await appState.getMLSConversationManager() else {
       logger.error("Cannot resolve conversation metadata: manager unavailable")
@@ -1328,6 +1427,29 @@ struct MLSConversationDetailView: View {
     }
   }
 
+  private final class ConversationPipelineGate: @unchecked Sendable {
+    static let shared = ConversationPipelineGate()
+
+    private let lock = NSLock()
+    private var activeConversationIDs: Set<String> = []
+
+    func begin(conversationID: String) -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      if activeConversationIDs.contains(conversationID) {
+        return false
+      }
+      activeConversationIDs.insert(conversationID)
+      return true
+    }
+
+    func end(conversationID: String) {
+      lock.lock()
+      defer { lock.unlock() }
+      activeConversationIDs.remove(conversationID)
+    }
+  }
+
   private func withTimeout<T>(
     seconds: TimeInterval,
     operationName: String,
@@ -1367,7 +1489,17 @@ struct MLSConversationDetailView: View {
 
   @MainActor
   private func showPipelineError(_ message: String) {
+    guard !hasVisibleMessages else {
+      logger.info("Suppressing pipeline overlay because cached messages are already visible")
+      return
+    }
     pipelineError = message
+  }
+
+  private func launchConversationPipeline() {
+    Task.detached(priority: .userInitiated) { [self] in
+      await self.runConversationPipeline()
+    }
   }
 
   private func retryConversationPipeline() {
@@ -1375,21 +1507,32 @@ struct MLSConversationDetailView: View {
       pipelineError = nil
     }
 
-    Task.detached(priority: .userInitiated) { [self] in
-      await self.runConversationPipeline()
-    }
+    launchConversationPipeline()
   }
 
   /// MLS conversation pipeline that runs independently of view lifecycle
   /// This function is called from a detached task to ensure MLS state updates
   /// complete even if the user navigates away from the view
   private func runConversationPipeline() async {
+    guard ConversationPipelineGate.shared.begin(conversationID: conversationId) else {
+      logger.debug(
+        "🚫 [PIPELINE] Skipping duplicate pipeline run for conversation: \(conversationId)")
+      return
+    }
+    defer {
+      ConversationPipelineGate.shared.end(conversationID: conversationId)
+    }
+
     logger.info(
       "🎬 [PIPELINE] Starting MLS conversation pipeline for conversation: \(conversationId)")
 
     // PHASE 0: Fetch conversation metadata
     // Even if the view is dismissed, we need conversation metadata for subsequent operations
-    _ = await ensureConversationMetadata()
+    guard await ensureConversationMetadata() != nil else {
+      logger.error("❌ [PIPELINE] Conversation metadata unavailable for \(conversationId)")
+      await showPipelineError("Couldn't load conversation details. Tap Retry to try again.")
+      return
+    }
 
     logger.info("📍 [PIPELINE] Starting Phase 0: Load cached messages")
 
@@ -1421,7 +1564,7 @@ struct MLSConversationDetailView: View {
     let fetchMessagesTimeoutSeconds: TimeInterval = 20
     let processMessagesTimeoutSeconds: TimeInterval = 30
 
-    guard let manager = await appState.getMLSConversationManager() else {
+    guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
       logger.error("Failed to get MLS conversation manager")
       await showPipelineError("MLS service unavailable. Please try again.")
       return
@@ -1856,6 +1999,10 @@ struct MLSConversationDetailView: View {
         if isViewActive && !hasStartedSubscription {
           startMessagePolling()
           hasStartedSubscription = true
+          // Deferred re-sort to fix any messages that arrived during initial load
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+            sortMessagesByMLSOrder()
+          }
         }
       }
 
@@ -2337,6 +2484,10 @@ struct MLSConversationDetailView: View {
         if isViewActive && !hasStartedSubscription {
           startMessagePolling()
           hasStartedSubscription = true
+          // Deferred re-sort to fix any messages that arrived during initial load
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+            sortMessagesByMLSOrder()
+          }
         }
       }
 
@@ -2362,6 +2513,50 @@ struct MLSConversationDetailView: View {
     }
 
     logger.debug("🔍 [PHASE 0] Using currentUserDID: \(currentUserDID)")
+
+    // Seed participantProfiles from the enricher's actor-level cache and DB members
+    // so that makeUser() can resolve display names and avatars for Phase 0 messages
+    // without waiting for the network fetch in loadParticipantProfiles().
+    do {
+      let memberModels = try await storage.fetchMembers(
+        conversationID: conversationId,
+        currentUserDID: currentUserDID,
+        database: database
+      )
+      let memberDIDs = memberModels.map(\.did)
+      let enricherProfiles = await appState.mlsProfileEnricher.getCachedProfiles(for: memberDIDs)
+
+      await MainActor.run {
+        // First: seed from DB member data (handles/names but no avatars)
+        for member in memberModels {
+          if participantProfiles[member.did] == nil,
+            member.handle != nil || member.displayName != nil
+          {
+            participantProfiles[member.did] = MLSProfileEnricher.ProfileData(
+              did: member.did,
+              handle: member.handle ?? "",
+              displayName: member.displayName,
+              avatarURL: nil
+            )
+          }
+        }
+        // Then: upgrade with enricher cache (full profiles with avatars)
+        for (canonical, profile) in enricherProfiles {
+          if participantProfiles[canonical] == nil
+            || participantProfiles[canonical]?.avatarURL == nil
+          {
+            participantProfiles[canonical] = profile
+          }
+        }
+      }
+      let seededCount = enricherProfiles.count
+      let memberSeeded = memberModels.filter { $0.handle != nil || $0.displayName != nil }.count
+      logger.debug(
+        "🔍 [PHASE 0] Seeded profiles: \(memberSeeded) from DB, \(seededCount) from enricher cache"
+      )
+    } catch {
+      logger.debug("🔍 [PHASE 0] Could not seed profiles: \(error.localizedDescription)")
+    }
 
     do {
       var orderUpdates: [String: MessageOrderKey] = [:]
@@ -2476,6 +2671,9 @@ struct MLSConversationDetailView: View {
         applyMessageOrderUpdates(orderUpdates)
         messages = cachedMessages
         sortMessagesByMLSOrder()
+        if !cachedMessages.isEmpty {
+          pipelineError = nil
+        }
       }
 
       ensureProfilesLoaded(for: cachedMessages.map { $0.user.id })
@@ -2672,10 +2870,35 @@ struct MLSConversationDetailView: View {
 
       let dids = Set(fetchedMembers.map(\.did))
 
+      // Seed participantProfiles from DB-persisted member data immediately
+      // so messages show names before the network fetch completes
+      var dbProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
+      for member in fetchedMembers {
+        if member.handle != nil || member.displayName != nil {
+          dbProfiles[member.did] = MLSProfileEnricher.ProfileData(
+            did: member.did,
+            handle: member.handle ?? "",
+            displayName: member.displayName,
+            avatarURL: nil
+          )
+        }
+      }
+
       await MainActor.run {
         members = fetchedMembers
         participantProfiles = participantProfiles.filter { dids.contains($0.key) }
+        // Merge DB-cached profiles as initial values (won't overwrite existing)
+        for (did, profile) in dbProfiles where participantProfiles[did] == nil {
+          participantProfiles[did] = profile
+        }
+        // Rebuild messages immediately with DB-cached names
+        if !dbProfiles.isEmpty {
+          rebuildMessagesWithProfiles()
+        }
       }
+
+      // Seed the in-memory actor cache from DB data so subsequent lookups are fast
+      await appState.mlsProfileEnricher.seedFromDatabase(Array(dbProfiles.values))
 
       guard !dids.isEmpty else {
         logger.info("Conversation \(conversationId) has no active members to enrich")
@@ -2696,7 +2919,7 @@ struct MLSConversationDetailView: View {
       await MainActor.run {
         mergeParticipantProfiles(with: profiles)
 
-        // IMPROVEMENT: Pass profiles to unified data source so messages show names immediately
+        // Pass profiles to unified data source so messages show names immediately
         unifiedDataSource?.preloadProfiles(profiles)
       }
 
@@ -3050,17 +3273,39 @@ struct MLSConversationDetailView: View {
   private func markMessagesAsRead() async {
     logger.debug("📬 [READ_RECEIPTS] Marking messages as read for conversation \(conversationId)")
 
+    var latestLocalCursor: (epoch: Int64, seq: Int64, messageID: String)?
+    var didAdvanceFrontier = false
+
     // Mark messages as read in local database first
     if let database = appState.mlsDatabase {
       let currentUserDID = appState.userDID
       do {
+        latestLocalCursor = try await storage.fetchLastMessageCursor(
+          conversationID: conversationId,
+          currentUserDID: currentUserDID,
+          database: database
+        )
+
         let count = try await MLSStorageHelpers.markAllMessagesAsRead(
           in: database,
           conversationID: conversationId,
           currentUserDID: currentUserDID
         )
+
+        if let latestLocalCursor {
+          didAdvanceFrontier = try await storage.upsertReadFrontier(
+            conversationID: conversationId,
+            currentUserDID: currentUserDID,
+            epoch: latestLocalCursor.epoch,
+            sequenceNumber: latestLocalCursor.seq,
+            database: database
+          )
+        }
+
         if count > 0 {
           logger.info("📬 [READ_RECEIPTS] Marked \(count) messages as read locally")
+        }
+        if count > 0 || didAdvanceFrontier {
           // Update AppState's MLS unread count
           await appState.updateMLSUnreadCount()
         }
@@ -3079,8 +3324,11 @@ struct MLSConversationDetailView: View {
     }
 
     do {
-      // Mark all messages as read (messageId: nil means all messages)
-      let readAt = try await apiClient.updateRead(convoId: conversationId, messageId: nil)
+      // Pass the latest message ID so the server can include it in the ReadEvent
+      let readAt = try await apiClient.updateRead(
+        convoId: conversationId,
+        messageId: latestLocalCursor?.messageID
+      )
       logger.info("📬 [READ_RECEIPTS] ✅ Marked all messages as read on server at \(readAt)")
     } catch {
       logger.error(
@@ -3422,6 +3670,14 @@ struct MLSConversationDetailView: View {
             self.logger.info("📡 WS: onReaction handler called")
             await self.handleReaction(reactionEvent)
           },
+          onTyping: { @MainActor typingEvent in
+            self.logger.info("📡 WS: onTyping handler called")
+            await self.handleTypingEvent(typingEvent)
+          },
+          onRead: { @MainActor readEvent in
+            self.logger.info("📬 WS: onRead handler called from \(readEvent.did)")
+            await self.handleReadEvent(readEvent)
+          },
           onInfo: { @MainActor infoEvent in
             self.logger.info("📡 WS: onInfo handler called")
             await self.handleInfoEvent(infoEvent)
@@ -3641,11 +3897,13 @@ struct MLSConversationDetailView: View {
         "🔍 MLS_OWNERSHIP: Created SSE Message object - user.name: '\(newMessage.user.name ?? "nil")', user.isCurrentUser: \(newMessage.user.isCurrentUser)"
       )
 
-      messageOrdering[newMessage.id] = MessageOrderKey(
-        epoch: event.message.epoch,
-        sequence: event.message.seq,
-        timestamp: event.message.createdAt.date
-      )
+      if messageOrdering[newMessage.id] == nil {
+        messageOrdering[newMessage.id] = MessageOrderKey(
+          epoch: event.message.epoch,
+          sequence: event.message.seq,
+          timestamp: event.message.createdAt.date
+        )
+      }
 
       // Add to messages if not already present
       if !messages.contains(where: { $0.id == newMessage.id }) {
@@ -3674,8 +3932,17 @@ struct MLSConversationDetailView: View {
         }
       }
 
-      // Notify unified data source to refresh from storage
-      await unifiedDataSource?.onMessagesDecrypted()
+      // Push message directly into the unified data source for immediate UI update
+      unifiedDataSource?.appendMessageImmediately(
+        id: event.message.id,
+        convoID: conversationId,
+        text: displayText,
+        senderDID: senderDID,
+        sentAt: event.message.createdAt.date,
+        embed: embed,
+        epoch: event.message.epoch,
+        sequence: event.message.seq
+      )
 
     } catch let error as MLSError {
       if case .ratchetStateDesync(let message) = error {
@@ -3755,6 +4022,29 @@ struct MLSConversationDetailView: View {
       senderDID: senderDID,
       action: event.action
     )
+  }
+
+  @MainActor
+  private func handleTypingEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.TypingEvent) async {
+    unifiedDataSource?.applyTypingEvent(
+      participantID: event.did.didString(),
+      isTyping: event.isTyping
+    )
+  }
+
+  @MainActor
+  private func handleReadEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.ReadEvent) async {
+    // If the server provides a specific messageId, use it as the read-up-to marker.
+    // Otherwise fall back to marking all current-user messages as read.
+    if let messageId = event.messageId {
+      unifiedDataSource?.applyReadReceipt(
+        readUpToMessageID: messageId,
+        readerDID: event.did.didString()
+      )
+    } else {
+      // No specific messageId — mark all current-user messages as read
+      unifiedDataSource?.applyReadReceiptForAll(readerDID: event.did.didString())
+    }
   }
 
   /// Handle new device events from SSE stream
@@ -4111,12 +4401,16 @@ struct MLSConversationDetailView: View {
 
   @MainActor
   private func orderingKey(for message: Message) -> MessageOrderKey {
-    messageOrdering[message.id]
-      ?? MessageOrderKey(
-        epoch: Int.max,
-        sequence: Int.max,
-        timestamp: message.createdAt
-      )
+    if let key = messageOrdering[message.id] {
+      return key
+    }
+    // Fallback: sort by timestamp with epoch/sequence 0
+    // so unknown messages sort by time rather than being pushed to the end
+    return MessageOrderKey(
+      epoch: 0,
+      sequence: 0,
+      timestamp: message.createdAt
+    )
   }
 
   private func refreshOrderMetadata(for messageID: String) {
@@ -4305,6 +4599,9 @@ struct MLSConversationDetailView: View {
       case .adminRoster, .adminAction:
         // Admin messages could be shown as system messages, but skip for now
         return (plaintext, true)
+      case .system:
+        // System messages (history boundary markers, etc.) are displayable
+        return (payload.text ?? plaintext, false)
       }
     }
 
