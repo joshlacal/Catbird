@@ -19,7 +19,7 @@ struct ProfileInfoView: View {
       viewModel: viewModel,
       appState: appState,
       isEditingProfile: $isEditingProfile,
-      path: $path,
+      path: $path, screenWidth: UIScreen.main.bounds.width - 32,
       hideAvatar: false
     )
     .padding(.horizontal, 16)

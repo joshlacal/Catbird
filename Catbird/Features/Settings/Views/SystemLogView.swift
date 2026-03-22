@@ -539,7 +539,8 @@ private struct LogExportView: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  SystemLogView()
-    .applyAppStateEnvironment(appState)
+  AsyncPreviewContent { appState in
+    SystemLogView()
+  }
 }
+

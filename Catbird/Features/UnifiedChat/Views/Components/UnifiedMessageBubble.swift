@@ -167,22 +167,32 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           .padding(.leading, 4)
       }
 
-      bubbleContent
+      let bubbleSurface = bubbleContent
         .bubbleBackground(
           isCurrentUser: message.isFromCurrentUser,
           cornerRadius: cornerRadius,
           colorScheme: colorScheme
         )
-        .background(
-          GeometryReader { proxy in
-            Color.clear
-              .preference(key: BubbleFramePreferenceKey.self, value: proxy.frame(in: .global))
+
+      if onLongPress != nil {
+        bubbleSurface
+          .background(
+            GeometryReader { proxy in
+              Color.clear
+                .preference(key: BubbleFramePreferenceKey.self, value: proxy.frame(in: .global))
+            }
+          )
+          .onPreferenceChange(BubbleFramePreferenceKey.self) { newFrame in
+            if bubbleGlobalFrame != newFrame {
+              bubbleGlobalFrame = newFrame
+            }
           }
-        )
-        .onPreferenceChange(BubbleFramePreferenceKey.self) { bubbleGlobalFrame = $0 }
-        .onLongPressGesture {
-          onLongPress?(bubbleGlobalFrame)
-        }
+          .onLongPressGesture {
+            onLongPress?(bubbleGlobalFrame)
+          }
+      } else {
+        bubbleSurface
+      }
 
       // Reactions
       if !message.reactions.isEmpty {
@@ -205,7 +215,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
 
-          sendStateIndicator
+          if message.isFromCurrentUser {
+            sendStateIndicator
+          }
         }
       }
     }
@@ -214,6 +226,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   @ViewBuilder
   private var bubbleContent: some View {
     let mlsDebugInfo = (message as? MLSMessageAdapter)?.debugInfo
+
+    let isImageOnly: Bool = {
+      if case .image = message.embed, message.text.isEmpty, mlsDebugInfo == nil {
+        return true
+      }
+      return false
+    }()
 
     let bubble = BubbleWidthLimiter(maxWidth: maxBubbleWidth) {
       VStack(alignment: .leading, spacing: 8) {
@@ -241,11 +260,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
         // Message text
         if !message.text.isEmpty {
-          let messageTextView = Text(message.text)
-            .font(.body)
-            .foregroundStyle(message.isFromCurrentUser ? .white : .primary)
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
+          let messageTextView = ChatRichTextView(
+            attributedText: message.attributedText,
+            isCurrentUser: message.isFromCurrentUser
+          )
+          .font(.body)
+          .lineLimit(nil)
+          .fixedSize(horizontal: false, vertical: true)
 
           if let identifier = mlsMessageTextIdentifier {
             messageTextView.accessibilityIdentifier(identifier)
@@ -254,22 +275,26 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           }
         }
       }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 10)
+      .padding(.horizontal, isImageOnly ? 4 : 14)
+      .padding(.vertical, isImageOnly ? 4 : 10)
     }
     .contentShape(Rectangle())
-    .onTapGesture {
-      if mlsDebugInfo != nil {
-        showingMLSErrorDetails = true
-      }
-    }
-    .sheet(isPresented: $showingMLSErrorDetails) {
-      if let info = mlsDebugInfo {
-        MLSMessageErrorDetailsSheet(info: info)
-      }
-    }
 
-    if message is MLSMessageAdapter {
+    if let info = mlsDebugInfo {
+      let interactiveBubble = bubble
+        .onTapGesture {
+          showingMLSErrorDetails = true
+        }
+        .sheet(isPresented: $showingMLSErrorDetails) {
+          MLSMessageErrorDetailsSheet(info: info)
+        }
+
+      if message is MLSMessageAdapter {
+        interactiveBubble.accessibilityElement(children: .contain)
+      } else {
+        interactiveBubble
+      }
+    } else if message is MLSMessageAdapter {
       bubble.accessibilityElement(children: .contain)
     } else {
       bubble
@@ -343,20 +368,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
         .symbolEffect(.pulse)
-    case .sent:
-      Image(systemName: "checkmark")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-    case .delivered:
-      Image(systemName: "checkmark")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .overlay {
-          Image(systemName: "checkmark")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .offset(x: 4)
-        }
+    case .sent, .delivered:
+      EmptyView()
     case .read:
       Image(systemName: "checkmark")
         .font(.caption2)
@@ -411,8 +424,21 @@ private struct BubbleWidthLimiter: Layout {
       width = effectiveMaxWidth
     }
 
-    let fallbackHeight = naturalSize.height.isFinite ? max(naturalSize.height, 0) : 0
-    let height = constrainedSize.height.isFinite ? max(constrainedSize.height, 0) : fallbackHeight
+    // Use the constrained height as the primary measurement. Only fall back to
+    // natural height when the content naturally fits within the max width — this
+    // handles fixedSize(vertical: true) text that needs its ideal height. When
+    // content exceeds the max width (e.g. images at full pixel dimensions), the
+    // natural height would be the raw pixel height, which is wildly wrong.
+    var height: CGFloat = 0
+    if constrainedSize.height.isFinite {
+      height = max(constrainedSize.height, 0)
+    }
+    if naturalSize.width.isFinite,
+       naturalSize.width <= effectiveMaxWidth,
+       naturalSize.height.isFinite
+    {
+      height = max(height, naturalSize.height)
+    }
 
     return CGSize(width: width, height: height)
   }
@@ -424,10 +450,11 @@ private struct BubbleWidthLimiter: Layout {
     cache: inout ()
   ) {
     guard let subview = subviews.first else { return }
+    // Propose nil height so fixedSize children can expand to their ideal height.
     subview.place(
       at: bounds.origin,
       anchor: .topLeading,
-      proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+      proposal: ProposedViewSize(width: bounds.width, height: nil)
     )
   }
 }
@@ -439,6 +466,44 @@ private struct BubbleFramePreferenceKey: PreferenceKey {
 
   static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
     value = nextValue()
+  }
+}
+
+// MARK: - Chat Rich Text
+
+struct ChatRichTextView: View {
+  let attributedText: AttributedString
+  let isCurrentUser: Bool
+
+  @Environment(AppState.self) private var appState
+
+  var body: some View {
+    Text(styledAttributedText)
+      .environment(
+        \.openURL,
+        OpenURLAction { url in
+          appState.urlHandler.handle(url)
+        }
+      )
+  }
+
+  private var styledAttributedText: AttributedString {
+    var text = attributedText
+    let defaultColor: Color = isCurrentUser ? .white : .primary
+    let linkColor: Color = isCurrentUser ? .white : .accentColor
+
+    for run in Array(text.runs) {
+      let range = run.range
+
+      if run.link == nil {
+        text[range].foregroundColor = defaultColor
+      } else {
+        text[range].foregroundColor = linkColor
+        text[range].underlineStyle = text[range].underlineStyle ?? .single
+      }
+    }
+
+    return text
   }
 }
 

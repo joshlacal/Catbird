@@ -895,12 +895,17 @@ extension PostComposerViewModel {
         if let gifFormat = gif.media_formats.gif {
             // Add size parameters to match Bluesky app format
             let baseURL = gifFormat.url
+            logger.debug("🔬 Tenor GIF baseURL: \(baseURL)")
+            logger.debug("🔬 Tenor GIF dims: \(gifFormat.dims)")
+            logger.debug("🔬 baseURL contains '?': \(baseURL.contains("?"))")
             if !baseURL.contains("?") && gifFormat.dims.count >= 2 {
                 let width = gifFormat.dims[0]
                 let height = gifFormat.dims[1]
                 gifURL = "\(baseURL)?hh=\(height)&ww=\(width)"
+                logger.debug("🔬 Constructed gifURL with params: \(gifURL)")
             } else {
                 gifURL = baseURL
+                logger.debug("🔬 Using baseURL without params (contains?: \(baseURL.contains("?")), dims count: \(gifFormat.dims.count))")
             }
         } else if let mediumGif = gif.media_formats.mediumgif {
             gifURL = mediumGif.url
@@ -916,7 +921,8 @@ extension PostComposerViewModel {
         if let previewURL = gif.media_formats.gifpreview?.url ?? gif.media_formats.tinygifpreview?.url {
             do {
                 let (data, _) = try await URLSession.shared.data(from: URL(string: previewURL)!)
-                let (_, uploadResult) = try await client.com.atproto.repo.uploadBlob(data: data, mimeType: "image/jpeg")
+                let thumbMimeType = ImageMetadataStripper.detectMIMEType(from: data)
+                let (_, uploadResult) = try await client.com.atproto.repo.uploadBlob(data: data, mimeType: thumbMimeType)
                 thumbBlob = uploadResult?.blob
             } catch {
                 logger.debug("Failed to upload GIF thumbnail: \(error)")

@@ -42,6 +42,13 @@ import os
 
     /// Load more coordination
     var loadMoreTask: Task<Void, Never>?
+    private var isLoadMoreRequestInFlight = false
+    private var lastLoadMoreTriggerPostID: String?
+    private var lastLoadMoreTriggerTimestamp: TimeInterval = .zero
+    private var recentlySeenPostTimestamps: [String: TimeInterval] = [:]
+    private let loadMorePrefetchThreshold = 5
+    private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
+    private let seenTrackingDedupInterval: TimeInterval = 0.75
 
     /// Update serialization - prevents concurrent performUpdate calls
     private var updateTask: Task<Void, Never>?
@@ -81,6 +88,8 @@ import os
 
     /// Apply a full reload on the next snapshot (set when feed switches)
     private var shouldReloadDataOnce = false
+    /// O(1) post lookup used during cell configuration
+    private var postsByID: [String: CachedFeedViewPost] = [:]
     
     // MARK: - Initialization
 
@@ -278,7 +287,7 @@ import os
       feedbackObserver?.stopObserving()
       appStateObserver?.stopObserving()
       tabTapObserver?.stopObserving()
-      loadMoreTask?.cancel()
+      cancelPendingLoadMoreRequest()
       updateTask?.cancel()
 
       if let backgroundObserver = backgroundObserver {
@@ -444,7 +453,7 @@ import os
         defer { PerformanceSignposts.endCellConfiguration(id: signpostId) }
         
         guard let self = self,
-          let post = self.stateManager.posts.first(where: { $0.id == postId })
+          let post = self.postsByID[postId]
         else {
           cell.contentConfiguration = nil
           return
@@ -469,7 +478,8 @@ import os
           FeedPostRow(
             viewModel: viewModel,
             navigationPath: self.navigationPath,
-            feedTypeIdentifier: self.stateManager.currentFeedType.identifier
+            feedTypeIdentifier: self.stateManager.currentFeedType.identifier,
+            tracksVisibilityForFeedback: false
           )
           .applyAppStateEnvironment(appState)
           .environment(\.fontManager, appState.fontManager)
@@ -606,6 +616,10 @@ import os
         // CRITICAL: Capture state at this moment to prevent race conditions
         // Do NOT read from stateManager during snapshot application
         let capturedPosts = stateManager.posts
+        let capturedPostsByID = Dictionary(
+          capturedPosts.map { ($0.id, $0) },
+          uniquingKeysWith: { first, _ in first }
+        )
         let capturedHeaderPresent = headerView != nil
         let accountID = stateManager.appState.userDID ?? "unknown-account"
         let feedID = stateManager.currentFeedType.identifier
@@ -623,16 +637,21 @@ import os
 
         let items = capturedPosts.map { Item.post(account: accountID, feed: feedID, id: $0.id) }
         snapshot.appendItems(items, toSection: .main)
+        postsByID = capturedPostsByID
 
         guard !Task.isCancelled else { return }
 
-        // Apply snapshot using reload for safety (prevents batch update inconsistencies)
+        let currentItemIdentifiers = dataSource.snapshot().itemIdentifiers
+
+        // Apply snapshot with targeted reconfiguration to avoid full reload churn
         if #available(iOS 15.0, *), shouldReloadDataOnce {
           shouldReloadDataOnce = false
           await dataSource.applySnapshotUsingReloadData(snapshot)
         } else if #available(iOS 15.0, *) {
-          // FIXED: Use applySnapshotUsingReloadData for all updates to avoid batch update race conditions
-          await dataSource.applySnapshotUsingReloadData(snapshot)
+          if currentItemIdentifiers == snapshot.itemIdentifiers {
+            snapshot.reconfigureItems(items)
+          }
+          await dataSource.apply(snapshot, animatingDifferences: false)
         } else {
           // Fallback for iOS 14 (though minimum is iOS 16)
           await dataSource.apply(snapshot, animatingDifferences: false)
@@ -696,39 +715,12 @@ import os
     /// Scrolls to the absolute top of the collection view (animated)
     private func scrollToTopAnimated() {
       guard let collectionView = collectionView else { return }
-      
-      // Fix 3: Force Layout Calculation
-      // If cells vary in height, estimates might be wrong. Force reconciliation.
-      collectionView.layoutIfNeeded()
-      // Fix 4: Invalidate layout to clear bad estimates if needed (optional, but good for truly dynamic content)
-      // collectionView.collectionViewLayout.invalidateLayout()
 
-      // Fix 2: Disable Paging During Scroll
-      // If paging is enabled, it can snag the scroll.
-      let wasPagingEnabled = collectionView.isPagingEnabled
-      if wasPagingEnabled {
-        collectionView.isPagingEnabled = false
-      }
-
-      // Scroll to the very top, respecting adjusted content insets (for large title nav bar)
-      // Fix 1: Scroll to Offset, Not Item
       let minOffsetY = -collectionView.adjustedContentInset.top
       let minOffsetX = -collectionView.adjustedContentInset.left
-      
-      controllerLogger.debug("🔝 Scrolling to top (animated) to y=\(minOffsetY)")
 
-      // Use UIView animation to ensure we can restore paging in completion
-      UIView.animate(
-        withDuration: 0.3,
-        animations: {
-          collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: true)
-        }
-      ) { _ in
-        // Restore paging if it was enabled
-        if wasPagingEnabled {
-          collectionView.isPagingEnabled = true
-        }
-      }
+      controllerLogger.debug("🔝 Scrolling to top (animated) to y=\(minOffsetY)")
+      collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: true)
     }
     
     /// Scrolls to top and refreshes to get the latest posts
@@ -834,6 +826,83 @@ import os
       collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: false)
       controllerLogger.debug("🔝 Reset scroll position to top (respecting adjustedContentInset)")
     }
+    
+    private func cancelPendingLoadMoreRequest() {
+      loadMoreTask?.cancel()
+      loadMoreTask = nil
+      isLoadMoreRequestInFlight = false
+    }
+    
+    private func resetTriggerDedupState() {
+      lastLoadMoreTriggerPostID = nil
+      lastLoadMoreTriggerTimestamp = .zero
+      recentlySeenPostTimestamps.removeAll(keepingCapacity: true)
+    }
+
+    private func postIndexForRow(at indexPath: IndexPath) -> Int? {
+      let postIndex = headerPresent ? indexPath.item - 1 : indexPath.item
+      guard postIndex >= .zero, postIndex < stateManager.posts.count else { return nil }
+      return postIndex
+    }
+    
+    private func trackPostSeenIfNeeded(at indexPath: IndexPath) {
+      guard let postIndex = postIndexForRow(at: indexPath) else { return }
+      
+      let postViewModel = stateManager.posts[postIndex]
+      let postID = postViewModel.id
+      let now = Date().timeIntervalSinceReferenceDate
+      if let lastSeenTimestamp = recentlySeenPostTimestamps[postID],
+         now - lastSeenTimestamp < seenTrackingDedupInterval
+      {
+        return
+      }
+      
+      recentlySeenPostTimestamps[postID] = now
+      if recentlySeenPostTimestamps.count > 200 {
+        let cutoff = now - seenTrackingDedupInterval * 2
+        recentlySeenPostTimestamps = recentlySeenPostTimestamps.filter { $0.value >= cutoff }
+      }
+      
+      if let postURI = try? ATProtocolURI(
+        uriString: postViewModel.feedViewPost.post.uri.uriString())
+      {
+        stateManager.appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+      }
+    }
+    
+    private func triggerLoadMoreIfNeeded(at indexPath: IndexPath) {
+      guard let postIndex = postIndexForRow(at: indexPath) else { return }
+      let totalItems = stateManager.posts.count
+      guard totalItems > .zero else { return }
+      
+      let triggerIndex = max(.zero, totalItems - loadMorePrefetchThreshold)
+      guard postIndex >= triggerIndex else { return }
+      guard !isLoadMoreRequestInFlight else { return }
+      
+      let triggerPostID = stateManager.posts[postIndex].id
+      let now = Date().timeIntervalSinceReferenceDate
+      if triggerPostID == lastLoadMoreTriggerPostID,
+         now - lastLoadMoreTriggerTimestamp < loadMoreTriggerDedupInterval
+      {
+        return
+      }
+      
+      lastLoadMoreTriggerPostID = triggerPostID
+      lastLoadMoreTriggerTimestamp = now
+      
+      isLoadMoreRequestInFlight = true
+      
+      loadMoreTask = Task { @MainActor [weak self] in
+        guard let self else { return }
+        defer {
+          self.loadMoreTask = nil
+          self.isLoadMoreRequestInFlight = false
+        }
+        
+        guard !self.stateManager.posts.isEmpty, !self.isAppInBackground else { return }
+        await self.stateManager.loadMore()
+      }
+    }
 
     // MARK: - App Lifecycle
 
@@ -860,7 +929,7 @@ import os
     private func handleAppDidEnterBackground() {
       controllerLogger.debug("📱 App entering background")
       isAppInBackground = true
-      loadMoreTask?.cancel()
+      cancelPendingLoadMoreRequest()
     }
 
     private func handleAppWillEnterForeground() {
@@ -881,7 +950,7 @@ import os
       captureCurrentScrollPosition()
 
       // Cancel ongoing operations
-      loadMoreTask?.cancel()
+      cancelPendingLoadMoreRequest()
       stateObserver?.stopObserving()
       themeObserver?.stopObserving()
       feedbackObserver?.stopObserving()
@@ -890,6 +959,7 @@ import os
 
       // Update the state manager
       stateManager = newStateManager
+      resetTriggerDedupState()
 
       // Restart observations
       setupObservers()
@@ -921,25 +991,8 @@ import os
       _ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
       forItemAt indexPath: IndexPath
     ) {
-      // Track post visibility for feed feedback (interaction seen)
-      if indexPath.item < stateManager.posts.count {
-        let postViewModel = stateManager.posts[indexPath.item]
-        if let postURI = try? ATProtocolURI(
-          uriString: postViewModel.feedViewPost.post.uri.uriString())
-        {
-          stateManager.appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
-        }
-      }
-
-      // Trigger load more when approaching the end
-      let totalItems = stateManager.posts.count
-      if indexPath.item >= totalItems - 5 {
-        Task { @MainActor in
-          if !stateManager.posts.isEmpty {
-            await stateManager.loadMore()
-          }
-        }
-      }
+      trackPostSeenIfNeeded(at: indexPath)
+      triggerLoadMoreIfNeeded(at: indexPath)
 
       // Notify scroll offset callback
       onScrollOffsetChanged?(collectionView.contentOffset.y)
@@ -947,17 +1000,6 @@ import os
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       onScrollOffsetChanged?(scrollView.contentOffset.y)
-
-      let contentHeight = scrollView.contentSize.height
-      guard contentHeight > .zero else { return }
-      let viewportHeight = scrollView.bounds.height
-      let preloadThreshold = contentHeight - viewportHeight * 1.5
-      if scrollView.contentOffset.y > preloadThreshold {
-        Task { @MainActor [weak self] in
-          guard let self = self else { return }
-          await self.stateManager.loadMore()
-        }
-      }
     }
   }
 

@@ -1,5 +1,4 @@
 import SwiftUI
-import AVFoundation
 import NukeUI
 import Petrel
 import WebKit
@@ -21,58 +20,6 @@ struct ExternalEmbedView: View {
     @State private var gifAspectRatio: CGFloat = 1.0
     
     private let logger = Logger(subsystem: "blue.catbird", category: "ExternalEmbedView")
-    
-    private actor MP4AspectRatioCache {
-        private var cache: [String: CGFloat] = [:]
-        
-        func get(for url: URL) -> CGFloat? {
-            cache[url.absoluteString]
-        }
-        
-        func set(_ aspectRatio: CGFloat, for url: URL) {
-            cache[url.absoluteString] = aspectRatio
-        }
-    }
-    
-    private static let mp4AspectRatioCache = MP4AspectRatioCache()
-    
-    private func resolveMP4AspectRatio(for url: URL) async -> CGFloat? {
-        if let cached = await Self.mp4AspectRatioCache.get(for: url) {
-            return cached
-        }
-        
-        // Match VideoAssetManager network options so AVFoundation can do efficient range requests.
-        let options: [String: Any] = [
-            AVURLAssetPreferPreciseDurationAndTimingKey: false,
-            AVURLAssetAllowsCellularAccessKey: true,
-            AVURLAssetAllowsConstrainedNetworkAccessKey: true,
-            AVURLAssetAllowsExpensiveNetworkAccessKey: true,
-        ]
-        
-        let asset = AVURLAsset(url: url, options: options)
-        
-        do {
-            let tracks = try await asset.loadTracks(withMediaType: .video)
-            guard let track = tracks.first else { return nil }
-            
-            let naturalSize = try await track.load(.naturalSize)
-            let preferredTransform = try await track.load(.preferredTransform)
-            let transformedSize = naturalSize.applying(preferredTransform)
-            
-            let width = abs(transformedSize.width)
-            let height = abs(transformedSize.height)
-            guard width > 0, height > 0 else { return nil }
-            
-            let aspectRatio = width / height
-            guard aspectRatio.isFinite, aspectRatio > 0 else { return nil }
-            
-            await Self.mp4AspectRatioCache.set(aspectRatio, for: url)
-            return aspectRatio
-        } catch {
-            logger.debug("❌ Failed to resolve MP4 aspect ratio for \(url.absoluteString): \(error)")
-            return nil
-        }
-    }
 
     /// Whether this external embed URL is a known GIF host (Tenor/Giphy)
     private var isGifURL: Bool {
@@ -327,29 +274,20 @@ struct ExternalEmbedView: View {
             return
         }
         
-        logger.debug("🔍 Checking URL for GIF conversion: \(url.absoluteString)")
-        logger.debug("🔍 URL host: \(url.host ?? "nil")")
-        logger.debug("🔍 App settings - allowGiphy: \(appSettings.allowGiphy), allowTenor: \(appSettings.allowTenor), autoplayVideos: \(appSettings.autoplayVideos)")
-        
         // Handle Tenor GIFs
         if url.host == "media.tenor.com" {
-            logger.debug("🎬 Detected Tenor GIF, attempting conversion...")
-            
             // Extract aspect ratio BEFORE setting loading state
-            if let widthStr = url.queryParameters?["ww"],
-               let heightStr = url.queryParameters?["hh"],
-               let width = Double(widthStr),
-               let height = Double(heightStr),
-               width > 0, height > 0 {
-                gifAspectRatio = CGFloat(width / height)
-                logger.debug("🎬 Extracted aspect ratio from URL params: \(width)x\(height) = \(gifAspectRatio)")
+            let hintedAspectRatio = tenorAspectRatioHint(from: url)
+            if let hintedAspectRatio {
+                gifAspectRatio = hintedAspectRatio
+                logger.debug("🎬 Extracted aspect ratio from URL params = \(gifAspectRatio)")
             } else {
                 gifAspectRatio = 1.0
                 logger.debug("🎬 Using default aspect ratio 1.0 (no valid dimensions in URL)")
             }
             
             isLoadingGif = true
-            setupTenorVideo(from: url)
+            setupTenorVideo(from: url, aspectRatio: gifAspectRatio)
         }
         // Handle Giphy GIFs
         else if url.host?.contains("giphy.com") == true || url.host?.contains("media.giphy.com") == true {
@@ -364,27 +302,41 @@ struct ExternalEmbedView: View {
             logger.debug("ℹ️ URL is not a recognized GIF host, treating as regular external link")
         }
     }
+
+    private func tenorAspectRatioHint(from url: URL) -> CGFloat? {
+        guard let widthStr = url.queryParameters?["ww"],
+              let heightStr = url.queryParameters?["hh"],
+              let width = Double(widthStr),
+              let height = Double(heightStr),
+              width > 0, height > 0 else {
+            return nil
+        }
+
+        let ratio = CGFloat(width / height)
+        guard ratio.isFinite, ratio > 0 else { return nil }
+        return ratio
+    }
     
-    private func setupTenorVideo(from url: URL) {
+    private func setupTenorVideo(from url: URL, aspectRatio: CGFloat) {
         logger.debug("🎬 Setting up Tenor video from URL: \(url.absoluteString)")
-        
-        // Aspect ratio already extracted in validateGifURL and set in gifAspectRatio
-        let aspectRatio = gifAspectRatio
-        
+
         // Transform Tenor URL to direct MP4 URL
         let pathComponents = url.path.split(separator: "/")
         logger.debug("🎬 Tenor URL path components: \(pathComponents)")
-        
+
         if let idComponent = pathComponents.first {
             let videoId = String(idComponent).replacingOccurrences(of: "AAAAC", with: "AAAPo")
             logger.debug("🎬 Transformed Tenor ID: '\(idComponent)' -> '\(videoId)'")
-            
+
             if let mp4URL = URL(string: "https://media.tenor.com/\(videoId)/video.mp4") {
                 logger.debug("✅ Created Tenor MP4 URL: \(mp4URL.absoluteString)")
-                
-                // Validate the MP4 URL before creating VideoModel
+
                 Task {
-                    await validateAndCreateTenorModel(mp4URL: mp4URL, aspectRatio: aspectRatio, originalURL: url)
+                    await validateAndCreateTenorModel(
+                        mp4URL: mp4URL,
+                        aspectRatio: aspectRatio,
+                        originalURL: url
+                    )
                 }
             } else {
                 logger.debug("❌ Failed to create MP4 URL for Tenor video ID: \(videoId)")
@@ -398,32 +350,30 @@ struct ExternalEmbedView: View {
         }
     }
     
-    private func validateAndCreateTenorModel(mp4URL: URL, aspectRatio: CGFloat, originalURL: URL) async {
+    private func validateAndCreateTenorModel(
+        mp4URL: URL,
+        aspectRatio: CGFloat,
+        originalURL: URL
+    ) async {
         do {
-            // Quick HEAD request to validate MP4 URL
             var request = URLRequest(url: mp4URL)
             request.httpMethod = "HEAD"
             request.timeoutInterval = 5.0
-            
+
             let (_, response) = try await URLSession.shared.data(for: request)
-            
+
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 {
                     logger.debug("✅ Tenor MP4 URL validated: \(mp4URL.absoluteString)")
-                    
-                    let resolvedAspectRatio = await resolveMP4AspectRatio(for: mp4URL)
-                    let finalAspectRatio = resolvedAspectRatio ?? aspectRatio
-                    
+
                     await MainActor.run {
-                        // Create VideoModel for Tenor GIF with unique ID including postID
                         let model = VideoModel(
                             id: "\(postID)-tenor-\(originalURL.absoluteString)",
                             url: mp4URL,
                             type: .tenorGif(external.uri),
-                            aspectRatio: finalAspectRatio,
+                            aspectRatio: aspectRatio,
                             thumbnailURL: external.thumb?.url
                         )
-                        gifAspectRatio = finalAspectRatio
                         videoModel = model
                         isLoadingGif = false
                         logger.debug("✅ Created VideoModel for Tenor GIF: \(model.id)")
@@ -514,31 +464,24 @@ struct ExternalEmbedView: View {
     
     private func validateAndCreateGiphyModel(mp4URL: URL, gifId: String) async {
         do {
-            // Quick HEAD request to validate MP4 URL
             var request = URLRequest(url: mp4URL)
             request.httpMethod = "HEAD"
             request.timeoutInterval = 5.0
-            
+
             let (_, response) = try await URLSession.shared.data(for: request)
-            
+
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 {
                     logger.debug("✅ Giphy MP4 URL validated: \(mp4URL.absoluteString)")
-                     
-                    let resolvedAspectRatio = await resolveMP4AspectRatio(for: mp4URL)
-                    
+
                     await MainActor.run {
-                        let finalAspectRatio = resolvedAspectRatio ?? gifAspectRatio
-                        
-                        // Create VideoModel for Giphy GIF with unique ID including postID
                         let model = VideoModel(
                             id: "\(postID)-giphy-\(gifId)",
                             url: mp4URL,
                             type: .giphyGif(external.uri),
-                            aspectRatio: finalAspectRatio,
+                            aspectRatio: gifAspectRatio,
                             thumbnailURL: external.thumb?.url
                         )
-                        gifAspectRatio = finalAspectRatio
                         videoModel = model
                         isLoadingGif = false
                         logger.debug("✅ Created VideoModel for Giphy GIF: \(model.id)")

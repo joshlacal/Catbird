@@ -196,9 +196,10 @@ struct BlueskyHelpWebView: NSViewRepresentable {
 #endif
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        HelpSettingsView()
-            .applyAppStateEnvironment(appState)
-    }
+            HelpSettingsView()
+        }
+  }
 }
+

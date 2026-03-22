@@ -15,8 +15,8 @@ import OSLog
 @available(iOS 13.0, *)
 actor MLSBackgroundRefreshManager {
   static let shared = MLSBackgroundRefreshManager()
+  static let taskIdentifier = "blue.catbird.key-package-refresh"
 
-  private let taskIdentifier = "blue.catbird.key-package-refresh"
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSBackgroundRefresh")
   
   /// Track whether registration has completed
@@ -35,7 +35,7 @@ actor MLSBackgroundRefreshManager {
     }
     
     BGTaskScheduler.shared.register(
-      forTaskWithIdentifier: taskIdentifier,
+      forTaskWithIdentifier: Self.taskIdentifier,
       using: nil
     ) { [weak self] task in
       guard let processingTask = task as? BGProcessingTask else {
@@ -54,20 +54,15 @@ actor MLSBackgroundRefreshManager {
     }
 
     isRegistered = true
-    logger.info("Registered background task: \(self.taskIdentifier)")
+    logger.info("Registered background task: \(Self.taskIdentifier)")
   }
 
   /// Schedule the next background refresh
   /// - Parameter delay: Time interval until next run (default: 24 hours)
   func scheduleBackgroundRefresh(delay: TimeInterval = 24 * 60 * 60) {
-    if !isRegistered {
-      logger.info("Lazily registering background task before scheduling")
-      registerBackgroundTask()
-    }
-    
-    let request = BGProcessingTaskRequest(identifier: taskIdentifier)
+    let request = BGProcessingTaskRequest(identifier: Self.taskIdentifier)
     request.requiresNetworkConnectivity = true
-    request.requiresExternalPower = true
+    request.requiresExternalPower = false
     request.earliestBeginDate = Date(timeIntervalSinceNow: delay)
 
     do {
@@ -80,8 +75,15 @@ actor MLSBackgroundRefreshManager {
 
   /// Cancel any pending background refresh tasks
   func cancelBackgroundRefresh() {
-      BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+      BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
     logger.info("Cancelled scheduled background refresh")
+  }
+
+  /// Called by AppDelegate when the BGTask handler fires
+  /// (registration happens synchronously in didFinishLaunchingWithOptions)
+  func handleRegisteredTask(_ task: BGProcessingTask) async {
+    isRegistered = true
+    await handleBackgroundRefresh(task: task)
   }
 
   // MARK: - Background Task Handling
@@ -93,21 +95,21 @@ actor MLSBackgroundRefreshManager {
     defer { scheduleBackgroundRefresh() }
 
     // BGTasks run while the app lifecycle is backgrounded; allow MLS contexts to be created for this work.
-    MLSClient.clearSuspensionFlag(reason: "MLS BGTask \(taskIdentifier)")
+    MLSClient.clearSuspensionFlag(reason: "MLS BGTask \(Self.taskIdentifier)")
     MLSCoreContext.clearSuspensionFlag()
 
     // RAII background task assertion — auto-released on scope exit
-    let bgTask = CatbirdBackgroundTask(name: "MLS BGTask \(taskIdentifier)")
+    let bgTask = CatbirdBackgroundTask(name: "MLS BGTask \(Self.taskIdentifier)")
     defer { bgTask.end() }
 
     // While running in background, ensure GRDB connections are resumed for the duration
     // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
-    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "MLS BGTask \(taskIdentifier)")
+    GRDBSuspensionCoordinator.beginBackgroundWork(reason: "MLS BGTask \(Self.taskIdentifier)")
     defer {
       // Ensure Rust UniFFI contexts are closed before we re-suspend, or iOS may kill us (0xdead10cc).
       MLSClient.emergencyCloseAllContexts(reason: "MLS BGTask complete")
       MLSCoreContext.emergencyCloseAllContexts()
-      GRDBSuspensionCoordinator.endBackgroundWork(reason: "MLS BGTask \(taskIdentifier)")
+      GRDBSuspensionCoordinator.endBackgroundWork(reason: "MLS BGTask \(Self.taskIdentifier)")
     }
 
     let logger = self.logger

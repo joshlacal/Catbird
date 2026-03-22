@@ -259,11 +259,7 @@ struct MLSChatSettingsView: View {
       let success = try await apiClient.optOut()
       if success {
         if let conversationManager = await appState.getMLSConversationManager() {
-          // Get current device ID and remove its record
-          if let did = conversationManager.userDid,
-             let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
-            try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
-          }
+          try? await conversationManager.removeCurrentDeviceRecord()
         }
         // Also update local settings
         ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)

@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import OSLog
 import Petrel
+import PhotosUI
 import SwiftUI
 
 #if os(iOS)
@@ -12,6 +13,7 @@ import SwiftUI
 
     let conversationId: String
     let onSend: (String, MLSEmbedData?) -> Void
+    var onTypingChanged: ((Bool) -> Void)? = nil
     var supportsEmbeds: Bool = true
     var showsAttachmentMenu: Bool = true
     var dismissKeyboardOnSend: Bool = false
@@ -19,8 +21,14 @@ import SwiftUI
 
     @State private var showingGifPicker = false
     @State private var showingPostPicker = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var showingPhotoPicker = false
+    @State private var imageUploadError: String?
+    @State private var showingImageUploadError = false
     @State private var isDetectingLink = false
     @State private var detectedLinkEmbed: MLSLinkEmbed?
+
+    var imageSender: MLSImageSender?
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var isTextFieldFocused: Bool
@@ -73,6 +81,25 @@ import SwiftUI
           attachPost(post)
         }
       }
+      .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+      .onChange(of: selectedPhotoItem) { _, newItem in
+        guard let newItem else { return }
+        selectedPhotoItem = nil
+        Task {
+          guard let sender = imageSender else { return }
+          if let embed = await sender.processImage(from: newItem, convoId: conversationId) {
+            attachedEmbed = .image(embed)
+          } else if let error = sender.uploadError {
+            imageUploadError = error
+            showingImageUploadError = true
+          }
+        }
+      }
+      .alert("Image Error", isPresented: $showingImageUploadError) {
+        Button("OK") {}
+      } message: {
+        Text(imageUploadError ?? "Could not process image")
+      }
     }
 
     // MARK: - Embed Preview
@@ -118,6 +145,14 @@ import SwiftUI
         Label("Post", systemImage: "text.bubble")
           .designCaption()
           .foregroundColor(.accentColor)
+      case .image:
+        Label("Image", systemImage: "photo.fill")
+          .designCaption()
+          .foregroundColor(.accentColor)
+      case .unknown:
+        Label("Attachment", systemImage: "paperclip")
+          .designCaption()
+          .foregroundColor(.secondary)
       }
     }
 
@@ -157,6 +192,12 @@ import SwiftUI
       let isEnabled = attachedEmbed == nil
 
       return Menu {
+        Button {
+          showingPhotoPicker = true
+        } label: {
+          Label("Send Image", systemImage: "photo")
+        }
+
         Button {
           showingGifPicker = true
         } label: {
@@ -198,12 +239,23 @@ import SwiftUI
           .background(Color.clear)
           .padding(.top, 6)
           .focused($isTextFieldFocused)
+          #if targetEnvironment(macCatalyst)
+          .onKeyPress(.return, phases: .down) { press in
+            if press.modifiers.contains(.shift) {
+              return .ignored  // Let Shift+Enter insert a newline
+            }
+            sendMessage()
+            return .handled
+          }
+          #endif
           .accessibilityIdentifier("mls.composer.textInput.\(accessibilityConvoIdPrefix)")
           .onChange(of: text) { _, newValue in
             // Detect URLs for link previews
             if supportsEmbeds {
               detectLinkInText(newValue)
             }
+            let isTyping = !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            onTypingChanged?(isTyping)
           }
       }
       .fixedSize(horizontal: false, vertical: true)
@@ -300,6 +352,36 @@ import SwiftUI
               .designFootnote()
               .lineLimit(2)
           }
+        }
+
+      case .image(let imageEmbed):
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          Image(systemName: "photo.fill")
+            .font(.system(size: 32))
+            .foregroundColor(.secondary)
+
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Image")
+              .designFootnote()
+              .fontWeight(.semibold)
+            Text(
+              ByteCountFormatter.string(
+                fromByteCount: Int64(imageEmbed.size), countStyle: .file)
+            )
+            .designCaption()
+            .foregroundColor(.secondary)
+          }
+        }
+
+      case .unknown:
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          Image(systemName: "paperclip")
+            .font(.system(size: 32))
+            .foregroundColor(.secondary)
+
+          Text("Unsupported attachment")
+            .designFootnote()
+            .foregroundColor(.secondary)
         }
       }
     }
@@ -399,6 +481,7 @@ import SwiftUI
       text = ""
       attachedEmbed = nil
       detectedLinkEmbed = nil
+      onTypingChanged?(false)
       if dismissKeyboardOnSend {
         isTextFieldFocused = false
       }
@@ -494,8 +577,6 @@ import SwiftUI
       }
       return nil
     }
-
-    // Typing indicator functions have been removed.
   }
 
   // MARK: - Glass Effect Modifiers

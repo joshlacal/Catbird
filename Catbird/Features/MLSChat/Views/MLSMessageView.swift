@@ -16,7 +16,6 @@ struct MLSMessageView: View {
   let processingError: String? // Processing/decryption error
   let processingAttempts: Int // Number of processing attempts
   let validationFailureReason: String? // Validation failure reason
-
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @Binding var navigationPath: NavigationPath
@@ -48,9 +47,11 @@ struct MLSMessageView: View {
 
         // Text content
         if !text.isEmpty {
-          Text(text)
+          ChatRichTextView(
+            attributedText: ChatTextRenderer.attributedString(for: text),
+            isCurrentUser: isCurrentUser
+          )
             .designBody()
-            .foregroundColor(isCurrentUser ? .white : .primary)
         }
 
         // Embed rendering
@@ -212,6 +213,16 @@ struct MLSMessageView: View {
 
     case .post(let postEmbed):
       ChatPostEmbedView(postEmbed: postEmbed, navigationPath: $navigationPath)
+
+    case .image(let imageEmbed):
+      MLSImageView(imageEmbed: imageEmbed)
+
+    case .unknown:
+      Text("This message contains an attachment your app version cannot display.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding()
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
   }
 
@@ -309,117 +320,119 @@ private struct BulletPoint: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  VStack(spacing: 20) {
-    // Plain text message
-    MLSMessageView(
-      text: "Hello! This is a test message.",
-      embed: nil,
-      isCurrentUser: false,
-      timestamp: Date(),
-      senderName: "Alice",
-      senderAvatarURL: nil,
-      messageState: nil,
-      onRetry: nil,
-      processingError: nil,
-      processingAttempts: 0,
-      validationFailureReason: nil,
-      navigationPath: .constant(NavigationPath())
-    )
+  AsyncPreviewContent { appState in
+    VStack(spacing: 20) {
+        // Plain text message
+        MLSMessageView(
+          text: "Hello! This is a test message.",
+          embed: nil,
+          isCurrentUser: false,
+          timestamp: Date(),
+          senderName: "Alice",
+          senderAvatarURL: nil,
+          messageState: nil,
+          onRetry: nil,
+          processingError: nil,
+          processingAttempts: 0,
+          validationFailureReason: nil,
+          navigationPath: .constant(NavigationPath())
+        )
 
-    // Sending message (optimistic)
-    MLSMessageView(
-      text: "Sending message...",
-      embed: nil,
-      isCurrentUser: true,
-      timestamp: Date(),
-      senderName: "You",
-      senderAvatarURL: nil,
-      messageState: .sending,
-      onRetry: nil,
-      processingError: nil,
-      processingAttempts: 0,
-      validationFailureReason: nil,
-      navigationPath: .constant(NavigationPath())
-    )
+        // Sending message (optimistic)
+        MLSMessageView(
+          text: "Sending message...",
+          embed: nil,
+          isCurrentUser: true,
+          timestamp: Date(),
+          senderName: "You",
+          senderAvatarURL: nil,
+          messageState: .sending,
+          onRetry: nil,
+          processingError: nil,
+          processingAttempts: 0,
+          validationFailureReason: nil,
+          navigationPath: .constant(NavigationPath())
+        )
 
-    // Failed message
-    MLSMessageView(
-      text: "Failed to send",
-      embed: nil,
-      isCurrentUser: true,
-      timestamp: Date(),
-      senderName: "You",
-      senderAvatarURL: nil,
-      messageState: .failed("Network error"),
-      onRetry: { },
+        // Failed message
+        MLSMessageView(
+          text: "Failed to send",
+          embed: nil,
+          isCurrentUser: true,
+          timestamp: Date(),
+          senderName: "You",
+          senderAvatarURL: nil,
+          messageState: .failed("Network error"),
+          onRetry: { },
 
-      processingError: nil,
-      processingAttempts: 0,
-      validationFailureReason: nil,
-      navigationPath: .constant(NavigationPath())
-    )
+          processingError: nil,
+          processingAttempts: 0,
+          validationFailureReason: nil,
+          navigationPath: .constant(NavigationPath())
+        )
 
-    // Message with processing error
-    MLSMessageView(
-      text: "[Encrypted]",
-      embed: nil,
-      isCurrentUser: false,
-      timestamp: Date(),
-      senderName: "Bob",
-      senderAvatarURL: nil,
-      messageState: nil,
-      onRetry: nil,
-      processingError: "Failed to decrypt: epoch key not found",
-      processingAttempts: 3,
-      validationFailureReason: "Missing epoch context",
-      navigationPath: .constant(NavigationPath())
-    )
+        // Message with processing error
+        MLSMessageView(
+          text: "[Encrypted]",
+          embed: nil,
+          isCurrentUser: false,
+          timestamp: Date(),
+          senderName: "Bob",
+          senderAvatarURL: nil,
+          messageState: nil,
+          onRetry: nil,
+          processingError: "Failed to decrypt: epoch key not found",
+          processingAttempts: 3,
+          validationFailureReason: "Missing epoch context",
+          navigationPath: .constant(NavigationPath())
+        )
 
-    // Message with GIF embed
-    MLSMessageView(
-      text: "Check this out!",
-      embed: .gif(MLSGIFEmbed(
-        tenorURL: "https://tenor.com/view/...",
-        mp4URL: "https://media.tenor.com/.../video.mp4",
-        title: "Dancing Cat"
-      )),
-      isCurrentUser: true,
-      timestamp: Date(),
-      senderName: "You",
-      senderAvatarURL: nil,
-      messageState: nil,
-      onRetry: nil,
-      processingError: nil,
-      processingAttempts: 0,
-      validationFailureReason: nil,
-      navigationPath: .constant(NavigationPath())
-    )
+        // Message with GIF embed
+        MLSMessageView(
+          text: "Check this out!",
+          embed: .gif(MLSGIFEmbed(
+            tenorURL: "https://tenor.com/view/...",
+            mp4URL: "https://media.tenor.com/.../video.mp4",
+            title: "Dancing Cat"
+          )),
+          isCurrentUser: true,
+          timestamp: Date(),
+          senderName: "You",
+          senderAvatarURL: nil,
+          messageState: nil,
+          onRetry: nil,
+          processingError: nil,
+          processingAttempts: 0,
+          validationFailureReason: nil,
+          navigationPath: .constant(NavigationPath())
+        )
 
-    // Message with link embed
-    MLSMessageView(
-      text: "Interesting article",
-      embed: .link(MLSLinkEmbed(
-        url: "https://example.com/article",
-        title: "The Future of Decentralized Social Media",
-        description: "An in-depth look at how AT Protocol is changing social networking...",
-        domain: "example.com"
-      )),
-      isCurrentUser: false,
-      timestamp: Date().addingTimeInterval(-3600),
-      senderName: "Bob",
-      senderAvatarURL: nil,
-      messageState: nil,
-      onRetry: nil,
-      processingError: nil,
-      processingAttempts: 0,
-      validationFailureReason: nil,
-      navigationPath: .constant(NavigationPath())
-    )
+        // Message with link embed
+        MLSMessageView(
+          text: "Interesting article",
+          embed: .link(MLSLinkEmbed(
+            url: "https://example.com/article",
+            title: "The Future of Decentralized Social Media",
+            description: "An in-depth look at how AT Protocol is changing social networking...",
+            domain: "example.com"
+          )),
+          isCurrentUser: false,
+          timestamp: Date().addingTimeInterval(-3600),
+          senderName: "Bob",
+          senderAvatarURL: nil,
+          messageState: nil,
+          onRetry: nil,
+          processingError: nil,
+          processingAttempts: 0,
+          validationFailureReason: nil,
+          navigationPath: .constant(NavigationPath())
+        )
+      }
+      .padding()
+      .environment(AppStateManager.shared)
   }
-  .padding()
-  .environment(AppStateManager.shared)
 }
+
 
 // MARK: - Message Bubble Background for MLS
 

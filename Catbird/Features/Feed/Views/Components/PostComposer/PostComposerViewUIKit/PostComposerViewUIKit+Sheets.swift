@@ -15,7 +15,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func sheetModifiers<Content: View>(vm: PostComposerViewModel, _ content: Content) -> some View {
     let photoPickerContent = content
-      .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems, matching: .images, photoLibrary: .shared())
+      .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems, matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
       .onChange(of: photoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Photo picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: false, vm: vm)

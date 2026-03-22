@@ -54,8 +54,10 @@ actor ImageLoadingManager {
     /// Start prefetching images for the given URLs
     /// - Parameter urls: Array of image URLs to prefetch
     func startPrefetching(urls: [URL]) {
+        // Transform CDN URLs to preferred format
+        let transformedURLs = urls.map { Self.cdnURL($0) }
         // Filter out already prefetched URLs
-        let newURLs = urls.filter { !prefetchedURLs.contains($0) }
+        let newURLs = transformedURLs.filter { !prefetchedURLs.contains($0) }
         guard !newURLs.isEmpty else { return }
         
         // Check if we need to clear some prefetched images
@@ -182,29 +184,45 @@ actor ImageLoadingManager {
 // MARK: - Image Processing Helpers
 
 extension ImageLoadingManager {
+    private static func normalizedTargetSize(_ targetSize: CGSize) -> CGSize {
+        let safeWidth = max(1, min(4000, targetSize.width.rounded(.toNearestOrAwayFromZero)))
+        let safeHeight = max(1, min(4000, targetSize.height.rounded(.toNearestOrAwayFromZero)))
+        return CGSize(width: safeWidth, height: safeHeight)
+    }
+
     /// Create optimized processors for the given target size
     /// Uses Nuke's built-in processors for better performance and caching
-    static func processors(for targetSize: CGSize, contentMode: ImageProcessors.Resize.ContentMode = .aspectFill) -> [any ImageProcessing] {
-        // Ensure reasonable minimum size to avoid invalid dimensions
-        let safeWidth = max(1, min(4000, targetSize.width))
-        let safeHeight = max(1, min(4000, targetSize.height))
-        let safeSize = CGSize(width: safeWidth, height: safeHeight)
+    static func processors(for targetSize: CGSize, contentMode: ImageProcessingOptions.ContentMode = .aspectFill) -> [any ImageProcessing] {
+        let safeSize = normalizedTargetSize(targetSize)
 
         return [
-            ImageProcessors.Resize(size: safeSize, contentMode: contentMode, crop: false, upscale: false),
-            ImageProcessors.CoreImageFilter(name: "CIColorControls") // Optional: improve contrast for thumbnails
+            ImageProcessors.Resize(size: safeSize, contentMode: contentMode, crop: false, upscale: false)
         ]
+    }
+
+    /// Converts a Bluesky CDN image URL to request JPEG XL format.
+    /// JXL is supported natively since iOS 17 / macOS 14 via ImageIO.
+    static func cdnURL(_ url: URL, format: String = "jxl") -> URL {
+        let str = url.absoluteString
+        guard str.contains("cdn.bsky.app") || str.contains("cdn.bsky.social") else { return url }
+        // Replace existing format suffix (@jpeg, @png, @webp) or append one
+        if let atRange = str.range(of: "@", options: .backwards),
+           str[atRange.upperBound...].allSatisfy({ $0.isLetter }) {
+            return URL(string: String(str[..<atRange.lowerBound]) + "@\(format)") ?? url
+        }
+        return URL(string: str + "@\(format)") ?? url
     }
 
     /// Create a request with optimized caching key for the given size
     static func imageRequest(for url: URL, targetSize: CGSize) -> ImageRequest {
-        var request = ImageRequest(url: url)
+        let safeSize = normalizedTargetSize(targetSize)
+        var request = ImageRequest(url: cdnURL(url))
 
         // Add size to cache key for better cache efficiency
-        request.processors = processors(for: targetSize)
+        request.processors = processors(for: safeSize)
 
         // Set appropriate priority based on size (smaller = higher priority for thumbnails)
-        let area = targetSize.width * targetSize.height
+        let area = safeSize.width * safeSize.height
         if area < 100_000 { // Small thumbnails
             request.priority = .high
         } else if area < 500_000 { // Medium images

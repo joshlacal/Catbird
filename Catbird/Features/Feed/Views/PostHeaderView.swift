@@ -96,11 +96,13 @@ struct PostHeaderView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     PostHeaderView(
-        displayName: "Josh", 
-        handle: "josh.uno", 
-        timeAgo: Date()
-    )
-    .environment(AppStateManager.shared)
+            displayName: "Josh", 
+            handle: "josh.uno", 
+            timeAgo: Date()
+        )
+        .environment(AppStateManager.shared)
+  }
 }
+

@@ -15,6 +15,7 @@ struct SettingsView: View {
   @State private var isLoadingProfile = false
   @State private var profileError: Error?
   @State private var profileLoadingTask: Task<Void, Never>?
+  @State private var hasLoadedFromNetwork = false
 
   @Environment(\.dismiss) private var dismiss
 
@@ -345,19 +346,26 @@ struct SettingsView: View {
   private func loadOrRefreshProfile() {
     profileLoadingTask?.cancel()
 
-    profileLoadingTask = Task {
-       let userDID = appState.userDID 
+    let userDID = appState.userDID
 
-      await MainActor.run {
+    // Show cached data immediately if we haven't loaded from network yet
+    if profile == nil || profile?.did.description != userDID {
+      if let cached = AppStateManager.shared.authentication.getCachedProfileData(for: userDID) {
+        // Build a lightweight profile from cache for instant display
+        // The network fetch below will replace this with full data
         isLoadingProfile = true
-        profileError = nil
+        hasLoadedFromNetwork = false
+      } else {
+        isLoadingProfile = true
       }
+    }
 
+    profileLoadingTask = Task {
       do {
         guard let client = AppStateManager.shared.authentication.client else {
           throw AuthError.clientNotInitialized
         }
-        
+
         let params = try AppBskyActorGetProfile.Parameters(actor: ATIdentifier(string: userDID))
         let (_, fetchedProfile) = try await client.app.bsky.actor.getProfile(input: params)
         try Task.checkCancellation()
@@ -366,6 +374,17 @@ struct SettingsView: View {
           profile = fetchedProfile
           isLoadingProfile = false
           profileError = nil
+          hasLoadedFromNetwork = true
+
+          // Update the cache for future use
+          if let fetchedProfile {
+            AppStateManager.shared.authentication.cacheProfileData(
+              for: userDID,
+              handle: fetchedProfile.handle.description,
+              displayName: fetchedProfile.displayName,
+              avatarURL: fetchedProfile.finalAvatarURL()
+            )
+          }
         }
       } catch is CancellationError {
         // Normal cancellation - do nothing
@@ -428,10 +447,7 @@ struct SettingsView: View {
     do {
       _ = try await apiClient.optOut()
       if let conversationManager = await appState.getMLSConversationManager() {
-        if let did = conversationManager.userDid,
-           let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
-          try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
-        }
+        try? await conversationManager.removeCurrentDeviceRecord()
       }
     } catch {
       // Silently fail - the local toggle is already off

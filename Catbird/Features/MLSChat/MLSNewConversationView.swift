@@ -27,13 +27,19 @@ struct MLSNewConversationView: View {
     @State private var currentStep: CreationStep = .selectParticipants
     @State private var searchTask: Task<Void, Never>?
     @State private var participantOptInStatus: [String: Bool] = [:]  // Track which participants have opted into MLS
+    @State private var isCheckingExistingConversation = false
     let onConversationCreated: (@Sendable () async -> Void)?
+    let onNavigateToConversation: ((String) -> Void)?
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSNewConversation")
     private let searchDebounceInterval: Duration = .milliseconds(300)
-    
-    init(onConversationCreated: (@Sendable () async -> Void)? = nil) {
+
+    init(
+        onConversationCreated: (@Sendable () async -> Void)? = nil,
+        onNavigateToConversation: ((String) -> Void)? = nil
+    ) {
         self.onConversationCreated = onConversationCreated
+        self.onNavigateToConversation = onNavigateToConversation
     }
     
     enum CreationStep {
@@ -263,16 +269,25 @@ struct MLSNewConversationView: View {
                 .frame(maxWidth: .infinity)
                 
                 Button {
-                    withAnimation(.spring(response: 0.25)) {
-                        currentStep = .configure
+                    if selectedParticipants.count == 1 {
+                        Task { await handleDirectMessageContinue() }
+                    } else {
+                        withAnimation(.spring(response: 0.25)) {
+                            currentStep = .configure
+                        }
                     }
                 } label: {
-                    Text(hasSelection ? "Continue (\(selectedParticipants.count))" : "Continue")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
+                    if isCheckingExistingConversation {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Text(hasSelection ? "Continue (\(selectedParticipants.count))" : "Continue")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!hasSelection)
+                .disabled(!hasSelection || isCheckingExistingConversation)
             }
             .padding(.horizontal)
             .padding(.vertical, DesignTokens.Spacing.base)
@@ -481,11 +496,15 @@ struct MLSNewConversationView: View {
     private var nextButton: some View {
         if currentStep == .selectParticipants {
             Button("Next") {
-                withAnimation {
-                    currentStep = .configure
+                if selectedParticipants.count == 1 {
+                    Task { await handleDirectMessageContinue() }
+                } else {
+                    withAnimation {
+                        currentStep = .configure
+                    }
                 }
             }
-            .disabled(selectedParticipants.isEmpty)
+            .disabled(selectedParticipants.isEmpty || isCheckingExistingConversation)
             .fontWeight(.semibold)
         } else if currentStep == .configure {
             Button("Create") {
@@ -634,6 +653,36 @@ struct MLSNewConversationView: View {
     }
     
     @MainActor
+    private func handleDirectMessageContinue() async {
+        guard selectedParticipants.count == 1,
+              let participantDid = selectedParticipants.first else { return }
+
+        isCheckingExistingConversation = true
+        defer { isCheckingExistingConversation = false }
+
+        if let conversationManager = await appState.getMLSConversationManager() {
+            do {
+                let did = try DID(didString: participantDid)
+                if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
+                    logger.info("Found existing 1:1 conversation: \(existingConvoId.prefix(16))...")
+                    dismiss()
+                    onNavigateToConversation?(existingConvoId)
+                    return
+                }
+            } catch {
+                logger.warning("Failed to check for existing 1:1 conversation: \(error.localizedDescription)")
+            }
+        }
+
+        // Don't set a conversation title for 1:1 — it will be resolved
+        // dynamically as the other participant's display name for each user
+        withAnimation(.spring(response: 0.25)) {
+            currentStep = .creating
+        }
+        await createMLSConversation()
+    }
+
+    @MainActor
     private func createMLSConversation() async {
         guard !selectedParticipants.isEmpty else { return }
         guard let database = appState.mlsDatabase,
@@ -685,7 +734,7 @@ struct MLSNewConversationView: View {
             logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             showingError = true
-            currentStep = .configure
+            currentStep = selectedParticipants.count == 1 ? .selectParticipants : .configure
         }
         
         isCreatingConversation = false

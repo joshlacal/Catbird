@@ -834,9 +834,7 @@ struct FeedsStartPage: View {
 
   // MARK: - Body
   var body: some View {
-    NavigationStack {
-      mainContent
-    }
+    mainContent
     .applyFeedsPageModifiers(
       viewModel: viewModel,
       appState: appState,

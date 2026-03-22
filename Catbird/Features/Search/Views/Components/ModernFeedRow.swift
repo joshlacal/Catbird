@@ -34,11 +34,13 @@ struct ModernFeedRow: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Placeholder for preview
-    VStack {
-        Text("Feed Row Preview")
-            .appFont(AppTextRole.headline)
-            .padding()
-    }
+        VStack {
+            Text("Feed Row Preview")
+                .appFont(AppTextRole.headline)
+                .padding()
+        }
+  }
 }
+

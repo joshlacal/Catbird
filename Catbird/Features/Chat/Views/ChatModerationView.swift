@@ -443,10 +443,12 @@ struct MessageContextRow: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  NavigationStack {
-    ChatModerationView()
-      .environment(AppStateManager.shared)
+  AsyncPreviewContent { appState in
+    NavigationStack {
+        ChatModerationView()
+          .environment(AppStateManager.shared)
+      }
   }
 }
+
 #endif

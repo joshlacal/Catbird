@@ -21,6 +21,8 @@ struct LoadingWithMessageView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     LoadingWithMessageView(message: "Loading content...")
+  }
 }
+

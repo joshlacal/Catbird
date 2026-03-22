@@ -199,10 +199,12 @@ struct SaveSearchSheet: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     SaveSearchSheet(
-        query: "artificial intelligence",
-        filters: AdvancedSearchParams(),
-        onSave: { _ in }
-    )
+            query: "artificial intelligence",
+            filters: AdvancedSearchParams(),
+            onSave: { _ in }
+        )
+  }
 }
+

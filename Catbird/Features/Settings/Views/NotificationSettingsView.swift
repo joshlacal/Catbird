@@ -1,6 +1,5 @@
 import SwiftUI
 import OSLog
-import DeviceCheck
 
 /// View that allows users to configure their notification settings
 struct NotificationSettingsView: View {
@@ -10,10 +9,6 @@ struct NotificationSettingsView: View {
     // MARK: - State
     @State private var isRequestingPermission = false
     @State private var showSystemSettingsPrompt = false
-    @State private var showDebugInfo = false
-    @State private var debugStatus: AppAttestEnvironmentStatus?
-    @State private var testResult: AppAttestKeyTestResult?
-    @State private var isTestingKey = false
     
     // MARK: - Properties
     private var notificationManager: NotificationManager {
@@ -176,38 +171,70 @@ struct NotificationSettingsView: View {
         }
     }
 
-    // Section for chat notifications
     #if os(iOS)
     private var chatNotificationsSection: some View {
-        Section("Chat Notifications") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label {
-                        Text("Direct Messages")
-                            .appFont(AppTextRole.body)
-                    } icon: {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                            .foregroundStyle(.green)
+        Group {
+            Section("Bluesky Direct Messages") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label {
+                            Text("Direct Messages")
+                                .appFont(AppTextRole.body)
+                        } icon: {
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
+                                .foregroundStyle(.green)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { notificationManager.chatNotificationsEnabled },
+                            set: { newValue in
+                                notificationManager.chatNotificationsEnabled = newValue
+                                logger.info("Chat notifications toggled to: \(newValue)")
+                            }
+                        ))
+                        .disabled(!notificationManager.notificationsEnabled)
                     }
 
-                    Spacer()
-
-                    Toggle("", isOn: Binding(
-                        get: { notificationManager.chatNotificationsEnabled },
-                        set: { newValue in
-                            notificationManager.chatNotificationsEnabled = newValue
-                            logger.info("Chat notifications toggled to: \(newValue)")
-                        }
-                    ))
-                    .disabled(!notificationManager.notificationsEnabled)
+                    Text("Get notifications for new chat messages when the app is not active")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 32)
                 }
-
-                Text("Get notifications for new chat messages when the app is not active")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 32) // Align with label text
+                .opacity(notificationManager.notificationsEnabled ? 1.0 : 0.6)
             }
-            .opacity(notificationManager.notificationsEnabled ? 1.0 : 0.6)
+
+            Section("Encrypted Chats") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label {
+                            Text("Encrypted Messages")
+                                .appFont(AppTextRole.body)
+                        } icon: {
+                            Image(systemName: "lock.shield")
+                                .foregroundStyle(.blue)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { notificationManager.mlsChatNotificationsEnabled },
+                            set: { newValue in
+                                notificationManager.mlsChatNotificationsEnabled = newValue
+                                logger.info("MLS chat notifications toggled to: \(newValue)")
+                            }
+                        ))
+                        .disabled(!notificationManager.notificationsEnabled)
+                    }
+
+                    Text("Get notifications for new encrypted chat messages")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 32)
+                }
+                .opacity(notificationManager.notificationsEnabled ? 1.0 : 0.6)
+            }
         }
     }
     #endif
@@ -312,122 +339,6 @@ struct NotificationSettingsView: View {
                 ))
                 .disabled(!notificationManager.notificationsEnabled)
             }
-            
-            // MARK: - Debug Section (only in DEBUG builds)
-            #if DEBUG
-            Section {
-                if #available(iOS 26.0, *) {
-                    Button {
-                        showDebugInfo.toggle()
-                        if showDebugInfo {
-                            debugStatus = AppAttestDebugger.performEnvironmentCheck()
-                            AppAttestDebugger.logDiagnostics()
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: showDebugInfo ? "chevron.down" : "chevron.right")
-                                .font(.caption)
-                            Text("App Attest Diagnostics")
-                                .appFont(AppTextRole.body)
-                        }
-                    }
-
-                    if showDebugInfo, let status = debugStatus {
-                        VStack(alignment: .leading, spacing: 8) {
-                            DiagnosticRow(
-                                title: "Platform",
-                                value: status.platform.rawValue,
-                                isGood: status.platform == .physicalDevice
-                            )
-
-                            DiagnosticRow(
-                                title: "DCAppAttest Support",
-                                value: status.isSupported ? "Supported" : "Not Supported",
-                                isGood: status.isSupported
-                            )
-
-                            DiagnosticRow(
-                                title: "OS Version",
-                                value: status.osVersionSupported ? "Compatible" : "Too Old",
-                                isGood: status.osVersionSupported
-                            )
-
-                            DiagnosticRow(
-                                title: "Bundle ID",
-                                value: status.bundleIdentifier ?? "None",
-                                isGood: status.bundleIdentifier != nil
-                            )
-
-                            DiagnosticRow(
-                                title: "Entitlement",
-                                value: status.hasAppAttestEntitlement ? "Present" : "Missing",
-                                isGood: status.hasAppAttestEntitlement
-                            )
-
-                            if status.canUseAppAttest {
-                                Label {
-                                    Text("App Attest should work")
-                                        .foregroundStyle(Color.green)
-                                        .appFont(AppTextRole.caption)
-                                } icon: {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(Color.green)
-                                }
-                                .padding(.top, 4)
-                            } else {
-                                Label {
-                                    Text(AppAttestDebugger.getUserFriendlyMessage())
-                                        .foregroundStyle(Color.orange)
-                                        .appFont(AppTextRole.caption)
-                                } icon: {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(Color.orange)
-                                }
-                                .padding(.top, 4)
-                            }
-
-                            if status.canUseAppAttest {
-                                Button {
-                                    isTestingKey = true
-                                    Task {
-                                        testResult = await AppAttestDebugger.testKeyGeneration()
-                                        isTestingKey = false
-                                    }
-                                } label: {
-                                    HStack {
-                                        if isTestingKey {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                        }
-                                        Text(isTestingKey ? "Testing..." : "Test Key Generation")
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(isTestingKey)
-                                .padding(.top, 8)
-
-                                if let result = testResult {
-                                    Text(result.userMessage)
-                                        .foregroundStyle(result.isSuccess ? Color.green : Color.red)
-                                        .appFont(AppTextRole.caption)
-                                        .padding(.top, 4)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                } else {
-                    Text("App Attest diagnostics require iOS 26 or newer.")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(Color.secondary)
-                        .padding(.vertical, 4)
-                }
-            } header: {
-                Text("Developer Tools")
-            } footer: {
-                Text("Debug tools for App Attest. Only visible in DEBUG builds.")
-            }
-            #endif
         }
     }
     
@@ -447,34 +358,6 @@ struct NotificationSettingsView: View {
     private func disableAllNotifications() async {
         logger.info("User disabling all notifications via master toggle")
         await notificationManager.cleanupNotifications()
-    }
-}
-
-// MARK: - Diagnostic Row Helper
-
-private struct DiagnosticRow: View {
-    let title: String
-    let value: String
-    let isGood: Bool
-    
-    var body: some View {
-        HStack {
-            Text(title)
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-            
-            Spacer()
-            
-            HStack(spacing: 4) {
-                Image(systemName: isGood ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(isGood ? Color.green : Color.red)
-                
-                Text(value)
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(isGood ? Color.primary : Color.red)
-            }
-        }
     }
 }
 

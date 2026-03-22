@@ -1,4 +1,5 @@
 import AVFoundation
+import CatbirdMLSCore
 import NukeUI
 import OSLog
 import Petrel
@@ -38,7 +39,29 @@ struct UnifiedEmbedView: View {
 
     case .tile(let tile):
       TileCardView(tile: tile)
+
+    case .image(let imageData):
+      imageEmbed(imageData)
     }
+  }
+
+  // MARK: - Image Embed
+
+  @ViewBuilder
+  private func imageEmbed(_ imageData: ImageEmbedData) -> some View {
+    let embed = MLSImageEmbed(
+      blobId: imageData.blobId,
+      key: imageData.key,
+      iv: imageData.iv,
+      sha256: imageData.sha256,
+      contentType: imageData.contentType,
+      size: imageData.size,
+      width: imageData.width,
+      height: imageData.height,
+      altText: imageData.altText,
+      blurhash: imageData.blurhash
+    )
+    MLSImageView(imageEmbed: embed)
   }
 
   // MARK: - Link Embed

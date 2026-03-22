@@ -22,8 +22,9 @@ enum ConversationState: Sendable, Equatable {
 }
 
 /// ViewModel for managing a single MLS conversation's details and messages
+@MainActor
 @Observable
-final class MLSConversationDetailViewModel: @unchecked Sendable {
+final class MLSConversationDetailViewModel {
     // MARK: - Properties
 
     /// Conversation initialization state
@@ -44,11 +45,14 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
       let confirmed = messages.map { DisplayMessage.confirmed($0) }
       // Sort by (epoch, sequenceNumber) for correct MLS message ordering
       // Prevents messages from appearing out of order during epoch transitions
+      // Treat seq=0 as "not yet assigned" (pre-cached, awaiting server response) → sort last within epoch
       return (optimistic + confirmed).sorted {
         if $0.epoch != $1.epoch {
           return $0.epoch < $1.epoch
         }
-        return $0.sequenceNumber < $1.sequenceNumber
+        let lhsSeq = $0.sequenceNumber == 0 ? Int.max : $0.sequenceNumber
+        let rhsSeq = $1.sequenceNumber == 0 ? Int.max : $1.sequenceNumber
+        return lhsSeq < rhsSeq
       }
     }
 
@@ -547,9 +551,10 @@ final class MLSConversationDetailViewModel: @unchecked Sendable {
 
     // MARK: - Deinitialization
 
-    deinit {
-        cancellables.forEach { $0.cancel() }
-    }
+    // AnyCancellable automatically cancels on deallocation, so no explicit
+    // deinit cancellation is needed. Removing the manual deinit avoids a
+    // compiler error since deinit is nonisolated and cannot access
+    // @MainActor-isolated stored properties.
 }
 
 // MARK: - Error Types

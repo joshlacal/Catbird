@@ -221,11 +221,13 @@ private struct PostPickerRow: View {
 // MARK: - Preview
 
 #Preview {
-  @Previewable @Environment(AppState.self) var appState
-  MLSPostPickerView { post in
-    _ = post.uri
+  AsyncPreviewContent { appState in
+    MLSPostPickerView { post in
+        _ = post.uri
+      }
+      .environment(AppStateManager.shared)
   }
-  .environment(AppStateManager.shared)
 }
+
 
 #endif

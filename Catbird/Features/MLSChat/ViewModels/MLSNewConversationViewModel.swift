@@ -59,10 +59,17 @@ final class MLSNewConversationViewModel {
         "MLS_256_DHKEMP521_AES256GCM_SHA512_P521"
     ]
 
+    /// Whether this is a 1:1 direct message (single participant)
+    var isDirectMessage: Bool { selectedMembers.count == 1 }
+
     /// Validation state
     var isValid: Bool {
-        !conversationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !selectedMembers.isEmpty
+        let hasName = !conversationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasMembers = !selectedMembers.isEmpty
+        if isDirectMessage {
+            return hasMembers
+        }
+        return hasName && hasMembers
     }
 
     // MARK: - Dependencies
@@ -245,7 +252,7 @@ final class MLSNewConversationViewModel {
     func validate() -> [String] {
         var errors: [String] = []
 
-        if conversationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !isDirectMessage && conversationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             errors.append("Conversation name is required")
         }
 

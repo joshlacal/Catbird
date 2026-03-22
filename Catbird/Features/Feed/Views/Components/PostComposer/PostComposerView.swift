@@ -199,7 +199,10 @@ struct PostComposerView: View {
     
     private var configuredWithModifiers: some View {
         baseViewWithSafeArea
-            .modifier(DiscardConfirmationModifier(showingDismissAlert: $showingDismissAlert, dismiss: dismiss))
+            .modifier(DiscardConfirmationModifier(showingDismissAlert: $showingDismissAlert, dismiss: dismiss, clearDraft: {
+                appState.composerDraftManager.clearDraft()
+                viewModel.clearAll()
+            }))
             .modifier(MediaPickersModifier(
                 photoPickerVisible: $photoPickerVisible,
                 photoPickerItems: $photoPickerItems,
@@ -1338,7 +1341,8 @@ struct PostComposerView: View {
 struct DiscardConfirmationModifier: ViewModifier {
     @Binding var showingDismissAlert: Bool
     let dismiss: DismissAction
-    
+    var clearDraft: (() -> Void)? = nil
+
     func body(content: Content) -> some View {
         content
             .confirmationDialog(
@@ -1347,6 +1351,7 @@ struct DiscardConfirmationModifier: ViewModifier {
                 titleVisibility: .visible
             ) {
                 Button("Discard", role: .destructive) {
+                    clearDraft?()
                     dismiss()
                 }
                 Button("Keep Editing", role: .cancel) {
@@ -1371,7 +1376,8 @@ struct MediaPickersModifier: ViewModifier {
                 isPresented: $photoPickerVisible,
                 selection: $photoPickerItems,
                 maxSelectionCount: viewModel.maxImagesAllowed,
-                matching: .images
+                matching: .images,
+                preferredItemEncoding: .current
             )
             .onChange(of: photoPickerItems) {
                 Task {

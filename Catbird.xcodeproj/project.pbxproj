@@ -11,7 +11,6 @@
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 211DC2F72EA803CB00608AF4 /* Petrel */; };
-		2126696D2F489E2A00A2811F /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2126696C2F489E2A00A2811F /* ProfileView.swift */; };
 		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		212D4B5F2ED221A30036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B5E2ED221A30036E016 /* CatbirdMLSCore */; };
 		212D4B662ED265F80036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B652ED265F80036E016 /* CatbirdMLSCore */; };
@@ -119,7 +118,6 @@
 /* Begin PBXFileReference section */
 		21196F102DC1115900662CC3 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		21196F122DC1115900662CC3 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
-		2126696C2F489E2A00A2811F /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		219E58022EBC27F500C8D6F2 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
@@ -324,7 +322,6 @@
 			isa = PBXGroup;
 			children = (
 				21AC6E632DD0E0E700251536 /* .swiftlint.yml */,
-				2126696C2F489E2A00A2811F /* ProfileView.swift */,
 				215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */,
 				212E93FF2D60132700D3E1DD /* Catbird */,
 				212E94142D60132A00D3E1DD /* CatbirdTests */,
@@ -715,7 +712,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2126696D2F489E2A00A2811F /* ProfileView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

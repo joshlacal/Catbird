@@ -44,6 +44,7 @@ struct AuthenticatedPreviewModifier: ViewModifier {
   func body(content: Content) -> some View {
     content
       .environment(appState)
+      .environment(AppStateManager.shared)
       .applyAppStateEnvironment(appState)
       .applyTheme(appState.themeManager)
       .fontManager(appState.fontManager)

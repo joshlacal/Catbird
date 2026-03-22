@@ -1090,7 +1090,9 @@ struct SkeletonPostCard: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  FeedDiscoveryCardsView()
-        .environment(AppStateManager.shared)
+  AsyncPreviewContent { appState in
+    FeedDiscoveryCardsView()
+            .environment(AppStateManager.shared)
+  }
 }
+

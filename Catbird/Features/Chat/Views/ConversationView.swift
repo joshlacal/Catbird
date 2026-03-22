@@ -112,40 +112,40 @@ struct ConversationView: View {
   @ViewBuilder
   private var chatContent: some View {
     if let dataSource = unifiedDataSource {
-      VStack(spacing: 0) {
-        ChatCollectionViewBridge(
-          dataSource: dataSource,
-          navigationPath: chatNavigationPath,
-          onMessageLongPress: { message in
-            presentMessageActions(for: message)
-          },
-          onRequestEmojiPicker: { messageID in
-            emojiPickerMessageID = messageID
-            showingEmojiPicker = true
-          }
-        )
-        .ignoresSafeArea()
-        .onChange(of: selectedEmoji) { _, newEmoji in
-          guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
-          dataSource.addReaction(messageID: messageID, emoji: newEmoji)
-          showingEmojiPicker = false
+      ChatCollectionViewBridge(
+        dataSource: dataSource,
+        navigationPath: chatNavigationPath,
+        onMessageLongPress: { message in
+          presentMessageActions(for: message)
+        },
+        onRequestEmojiPicker: { messageID in
+          emojiPickerMessageID = messageID
+          showingEmojiPicker = true
+        }
+      )
+      .ignoresSafeArea(.container)
+      .onChange(of: selectedEmoji) { _, newEmoji in
+        guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
+        dataSource.addReaction(messageID: messageID, emoji: newEmoji)
+        showingEmojiPicker = false
+        selectedEmoji = ""
+        emojiPickerMessageID = nil
+      }
+      .onChange(of: showingEmojiPicker) { _, isPresented in
+        if !isPresented {
           selectedEmoji = ""
           emojiPickerMessageID = nil
         }
-        .onChange(of: showingEmojiPicker) { _, isPresented in
-          if !isPresented {
-            selectedEmoji = ""
-            emojiPickerMessageID = nil
-          }
-        }
-        
-          // Input bar at bottom with keyboard avoidance (hidden for deleted accounts)
+      }
+      .safeAreaInset(edge: .bottom) {
+        if chatNavigationPath.wrappedValue.isEmpty {
           if isOtherMemberDeleted {
             deletedAccountBanner
           } else {
             blueskyInputBar(dataSource: dataSource)
           }
         }
+      }
       .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
         selectedEmoji = emoji
       }

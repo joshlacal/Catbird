@@ -196,13 +196,14 @@ final class ListManager {
       // First upload avatar if provided
       var avatarBlob: Blob?
       if let avatar = avatar {
+        let mimeType = ImageMetadataStripper.detectMIMEType(from: avatar)
         let (_, uploadData) = try await client.com.atproto.repo.uploadBlob(
           data: avatar,
-          mimeType: "image/jpeg"
+          mimeType: mimeType
         )
         avatarBlob = uploadData?.blob
       }
-      
+
       // Create the list record
       let listRecord = AppBskyGraphList(
         purpose: purpose,
@@ -291,9 +292,10 @@ final class ListManager {
       // Upload new avatar if provided
       var avatarBlob: Blob? = currentList.avatar
       if let avatar = avatar {
+        let mimeType = ImageMetadataStripper.detectMIMEType(from: avatar)
         let (_, uploadData) = try await client.com.atproto.repo.uploadBlob(
           data: avatar,
-          mimeType: "image/jpeg"
+          mimeType: mimeType
         )
         avatarBlob = uploadData?.blob
       }

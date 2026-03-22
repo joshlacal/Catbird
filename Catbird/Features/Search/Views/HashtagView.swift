@@ -471,9 +471,10 @@ struct HashtagFilterView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        HashtagView(tag: "bluesky", path: .constant(NavigationPath()))
-            .applyAppStateEnvironment(appState)
-    }
+            HashtagView(tag: "bluesky", path: .constant(NavigationPath()))
+        }
+  }
 }
+

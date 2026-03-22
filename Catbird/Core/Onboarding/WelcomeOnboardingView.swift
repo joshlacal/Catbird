@@ -203,7 +203,8 @@ private struct PlatformPresentationModifier: ViewModifier {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  WelcomeOnboardingView()
-    .applyAppStateEnvironment(appState)
+  AsyncPreviewContent { appState in
+    WelcomeOnboardingView()
+  }
 }
+

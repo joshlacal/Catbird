@@ -519,9 +519,9 @@ class PostHeightCalculator {
         // Base height for the card
         var height = config.externalEmbedHeight
         
-        // Check if this is a special case like a Tenor GIF link
-        if let url = URL(string: externalView.external.uri.uriString()),
-           url.host?.contains("tenor.com") == true {
+        // Check if this is a media.tenor.com GIF link that ExternalEmbedView converts to video.
+        if let url = externalView.external.uri.url ?? URL(string: externalView.external.uri.uriString()),
+           url.host?.lowercased() == "media.tenor.com" {
             // Prefer Tenor-provided dimensions when available (matches ExternalEmbedView).
             let aspectRatio: CGFloat = {
                 if let widthStr = url.queryParameters?["ww"],
@@ -529,14 +529,18 @@ class PostHeightCalculator {
                    let width = Double(widthStr),
                    let height = Double(heightStr),
                    width > 0, height > 0 {
-                    return CGFloat(width / height)
+                    let ratio = CGFloat(width / height)
+                    if ratio.isFinite, ratio > 0 {
+                        return ratio
+                    }
                 }
                 
-                return 4/3 // Default aspect ratio for GIFs
+                return 1.0 // Match ExternalEmbedView fallback when URL dimensions are unavailable
             }()
             
             // Calculate height based on width and aspect ratio
-            return config.maxWidth / aspectRatio + config.videoControlsHeight
+            // Tenor GIF rendering does not include extra controls area.
+            return config.maxWidth / aspectRatio
         }
         
         // Add extra height if there is a thumbnail

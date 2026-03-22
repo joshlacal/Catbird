@@ -208,11 +208,13 @@ struct ConversationInvitationRow: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  NavigationStack {
-    ConversationInvitationsView()
-      .environment(AppStateManager.shared)
+  AsyncPreviewContent { appState in
+    NavigationStack {
+        ConversationInvitationsView()
+          .environment(AppStateManager.shared)
+      }
   }
 }
+
 
 #endif

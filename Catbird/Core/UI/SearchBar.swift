@@ -57,10 +57,12 @@ struct SearchBar: UIViewRepresentable {
 
 // Preview provider
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  SearchBar(text: .constant(""), placeholder: "Search feeds...")
-    .padding()
+  AsyncPreviewContent { appState in
+    SearchBar(text: .constant(""), placeholder: "Search feeds...")
+        .padding()
+  }
 }
+
 
 #else
 
@@ -84,9 +86,11 @@ struct SearchBar: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  SearchBar(text: .constant(""), placeholder: "Search feeds...")
-    .padding()
+  AsyncPreviewContent { appState in
+    SearchBar(text: .constant(""), placeholder: "Search feeds...")
+        .padding()
+  }
 }
+
 
 #endif

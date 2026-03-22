@@ -364,6 +364,7 @@ final class AppStateManager {
       if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
+        appState.configureDataServices(modelContainer: container)
       }
 
       // Only show transition overlay for actual account switches, not initial launch
@@ -378,14 +379,15 @@ final class AppStateManager {
       authenticatedStates[userDID] = appState
       isCachedAccount = false
       updateAccessOrder(userDID)
-      
+
       // OOM FIX: Await eviction to ensure databases are properly closed before proceeding
       await evictLRUIfNeeded()
-      
-      // Initialize model context for draft persistence
+
+      // Initialize model context for draft persistence and data services
       if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
+        appState.configureDataServices(modelContainer: container)
       }
       
       // Only show transition overlay for actual account switches, not initial launch
@@ -525,7 +527,7 @@ final class AppStateManager {
     // the entire switch window. Without this, the NSE can race in and access
     // the database with the wrong encryption key, causing HMAC check failures.
     // ═══════════════════════════════════════════════════════════════════════════
-    MLSAppActivityState.beginAccountSwitch(from: previousUserDID, to: userDID)
+    MLSNotificationCoordinator.beginAccountSwitch(from: previousUserDID, to: userDID)
     MLSCoordinationStore.shared.updatePhase(.switching)
     MLSCoordinationStore.shared.incrementGeneration(for: userDID)
     if let previousUserDID = previousUserDID {
@@ -534,7 +536,7 @@ final class AppStateManager {
     
     // Ensure we clear the switch state even if we fail
     defer {
-      MLSAppActivityState.endAccountSwitch()
+      MLSNotificationCoordinator.endAccountSwitch()
       MLSCoordinationStore.shared.updatePhase(.active)
     }
 

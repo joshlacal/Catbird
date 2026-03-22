@@ -2,6 +2,26 @@ import CatbirdMLSCore
 import Foundation
 import Petrel
 
+struct MLSMessageDisplayOrderKey: Comparable, Sendable {
+  let epoch: Int
+  let sequence: Int
+  let sentAt: Date
+  let messageID: String
+
+  static func < (lhs: MLSMessageDisplayOrderKey, rhs: MLSMessageDisplayOrderKey) -> Bool {
+    if lhs.epoch != rhs.epoch {
+      return lhs.epoch < rhs.epoch
+    }
+    if lhs.sequence != rhs.sequence {
+      return lhs.sequence < rhs.sequence
+    }
+    if lhs.sentAt != rhs.sentAt {
+      return lhs.sentAt < rhs.sentAt
+    }
+    return lhs.messageID < rhs.messageID
+  }
+}
+
 /// Adapter that conforms MLS messages to UnifiedChatMessage
 struct MLSMessageAdapter: UnifiedChatMessage {
   struct MLSProfileData: Sendable {
@@ -180,6 +200,21 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     metadata.sequence
   }
 
+  /// Use a low, timestamp-tiebroken fallback so messages with temporarily missing
+  /// ordering metadata do not get stranded at the end of the transcript.
+  var displayOrderKey: MLSMessageDisplayOrderKey {
+    MLSMessageDisplayOrderKey(
+      epoch: metadata.epoch ?? 0,
+      sequence: metadata.sequence ?? 0,
+      sentAt: metadata.sentAt,
+      messageID: metadata.id
+    )
+  }
+
+  static func sortsInDisplayOrder(_ lhs: MLSMessageAdapter, _ rhs: MLSMessageAdapter) -> Bool {
+    lhs.displayOrderKey < rhs.displayOrderKey
+  }
+
   var processingError: String? {
     metadata.processingError
   }
@@ -312,6 +347,23 @@ struct MLSMessageAdapter: UnifiedChatMessage {
           text: post.text
         )
       )
+    case .image(let imageEmbed):
+      return .image(
+        ImageEmbedData(
+          blobId: imageEmbed.blobId,
+          key: imageEmbed.key,
+          iv: imageEmbed.iv,
+          sha256: imageEmbed.sha256,
+          contentType: imageEmbed.contentType,
+          size: imageEmbed.size,
+          width: imageEmbed.width,
+          height: imageEmbed.height,
+          altText: imageEmbed.altText,
+          blurhash: imageEmbed.blurhash
+        )
+      )
+    case .unknown:
+      return nil
     }
   }
 }

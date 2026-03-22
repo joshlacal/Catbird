@@ -236,8 +236,10 @@ struct AdvancedFilterView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Create a mock view model for preview
     
-    return AdvancedFilterView(viewModel: RefinedSearchViewModel(appState: appState))
+        return AdvancedFilterView(viewModel: RefinedSearchViewModel(appState: appState))
+  }
 }
+

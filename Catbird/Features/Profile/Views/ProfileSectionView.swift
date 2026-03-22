@@ -306,16 +306,18 @@ struct ProfileSectionView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  NavigationStack {
-    ProfileSectionView(
-      viewModel: ProfileViewModel(
-        client: nil,
-        userDID: "did:example:user",
-        currentUserDID: "did:example:current"
-      ),
-      tab: .likes,
-      path: .constant(NavigationPath())
-    )
+  AsyncPreviewContent { appState in
+    NavigationStack {
+        ProfileSectionView(
+          viewModel: ProfileViewModel(
+            client: nil,
+            userDID: "did:example:user",
+            currentUserDID: "did:example:current"
+          ),
+          tab: .likes,
+          path: .constant(NavigationPath())
+        )
+      }
   }
 }
+

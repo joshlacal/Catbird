@@ -9,6 +9,7 @@ enum UnifiedEmbed: Hashable, Sendable {
   case gif(GIFEmbedData)
   case post(PostEmbedData)
   case tile(TileEmbedData)
+  case image(ImageEmbedData)
 }
 
 // MARK: - BlueskyRecordEmbedData
@@ -44,4 +45,19 @@ struct PostEmbedData: Hashable, Sendable {
   let authorDID: String
   let authorHandle: String?
   let text: String?
+}
+
+// MARK: - ImageEmbedData
+
+struct ImageEmbedData: Hashable, Sendable {
+  let blobId: String
+  let key: Data
+  let iv: Data
+  let sha256: String
+  let contentType: String
+  let size: Int
+  let width: Int
+  let height: Int
+  let altText: String?
+  let blurhash: String?
 }

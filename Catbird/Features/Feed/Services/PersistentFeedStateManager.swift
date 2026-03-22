@@ -86,7 +86,45 @@ actor PersistentFeedStateManager {
             if let existing = _shared {
                 return existing
             }
-            fatalError("PersistentFeedStateManager.shared accessed before initialization. Call initialize(with:) first.")
+            // Auto-initialize with in-memory container for previews/tests
+            let schema = Schema([
+                PersistedScrollPosition.self,
+                PersistedFeedState.self,
+                FeedContinuityInfo.self,
+                CachedFeedViewPost.self,
+                Preferences.self,
+                AppSettingsModel.self,
+                DraftPost.self,
+            ])
+            let config = ModelConfiguration(
+                "PersistentFeedState-Preview",
+                schema: schema,
+                isStoredInMemoryOnly: true,
+                cloudKitDatabase: .none
+            )
+            do {
+                let container = try ModelContainer(for: schema, configurations: [config])
+                let instance = PersistentFeedStateManager(modelContainer: container)
+                _shared = instance
+                return instance
+            } catch {
+                // Bare minimum if full schema fails
+                let minSchema = Schema([
+                    PersistedScrollPosition.self,
+                    PersistedFeedState.self,
+                    FeedContinuityInfo.self,
+                ])
+                let minConfig = ModelConfiguration(
+                    "PersistentFeedState-Minimal",
+                    schema: minSchema,
+                    isStoredInMemoryOnly: true,
+                    cloudKitDatabase: .none
+                )
+                let container = try! ModelContainer(for: minSchema, configurations: [minConfig])
+                let instance = PersistentFeedStateManager(modelContainer: container)
+                _shared = instance
+                return instance
+            }
         }
     }
 

@@ -193,11 +193,13 @@ struct ChatProfileRowView: View {
 
 // MARK: - Preview
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     VStack {
-        // Placeholder for preview
-        Text("ChatProfileRowView Preview")
-            .padding()
-    }
+            // Placeholder for preview
+            Text("ChatProfileRowView Preview")
+                .padding()
+        }
+  }
 }
+
 #endif

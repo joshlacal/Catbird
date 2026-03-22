@@ -154,11 +154,12 @@ struct PostComposerViewUIKit: View {
       if let vm = viewModel,
          dismissReason != .submit && dismissReason != .discard,
          !suppressAutoSaveOnDismiss,
-         hasContent(vm: vm) {
+         hasContent(vm: vm),
+         appState.composerDraftManager.currentDraft != nil {
         pcUIKitLogger.info("PostComposerViewUIKit: Auto-saving draft on disappear")
         Task { await MainActor.run { vm.saveDraftIfNeeded() } }
       } else {
-        pcUIKitLogger.debug("PostComposerViewUIKit: Skipping auto-save - submit/discard or no content")
+        pcUIKitLogger.debug("PostComposerViewUIKit: Skipping auto-save - submit/discard, no content, or draft was cleared")
       }
     }
   }

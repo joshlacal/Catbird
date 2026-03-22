@@ -16,65 +16,83 @@ import AppKit
 #if os(iOS)
 // Custom UITextView that properly sizes itself and allows text selection
 class SelectableSelfSizingTextView: UITextView {
+  private func measuredHeight(for width: CGFloat) -> CGFloat? {
+    guard width.isFinite, width > 0 else { return nil }
+
+    textContainer.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+    layoutManager.ensureLayout(for: textContainer)
+
+    // Get the used rect which accounts for all text content
+    let usedRect = layoutManager.usedRect(for: textContainer)
+
+    // Account for font descent and line spacing below the last line
+    var additionalBottomSpace: CGFloat = 0
+    if let attributedText = attributedText, attributedText.length > 0 {
+      let lastCharacterRange = NSRange(location: attributedText.length - 1, length: 1)
+
+      // Get font descent to ensure descenders are visible
+      if let font = attributedText.attribute(.font, at: lastCharacterRange.location, effectiveRange: nil) as? UIFont {
+        additionalBottomSpace += abs(font.descender)
+      }
+
+      // Add line spacing from paragraph style
+      if let paragraphStyle = attributedText.attribute(.paragraphStyle, at: lastCharacterRange.location, effectiveRange: nil) as? NSParagraphStyle {
+        additionalBottomSpace += paragraphStyle.lineSpacing
+        // Also account for line height multiple if set
+        if paragraphStyle.lineHeightMultiple > 0 {
+          additionalBottomSpace += paragraphStyle.lineSpacing * (paragraphStyle.lineHeightMultiple - 1)
+        }
+      }
+    }
+
+    // Add generous bottom padding to prevent clipping (8pt safety margin)
+    return ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+  }
+
   override var intrinsicContentSize: CGSize {
     // Ensure we have a valid width to work with
     let currentWidth = bounds.width > 0 ? bounds.width : frame.width
 
-    if currentWidth > 0 {
-      // Use the actual available width for accurate text layout
-      textContainer.size = CGSize(width: currentWidth, height: CGFloat.greatestFiniteMagnitude)
-      layoutManager.ensureLayout(for: textContainer)
-
-      // Get the used rect which accounts for all text content
-      let usedRect = layoutManager.usedRect(for: textContainer)
-
-      // Account for font descent and line spacing below the last line
-      var additionalBottomSpace: CGFloat = 0
-      if let attributedText = attributedText, attributedText.length > 0 {
-        let lastCharacterRange = NSRange(location: attributedText.length - 1, length: 1)
-
-        // Get font descent to ensure descenders are visible
-        if let font = attributedText.attribute(.font, at: lastCharacterRange.location, effectiveRange: nil) as? UIFont {
-          additionalBottomSpace += abs(font.descender)
-        }
-
-        // Add line spacing from paragraph style
-        if let paragraphStyle = attributedText.attribute(.paragraphStyle, at: lastCharacterRange.location, effectiveRange: nil) as? NSParagraphStyle {
-          additionalBottomSpace += paragraphStyle.lineSpacing
-          // Also account for line height multiple if set
-          if paragraphStyle.lineHeightMultiple > 0 {
-            additionalBottomSpace += paragraphStyle.lineSpacing * (paragraphStyle.lineHeightMultiple - 1)
-          }
-        }
-      }
-
-      // Add generous bottom padding to prevent clipping (8pt safety margin)
-      let height = ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
-
+    if let height = measuredHeight(for: currentWidth) {
       return CGSize(width: UIView.noIntrinsicMetric, height: max(height, 1))
     } else {
       // Fallback for when width isn't available yet
       return CGSize(width: UIView.noIntrinsicMetric, height: 1)
     }
   }
+
+  override func sizeThatFits(_ size: CGSize) -> CGSize {
+    if let height = measuredHeight(for: size.width) {
+      return CGSize(width: size.width, height: max(height, 1))
+    }
+
+    return super.sizeThatFits(size)
+  }
   
   private var lastKnownWidth: CGFloat = 0
-  
+
   override func layoutSubviews() {
     super.layoutSubviews()
 
-    // Only invalidate if the width has changed significantly to avoid unnecessary layout passes
+    // Invalidate synchronously when width changes to prevent truncation on first render.
+    // The previous async dispatch caused the initial frame to render with stale height.
     let currentWidth = bounds.width
     if abs(currentWidth - lastKnownWidth) > 1 {
       lastKnownWidth = currentWidth
-      DispatchQueue.main.async {
-        UIView.performWithoutAnimation {
-          CATransaction.begin()
-          CATransaction.setDisableActions(true)
-          self.invalidateIntrinsicContentSize()
-          CATransaction.commit()
-        }
-      }
+      invalidateIntrinsicContentSize()
+    }
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // When the view is added to a window (e.g. during navigation push),
+    // bounds.width is now correct. Force a fresh size calculation to fix
+    // truncation that occurs when intrinsicContentSize was first queried
+    // with a zero or transitional width.
+    if window != nil {
+      lastKnownWidth = bounds.width
+      invalidateIntrinsicContentSize()
+      setNeedsLayout()
     }
   }
 }
@@ -215,6 +233,18 @@ struct SelectableTextView: UIViewRepresentable {
   
   func makeCoordinator() -> Coordinator {
     Coordinator()
+  }
+
+  func sizeThatFits(
+    _ proposal: ProposedViewSize,
+    uiView: SelectableSelfSizingTextView,
+    context: Context
+  ) -> CGSize? {
+    let width = proposal.width ?? uiView.bounds.width
+    guard width.isFinite, width > 0 else { return nil }
+
+    let fittingSize = uiView.sizeThatFits(CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+    return CGSize(width: width, height: max(ceil(fittingSize.height), 1))
   }
   
   class Coordinator: NSObject, UITextViewDelegate {

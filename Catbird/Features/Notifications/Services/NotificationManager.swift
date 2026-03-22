@@ -217,6 +217,9 @@ final class NotificationManager: NSObject {
   /// Persisted key prefix for per-account chat notification preference
   private let chatNotificationsDefaultsKeyPrefix = "chatNotificationsEnabled"
 
+  /// Persisted key prefix for per-account MLS chat notification preference
+  private let mlsChatNotificationsDefaultsKeyPrefix = "mlsChatNotificationsEnabled"
+
   /// Whether chat message notifications are enabled locally (per-account)
   var chatNotificationsEnabled: Bool = true {
     didSet {
@@ -224,6 +227,16 @@ final class NotificationManager: NSObject {
         return
       }
       saveChatNotificationPreference()
+    }
+  }
+
+  /// Whether MLS encrypted chat notifications are enabled locally (per-account)
+  var mlsChatNotificationsEnabled: Bool = true {
+    didSet {
+      guard shouldPersistChatPreference else {
+        return
+      }
+      saveMLSChatNotificationPreference()
     }
   }
 
@@ -265,6 +278,33 @@ final class NotificationManager: NSObject {
         "No chat notification preference found for \(did), defaulting to enabled")
       chatNotificationsEnabled = true
     }
+
+    let mlsKey = "\(mlsChatNotificationsDefaultsKeyPrefix)_\(did)"
+    if defaults.object(forKey: mlsKey) != nil {
+      let enabled = defaults.bool(forKey: mlsKey)
+      notificationLogger.info(
+        "Loaded MLS chat notification preference for \(did): \(enabled ? "enabled" : "disabled")")
+      mlsChatNotificationsEnabled = enabled
+    } else {
+      notificationLogger.info(
+        "No MLS chat notification preference found for \(did), defaulting to enabled")
+      mlsChatNotificationsEnabled = true
+    }
+  }
+
+  /// Save MLS chat notification preference for the current account
+  private func saveMLSChatNotificationPreference() {
+    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+      let did = appState?.userDID
+    else {
+      return
+    }
+
+    let key = "\(mlsChatNotificationsDefaultsKeyPrefix)_\(did)"
+    defaults.set(mlsChatNotificationsEnabled, forKey: key)
+    notificationLogger.info(
+      "MLS chat notification preference updated for \(did): \(self.mlsChatNotificationsEnabled ? "enabled" : "disabled")"
+    )
   }
 
   /// Flag to avoid persisting chat preference before it is initially loaded from disk
@@ -1726,7 +1766,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     originalNotification: UNNotification,
     completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) async {
-    func getCachedPlaintextByOrder() async -> String? {
+    func getCachedPlaintextByOrder() async -> (plaintext: String, senderDid: String?)? {
       guard let epoch, let seq else { return nil }
       do {
         let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1741,25 +1781,26 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         }
 
         if let message {
-          if let plaintext = message.plaintext { return plaintext }
+          let sender = (message.senderID != nil && message.senderID != "unknown") ? message.senderID : nil
+          if let plaintext = message.plaintext { return (plaintext, sender) }
 
           // Control messages (reactions/readReceipts/etc) often have nil plaintext; derive from payload.
           if let payload = message.parsedPayload {
             switch payload.messageType {
             case .text:
-              return payload.text
+              if let text = payload.text { return (text, sender) }
             case .reaction:
               if let reaction = payload.reaction {
                 let verb = (reaction.action == .add) ? "Reacted with" : "Removed reaction"
-                return "\(verb) \(reaction.emoji)"
+                return ("\(verb) \(reaction.emoji)", sender)
               }
-              return "Reaction update"
+              return ("Reaction update", sender)
             case .readReceipt:
-              return "Read receipt"
+              return ("Read receipt", sender)
             case .typing:
-              return "Typing..."
+              return ("Typing...", sender)
             case .adminRoster, .adminAction:
-              return "Group update"
+              return ("Group update", sender)
             case .system:
               return nil
             }
@@ -1827,17 +1868,18 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     notificationLogger.info("🔓 [FG] Recipient DID: \(recipientDid.prefix(24))...")
 
     // If we already have the payload cached (by server order), avoid any decryption attempt.
-    if let cachedPlaintext = await getCachedPlaintextByOrder() {
+    if let cached = await getCachedPlaintextByOrder() {
       CatbirdMLSCore.MLSNotificationMetrics.increment(
         .cacheHitBeforeDecrypt,
         source: "foreground_pre_route_order_cache"
       )
       notificationLogger.info("📦 [FG] Cache HIT by (epoch,seq) - using cached content")
       await presentDecryptedNotification(
-        plaintext: cachedPlaintext,
+        plaintext: cached.plaintext,
         convoId: convoId,
         messageId: messageId,
         recipientDid: recipientDid,
+        senderDid: cached.senderDid,
         originalNotification: originalNotification,
         completionHandler: completionHandler
       )
@@ -1868,7 +1910,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       let backoffDelaysMs: [UInt64] = [50, 100, 200, 400, 800, 1500, 2000]
 
       for (attempt, delayMs) in backoffDelaysMs.enumerated() {
-        if let cachedPlaintext = await getCachedPlaintextByOrder() {
+        if let cached = await getCachedPlaintextByOrder() {
           CatbirdMLSCore.MLSNotificationMetrics.increment(
             .cacheHitBeforeDecrypt,
             owner: .appSync,
@@ -1878,10 +1920,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           notificationLogger.info(
             "📦 [FG] Cache HIT by (epoch,seq) (attempt \(attempt + 1)) - using cached content")
           await presentDecryptedNotification(
-            plaintext: cachedPlaintext,
+            plaintext: cached.plaintext,
             convoId: convoId,
             messageId: messageId,
             recipientDid: recipientDid,
+            senderDid: cached.senderDid,
             originalNotification: originalNotification,
             completionHandler: completionHandler
           )
@@ -1917,9 +1960,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       await logCacheMissDetails(context: "active-cache-only-miss")
       notificationLogger.warning(
-        "⚠️ [FG] Cache-only route timed out without decrypted payload - showing placeholder")
-      completionHandler([.banner, .sound])
-      return
+        "⚠️ [FG] Cache-only route timed out - falling through to direct decryption")
+      // Fall through to direct decryption instead of showing "Decrypting..." placeholder
 
     case .decrypt:
       notificationLogger.info(
@@ -1928,7 +1970,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     do {
       // Check if already cached first
-      if let cachedPlaintext = await getCachedPlaintextByOrder() {
+      if let cached = await getCachedPlaintextByOrder() {
         CatbirdMLSCore.MLSNotificationMetrics.increment(
           .cacheHitBeforeDecrypt,
           owner: .appNotification,
@@ -1937,10 +1979,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         )
         notificationLogger.info("📦 [FG] Cache HIT by (epoch,seq) - using cached content")
         await presentDecryptedNotification(
-          plaintext: cachedPlaintext,
+          plaintext: cached.plaintext,
           convoId: convoId,
           messageId: messageId,
           recipientDid: recipientDid,
+          senderDid: cached.senderDid,
           originalNotification: originalNotification,
           completionHandler: completionHandler
         )
@@ -2014,13 +2057,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
 
       // Check cache again after sync (message may have been stored)
-      if let cachedPlaintext = await getCachedPlaintextByOrder() {
+      if let cached = await getCachedPlaintextByOrder() {
         notificationLogger.info("📦 [FG] Cache HIT by (epoch,seq) after sync - using cached content")
         await presentDecryptedNotification(
-          plaintext: cachedPlaintext,
+          plaintext: cached.plaintext,
           convoId: convoId,
           messageId: messageId,
           recipientDid: recipientDid,
+          senderDid: cached.senderDid,
           originalNotification: originalNotification,
           completionHandler: completionHandler
         )
@@ -2077,6 +2121,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         convoId: convoId,
         messageId: messageId,
         recipientDid: recipientDid,
+        senderDid: decryptResult.senderDID,
         originalNotification: originalNotification,
         completionHandler: completionHandler
       )
@@ -2094,14 +2139,15 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
         let backoffDelaysMs: [UInt64] = [50, 100, 200]
         for (attempt, delayMs) in backoffDelaysMs.enumerated() {
-          var cachedPlaintext = await getCachedPlaintextByOrder()
-          if cachedPlaintext == nil {
-            cachedPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
+          var cached = await getCachedPlaintextByOrder()
+          var fallbackPlaintext: String?
+          if cached == nil {
+            fallbackPlaintext = await CatbirdMLSCore.MLSCoreContext.shared.getCachedPlaintext(
               messageID: messageId, userDid: recipientDid
             )
           }
 
-          if let cachedPlaintext {
+          if let resolved = cached ?? fallbackPlaintext.map({ ($0, nil as String?) }) {
             CatbirdMLSCore.MLSNotificationMetrics.increment(
               .cacheHitBeforeDecrypt,
               owner: .appNotification,
@@ -2111,10 +2157,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
             notificationLogger.info(
               "📦 [FG] Cache HIT after SecretReuse (attempt \(attempt + 1)) - using cached content")
             await presentDecryptedNotification(
-              plaintext: cachedPlaintext,
+              plaintext: resolved.plaintext,
               convoId: convoId,
               messageId: messageId,
               recipientDid: recipientDid,
+              senderDid: resolved.senderDid,
               originalNotification: originalNotification,
               completionHandler: completionHandler
             )
@@ -2845,6 +2892,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     convoId: String,
     messageId: String,
     recipientDid: String,
+    senderDid knownSenderDid: String? = nil,
     originalNotification: UNNotification,
     completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) async {
@@ -2929,8 +2977,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     let conversationTitle = await getMLSConversationTitle(
       convoId: convoId, recipientDid: recipientDid)
 
-    // Prefer sender from stored message (post-decryption), fall back to payload if present.
-    var senderDid = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
+    // Prefer known sender DID (from MLS credential), fall back to DB lookup, then push payload.
+    var senderDid = knownSenderDid
+    if senderDid == nil {
+      senderDid = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
+    }
     if senderDid == nil {
       senderDid = originalNotification.request.content.userInfo["sender_did"] as? String
     }
@@ -2941,13 +2992,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     var senderAvatarURL: URL? = nil
 
     if let senderDid = canonicalSenderDid {
-      if let profile = getCachedProfile(for: senderDid) {
-        senderName = profile.displayName ?? profile.handle
-        senderAvatarURL = profile.avatarURL.flatMap(URL.init(string:))
-      } else if let memberInfo = await getMLSMemberInfo(
+      if let memberInfo = await getMLSMemberInfo(
         senderDid: senderDid, convoId: convoId, recipientDid: recipientDid)
       {
         senderName = memberInfo.displayName ?? memberInfo.handle
+        senderAvatarURL = memberInfo.avatarURL.flatMap(URL.init(string:))
       }
 
       if senderName == nil {
@@ -3001,30 +3050,10 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   // MARK: - Foreground rich notification helpers
 
-  private static let mlsNotificationAppGroupSuite = "group.blue.catbird.shared"
-  private static let mlsProfileCacheKeyPrefix = "profile_cache_"
-
-  private struct MLSCachedProfile: Codable {
-    let did: String
-    let handle: String
-    let displayName: String?
-    let avatarURL: String?
-    let cachedAt: Date?
-  }
-
   private func canonicalDID(_ did: String) -> String {
     let trimmed = did.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: true).first.map(
       String.init) ?? trimmed
-  }
-
-  private func getCachedProfile(for did: String) -> MLSCachedProfile? {
-    guard let defaults = UserDefaults(suiteName: Self.mlsNotificationAppGroupSuite) else {
-      return nil
-    }
-    let cacheKey = "\(Self.mlsProfileCacheKeyPrefix)\(did.lowercased())"
-    guard let data = defaults.data(forKey: cacheKey) else { return nil }
-    return try? JSONDecoder().decode(MLSCachedProfile.self, from: data)
   }
 
   private func getMLSConversationTitle(convoId: String, recipientDid: String) async -> String? {
@@ -3075,7 +3104,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     senderDid: String,
     convoId: String,
     recipientDid: String
-  ) async -> (displayName: String?, handle: String?)? {
+  ) async -> (displayName: String?, handle: String?, avatarURL: String?)? {
     do {
       // Use smart routing - auto-routes to lightweight DatabaseQueue for inactive users
       let normalizedSenderDid = senderDid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3092,7 +3121,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
 
       guard let member else { return nil }
-      return (displayName: member.displayName, handle: member.handle)
+      return (displayName: member.displayName, handle: member.handle, avatarURL: member.avatarURL)
     } catch {
       return nil
     }

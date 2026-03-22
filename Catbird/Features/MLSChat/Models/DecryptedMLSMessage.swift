@@ -80,7 +80,7 @@ import Petrel
       switch payload.messageType {
       case .reaction:
         return true
-      case .text, .readReceipt, .typing, .adminRoster, .adminAction:
+      case .text, .readReceipt, .typing, .adminRoster, .adminAction, .system:
         return false
       }
     }

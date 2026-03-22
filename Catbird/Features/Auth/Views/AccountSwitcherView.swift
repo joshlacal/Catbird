@@ -435,62 +435,56 @@ struct AccountSwitcherView: View {
   // MARK: - Data Methods
     
     private func loadAccounts() async {
-      isLoading = true
-      defer { isLoading = false }
-
-      // First refresh available accounts
+      // Refresh available accounts list
       await appStateManager.authentication.refreshAvailableAccounts()
 
-      // Get the basic account info
       let accountInfos = appStateManager.authentication.availableAccounts
 
-      // If we have an authenticated AppState with a client, fetch detailed profiles
-      if let appState = appStateManager.lifecycle.appState,
-         let client = appState.atProtoClient,
-         !accountInfos.isEmpty {
-        do {
-          // Create identifiers for all accounts
-          let actors = try accountInfos.map { try ATIdentifier(string: $0.did) }
-          
-          // Fetch profiles for all accounts in a single API call
-          let (responseCode, profilesData) = try await client.app.bsky.actor.getProfiles(
-            input: .init(actors: actors)
-          )
-          
-          if responseCode == 200, let profilesData = profilesData {
-            // Map the accounts with their profiles
-            accounts = accountInfos.map { accountInfo in
-              // Find the profile that matches this account's DID
-              let matchingProfile = profilesData.profiles.first {
-                $0.did.description == accountInfo.did
-              }
-
-              // Cache the profile data for future use
-              if let profile = matchingProfile {
-                appStateManager.authentication.cacheProfileData(
-                  for: accountInfo.did,
-                  handle: profile.handle.description,
-                  displayName: profile.displayName,
-                  avatarURL: profile.finalAvatarURL()
-                )
-              }
-
-              return AccountViewModel(from: accountInfo, profile: matchingProfile)
-            }
-          } else {
-            // If profiles fetch fails, just use basic account info
-            accounts = accountInfos.map { AccountViewModel(from: $0, profile: nil) }
-            logger.warning("Failed to fetch profiles with code \(responseCode)")
-          }
-        } catch {
-          // If profiles fetch fails, just use basic account info
-          accounts = accountInfos.map { AccountViewModel(from: $0, profile: nil) }
-          logger.warning("Error fetching profiles: \(error.localizedDescription)")
-        }
-      } else {
-        // If no client available, just use basic account info
+      // Show cached data immediately (no loading spinner for cached data)
+      if accounts.isEmpty {
         accounts = accountInfos.map { AccountViewModel(from: $0, profile: nil) }
       }
+
+      // Fetch fresh profiles in the background
+      guard let appState = appStateManager.lifecycle.appState,
+            let client = appState.atProtoClient,
+            !accountInfos.isEmpty else {
+        isLoading = false
+        return
+      }
+
+      do {
+        let actors = try accountInfos.map { try ATIdentifier(string: $0.did) }
+
+        let (responseCode, profilesData) = try await client.app.bsky.actor.getProfiles(
+          input: .init(actors: actors)
+        )
+
+        if responseCode == 200, let profilesData = profilesData {
+          accounts = accountInfos.map { accountInfo in
+            let matchingProfile = profilesData.profiles.first {
+              $0.did.description == accountInfo.did
+            }
+
+            if let profile = matchingProfile {
+              appStateManager.authentication.cacheProfileData(
+                for: accountInfo.did,
+                handle: profile.handle.description,
+                displayName: profile.displayName,
+                avatarURL: profile.finalAvatarURL()
+              )
+            }
+
+            return AccountViewModel(from: accountInfo, profile: matchingProfile)
+          }
+        } else {
+          logger.warning("Failed to fetch profiles with code \(responseCode)")
+        }
+      } catch {
+        logger.warning("Error fetching profiles: \(error.localizedDescription)")
+      }
+
+      isLoading = false
     }
 
     private func saveAccountOrder() async {
@@ -713,10 +707,15 @@ struct AccountSwitcherView: View {
         logger.notice("Authentication was cancelled by user")
         authenticationCancelled = true
         isLoading = false
+      } catch is CancellationError {
+        // Task was cancelled (e.g., auth state changed to authenticated
+        // before this task finished cleanup) — not a real error
+        logger.notice("Authentication task cancelled (auth may have already succeeded)")
+        isLoading = false
       } catch {
         // Other authentication errors (including timeout)
         logger.error("Authentication error: \(error.localizedDescription)")
-        
+
         if case AuthError.timeout = error {
           self.error = "Authentication timed out. The authentication session took too long to complete. Please try again."
         } else {

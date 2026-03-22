@@ -69,31 +69,33 @@ struct ValidatingTextField: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     VStack {
-        ValidatingTextField(
-            text: .constant("test"),
-            prompt: "Enter value",
-            icon: "envelope",
-            validationError: nil,
-            isDisabled: false
-        )
+            ValidatingTextField(
+                text: .constant("test"),
+                prompt: "Enter value",
+                icon: "envelope",
+                validationError: nil,
+                isDisabled: false
+            )
         
-        ValidatingTextField(
-            text: .constant(""),
-            prompt: "Enter value",
-            icon: "envelope",
-            validationError: "This field is required",
-            isDisabled: false
-        )
+            ValidatingTextField(
+                text: .constant(""),
+                prompt: "Enter value",
+                icon: "envelope",
+                validationError: "This field is required",
+                isDisabled: false
+            )
         
-        ValidatingTextField(
-            text: .constant("test"),
-            prompt: "Enter value",
-            icon: "envelope",
-            validationError: nil,
-            isDisabled: true
-        )
-    }
-    .padding()
+            ValidatingTextField(
+                text: .constant("test"),
+                prompt: "Enter value",
+                icon: "envelope",
+                validationError: nil,
+                isDisabled: true
+            )
+        }
+        .padding()
+  }
 }
+

@@ -124,7 +124,8 @@ extension PostComposerViewModel {
             logger.debug("DEBUG: Video upload successful, creating embed")
             let embed = mediaUploadManager.createVideoEmbed(
                 aspectRatio: videoItem.aspectRatio,
-                alt: videoItem.altText.isEmpty ? "Video" : videoItem.altText
+                alt: videoItem.altText.isEmpty ? "Video" : videoItem.altText,
+                presentation: videoItem.isGifConversion ? "gif" : nil
             )
 
             isVideoUploading = false

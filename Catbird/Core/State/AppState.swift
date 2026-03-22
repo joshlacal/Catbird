@@ -250,7 +250,7 @@ final class AppState {
     }
 
     let service = ActivitySubscriptionService(
-      client: nil,
+      client: client,
       notificationManager: notificationManager
     )
     activitySubscriptionServiceStorage = service

@@ -22,11 +22,6 @@
 			</array>
 		</dict>
 	</array>
-	<key>DCAppAttestService</key>
-	<dict>
-		<key>Enabled</key>
-		<true/>
-	</dict>
 	<key>LegalPrivacyPolicyURL</key>
 	<string>https://catbird.blue/privacy</string>
 	<key>LegalTermsOfServiceURL</key>

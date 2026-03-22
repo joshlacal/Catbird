@@ -26,6 +26,26 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
 
   var text: String { messageView.text }
 
+  var attributedText: AttributedString {
+    guard let facets = messageView.facets, !facets.isEmpty else {
+      return ChatTextRenderer.attributedString(for: messageView.text)
+    }
+
+    let facetedText = AppBskyFeedPost(
+      text: messageView.text,
+      entities: nil,
+      facets: facets,
+      reply: nil,
+      embed: nil,
+      langs: nil,
+      labels: nil,
+      tags: nil,
+      createdAt: messageView.sentAt
+    ).facetsAsAttributedString
+
+    return facetedText
+  }
+
   var senderID: String { messageView.sender.did.didString() }
 
   var senderDisplayName: String? {

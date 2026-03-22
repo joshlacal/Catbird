@@ -729,95 +729,22 @@ import AppKit
         domain: "ProfileImageUpload", code: 0,
         userInfo: [NSLocalizedDescriptionKey: "Client not available"])
     }
-    
-    let processedData = try await processImageForUpload(imageData)
-    
+
+    let mimeType = ImageMetadataStripper.detectMIMEType(from: imageData)
+
     let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
-      data: processedData,
-      mimeType: "image/jpeg",
+      data: imageData,
+      mimeType: mimeType,
       stripMetadata: true
     )
-    
+
     guard responseCode == 200, let blob = blobOutput?.blob else {
       throw NSError(
         domain: "ProfileImageUpload", code: responseCode,
         userInfo: [NSLocalizedDescriptionKey: "Failed to upload image: HTTP \(responseCode)"])
     }
-    
+
     return blob
-  }
-  
-  /// Processes image data for upload with compression and format conversion
-  private func processImageForUpload(_ data: Data) async throws -> Data {
-    var processedData = data
-    
-    // Convert HEIC to JPEG if needed
-    if checkImageFormat(data) == "HEIC" {
-      if let converted = convertHEICToJPEG(data) {
-        processedData = converted
-      }
-    }
-    
-    // Compress image to meet AT Protocol limits (target 900KB, max 1MB)
-    if let image = PlatformImage(data: processedData),
-       let compressed = compressImage(image, maxSizeInBytes: 900_000) {
-      processedData = compressed
-    }
-    
-    return processedData
-  }
-  
-  /// Checks the image format based on data header
-  private func checkImageFormat(_ data: Data) -> String {
-    guard data.count >= 4 else { return "Unknown" }
-    
-    let bytes = data.prefix(4)
-    if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
-      return "JPEG"
-    } else if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-      return "PNG"
-    } else if data.count >= 12 {
-      let heicHeader = data.subdata(in: 4..<12)
-      if String(data: heicHeader, encoding: .ascii)?.contains("ftyp") == true {
-        let heicTypes = ["heic", "heix", "hevc", "hevx"]
-        if let typeString = String(data: data.subdata(in: 8..<12), encoding: .ascii),
-           heicTypes.contains(where: typeString.lowercased().contains) {
-          return "HEIC"
-        }
-      }
-    }
-    return "Unknown"
-  }
-  
-  /// Converts HEIC data to JPEG
-  private func convertHEICToJPEG(_ data: Data) -> Data? {
-    #if os(iOS)
-    guard let image = UIImage(data: data) else { return nil }
-    #elseif os(macOS)
-    guard let image = NSImage(data: data) else { return nil }
-    #else
-    return nil // Unsupported platform
-    #endif
-    return image.jpegData(compressionQuality: 0.8)
-  }
-  
-  /// Compresses image to target size
-  private func compressImage(_ image: PlatformImage, maxSizeInBytes: Int) -> Data? {
-    #if os(iOS)
-    var compression: CGFloat = 0.8
-    var imageData = image.jpegData(compressionQuality: compression)
-    
-    while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
-      compression -= 0.1
-      imageData = image.jpegData(compressionQuality: compression)
-    }
-    
-    return imageData
-    #else
-    // macOS compression is more complex, returning as-is for now
-    let imageRep = NSBitmapImageRep(data: image.tiffRepresentation!)
-    return imageRep?.representation(using: .jpeg, properties: [:])
-    #endif
   }
 
   // MARK: Update Profile

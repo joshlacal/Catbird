@@ -171,40 +171,34 @@ struct EditListView: View {
   }
   
   var body: some View {
-    NavigationStack {
-      contentView
-        .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-        .navigationTitle("Edit List")
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
-        .toolbar {
-          toolbarContent
+    contentView
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+      .toolbar {
+        toolbarContent
+      }
+      .task {
+        viewModel = EditListViewModel(listURI: listURI, appState: appState)
+        if let vm = viewModel {
+          await vm.loadListData()
         }
-        .task {
-          viewModel = EditListViewModel(listURI: listURI, appState: appState)
-          if let vm = viewModel {
-            await vm.loadListData()
-          }
+      }
+      .alert("Discard Changes?", isPresented: $showingDiscardAlert) {
+        Button("Discard", role: .destructive) {
+          dismiss()
         }
-        .alert("Discard Changes?", isPresented: $showingDiscardAlert) {
-          Button("Discard", role: .destructive) {
-            dismiss()
-          }
-          Button("Keep Editing", role: .cancel) {}
-        } message: {
-          Text("You have unsaved changes. Are you sure you want to discard them?")
+        Button("Keep Editing", role: .cancel) {}
+      } message: {
+        Text("You have unsaved changes. Are you sure you want to discard them?")
+      }
+      .alert("Error", isPresented: errorAlertBinding) {
+        Button("OK") {
+          viewModel?.showingError = false
         }
-        .alert("Error", isPresented: errorAlertBinding) {
-          Button("OK") {
-            viewModel?.showingError = false
-          }
-        } message: {
-          if let errorMessage = viewModel?.errorMessage {
-            Text(errorMessage)
-          }
+      } message: {
+        if let errorMessage = viewModel?.errorMessage {
+          Text(errorMessage)
         }
-    }
+      }
   }
   
   @ViewBuilder

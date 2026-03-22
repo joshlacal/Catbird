@@ -146,14 +146,20 @@ struct ResultsView: View {
             }
             if showSeeAll, viewModel.profileResults.count > (limit ?? 0) {
                 Button { selectedContentType = .profiles } label: {
-                    Text("See all \(viewModel.profileResults.count) profiles")
-                        .appFont(AppTextRole.subheadline.weight(.semibold))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
-                        .foregroundColor(.accentColor)
+                    HStack {
+                        Text("See all \(viewModel.profileResults.count) profiles")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
+                        Image(systemName: "chevron.right")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
+                    }
+                    .padding(.leading, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .padding(.horizontal, 8)
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
             }
@@ -206,14 +212,21 @@ struct ResultsView: View {
             }
             if showSeeAll, viewModel.postResults.count > (limit ?? 0) {
                 Button { selectedContentType = .posts } label: {
-                    Text("See all \(viewModel.postResults.count) posts")
-                        .appFont(AppTextRole.subheadline.weight(.semibold))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
-                        .foregroundColor(.accentColor)
+                    HStack {
+                        Text("See all \(viewModel.postResults.count) posts")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
+                        Image(systemName: "chevron.right")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
+                    }
+                    .padding(.leading, 16)
+
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .padding(.horizontal, 8)
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
             }
@@ -257,14 +270,21 @@ struct ResultsView: View {
             }
             if showSeeAll, viewModel.feedResults.count > (limit ?? 0) {
                 Button { selectedContentType = .feeds } label: {
-                    Text("See all \(viewModel.feedResults.count) feeds")
-                        .appFont(AppTextRole.subheadline.weight(.semibold))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
-                        .foregroundColor(.accentColor)
+                    HStack {
+                        Text("See all \(viewModel.feedResults.count) feeds")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
+                        Image(systemName: "chevron.right")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
+                    }
+                    .padding(.leading, 16)
+
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .padding(.horizontal, 8)
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets())
             }
@@ -354,11 +374,21 @@ struct ResultsView: View {
                                 Button {
                                     selectedContentType = .profiles
                                 } label: {
-                                    Text("See all \(viewModel.profileResults.count) profiles")
-                                        .appFont(AppTextRole.subheadline)
-                                        .foregroundColor(.accentColor)
-                                        .padding(.vertical, 12)
+                                    HStack {
+                                        Text("See all \(viewModel.profileResults.count) profiles")
+                                            .appFont(AppTextRole.subheadline)
+                                            .foregroundColor(.accentColor)
+                                        Image(systemName: "chevron.right")
+                                            .appFont(AppTextRole.subheadline)
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    .padding(.leading, 16)
+
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
+                                .padding(.horizontal, 8)
                                 .buttonStyle(.plain)
                             }
                         }
@@ -391,11 +421,21 @@ struct ResultsView: View {
                                 Button {
                                     selectedContentType = .posts
                                 } label: {
-                                    Text("See all \(viewModel.postResults.count) posts")
-                                        .appFont(AppTextRole.subheadline)
-                                        .foregroundColor(.accentColor)
-                                        .padding(.vertical, 12)
+                                    HStack {
+                                        Text("See all \(viewModel.postResults.count) posts")
+                                            .appFont(AppTextRole.subheadline)
+                                            .foregroundColor(.accentColor)
+                                        Image(systemName: "chevron.right")
+                                            .appFont(AppTextRole.subheadline)
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    .padding(.leading, 16)
+
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
+                                .padding(.horizontal, 8)
                                 .buttonStyle(.plain)
                             }
                         }
@@ -453,11 +493,21 @@ struct ResultsView: View {
                                 Button {
                                     selectedContentType = .feeds
                                 } label: {
-                                    Text("See all \(viewModel.feedResults.count) feeds")
-                                        .appFont(AppTextRole.subheadline)
-                                        .foregroundColor(.accentColor)
-                                        .padding(.vertical, 12)
+                                    HStack {
+                                        Text("See all \(viewModel.feedResults.count) feeds")
+                                            .appFont(AppTextRole.subheadline)
+                                            .foregroundColor(.accentColor)
+                                        Image(systemName: "chevron.right")
+                                            .appFont(AppTextRole.subheadline)
+                                            .foregroundColor(.accentColor)
+                                    }
+                                    .padding(.leading, 16)
+
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
+                                .padding(.horizontal, 8)
                                 .buttonStyle(.plain)
                             }
                         }

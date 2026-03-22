@@ -30,6 +30,7 @@ struct Post: View, Equatable {
     @State private var translationConfig: Any? // Use Any instead of specific type for cross-platform compatibility
     @State private var translationError: String?
     @State private var isTranslating = false
+    @State private var shouldPrepareTranslation = false
     @State private var showTranslationPopover = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -303,6 +304,7 @@ struct Post: View, Equatable {
             showTranslation = false
             translatedText = nil
             translationConfig = nil
+            shouldPrepareTranslation = false
         }
         return
 #endif
@@ -313,6 +315,7 @@ struct Post: View, Equatable {
                 showTranslation = false
                 translatedText = nil
                 translationConfig = nil
+                shouldPrepareTranslation = false
                 translationError = nil
             }
         } else {
@@ -334,11 +337,21 @@ struct Post: View, Equatable {
                 } else {
                     // No languages specified
                     await MainActor.run {
+                        translationConfig = nil
+                        shouldPrepareTranslation = false
                         translationError = NSLocalizedString("Source language not identified.", comment: "")
                     }
                 }
             }
         }
+    }
+
+    private func normalizedTranslationLanguage(_ language: Locale.Language) -> Locale.Language {
+        guard let baseLanguageCode = language.baseLanguageCode else {
+            return language
+        }
+
+        return Locale.Language(identifier: baseLanguageCode)
     }
 
     private func detectTextLanguage() -> Locale.Language? {
@@ -353,31 +366,54 @@ struct Post: View, Equatable {
 
     private func setupTranslation(sourceLanguage: Locale.Language) async {
         if #available(iOS 18.0, macCatalyst 26.0, *) {
+            let normalizedSourceLanguage = normalizedTranslationLanguage(sourceLanguage)
+            let normalizedTargetLanguage = normalizedTranslationLanguage(targetLanguage)
             let availability = LanguageAvailability()
-            let status = await availability.status(from: sourceLanguage, to: targetLanguage)
+            let status = await availability.status(from: normalizedSourceLanguage, to: normalizedTargetLanguage)
             
-            logger.debug("Translation status: \(String(describing: status)) for \(String(describing:sourceLanguage)) -> \(String(describing:targetLanguage))")
+            logger.debug("Translation status: \(String(describing: status)) for \(String(describing: normalizedSourceLanguage)) -> \(String(describing: normalizedTargetLanguage))")
             
+            if case .installed = status, #available(iOS 26.0, macCatalyst 26.0, *) {
+                // Models already downloaded — translate directly without triggering
+                // the .translationTask() modifier (which shows the system download UI).
+                logger.debug("Models installed; translating directly via TranslationSession")
+                let session = TranslationSession(installedSource: normalizedSourceLanguage, target: normalizedTargetLanguage)
+                await performTranslation(session: session)
+                return
+            }
+
             await MainActor.run {
                 switch status {
-                case .installed, .supported:
-                    // Proceed with translation - the translationTask modifier will handle model downloads
-                    if #available(iOS 18.0, macCatalyst 26.0, *) {
-                        let config = TranslationSession.Configuration(source: sourceLanguage, target: targetLanguage)
-                        translationConfig = config
-                        logger.debug("Translation configuration set")
-                    }
+                case .installed:
+                    // iOS 18–25 fallback: use .translationTask() modifier.
+                    let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
+                    translationConfig = config
+                    shouldPrepareTranslation = false
+                    translationError = nil
+                    logger.debug("Translation configuration set for installed languages (pre-iOS 26 path)")
+                case .supported:
+                    let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
+                    translationConfig = config
+                    shouldPrepareTranslation = true
+                    translationError = nil
+                    logger.debug("Translation configuration set for supported languages requiring preparation")
                 case .unsupported:
                     // Handle unsupported language pairing
+                    shouldPrepareTranslation = false
+                    translationConfig = nil
                     translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
                     logger.debug("Translation unsupported for language pair")
                 @unknown default:
+                    shouldPrepareTranslation = false
+                    translationConfig = nil
                     translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
                     logger.debug("Translation status unknown")
                 }
             }
         } else {
             await MainActor.run {
+                translationConfig = nil
+                shouldPrepareTranslation = false
                 translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
                 logger.debug("Translation not available - iOS version too old")
             }
@@ -390,12 +426,13 @@ struct Post: View, Equatable {
         isTranslating = true
         translationError = nil
 
-        // Try to ensure languages are authorized for download/install first.
-        do {
-            try await session.prepareTranslation()
-        } catch {
-            logger.debug("prepareTranslation failed: \(error.localizedDescription)")
-            // Continue — we’ll handle errors from translate and retry if appropriate.
+        if shouldPrepareTranslation {
+            do {
+                try await session.prepareTranslation()
+            } catch {
+                logger.debug("prepareTranslation failed: \(error.localizedDescription)")
+                // Continue — we’ll handle errors from translate and retry if appropriate.
+            }
         }
 
         func attemptTranslate() async throws -> String {

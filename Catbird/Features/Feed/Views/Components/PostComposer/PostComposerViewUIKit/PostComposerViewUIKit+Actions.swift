@@ -83,6 +83,7 @@ extension PostComposerViewUIKit {
   }
   
   func handleMediaSelection(from items: [PhotosPickerItem], isVideo: Bool = false, vm: PostComposerViewModel) {
+    guard !items.isEmpty else { return }
     pcActionsLogger.info("PostComposerActions: Handling media selection - items: \(items.count), isVideo: \(isVideo)")
     Task {
       if isVideo {

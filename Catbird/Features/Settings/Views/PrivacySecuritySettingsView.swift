@@ -1159,9 +1159,10 @@ struct AppPassword: Identifiable {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        PrivacySecuritySettingsView()
-            .applyAppStateEnvironment(appState)
-    }
+            PrivacySecuritySettingsView()
+        }
+  }
 }
+

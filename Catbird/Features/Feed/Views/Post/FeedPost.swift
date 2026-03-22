@@ -118,7 +118,8 @@ struct FeedPost: View, Equatable {
         isParentPost: true,
         isSelectable: false,
         path: $path,
-        appState: appState
+        appState: appState,
+        hasVisibleThreadContext: true
       )
       .environment(\.feedPostID, post.id)
       .id("\(post.id)-parent-\(postView.uri.uriString())")
@@ -154,7 +155,8 @@ struct FeedPost: View, Equatable {
       isSelectable: false,
       path: $path,
       appState: appState,
-      isToYou: isReplyWithMissingParent
+      isToYou: isReplyWithMissingParent,
+      hasVisibleThreadContext: post.reply != nil
     )
     .environment(\.feedPostID, post.id)
     .id("\(post.id)-main-\(post.post.uri.uriString())")

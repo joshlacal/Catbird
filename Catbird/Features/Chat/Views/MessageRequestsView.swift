@@ -600,9 +600,11 @@ struct MessageRequestPreviewView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  MessageRequestsView()
-    .environment(AppStateManager.shared)
+  AsyncPreviewContent { appState in
+    MessageRequestsView()
+        .environment(AppStateManager.shared)
+  }
 }
+
 
 #endif

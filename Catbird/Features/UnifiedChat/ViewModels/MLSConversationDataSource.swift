@@ -33,6 +33,9 @@ import CatbirdMLSCore
     private(set) var isLoading: Bool = false
     private(set) var hasMoreMessages: Bool = true
     private(set) var error: Error?
+    private(set) var showsTypingIndicator: Bool = false
+    private(set) var typingParticipantAvatarURL: URL?
+    private(set) var scrollToBottomTrigger: Int = 0
 
     // When a refresh is requested while isLoading is true, queue it
     // so it runs after the current load finishes
@@ -44,6 +47,10 @@ import CatbirdMLSCore
     // Local reactions cache for optimistic updates
     private var localReactions: [String: [MLSMessageReaction]] = [:]
     private var reactionReloadTask: Task<Void, Never>?
+    private var typingParticipants: [String: Date] = [:]
+    private var typingCleanupTask: Task<Void, Never>?
+    private var localTypingActive: Bool = false
+    private var localTypingStopTask: Task<Void, Never>?
 
     // Pagination tracking
     private var oldestLoadedEpoch: Int = Int.max
@@ -80,6 +87,9 @@ import CatbirdMLSCore
         case .adminRoster, .adminAction:
           // Admin messages could be shown as system messages, but skip for now
           return (plaintext, true)
+        case .system:
+          // System messages (history boundary markers, etc.) are displayable
+          return (payload.text ?? plaintext, false)
         }
       }
 
@@ -94,16 +104,18 @@ import CatbirdMLSCore
       self.currentUserDID = MLSStorageHelpers.normalizeDID(currentUserDID)
       self.appState = appState
     }
-    
+
     /// Preload profiles for known participants before loading messages
     /// Call this with participant data from the conversation list to avoid blank names
     func preloadProfiles(_ profiles: [String: MLSProfileEnricher.ProfileData]) {
-      var newProfilesAdded = false
+      var profilesChanged = false
       for (did, profile) in profiles {
         let canonical = MLSProfileEnricher.canonicalDID(did)
-        if profileCache[canonical] == nil {
+        let existing = profileCache[canonical]
+        // Insert if missing, or upgrade if new profile has avatar and existing doesn't
+        if existing == nil || (existing?.avatarURL == nil && profile.avatarURL != nil) {
           profileCache[canonical] = profile
-          newProfilesAdded = true
+          profilesChanged = true
         }
       }
       if !profiles.isEmpty {
@@ -111,7 +123,7 @@ import CatbirdMLSCore
         logger.debug("Preloaded \(profiles.count) profiles for conversation \(self.conversationId)")
 
         // If messages are already loaded, rebuild them with the new profile data
-        if newProfilesAdded && !messages.isEmpty {
+        if profilesChanged && !messages.isEmpty {
           rebuildMessagesWithProfiles()
         }
       }
@@ -399,6 +411,21 @@ import CatbirdMLSCore
           logger.debug("Loaded \(members.count) members from database for fallback names")
         }
 
+        // Seed profileCache from the enricher's actor-level cache before building messages.
+        // This ensures profiles fetched in prior sessions or from the conversation list
+        // are available immediately, avoiding a blank-then-populate flash.
+        let enricher = appState.mlsProfileEnricher
+        let memberDIDs = Array(memberCache.keys)
+        let enricherProfiles = await enricher.getCachedProfiles(for: memberDIDs)
+        for (canonical, profile) in enricherProfiles {
+          if profileCache[canonical] == nil || profileCache[canonical]?.avatarURL == nil {
+            profileCache[canonical] = profile
+          }
+        }
+        if !enricherProfiles.isEmpty {
+          logger.debug("Seeded \(enricherProfiles.count) profile(s) from enricher cache")
+        }
+
         // Fetch messages from local storage
         let messageModels = try await storage.fetchMessagesForConversation(
           conversationId,
@@ -450,8 +477,8 @@ import CatbirdMLSCore
             continue
           }
 
-          // Skip control messages (reactions, etc.)
-          guard payload.messageType == .text else {
+          // Skip control messages (reactions, etc.) but allow text and system messages
+          guard payload.messageType == .text || payload.messageType == .system else {
             continue
           }
 
@@ -468,7 +495,20 @@ import CatbirdMLSCore
             continue
           }
 
-          let displayText = text
+          // Map system message content keys to display text
+          let displayText: String
+          if payload.messageType == .system {
+            switch text {
+            case "history_boundary.new_member":
+              displayText = "You joined this conversation"
+            case "history_boundary.device_rejoined":
+              displayText = "Messages before this point aren't available on this device"
+            default:
+              displayText = text
+            }
+          } else {
+            displayText = text
+          }
 
           let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
           let profile = profileCache[canonicalSenderDID]
@@ -537,26 +577,17 @@ import CatbirdMLSCore
           }
         }
 
-        // Sort by epoch/sequence (MLS ordering is authoritative, not timestamps)
-        adapters.sort { lhs, rhs in
-          let lhsEpoch = lhs.mlsEpoch ?? Int.max
-          let rhsEpoch = rhs.mlsEpoch ?? Int.max
-          if lhsEpoch != rhsEpoch {
-            return lhsEpoch < rhsEpoch
-          }
-          let lhsSeq = lhs.mlsSequence ?? Int.max
-          let rhsSeq = rhs.mlsSequence ?? Int.max
-          if lhsSeq != rhsSeq {
-            return lhsSeq < rhsSeq
-          }
-          // Fallback to timestamp for messages without epoch/seq
-          return lhs.sentAt < rhs.sentAt
-        }
+        sortMessagesInDisplayOrder(&adapters)
 
         // Merge with existing messages instead of replacing
         // This preserves scroll position and avoids UI flicker
         let existingIDs = Set(messages.map { $0.id })
         let newMessages = adapters.filter { !existingIDs.contains($0.id) }
+
+        // Clear typing indicators for senders who just sent a message
+        for message in newMessages {
+          clearTypingForSender(message.senderID)
+        }
 
         if newMessages.isEmpty && messages.count == adapters.count {
           // No changes, just update existing messages in place for reactions/profiles
@@ -573,20 +604,7 @@ import CatbirdMLSCore
               merged.append(adapter)
             }
           }
-          // Re-sort after merge using MLS ordering
-          merged.sort { lhs, rhs in
-            let lhsEpoch = lhs.mlsEpoch ?? Int.max
-            let rhsEpoch = rhs.mlsEpoch ?? Int.max
-            if lhsEpoch != rhsEpoch {
-              return lhsEpoch < rhsEpoch
-            }
-            let lhsSeq = lhs.mlsSequence ?? Int.max
-            let rhsSeq = rhs.mlsSequence ?? Int.max
-            if lhsSeq != rhsSeq {
-              return lhsSeq < rhsSeq
-            }
-            return lhs.sentAt < rhs.sentAt
-          }
+          sortMessagesInDisplayOrder(&merged)
           self.messages = merged
         }
 
@@ -656,11 +674,11 @@ import CatbirdMLSCore
             continue
           }
 
-          // Skip control messages (reactions, etc.)
-          guard payload.messageType == .text else {
+          // Skip control messages (reactions, etc.) but allow text and system messages
+          guard payload.messageType == .text || payload.messageType == .system else {
             continue
           }
-          
+
           // SAFETY: Skip placeholder error messages (same as loadMessages)
           let text = payload.text ?? ""
           let isPlaceholderError =
@@ -672,7 +690,20 @@ import CatbirdMLSCore
             continue
           }
 
-          let displayText = text
+          // Map system message content keys to display text
+          let displayText: String
+          if payload.messageType == .system {
+            switch text {
+            case "history_boundary.new_member":
+              displayText = "You joined this conversation"
+            case "history_boundary.device_rejoined":
+              displayText = "Messages before this point aren't available on this device"
+            default:
+              displayText = text
+            }
+          } else {
+            displayText = text
+          }
 
           let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
           let profile = profileCache[canonicalSenderDID]
@@ -730,8 +761,11 @@ import CatbirdMLSCore
           }
         }
 
-        // Prepend older messages
-        self.messages = adapters + self.messages
+        // Prepend older messages, deduplicating against existing
+        let existingIDs = Set(messages.map { $0.id })
+        let uniqueAdapters = adapters.filter { !existingIDs.contains($0.id) }
+        self.messages = uniqueAdapters + self.messages
+        sortMessagesInDisplayOrder(&self.messages)
         self.hasMoreMessages = olderModels.count >= 50
 
         // Only fetch profiles for unknown DIDs
@@ -747,9 +781,108 @@ import CatbirdMLSCore
       }
     }
 
+    func handleComposerTextChanged(_ text: String) {
+      let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+      if !hasText {
+        stopLocalTypingIndicatorIfNeeded()
+        return
+      }
+
+      localTypingStopTask?.cancel()
+
+      if !localTypingActive {
+        localTypingActive = true
+        Task { [weak self] in
+          await self?.sendTypingIndicator(isTyping: true)
+        }
+      }
+
+      localTypingStopTask = Task { @MainActor [weak self] in
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        guard let self, !Task.isCancelled, self.localTypingActive else { return }
+        self.localTypingActive = false
+        await self.sendTypingIndicator(isTyping: false)
+      }
+    }
+
+    func stopLocalTypingIndicatorIfNeeded() {
+      localTypingStopTask?.cancel()
+      localTypingStopTask = nil
+
+      guard localTypingActive else { return }
+      localTypingActive = false
+      Task { [weak self] in
+        await self?.sendTypingIndicator(isTyping: false)
+      }
+    }
+
+    func applyTypingEvent(participantID: String, isTyping: Bool) {
+      let normalizedParticipantID = MLSStorageHelpers.normalizeDID(participantID)
+      guard normalizedParticipantID != currentUserDID else { return }
+
+      if isTyping {
+        typingParticipants[normalizedParticipantID] = Date().addingTimeInterval(4)
+      } else {
+        typingParticipants.removeValue(forKey: normalizedParticipantID)
+      }
+
+      refreshTypingIndicatorState()
+      scheduleTypingCleanup()
+    }
+
+    private func refreshTypingIndicatorState(now: Date = Date()) {
+      typingParticipants = typingParticipants.filter { $0.value > now }
+      showsTypingIndicator = !typingParticipants.isEmpty
+      if let firstTypingDID = typingParticipants.keys.first {
+        typingParticipantAvatarURL = profileCache[MLSProfileEnricher.canonicalDID(firstTypingDID)]?.avatarURL
+      } else {
+        typingParticipantAvatarURL = nil
+      }
+    }
+
+    /// Clear typing indicator for a sender when their message arrives
+    func clearTypingForSender(_ did: String) {
+      let normalized = MLSStorageHelpers.normalizeDID(did)
+      guard typingParticipants.removeValue(forKey: normalized) != nil else { return }
+      refreshTypingIndicatorState()
+    }
+
+    private func scheduleTypingCleanup() {
+      typingCleanupTask?.cancel()
+      guard !typingParticipants.isEmpty else { return }
+
+      typingCleanupTask = Task { @MainActor [weak self] in
+        guard let self else { return }
+        while !Task.isCancelled {
+          try? await Task.sleep(nanoseconds: 1_000_000_000)
+          self.refreshTypingIndicatorState()
+          if self.typingParticipants.isEmpty {
+            break
+          }
+        }
+      }
+    }
+
+    private func sendTypingIndicator(isTyping: Bool) async {
+      guard let appState = appState,
+        let manager = await appState.getMLSConversationManager()
+      else {
+        return
+      }
+
+      do {
+        try await manager.sendTypingIndicator(convoId: conversationId, isTyping: isTyping)
+      } catch {
+        logger.debug("Typing indicator send failed: \(error.localizedDescription)")
+      }
+    }
+
     func sendMessage(text: String) async {
       guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedEmbed != nil
       else { return }
+
+      stopLocalTypingIndicatorIfNeeded()
 
       guard let appState = appState,
         let manager = await appState.getMLSConversationManager()
@@ -788,13 +921,18 @@ import CatbirdMLSCore
           },
           reactions: [],
           embed: embed,
-          sendState: .sent
+          sendState: .sent,
+          epoch: Int(epoch),
+          sequence: Int(seq)
         )
 
-        // Add to messages if not already present
-        if !messages.contains(where: { $0.id == messageId }) {
+        if let existingIndex = messages.firstIndex(where: { $0.id == messageId }) {
+          messages[existingIndex] = adapter
+        } else {
           messages.append(adapter)
         }
+        sortMessagesInDisplayOrder(&messages)
+        scrollToBottomTrigger += 1
 
         logger.info("Sent MLS message: \(messageId)")
 
@@ -1070,6 +1208,42 @@ import CatbirdMLSCore
     }
 
 
+    /// Mark all current-user messages as read (when server sends readEvent with no specific messageId).
+    func applyReadReceiptForAll(readerDID: String) {
+      let normalizedReaderDID = MLSStorageHelpers.normalizeDID(readerDID)
+      guard normalizedReaderDID != currentUserDID else { return }
+
+      var didUpdate = false
+      for i in messages.indices {
+        let adapter = messages[i]
+        guard adapter.isFromCurrentUser, adapter.sendState != .read else { continue }
+
+        let updatedAdapter = MLSMessageAdapter(
+          id: adapter.id,
+          convoID: adapter.mlsConversationID,
+          text: adapter.text,
+          senderDID: adapter.senderID,
+          currentUserDID: currentUserDID,
+          sentAt: adapter.sentAt,
+          senderProfile: adapter.mlsProfile,
+          reactions: localReactions[adapter.id] ?? [],
+          embed: adapter.mlsEmbed,
+          sendState: .read,
+          epoch: adapter.mlsEpoch,
+          sequence: adapter.mlsSequence,
+          processingError: adapter.processingError,
+          processingAttempts: adapter.processingAttempts,
+          validationFailureReason: adapter.validationFailureReason
+        )
+        messages[i] = updatedAdapter
+        didUpdate = true
+      }
+
+      if didUpdate {
+        logger.info("📬 [READ_RECEIPTS] Marked all current-user messages as .read")
+      }
+    }
+
     func deleteMessage(messageID: String) async {
       // MLS doesn't support message deletion
     }
@@ -1129,6 +1303,65 @@ import CatbirdMLSCore
     /// Debounce task for refreshFromStorage to avoid rapid reloads
     private var refreshDebounceTask: Task<Void, Never>?
 
+    /// Immediately append a new message to the displayed messages array.
+    /// This provides instant UI updates for real-time websocket messages
+    /// without waiting for a database round-trip.
+    func appendMessageImmediately(
+      id: String,
+      convoID: String,
+      text: String,
+      senderDID: String,
+      sentAt: Date,
+      embed: MLSEmbedData? = nil,
+      epoch: Int? = nil,
+      sequence: Int? = nil
+    ) {
+      guard !messages.contains(where: { $0.id == id }) else { return }
+
+      let canonicalSenderDID = MLSProfileEnricher.canonicalDID(senderDID)
+      let profile = profileCache[canonicalSenderDID]
+
+      let senderProfile: MLSMessageAdapter.MLSProfileData?
+      if let profile {
+        senderProfile = .init(
+          displayName: profile.displayName,
+          avatarURL: profile.avatarURL,
+          handle: profile.handle
+        )
+      } else if let memberData = memberCache[canonicalSenderDID],
+        (memberData.handle != nil || memberData.displayName != nil)
+      {
+        senderProfile = .init(
+          displayName: memberData.displayName,
+          avatarURL: nil,
+          handle: memberData.handle
+        )
+      } else {
+        senderProfile = nil
+      }
+
+      let adapter = MLSMessageAdapter(
+        id: id,
+        convoID: convoID,
+        text: text,
+        senderDID: senderDID,
+        currentUserDID: currentUserDID,
+        sentAt: sentAt,
+        senderProfile: senderProfile,
+        embed: embed,
+        sendState: .sent,
+        epoch: epoch,
+        sequence: sequence
+      )
+
+      clearTypingForSender(senderDID)
+
+      var updated = messages
+      updated.append(adapter)
+      sortMessagesInDisplayOrder(&updated)
+      messages = updated
+    }
+
     /// Called when new messages have been decrypted and stored
     /// Triggers a debounced refresh from storage to update the UI
     @MainActor
@@ -1152,6 +1385,10 @@ import CatbirdMLSCore
     /// Refresh messages from local storage (call after new messages arrive via SSE)
     func refreshFromStorage() async {
       await loadMessages()
+    }
+
+    private func sortMessagesInDisplayOrder(_ messages: inout [MLSMessageAdapter]) {
+      messages.sort(by: MLSMessageAdapter.sortsInDisplayOrder)
     }
   }
 #endif

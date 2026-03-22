@@ -298,9 +298,10 @@ extension View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        AgeVerificationView()
-            .applyAppStateEnvironment(appState)
-    }
+            AgeVerificationView()
+        }
+  }
 }
+

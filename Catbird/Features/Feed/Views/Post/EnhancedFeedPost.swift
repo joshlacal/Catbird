@@ -48,13 +48,9 @@ struct EnhancedFeedPost: View, Equatable {
 
   // MARK: - Body
   var body: some View {
-    Group {
-      if let feedViewPost {
-        content(for: feedViewPost)
-              .id(appState.feedFeedbackManager.currentFeedType?.identifier ?? "unknown-feed-\(id)")
-      } else {
-        EmptyView()
-      }
+    if let feedViewPost {
+      content(for: feedViewPost)
+        .id(appState.feedFeedbackManager.currentFeedType?.identifier ?? "unknown-feed-\(id)")
     }
   }
 
@@ -67,7 +63,6 @@ struct EnhancedFeedPost: View, Equatable {
           .frame(height: Self.baseUnit * 8)
           .padding(.horizontal, Self.baseUnit * 2)
           .padding(.bottom, Self.baseUnit * 2)
-          .fixedSize(horizontal: false, vertical: true)
       }
 
       if shouldShowPinnedBadge(feedViewPost) {
@@ -165,10 +160,10 @@ struct EnhancedFeedPost: View, Equatable {
             isParentPost: !isLast,
             isSelectable: false,
             path: $path,
-            appState: appState
+            appState: appState,
+            hasVisibleThreadContext: true
           )
           .environment(\.feedPostID, cachedPost.id)
-          .id("\(cachedPost.id)-slice-\(index)-\(item.post.uri.uriString())")
           .contentShape(Rectangle())
           .onTapGesture {
             path.append(NavigationDestination.post(item.post.uri))
@@ -200,10 +195,10 @@ struct EnhancedFeedPost: View, Equatable {
           isParentPost: true,
           isSelectable: false,
           path: $path,
-          appState: appState
+          appState: appState,
+          hasVisibleThreadContext: true
         )
         .environment(\.feedPostID, cachedPost.id)
-        .id("\(cachedPost.id)-root-\(rootItem.post.uri.uriString())")
         .contentShape(Rectangle())
         .onTapGesture {
           path.append(NavigationDestination.post(rootItem.post.uri))
@@ -225,10 +220,10 @@ struct EnhancedFeedPost: View, Equatable {
             isParentPost: !isLast,
             isSelectable: false,
             path: $path,
-            appState: appState
+            appState: appState,
+            hasVisibleThreadContext: true
           )
           .environment(\.feedPostID, cachedPost.id)
-          .id("\(cachedPost.id)-bottom-\(index)-\(item.post.uri.uriString())")
           .contentShape(Rectangle())
           .onTapGesture {
             path.append(NavigationDestination.post(item.post.uri))
@@ -260,7 +255,6 @@ struct EnhancedFeedPost: View, Equatable {
         .lineLimit(1)
         .allowsTightening(true)
         .offset(y: -2)
-        .fixedSize(horizontal: false, vertical: true)
     }
     .foregroundColor(.secondary)
     .padding(.vertical, 6)
@@ -302,7 +296,6 @@ struct EnhancedFeedPost: View, Equatable {
             .padding(.top, Self.baseUnit)
         }
       }
-      .id("\(feedViewPost.id)-parent-notfound-\(notFound.uri.uriString())")
 
     case .appBskyFeedDefsBlockedPost(let blocked):
       HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
@@ -318,7 +311,6 @@ struct EnhancedFeedPost: View, Equatable {
             .padding(.top, Self.baseUnit)
         }
       }
-      .id("\(feedViewPost.id)-parent-blocked-\(blocked.uri.uriString())")
 
     case .unexpected:
       Text("Unexpected post type")

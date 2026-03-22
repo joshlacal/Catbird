@@ -350,8 +350,11 @@ struct FeedDiscoveryHeaderView: View {
     let impactFeedback = UIImpactFeedbackGenerator(style: .light)
     impactFeedback.impactOccurred()
     #endif
-    
-    guard let url = URL(string: feed.uri.uriString()) else { return }
+
+    // Build a bsky.app web URL from the AT URI (at://did/collection/rkey)
+    let creatorHandle = feed.creator.handle.description
+    guard let rkey = feed.uri.recordKey,
+          let url = URL(string: "https://bsky.app/profile/\(creatorHandle)/feed/\(rkey)") else { return }
     
     #if os(iOS)
     guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,

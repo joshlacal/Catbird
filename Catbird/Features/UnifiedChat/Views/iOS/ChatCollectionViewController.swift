@@ -1,5 +1,8 @@
 import CatbirdMLSCore
 #if os(iOS)
+import NukeUI
+import Observation
+import os
 import SwiftUI
 import UIKit
 
@@ -9,6 +12,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   UICollectionViewDataSourcePrefetching
 {
   typealias Message = DataSource.Message
+  private let chatLogger = Logger(subsystem: "blue.catbird", category: "ChatCollectionVC")
 
   // MARK: - Types
 
@@ -16,10 +20,43 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     case messages
   }
 
+  /// Wrapper for typing indicator avatar URL to avoid UIKit's NSNull crash
+  /// when using Optional types with CellRegistration.
+  private struct TypingAvatarItem: Hashable {
+    let avatarURL: URL?
+  }
+
   private enum Item: Hashable {
     case message(id: String)
     case dateSeparator(Date)
-    case typingIndicator
+    case typingIndicator(TypingAvatarItem)
+    case historyBoundary(id: String, text: String)
+
+    func hash(into hasher: inout Hasher) {
+      switch self {
+      case .message(let id):
+        hasher.combine(0)
+        hasher.combine(id)
+      case .dateSeparator(let date):
+        hasher.combine(1)
+        hasher.combine(date)
+      case .typingIndicator:
+        hasher.combine(2)
+      case .historyBoundary(let id, _):
+        hasher.combine(3)
+        hasher.combine(id)
+      }
+    }
+
+    static func == (lhs: Item, rhs: Item) -> Bool {
+      switch (lhs, rhs) {
+      case (.message(let a), .message(let b)): return a == b
+      case (.dateSeparator(let a), .dateSeparator(let b)): return a == b
+      case (.typingIndicator, .typingIndicator): return true
+      case (.historyBoundary(let a, _), .historyBoundary(let b, _)): return a == b
+      default: return false
+      }
+    }
   }
 
   // MARK: - Properties
@@ -37,13 +74,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var lastOldestMessageID: String?
   private var lastMessageCount: Int = 0
   private var isAtBottom = true
-  private var showsTypingIndicator = false
+  private let bottomProximityThreshold: CGFloat = 120
   private var isLoadingOlderMessages = false
   
   // Callbacks for message actions
   var onMessageLongPress: ((Message) -> Void)?
   var onReactionTapped: ((String, String) -> Void)? // (messageID, emoji)
   var onRequestEmojiPicker: ((String) -> Void)?
+
+  private var hasPerformedInitialScroll = false
+  private var lastScrollToBottomTrigger: Int = 0
 
   private var reactionOverlayControl: UIControl?
   private var reactionOverlayHost: UIHostingController<UnifiedQuickReactionBar>?
@@ -81,6 +121,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
     if observationTask == nil {
+      hasPerformedInitialScroll = false
+      collectionView.alpha = 0
       setupObservation()
     }
     Task { await dataSource.loadMessages() }
@@ -88,8 +130,14 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
-    observationTask?.cancel()
-    observationTask = nil
+    // Only tear down observation when truly leaving the screen (popped from nav stack),
+    // not when a sheet or full-screen cover is presented over this view controller.
+    // Cancelling here caused incoming websocket messages to be silently dropped from the
+    // UI because the snapshot was never updated while observation was inactive.
+    if isMovingFromParent || isBeingDismissed {
+      observationTask?.cancel()
+      observationTask = nil
+    }
   }
 
   // MARK: - Setup
@@ -105,9 +153,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.showsVerticalScrollIndicator = true
     collectionView.contentInsetAdjustmentBehavior = .automatic
 
+    // Extra bottom inset so the last message clears the floating composer
+    collectionView.contentInset.bottom = 100
+
     // Keep the collection view in a normal (unflipped) coordinate space.
     // We preserve scroll position when prepending older messages by adjusting contentOffset.
     collectionView.scrollsToTop = true
+
+    // Hide until initial snapshot is applied and scrolled to bottom to prevent
+    // the user seeing messages appear from the top and then jump down.
+    collectionView.alpha = 0
 
     view.addSubview(collectionView)
   }
@@ -199,13 +254,24 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       .margins(.all, 0)
     }
 
-    let typingIndicatorRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
-      cell, _, _ in
+    let typingIndicatorRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, TypingAvatarItem> {
+      cell, _, item in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
 
       cell.contentConfiguration = UIHostingConfiguration {
-        TypingIndicatorView()
+        TypingIndicatorView(avatarURL: item.avatarURL)
           .padding(.vertical, 4)
+      }
+      .margins(.all, 0)
+    }
+
+    let historyBoundaryRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
+      cell, _, text in
+      cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+      cell.selectedBackgroundView = nil
+
+      cell.contentConfiguration = UIHostingConfiguration {
+        HistoryBoundaryView(text: text)
       }
       .margins(.all, 0)
     }
@@ -225,11 +291,17 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
           for: indexPath,
           item: date
         )
-      case .typingIndicator:
+      case .typingIndicator(let avatarItem):
         return collectionView.dequeueConfiguredReusableCell(
           using: typingIndicatorRegistration,
           for: indexPath,
-          item: ()
+          item: avatarItem
+        )
+      case .historyBoundary(_, let text):
+        return collectionView.dequeueConfiguredReusableCell(
+          using: historyBoundaryRegistration,
+          for: indexPath,
+          item: text
         )
       }
     }
@@ -239,21 +311,57 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     observationTask?.cancel()
     observationTask = Task { @MainActor [weak self] in
       guard let self else { return }
-      while !Task.isCancelled {
-        let newItems = self.currentSnapshotItems()
-        let newSignaturesByID = self.currentMessageSignaturesByID()
-        let stableIDs = Set(self.lastMessageSignaturesByID.keys).intersection(newSignaturesByID.keys)
-        let changedMessageIDs = Set(stableIDs.filter {
-          self.lastMessageSignaturesByID[$0] != newSignaturesByID[$0]
-        })
 
-        if newItems != self.lastSnapshotItems || !changedMessageIDs.isEmpty {
-          self.lastSnapshotItems = newItems
-          self.lastMessageSignaturesByID = newSignaturesByID
-          await self.updateSnapshot(reconfiguringMessageIDs: changedMessageIDs)
+      // Perform an initial snapshot so the UI is populated immediately.
+      await self.processObservationCycle()
+
+      // Re-arm observation each time a tracked property changes.
+      while !Task.isCancelled {
+        // withObservationTracking calls `apply` synchronously to register
+        // which @Observable properties are read, then invokes `onChange`
+        // asynchronously the NEXT time any of them mutates.
+        await withCheckedContinuation { continuation in
+          withObservationTracking {
+            // Touch the observable properties we care about so the
+            // tracking system knows to wake us when they change.
+            _ = self.dataSource.messages
+            _ = self.dataSource.showsTypingIndicator
+            _ = self.dataSource.typingParticipantAvatarURL
+            _ = self.dataSource.scrollToBottomTrigger
+          } onChange: {
+            continuation.resume()
+          }
         }
-        try? await Task.sleep(nanoseconds: 120_000_000) // 120ms cadence keeps UI responsive
+
+        guard !Task.isCancelled else { break }
+        await self.processObservationCycle()
       }
+    }
+  }
+
+  @MainActor
+  private func processObservationCycle() async {
+    let newItems = currentSnapshotItems()
+    let newSignaturesByID = currentMessageSignaturesByID()
+    let stableIDs = Set(lastMessageSignaturesByID.keys).intersection(newSignaturesByID.keys)
+    let changedMessageIDs = Set(stableIDs.filter {
+      lastMessageSignaturesByID[$0] != newSignaturesByID[$0]
+    })
+
+    // Detect if the data source requested a scroll-to-bottom (e.g. after sending)
+    let currentTrigger = dataSource.scrollToBottomTrigger
+    let shouldForceScrollToBottom = currentTrigger != lastScrollToBottomTrigger
+    lastScrollToBottomTrigger = currentTrigger
+
+    if newItems != lastSnapshotItems || !changedMessageIDs.isEmpty {
+      lastSnapshotItems = newItems
+      lastMessageSignaturesByID = newSignaturesByID
+      if shouldForceScrollToBottom {
+        isAtBottom = true
+      }
+      await updateSnapshot(reconfiguringMessageIDs: changedMessageIDs)
+    } else if shouldForceScrollToBottom {
+      scrollToBottom(animated: true)
     }
   }
 
@@ -267,7 +375,12 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     let previousItemCount = diffableDataSource.snapshot().numberOfItems
     let previousContentHeight = collectionView.contentSize.height
     let previousContentOffsetY = collectionView.contentOffset.y
-    let shouldScrollToBottomAfterUpdate = (previousItemCount == 0) || isAtBottom
+    let previousVisibleBottom =
+      previousContentOffsetY +
+      collectionView.bounds.height -
+      collectionView.adjustedContentInset.bottom
+    let wasNearBottom = previousVisibleBottom >= previousContentHeight - bottomProximityThreshold
+    let shouldScrollToBottomAfterUpdate = (previousItemCount == 0) || isAtBottom || wasNearBottom
     let currentOldestMessageID = dataSource.messages.first?.id
     let currentMessageCount = dataSource.messages.count
     let didPrependOlderMessages =
@@ -287,24 +400,39 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       snapshot.reconfigureItems(reconfiguringMessageIDs.map { .message(id: $0) })
     }
     
-    // When prepending older messages, disable animation and adjust contentOffset to avoid jumps.
-    let shouldAnimate = !didPrependOlderMessages && previousItemCount > 0
-    
-    diffableDataSource.apply(snapshot, animatingDifferences: shouldAnimate) { [weak self] in
-      guard let self else { return }
+    // When prepending older messages or performing initial load, disable animation.
+    let isInitialPopulate = !hasPerformedInitialScroll && previousItemCount == 0 && items.count > 0
+    let shouldAnimate = !isInitialPopulate && !didPrependOlderMessages && previousItemCount > 0
 
-      // Keep the user's viewport stable when older messages are inserted at the top.
-      if didPrependOlderMessages {
-        self.collectionView.layoutIfNeeded()
-        let newContentHeight = self.collectionView.contentSize.height
-        let deltaHeight = newContentHeight - previousContentHeight
-        self.collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
-      } else if shouldScrollToBottomAfterUpdate {
-        self.scrollToBottom(animated: shouldAnimate)
+    if isInitialPopulate {
+      // Apply without any animation for the initial load, then scroll to bottom
+      // and reveal the collection view in one frame.
+      UIView.performWithoutAnimation {
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+        collectionView.layoutIfNeeded()
+        scrollToBottom(animated: false)
+        collectionView.alpha = 1
       }
+      hasPerformedInitialScroll = true
+      lastOldestMessageID = currentOldestMessageID
+      lastMessageCount = currentMessageCount
+    } else {
+      diffableDataSource.apply(snapshot, animatingDifferences: shouldAnimate) { [weak self] in
+        guard let self else { return }
 
-      self.lastOldestMessageID = currentOldestMessageID
-      self.lastMessageCount = currentMessageCount
+        // Keep the user's viewport stable when older messages are inserted at the top.
+        if didPrependOlderMessages {
+          self.collectionView.layoutIfNeeded()
+          let newContentHeight = self.collectionView.contentSize.height
+          let deltaHeight = newContentHeight - previousContentHeight
+          self.collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
+        } else if shouldScrollToBottomAfterUpdate {
+          self.scrollToBottom(animated: shouldAnimate)
+        }
+
+        self.lastOldestMessageID = currentOldestMessageID
+        self.lastMessageCount = currentMessageCount
+      }
     }
   }
 
@@ -313,12 +441,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       guard let self else { return }
       await self.updateSnapshot(reconfiguringMessageIDs: [])
     }
-  }
-
-  func setTypingIndicatorVisible(_ isVisible: Bool) {
-    guard showsTypingIndicator != isVisible else { return }
-    showsTypingIndicator = isVisible
-    refreshIfNeeded()
   }
 
   func updateNavigationBinding(_ binding: Binding<NavigationPath>) {
@@ -500,21 +622,30 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   private func currentSnapshotItems() -> [Item] {
     var items: [Item] = []
-    var lastRenderedDay: Date?
+    var seenDays = Set<Date>()
     let calendar = Calendar.current
 
     // Messages in chronological order (oldest first, newest last)
+    var seenMessageIDs = Set<String>()
     for message in dataSource.messages {
-      let messageDay = calendar.startOfDay(for: message.sentAt)
-      if lastRenderedDay != messageDay {
-        items.append(.dateSeparator(messageDay))
-        lastRenderedDay = messageDay
+      guard seenMessageIDs.insert(message.id).inserted else {
+        chatLogger.warning("Duplicate message ID skipped in snapshot: \(message.id)")
+        continue
       }
-      items.append(.message(id: message.id))
+      let messageDay = calendar.startOfDay(for: message.sentAt)
+      if seenDays.insert(messageDay).inserted {
+        items.append(.dateSeparator(messageDay))
+      }
+      // Render history boundary markers as inline system pills
+      if message.id.hasPrefix("hb-") {
+        items.append(.historyBoundary(id: message.id, text: message.text))
+      } else {
+        items.append(.message(id: message.id))
+      }
     }
 
-    if showsTypingIndicator {
-      items.append(.typingIndicator)
+    if dataSource.showsTypingIndicator {
+      items.append(.typingIndicator(TypingAvatarItem(avatarURL: dataSource.typingParticipantAvatarURL)))
     }
 
     return items
@@ -539,7 +670,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       scrollView.bounds.height -
       scrollView.adjustedContentInset.bottom
 
-    isAtBottom = visibleBottom >= scrollView.contentSize.height - 50
+    isAtBottom = visibleBottom >= scrollView.contentSize.height - bottomProximityThreshold
 
     // Trigger pagination when approaching the top (older messages)
     let threshold: CGFloat = 200
@@ -575,25 +706,51 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
 @available(iOS 16.0, *)
 private struct TypingIndicatorView: View {
+  let avatarURL: URL?
   @State private var animate = false
 
   var body: some View {
-    HStack(spacing: 6) {
-      ForEach(0..<3, id: \.self) { index in
+    HStack(spacing: 8) {
+      if let avatarURL {
+        LazyImage(url: avatarURL) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .scaledToFill()
+          } else {
+            Circle()
+              .fill(Color.gray.opacity(0.3))
+          }
+        }
+        .frame(width: 28, height: 28)
+        .clipShape(Circle())
+      } else {
         Circle()
-          .fill(Color.secondary)
-          .frame(width: 8, height: 8)
-          .scaleEffect(animate ? 1.0 : 0.6)
-          .opacity(animate ? 1 : 0.4)
-          .animation(
-            .easeInOut(duration: 0.6)
-              .repeatForever()
-              .delay(Double(index) * 0.15),
-            value: animate
-          )
+          .fill(Color.gray.opacity(0.3))
+          .frame(width: 28, height: 28)
       }
+
+      HStack(spacing: 6) {
+        ForEach(0..<3, id: \.self) { index in
+          Circle()
+            .fill(Color.secondary)
+            .frame(width: 8, height: 8)
+            .scaleEffect(animate ? 1.0 : 0.6)
+            .opacity(animate ? 1 : 0.4)
+            .animation(
+              .easeInOut(duration: 0.6)
+                .repeatForever()
+                .delay(Double(index) * 0.15),
+              value: animate
+            )
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(Color(.systemGray5), in: RoundedRectangle(cornerRadius: 16))
     }
-    .frame(maxWidth: .infinity)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.leading, 12)
     .onAppear { animate = true }
   }
 }

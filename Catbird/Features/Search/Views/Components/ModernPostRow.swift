@@ -95,14 +95,16 @@ struct PostEmbedPreview: View {
 
 // Add a preview
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Since we don't have an actual PostView to preview, we'll just show a placeholder
-    VStack {
-        Text("Post Row Preview")
-            .appFont(AppTextRole.headline)
-            .padding()
+        VStack {
+            Text("Post Row Preview")
+                .appFont(AppTextRole.headline)
+                .padding()
         
-        Text("This is a preview placeholder since we need real data to show the actual ModernPostRow")
-            .padding()
-    }
+            Text("This is a preview placeholder since we need real data to show the actual ModernPostRow")
+                .padding()
+        }
+  }
 }
+

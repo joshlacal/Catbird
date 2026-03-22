@@ -388,21 +388,23 @@ struct ConversationInvitationView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  // Mock conversation for preview
-  let mockConversation = ChatBskyConvoDefs.ConvoView(
-    id: "mock-convo-id",
-    rev: "1",
-    members: [],
-    lastMessage: nil,
-    lastReaction: nil,
-    muted: false,
-    status: "accepted",
-    unreadCount: 5
-  )
+  AsyncPreviewContent { appState in
+    // Mock conversation for preview
+      let mockConversation = ChatBskyConvoDefs.ConvoView(
+        id: "mock-convo-id",
+        rev: "1",
+        members: [],
+        lastMessage: nil,
+        lastReaction: nil,
+        muted: false,
+        status: "accepted",
+        unreadCount: 5
+      )
   
-  ConversationManagementView(conversation: mockConversation)
-    .environment(AppStateManager.shared)
+      ConversationManagementView(conversation: mockConversation)
+        .environment(AppStateManager.shared)
+  }
 }
+
 
 #endif

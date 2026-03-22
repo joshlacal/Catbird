@@ -238,53 +238,55 @@ import SwiftUI
   // MARK: - Preview
 
   #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     VStack(spacing: 20) {
-      // Loading state
-      MLSMessageRowView(
-        message: Message(
-          id: "1",
-          user: User(id: "alice", name: "Alice", avatarURL: nil, isCurrentUser: false),
-          status: .sent,
-          createdAt: Date(),
-          text: "Hello!"
-        ),
-        conversationID: "test-convo",
-        reactions: [
-          MLSMessageReaction(messageId: "1", reaction: "👍", senderDID: "did:plc:user1"),
-          MLSMessageReaction(messageId: "1", reaction: "👍", senderDID: "did:plc:user2"),
-          MLSMessageReaction(messageId: "1", reaction: "❤️", senderDID: "did:plc:user1"),
-        ],
+          // Loading state
+          MLSMessageRowView(
+            message: Message(
+              id: "1",
+              user: User(id: "alice", name: "Alice", avatarURL: nil, isCurrentUser: false),
+              status: .sent,
+              createdAt: Date(),
+              text: "Hello!"
+            ),
+            conversationID: "test-convo",
+            reactions: [
+              MLSMessageReaction(messageId: "1", reaction: "👍", senderDID: "did:plc:user1"),
+              MLSMessageReaction(messageId: "1", reaction: "👍", senderDID: "did:plc:user2"),
+              MLSMessageReaction(messageId: "1", reaction: "❤️", senderDID: "did:plc:user1"),
+            ],
 
-        currentUserDID: "did:plc:user1",
-        participantProfiles: [:],
-        onAddReaction: { _, _ in },
-        onRemoveReaction: { _, _ in },
-        navigationPath: .constant(NavigationPath())
-      )
-      .environment(AppStateManager.shared)
+            currentUserDID: "did:plc:user1",
+            participantProfiles: [:],
+            onAddReaction: { _, _ in },
+            onRemoveReaction: { _, _ in },
+            navigationPath: .constant(NavigationPath())
+          )
+          .environment(AppStateManager.shared)
 
-      // Current user message with read receipt
-      MLSMessageRowView(
-        message: Message(
-          id: "2",
-          user: User(id: "me", name: "You", avatarURL: nil, isCurrentUser: true),
-          status: .sent,
-          createdAt: Date(),
-          text: "Hi there!"
-        ),
-        conversationID: "test-convo",
-        reactions: [],
+          // Current user message with read receipt
+          MLSMessageRowView(
+            message: Message(
+              id: "2",
+              user: User(id: "me", name: "You", avatarURL: nil, isCurrentUser: true),
+              status: .sent,
+              createdAt: Date(),
+              text: "Hi there!"
+            ),
+            conversationID: "test-convo",
+            reactions: [],
 
-        currentUserDID: "did:plc:me",
-        participantProfiles: [:],
-        onAddReaction: { _, _ in },
-        onRemoveReaction: { _, _ in },
-        navigationPath: .constant(NavigationPath())
-      )
-      .environment(AppStateManager.shared)
-    }
-    .padding()
+            currentUserDID: "did:plc:me",
+            participantProfiles: [:],
+            onAddReaction: { _, _ in },
+            onRemoveReaction: { _, _ in },
+            navigationPath: .constant(NavigationPath())
+          )
+          .environment(AppStateManager.shared)
+        }
+        .padding()
   }
+}
+
 
 #endif

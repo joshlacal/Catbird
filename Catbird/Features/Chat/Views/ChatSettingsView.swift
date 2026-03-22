@@ -284,10 +284,7 @@ struct ChatSettingsView: View {
         } else {
           _ = try await mlsClient.optOut()
           if let conversationManager = await appState.getMLSConversationManager() {
-            if let did = conversationManager.userDid,
-               let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
-              try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
-            }
+            try? await conversationManager.removeCurrentDeviceRecord()
           }
           ExperimentalSettings.shared.disableMLSChat(for: userDID)
           logger.info("Successfully opted out of MLS chat for account: \(userDID.prefix(20))...")

@@ -137,10 +137,10 @@ struct ConversationListView: View {
   private var emptyStateDescription: some View {
     VStack(spacing: DesignTokens.Spacing.sm) {
       Text("You haven't started any chats yet.")
-        .enhancedAppBody()
+        .designBody()
       if appState.chatManager.messageRequestsCount > 0 {
         Text("Check your message requests above to see if anyone wants to chat with you.")
-          .enhancedAppCaption()
+          .designCaption()
           .foregroundColor(.secondary)
       }
     }
@@ -159,14 +159,14 @@ struct ConversationListView: View {
     Button {
       onSelectSearchResult?(profileBasic)
     } label: {
-      HStack {
-        ChatProfileAvatarView(profile: profileBasic, size: 40)
-        VStack(alignment: .leading) {
+      HStack(spacing: DesignTokens.Spacing.base) {
+        ChatProfileAvatarView(profile: profileBasic, size: DesignTokens.Size.avatarLG)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
           Text(profileBasic.displayName ?? "")
-            .appHeadline()
+            .designCallout()
             .foregroundColor(.primary)
           Text("@\(profileBasic.handle.description)")
-            .appSubheadline()
+            .designFootnote()
             .foregroundColor(.secondary)
         }
       }

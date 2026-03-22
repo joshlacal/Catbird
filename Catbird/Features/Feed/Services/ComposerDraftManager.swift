@@ -45,6 +45,10 @@ final class ComposerDraftManager {
   private var persistDebounceTask: Task<Void, Never>?
   private let persistDebounceInterval: TimeInterval = 0.5  // 500ms debounce
 
+  /// Generation counter to invalidate in-flight debounced writes after clearDraft()
+  @ObservationIgnored
+  private var clearGeneration: Int = 0
+
   @ObservationIgnored
   private var accountObservation: Task<Void, Never>?
   
@@ -92,6 +96,15 @@ final class ComposerDraftManager {
           if currentDID != lastDID {
             logger.info("🔄 Account DID changed - Old: \(lastDID ?? "nil"), New: \(currentDID ?? "nil")")
             lastDID = currentDID
+            // Clear current draft from previous account so it doesn't bleed over
+            await MainActor.run {
+              self.persistDebounceTask?.cancel()
+              self.persistDebounceTask = nil
+              self.clearGeneration += 1
+              self.currentDraft = nil
+              self.restoredSavedDraftId = nil
+              UserDefaults.standard.removeObject(forKey: self.draftKey)
+            }
             await self.loadSavedDrafts()
           }
         }
@@ -449,20 +462,27 @@ final class ComposerDraftManager {
   /// Clear the current draft and delete associated saved draft if applicable
   func clearDraft() {
       logger.info("🧹 Clearing current draft - Has draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
-    
+
+    // Cancel any pending debounced write FIRST to prevent it from resurrecting the draft
+    persistDebounceTask?.cancel()
+    persistDebounceTask = nil
+
+    // Increment generation so any in-flight writes are invalidated
+    clearGeneration += 1
+
     // Clean up any files referenced by the draft (videos/images saved by Share Extension)
     if let draft = currentDraft {
       logger.debug("🗑️ Cleaning up files for draft")
       cleanUpFiles(for: draft)
     }
-    
+
     // Delete the saved draft that was restored (if any)
     if let restoredId = restoredSavedDraftId {
       logger.info("🗑️ Deleting restored saved draft: \(restoredId.uuidString)")
       deleteSavedDraft(restoredId)
       restoredSavedDraftId = nil
     }
-    
+
     currentDraft = nil
     UserDefaults.standard.removeObject(forKey: draftKey)
     logger.info("✅ Current draft cleared")
@@ -491,8 +511,9 @@ final class ComposerDraftManager {
       }
     }
     
-    // Images
-    for item in draft.mediaItems {
+    // Images (main composer + thread entries)
+    let allMediaItems = draft.mediaItems + draft.threadEntries.flatMap(\.mediaItems)
+    for item in allMediaItems {
       if let rawImage = item.rawImageURLString, let url = URL(string: rawImage) {
         if isInSharedDrafts(url) {
           logger.debug("  Deleting image: \(url.lastPathComponent)")
@@ -501,7 +522,7 @@ final class ComposerDraftManager {
         }
       }
     }
-    
+
     logger.info("🧹 Cleaned up \(cleanedCount) draft file(s)")
   }
 
@@ -604,6 +625,9 @@ final class ComposerDraftManager {
   private func performPersistDraft() async {
     logger.debug("💾 Persisting draft to UserDefaults (background)")
 
+    // Capture generation before doing any work; abort if clearDraft() was called
+    let expectedGeneration = clearGeneration
+
     guard let draft = currentDraft else {
       logger.debug("  No draft - removing UserDefaults entry")
       await Task.detached(priority: .utility) {
@@ -615,6 +639,13 @@ final class ComposerDraftManager {
     do {
       let encoder = JSONEncoder()
       let data = try encoder.encode(draft)
+
+      // Check generation hasn't changed (i.e. clearDraft wasn't called while encoding)
+      guard clearGeneration == expectedGeneration else {
+        logger.debug("  ⚠️ Draft persist aborted - clearDraft() was called during encode")
+        return
+      }
+
       let key = draftKey
       await Task.detached(priority: .utility) {
         UserDefaults.standard.set(data, forKey: key)

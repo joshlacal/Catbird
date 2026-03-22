@@ -181,7 +181,9 @@ struct QuickFilterSheet: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  QuickFilterSheet()
-    .environment(AppStateManager.shared)
+  AsyncPreviewContent { appState in
+    QuickFilterSheet()
+        .environment(AppStateManager.shared)
+  }
 }
+

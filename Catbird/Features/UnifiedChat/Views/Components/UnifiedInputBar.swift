@@ -113,6 +113,8 @@ struct UnifiedInputBar: View {
       return post.authorHandle ?? "Shared Post"
     case .tile(let tile):
       return tile.name
+    case .image:
+      return "Image"
     }
   }
 
@@ -128,6 +130,8 @@ struct UnifiedInputBar: View {
       return post.text ?? post.uri
     case .tile(let tile):
         return tile.tileDescription ?? tile.uri
+    case .image(let imageData):
+      return "\(imageData.width)x\(imageData.height)"
     }
   }
 

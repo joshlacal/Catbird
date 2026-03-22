@@ -156,6 +156,7 @@ extension PostComposerViewModel {
             var newVideoItem = MediaItem()
             newVideoItem.rawVideoURL = videoURL
             newVideoItem.isLoading = true
+            newVideoItem.isGifConversion = true
             
             self.videoItem = newVideoItem
             await loadVideoThumbnail(for: newVideoItem)

@@ -67,13 +67,6 @@ struct CatalystToolbarBridge: ViewModifier {
       onMessageRequests?()
     }
 
-    // Set up avatar hosting view — coordinator retains the UIHostingController
-    let avatarView = SettingsAvatarToolbarButton {
-      showingSettings = true
-    }
-    .environment(appState)
-    coordinator.setAvatarView(avatarView)
-
     // Initial state sync
     coordinator.selectTab(selectedTab)
     coordinator.setFeedSelectorEnabled(isRootView)

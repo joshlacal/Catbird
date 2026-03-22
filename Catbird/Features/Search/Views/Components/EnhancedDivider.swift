@@ -9,12 +9,14 @@ struct EnhancedDivider: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     VStack {
-        Text("Item 1")
-            .padding()
-        EnhancedDivider()
-        Text("Item 2")
-            .padding()
-    }
+            Text("Item 1")
+                .padding()
+            EnhancedDivider()
+            Text("Item 2")
+                .padding()
+        }
+  }
 }
+

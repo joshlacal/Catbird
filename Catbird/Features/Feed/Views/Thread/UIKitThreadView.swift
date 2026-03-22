@@ -2914,7 +2914,8 @@ struct ParentPostView: View {
         isParentPost: true,
         isSelectable: false,
         path: $path,
-        appState: appState
+        appState: appState,
+        hasVisibleThreadContext: true
       )
       .contentShape(Rectangle())
       .onTapGesture {
@@ -2968,7 +2969,8 @@ struct ReplyView: View {
           isParentPost: showLine,  // Show connecting line if there are nested replies
           isSelectable: false,
           path: $path,
-          appState: appState
+          appState: appState,
+          hasVisibleThreadContext: true
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -3003,7 +3005,8 @@ struct ReplyView: View {
                 isParentPost: showNestedLine,
                 isSelectable: false,
                 path: $path,
-                appState: appState
+                appState: appState,
+                hasVisibleThreadContext: true
               )
               .contentShape(Rectangle())
               .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }

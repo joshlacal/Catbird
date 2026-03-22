@@ -42,14 +42,42 @@ struct ConversationRow: View {
 
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.base) {
-      ChatProfileAvatarView(profile: otherMember, size: 50)
+      ChatProfileAvatarView(profile: otherMember, size: DesignTokens.Size.avatarLG)
         .accessibilityLabel("\(displayName.isEmpty ? handle : displayName) profile picture")
 
-      VStack(alignment: .leading, spacing: 4) {
-        Text(displayName.isEmpty ? handle : displayName)  // Show handle if display name is empty
-          .enhancedAppHeadline()
-          .lineLimit(1)
-          .accessibilityAddTraits(.isHeader)
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          Text(displayName.isEmpty ? handle : displayName)
+            .designCallout()
+            .fontWeight(convo.unreadCount > 0 ? .semibold : .regular)
+            .foregroundColor(.primary)
+            .lineLimit(1)
+            .accessibilityAddTraits(.isHeader)
+
+          Spacer()
+
+          // Unread message count badge
+          if convo.unreadCount > 0 {
+            ZStack {
+              Circle()
+                .fill(Color.accentColor)
+                .frame(width: 22, height: 22)
+              Text(convo.unreadCount > 99 ? "99+" : "\(convo.unreadCount)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(.white)
+            }
+            .accessibilityLabel("\(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")")
+          }
+
+          // Timestamp of the last message
+          if let lastMessage = convo.lastMessage, let date = lastMessageDate(lastMessage) {
+            Text(formatDate(date))
+              .designCaption()
+              .foregroundColor(convo.unreadCount > 0 ? .accentColor : .secondary)
+              .fontWeight(convo.unreadCount > 0 ? .medium : .regular)
+              .accessibilityLabel("Last message \(formatDate(date))")
+          }
+        }
 
         // Last message preview
         if let lastMessage = convo.lastMessage {
@@ -57,38 +85,9 @@ struct ConversationRow: View {
             .accessibilityLabel("Last message")
         } else {
           Text("No messages yet")
-            .appSubheadline()
-            .foregroundColor(.gray)
+            .designFootnote()
+            .foregroundColor(.secondary)
             .accessibilityLabel("No messages in this conversation yet")
-        }
-      }
-
-      Spacer()
-
-      VStack(alignment: .trailing, spacing: 6) {
-        // Timestamp of the last message
-        if let lastMessage = convo.lastMessage, let date = lastMessageDate(lastMessage) {
-          Text(formatDate(date))
-            .appCaption()
-            .foregroundColor(.gray)
-            .accessibilityLabel("Last message \(formatDate(date))")
-        }
-
-        // Unread message count badge
-        if convo.unreadCount > 0 {
-          Text("\(convo.unreadCount)")
-            .appCaption()
-            .fontWeight(.bold)
-            .foregroundColor(.white)
-            .spacingSM(.horizontal)
-            .spacingSM(.vertical)
-            .background(Color.blue)
-            .clipShape(Capsule())
-            .accessibilityLabel("\(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")")
-            .accessibilityAddTraits(.isStaticText)
-        } else {
-          // Keep alignment consistent even when no badge
-          Spacer().frame(height: 20)  // Adjust height to match badge approx
         }
       }
     }
@@ -96,9 +95,7 @@ struct ConversationRow: View {
     .accessibilityLabel(accessibilityDescription)
     .accessibilityAddTraits(.isButton)
     .accessibilityHint("Double tap to open conversation")
-    .spacingMD(.vertical)
-    .padding(.horizontal, DesignTokens.Spacing.sm) // Add horizontal padding to ensure content doesn't touch edges
-    .frame(maxWidth: .infinity) // Make the HStack take the full width available
+    .spacingSM(.vertical)
     .onAppear {
       // Load profile details when the row appears
       loadProfileDetails()
@@ -171,19 +168,19 @@ struct LastMessagePreview: View {
     Group {
       switch lastMessage {
       case .chatBskyConvoDefsMessageView(let messageView):
-          Text(messageView.sender.did.didString() == appState.userDID ? "You: \(messageView.text)" : messageView.text)
-          .appCallout()
-          .foregroundColor(.gray)
+        Text(messageView.sender.did.didString() == appState.userDID ? "You: \(messageView.text)" : messageView.text)
+          .designFootnote()
+          .foregroundColor(.secondary)
           .lineLimit(2)
       case .chatBskyConvoDefsDeletedMessageView:
         Text("Message deleted")
-              .appCallout()
-          .foregroundColor(.gray)
+          .designFootnote()
+          .foregroundColor(.secondary)
           .italic()
       case .unexpected:
         Text("Unsupported message")
-              .appCallout()
-          .foregroundColor(.gray)
+          .designFootnote()
+          .foregroundColor(.secondary)
           .italic()
       }
     }

@@ -776,6 +776,7 @@ final class ChatManager: StateInvalidationSubscriber {
   }
   
   /// Send a message with optional embed (for sharing posts)
+  @MainActor
   func sendMessage(convoId: String, text: String, embed: ChatBskyConvoDefs.MessageInputEmbedUnion?) async -> Bool {
     guard let client = client else {
       logger.error("Cannot send message to \(convoId): client or session is nil")
@@ -795,7 +796,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
     do {
       // Build mention facets for @handles in chat (skip if text is empty)
-      let facets = trimmedText.isEmpty ? [] : await buildChatMentionFacets(for: trimmedText)
+      let facets = trimmedText.isEmpty ? [] : await buildChatFacets(for: trimmedText)
       let messageInput = ChatBskyConvoDefs.MessageInput(
         text: trimmedText,
         facets: facets.isEmpty ? nil : facets,
@@ -837,41 +838,89 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 
-  // MARK: - Chat Mention Facets
-  private func buildChatMentionFacets(for text: String) async -> [AppBskyRichtextFacet] {
-    guard let client = client else { return [] }
+  // MARK: - Chat Facets (Mentions, Links, Hashtags)
+  private func buildChatFacets(for text: String) async -> [AppBskyRichtextFacet] {
     var facets: [AppBskyRichtextFacet] = []
 
-    // Extract candidate @handles
-    let pattern = #"@([a-zA-Z0-9.-]+)"#
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return [] }
-    let ns = text as NSString
-    let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
-
-    // Resolve and create facets
-    for m in matches {
-      guard m.numberOfRanges > 1 else { continue }
-      let fullRange = m.range(at: 0)
-      let handleRange = m.range(at: 1)
-      guard let swiftRange = Range(handleRange, in: text) else { continue }
-      let handle = String(text[swiftRange])
-      do {
-        let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
-        let (code, response) = try await client.app.bsky.actor.searchActors(input: params)
-        if code >= 200 && code < 300, let profile = response?.actors.first,
-           profile.handle.description.lowercased() == handle.lowercased() {
-          // Compute UTF-8 byte range
-          let bytesBefore = (ns.substring(to: fullRange.location)).data(using: .utf8)?.count ?? 0
-          let bytesIn = (ns.substring(with: fullRange)).data(using: .utf8)?.count ?? 0
-          let slice = AppBskyRichtextFacet.ByteSlice(byteStart: bytesBefore, byteEnd: bytesBefore + bytesIn)
-          let mention = AppBskyRichtextFacet.Mention(did: profile.did)
-          let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
-          facets.append(AppBskyRichtextFacet(index: slice, features: [feature]))
+    // --- Link facets (via NSDataDetector) ---
+    if let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+      let nsText = text as NSString
+      let linkMatches = linkDetector.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length))
+      for match in linkMatches {
+        guard let url = match.url,
+              let swiftRange = Range(match.range, in: text) else { continue }
+        let byteStart = text[text.startIndex..<swiftRange.lowerBound].utf8.count
+        let byteEnd = byteStart + text[swiftRange].utf8.count
+        // Ensure the URI has a scheme
+        var uriString = url.absoluteString
+        if url.scheme == nil {
+          uriString = "https://\(uriString)"
         }
-      } catch {
-        // Ignore and continue
+        let slice = AppBskyRichtextFacet.ByteSlice(byteStart: byteStart, byteEnd: byteEnd)
+        let link = AppBskyRichtextFacet.Link(uri: URI(uriString: uriString))
+        let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetLink(link)
+        facets.append(AppBskyRichtextFacet(index: slice, features: [feature]))
       }
     }
+
+    // --- Mention facets (@handle) ---
+    if let client = client {
+      let mentionPattern = #"(?<![a-zA-Z0-9])@([a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+)"#
+      if let regex = try? NSRegularExpression(pattern: mentionPattern, options: []) {
+        let ns = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        for m in matches {
+          guard m.numberOfRanges > 1 else { continue }
+          let fullRange = m.range(at: 0)
+          let handleRange = m.range(at: 1)
+          guard let swiftRange = Range(handleRange, in: text),
+                let fullSwiftRange = Range(fullRange, in: text) else { continue }
+          let handle = String(text[swiftRange])
+          do {
+            let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
+            let (code, response) = try await client.app.bsky.actor.searchActors(input: params)
+            if code >= 200 && code < 300, let profile = response?.actors.first,
+               profile.handle.description.lowercased() == handle.lowercased() {
+              let byteStart = text[text.startIndex..<fullSwiftRange.lowerBound].utf8.count
+              let byteEnd = byteStart + text[fullSwiftRange].utf8.count
+              let slice = AppBskyRichtextFacet.ByteSlice(byteStart: byteStart, byteEnd: byteEnd)
+              let mention = AppBskyRichtextFacet.Mention(did: profile.did)
+              let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
+              facets.append(AppBskyRichtextFacet(index: slice, features: [feature]))
+            }
+          } catch {
+            logger.debug("Failed to resolve mention @\(handle): \(error.localizedDescription)")
+          }
+        }
+      }
+    }
+
+    // --- Hashtag facets (#tag) ---
+    let hashtagPattern = #"(?<![a-zA-Z0-9])#([^\s\p{P}][^\s]*[^\s\p{P}]|[^\s\p{P}])"#
+    if let regex = try? NSRegularExpression(pattern: hashtagPattern, options: []) {
+      let ns = text as NSString
+      let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+      for m in matches {
+        guard m.numberOfRanges > 1 else { continue }
+        let fullRange = m.range(at: 0)
+        let tagRange = m.range(at: 1)
+        guard let fullSwiftRange = Range(fullRange, in: text),
+              let tagSwiftRange = Range(tagRange, in: text) else { continue }
+        let tag = String(text[tagSwiftRange])
+        // Skip if the hashtag is inside a URL (overlaps with a link facet)
+        let byteStart = text[text.startIndex..<fullSwiftRange.lowerBound].utf8.count
+        let byteEnd = byteStart + text[fullSwiftRange].utf8.count
+        let overlapsLink = facets.contains { facet in
+          facet.index.byteStart <= byteStart && facet.index.byteEnd >= byteEnd
+        }
+        guard !overlapsLink else { continue }
+        let slice = AppBskyRichtextFacet.ByteSlice(byteStart: byteStart, byteEnd: byteEnd)
+        let tagFeature = AppBskyRichtextFacet.Tag(tag: tag)
+        let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetTag(tagFeature)
+        facets.append(AppBskyRichtextFacet(index: slice, features: [feature]))
+      }
+    }
+
     return facets
   }
 
@@ -939,16 +988,19 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     do {
-      let batchItems = items.map { item in
+      var batchItems: [ChatBskyConvoSendMessageBatch.BatchItem] = []
+      for item in items {
+        let trimmedText = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let facets = trimmedText.isEmpty ? [] : await buildChatFacets(for: trimmedText)
         let messageInput = ChatBskyConvoDefs.MessageInput(
-          text: item.text,
-          facets: nil,
+          text: trimmedText,
+          facets: facets.isEmpty ? nil : facets,
           embed: nil
         )
-        return ChatBskyConvoSendMessageBatch.BatchItem(
+        batchItems.append(ChatBskyConvoSendMessageBatch.BatchItem(
           convoId: item.convoId,
           message: messageInput
-        )
+        ))
       }
 
       let input = ChatBskyConvoSendMessageBatch.Input(items: batchItems)

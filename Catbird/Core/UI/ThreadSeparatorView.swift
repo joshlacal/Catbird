@@ -129,19 +129,21 @@ struct ThreadSeparatorView: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  VStack(spacing: 20) {
-    ThreadSeparatorView(hiddenPostCount: 5) {
-      logger.debug("Tapped thread continuation")
-    }
+  AsyncPreviewContent { appState in
+    VStack(spacing: 20) {
+        ThreadSeparatorView(hiddenPostCount: 5) {
+          logger.debug("Tapped thread continuation")
+        }
     
-    ThreadSeparatorView(hiddenPostCount: 1) {
-      logger.debug("Tapped thread continuation")
-    }
+        ThreadSeparatorView(hiddenPostCount: 1) {
+          logger.debug("Tapped thread continuation")
+        }
     
-    ThreadSeparatorView(hiddenPostCount: 0) {
-      logger.debug("Tapped thread continuation")
-    }
+        ThreadSeparatorView(hiddenPostCount: 0) {
+          logger.debug("Tapped thread continuation")
+        }
+      }
+      .padding()
   }
-  .padding()
 }
+

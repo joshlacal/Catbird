@@ -73,7 +73,9 @@ struct ThreadSliceItemView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Preview would need mock data
-    EmptyView()
+        EmptyView()
+  }
 }
+

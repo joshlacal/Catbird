@@ -26,19 +26,8 @@ class NotificationService: UNNotificationServiceExtension {
   /// App Group suite name for shared storage
   private static let appGroupSuite = "group.blue.catbird.shared"
 
-  /// Key prefix for profile cache entries
-  private static let profileCacheKeyPrefix = "profile_cache_"
   private static let mlsServiceDID = "did:web:mlschat.catbird.blue#atproto_mls"
   private static let mlsServiceNamespace = "blue.catbird.mls"
-
-  /// Cached profile info for notification display (matches MLSProfileEnricher.SharedCachedProfile)
-  struct CachedProfile: Codable {
-    let did: String
-    let handle: String
-    let displayName: String?
-    let avatarURL: String?
-    let cachedAt: Date?  // Optional for backward compatibility
-  }
 
   deinit {
     stopObservingAppStop()
@@ -191,6 +180,20 @@ class NotificationService: UNNotificationServiceExtension {
       "📦 [NSE] Fields: ciphertext=\(ciphertext != nil), convo_id=\(convoId != nil), message_id=\(messageId != nil), recipient_account=\(recipientAccountHash != nil), recipient_did=\(recipientDid != nil), seq=\(sequenceNumber != nil ? String(sequenceNumber!) : "nil"), epoch=\(epoch != nil ? String(epoch!) : "nil")"
     )
 
+    if let recipientDid = recipientDid,
+      let sharedDefaults = UserDefaults(suiteName: Self.appGroupSuite)
+    {
+      let mlsKey = "mlsChatNotificationsEnabled_\(recipientDid)"
+      if sharedDefaults.object(forKey: mlsKey) != nil && !sharedDefaults.bool(forKey: mlsKey) {
+        logger.info("🔇 [NSE] MLS chat notifications disabled for \(recipientDid.prefix(24))... - suppressing")
+        bestAttemptContent.title = ""
+        bestAttemptContent.body = ""
+        bestAttemptContent.sound = nil
+        contentHandler(bestAttemptContent)
+        return
+      }
+    }
+
     guard let ciphertext = ciphertext,
       let convoId = convoId,
       let messageId = messageId,
@@ -250,6 +253,26 @@ class NotificationService: UNNotificationServiceExtension {
         // ═══════════════════════════════════════════════════════════════
         self.activeRecipientDID = nil
         self.bestEffortNSECleanup(recipientDid: recipientDid)
+      }
+
+      // Check per-conversation mute before expensive decryption
+      do {
+        let conversation = try await self.databaseManager.nseRead(for: recipientDid) { db in
+          try MLSConversationModel
+            .filter(MLSConversationModel.Columns.conversationID == convoId)
+            .filter(MLSConversationModel.Columns.currentUserDID == recipientDid)
+            .fetchOne(db)
+        }
+        if let conversation, conversation.isMuted {
+          self.logger.info("🔇 [NSE] Conversation \(convoId.prefix(16))... muted until \(conversation.mutedUntil?.description ?? "forever") - suppressing")
+          capturedBestAttemptContent.title = ""
+          capturedBestAttemptContent.body = ""
+          capturedBestAttemptContent.sound = nil
+          capturedContentHandler(capturedBestAttemptContent)
+          return
+        }
+      } catch {
+        self.logger.warning("⚠️ [NSE] Mute check failed: \(error.localizedDescription) - proceeding with notification")
       }
 
       // Cache-first (pre-lock): If the main app just decrypted the message, it may not
@@ -1262,7 +1285,8 @@ class NotificationService: UNNotificationServiceExtension {
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
-        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
+        gatewayURL: URL(string: "https://api.catbird.blue")!,
+//        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
         bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
@@ -1318,26 +1342,26 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     if let state = lastProcessed {
-      // If this message's seq is > lastProcessed + 1, we're missing messages
-      if sequenceNumber > state.lastProcessedSeq + 1 {
-        logger.info(
-          "[NSE-SEQ] Gap detected: expecting seq=\(state.lastProcessedSeq + 1), got seq=\(sequenceNumber)"
-        )
-        return true  // Buffer this message
-      }
-
-      // If this message's seq <= lastProcessed, it's a duplicate
+      // If this message's seq <= lastProcessed, it's a duplicate — skip
       if sequenceNumber <= state.lastProcessedSeq {
         logger.info(
           "[NSE-SEQ] Duplicate message: seq=\(sequenceNumber) already processed (lastProcessed=\(state.lastProcessedSeq))"
         )
-        return true  // Buffer to prevent double-processing (will be deduplicated)
+        return true
       }
 
-      // seq == lastProcessed + 1: process now
-      logger.debug(
-        "[NSE-SEQ] Message in sequence: seq=\(sequenceNumber), lastProcessed=\(state.lastProcessedSeq)"
-      )
+      // For gaps (seq > lastProcessed + 1): decrypt anyway.
+      // MLS can decrypt out of order within the same epoch.
+      // The main app will reconcile ordering when it syncs.
+      if sequenceNumber > state.lastProcessedSeq + 1 {
+        logger.info(
+          "[NSE-SEQ] Gap detected: expecting seq=\(state.lastProcessedSeq + 1), got seq=\(sequenceNumber) - decrypting anyway"
+        )
+      } else {
+        logger.debug(
+          "[NSE-SEQ] Message in sequence: seq=\(sequenceNumber), lastProcessed=\(state.lastProcessedSeq)"
+        )
+      }
       return false
     } else {
       // No sequence state yet - this is the first message
@@ -1441,29 +1465,23 @@ class NotificationService: UNNotificationServiceExtension {
       }
     }
 
-    // Try to get sender profile info from cache or members table
+    // Get sender profile from members table in shared MLS database
     var senderName: String? = nil
     var senderAvatarURL: String? = nil
 
     if let senderDid = canonicalSenderDid {
-      if let profile = getCachedProfile(for: senderDid) {
-        senderName = profile.displayName ?? profile.handle
-        senderAvatarURL = profile.avatarURL
-        logger.info("👤 [NSE] Found cached sender profile: \(senderName ?? "unknown")")
-      } else {
-        // Fallback: try to get from members table in MLS database
-        if let memberInfo = await getMemberInfo(
-          senderDid: senderDid, convoId: convoId, recipientDid: recipientDid)
-        {
-          senderName = memberInfo.displayName ?? memberInfo.handle
-          logger.info("👤 [NSE] Found member info from database: \(senderName ?? "unknown")")
-        }
+      if let memberInfo = await getMemberInfo(
+        senderDid: senderDid, convoId: convoId, recipientDid: recipientDid)
+      {
+        senderName = memberInfo.displayName ?? memberInfo.handle
+        senderAvatarURL = memberInfo.avatarURL
+        logger.info("👤 [NSE] Found member info from database: \(senderName ?? "unknown")")
+      }
 
-        // Last resort: use shortened DID as identifier
-        if senderName == nil {
-          senderName = formatShortDID(senderDid)
-          logger.info("👤 [NSE] Using shortened DID as sender name: \(senderName ?? "unknown")")
-        }
+      // Last resort: use shortened DID as identifier
+      if senderName == nil {
+        senderName = formatShortDID(senderDid)
+        logger.info("👤 [NSE] Using shortened DID as sender name: \(senderName ?? "unknown")")
       }
     }
 
@@ -1533,6 +1551,11 @@ class NotificationService: UNNotificationServiceExtension {
         // Admin actions - generic notification
         content.body = "Group settings updated"
         logger.info("👑 [NSE] Admin action notification")
+
+      case .system:
+        // System messages (history boundary markers) - suppress notification
+        logger.info("🔧 [NSE] System message - suppressing notification")
+        return false
       }
     } else {
       // Fallback: If not valid JSON payload, treat as plain text
@@ -1632,7 +1655,7 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Gets member info from the MLS member table
   private func getMemberInfo(senderDid: String, convoId: String, recipientDid: String) async -> (
-    displayName: String?, handle: String?
+    displayName: String?, handle: String?, avatarURL: String?
   )? {
     do {
       // Normalize the DID for consistent lookup (DIDs are stored normalized in the database)
@@ -1653,7 +1676,7 @@ class NotificationService: UNNotificationServiceExtension {
       }
 
       if let member = member {
-        return (displayName: member.displayName, handle: member.handle)
+        return (displayName: member.displayName, handle: member.handle, avatarURL: member.avatarURL)
       }
 
       return nil
@@ -1665,20 +1688,6 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Gets cached profile from App Group UserDefaults
-  private func getCachedProfile(for did: String) -> CachedProfile? {
-    guard let defaults = UserDefaults(suiteName: Self.appGroupSuite) else {
-      return nil
-    }
-
-    let cacheKey = "\(Self.profileCacheKeyPrefix)\(did.lowercased())"
-
-    guard let data = defaults.data(forKey: cacheKey) else {
-      return nil
-    }
-
-    return try? JSONDecoder().decode(CachedProfile.self, from: data)
-  }
-
   /// Downloads and attaches profile photo to the notification
   private func attachProfilePhoto(to content: UNMutableNotificationContent, from url: URL) async {
     logger.debug(
@@ -1756,16 +1765,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// App Group container. We reverse the sanitization to recover the DID, hash it,
   /// and compare against the received hash.
   private func resolveRecipientDID(fromHash hash: String) -> String? {
-    guard
-      let appGroup = FileManager.default.containerURL(
-        forSecurityApplicationGroupIdentifier: Self.appGroupSuite)
-    else {
-      logger.error("❌ [NSE] Cannot access App Group container for account resolution")
-      return nil
-    }
-
-    let mlsDir = appGroup.appendingPathComponent(
-      "Application Support/MLS", isDirectory: true)
+    let mlsDir = MLSStoragePaths.baseContainerURL().appendingPathComponent("MLS", isDirectory: true)
 
     guard let contents = try? FileManager.default.contentsOfDirectory(
       at: mlsDir, includingPropertiesForKeys: nil)

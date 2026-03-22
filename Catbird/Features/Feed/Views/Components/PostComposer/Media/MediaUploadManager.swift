@@ -67,35 +67,13 @@ final class MediaUploadManager {
 
   // MARK: - Image Upload Methods
 
-  /// Process image for upload - compress and optimize
-  func processImageForUpload(_ data: Data) async throws -> Data {
-    // Start with original data
-    var processedData = data
-
-    // Check if we need to convert format
-    if checkImageFormat(data) == "HEIC" {
-      if let converted = convertHEICToJPEG(data) {
-        processedData = converted
-      }
-    }
-
-    // Compress if needed (AT Protocol limit is 1MB)
-    if let image = PlatformImage(data: processedData),
-      let compressed = compressImage(image, maxSizeInBytes: 900_000)
-    {
-      processedData = compressed
-    }
-
-    return processedData
-  }
-
   /// Upload an image blob to the server
   func uploadImageBlob(_ imageData: Data) async throws -> Blob {
-    let processedData = try await processImageForUpload(imageData)
+    let mimeType = ImageMetadataStripper.detectMIMEType(from: imageData)
 
     let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
-      data: processedData,
-      mimeType: "image/jpeg",
+      data: imageData,
+      mimeType: mimeType,
       stripMetadata: true
     )
 
@@ -734,7 +712,7 @@ final class MediaUploadManager {
   }
 
   /// Creates a video embed from the uploaded blob
-  func createVideoEmbed(aspectRatio: CGSize?, alt: String) -> AppBskyFeedPost
+  func createVideoEmbed(aspectRatio: CGSize?, alt: String, presentation: String? = nil) -> AppBskyFeedPost
     .AppBskyFeedPostEmbedUnion?
   {
     guard let blob = uploadedBlob else {
@@ -755,105 +733,13 @@ final class MediaUploadManager {
       captions: nil,
       alt: alt.isEmpty ? nil : alt,
       aspectRatio: ratio,
-      presentation: nil
+      presentation: presentation
     )
 
     return .appBskyEmbedVideo(videoEmbed)
   }
 
   // MARK: - Media Helpers
-
-  func checkImageFormat(_ data: Data) -> String {
-    let bytes = [UInt8](data.prefix(4))
-    if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
-      return "JPEG"
-    } else if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-      return "PNG"
-    } else if bytes.starts(with: [0x00, 0x00, 0x01]) {
-      return "HEIC"
-    } else {
-      return "Unknown"
-    }
-  }
-
-  func convertHEICToJPEG(_ heicData: Data) -> Data? {
-    guard let source = CGImageSourceCreateWithData(heicData as CFData, nil),
-      let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
-    else {
-      return nil
-    }
-
-    #if os(iOS)
-      let image = UIImage(cgImage: cgImage)
-      return image.jpegData(compressionQuality: 0.9)
-    #elseif os(macOS)
-      let image = NSImage(
-        cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
-      guard let tiffData = image.tiffRepresentation,
-        let bitmapRep = NSBitmapImageRep(data: tiffData)
-      else {
-        return nil
-      }
-      return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
-    #endif
-  }
-
-  func compressImage(_ image: PlatformImage, maxSizeInBytes: Int = 900_000) -> Data? {
-    var compression: CGFloat = 1.0
-    #if os(iOS)
-      var imageData = image.jpegData(compressionQuality: compression)
-    #elseif os(macOS)
-      var imageData: Data?
-      if let tiffData = image.tiffRepresentation,
-        let bitmapRep = NSBitmapImageRep(data: tiffData)
-      {
-        imageData = bitmapRep.representation(
-          using: .jpeg, properties: [.compressionFactor: compression])
-      }
-    #endif
-
-    // Gradually lower quality until we get under target size
-    while let data = imageData, data.count > maxSizeInBytes && compression > 0.1 {
-      compression -= 0.1
-      #if os(iOS)
-        imageData = image.jpegData(compressionQuality: compression)
-      #elseif os(macOS)
-        if let tiffData = image.tiffRepresentation,
-          let bitmapRep = NSBitmapImageRep(data: tiffData)
-        {
-          imageData = bitmapRep.representation(
-            using: .jpeg, properties: [.compressionFactor: compression])
-        }
-      #endif
-    }
-
-    // If we still exceed the size limit, resize the image
-    if let bestData = imageData, bestData.count > maxSizeInBytes {
-      let scale = sqrt(CGFloat(maxSizeInBytes) / CGFloat(bestData.count))
-      let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-
-      #if os(iOS)
-        UIGraphicsBeginImageContextWithOptions(newSize, false, image.scale)
-        image.draw(in: CGRect(origin: .zero, size: newSize))
-        let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return resizedImage?.jpegData(compressionQuality: 0.7)
-      #elseif os(macOS)
-        let resizedImage = NSImage(size: newSize, flipped: false) { rect in
-          image.draw(in: rect)
-          return true
-        }
-        if let tiffData = resizedImage.tiffRepresentation,
-          let bitmapRep = NSBitmapImageRep(data: tiffData)
-        {
-          return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
-        }
-        return nil
-      #endif
-    }
-
-    return imageData
-  }
 
   /// Extract aspect ratio from video file
   func getVideoAspectRatio(url: URL) async -> AppBskyEmbedDefs.AspectRatio? {

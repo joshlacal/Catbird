@@ -81,13 +81,15 @@ struct SearchSortSegmentedControl: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     @State var selectedSort = SearchSort.top
     
-    return VStack(spacing: 20) {
-        SearchSortSelector(selectedSort: $selectedSort)
-        SearchSortSegmentedControl(selectedSort: $selectedSort)
-    }
-    .padding()
-    .environment(AppStateManager.shared)
+        return VStack(spacing: 20) {
+            SearchSortSelector(selectedSort: $selectedSort)
+            SearchSortSegmentedControl(selectedSort: $selectedSort)
+        }
+        .padding()
+        .environment(AppStateManager.shared)
+  }
 }
+

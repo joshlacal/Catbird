@@ -120,12 +120,14 @@ struct CloudShape: Shape {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     ZStack {
-        LinearGradient(colors: [.blue.opacity(0.6), .cyan.opacity(0.4)], 
-                      startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
+            LinearGradient(colors: [.blue.opacity(0.6), .cyan.opacity(0.4)], 
+                          startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
         
-        CloudAnimationView()
-    }
+            CloudAnimationView()
+        }
+  }
 }
+

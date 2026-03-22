@@ -315,9 +315,11 @@ struct FilterView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Create a mock view model for preview
 
     
-     FilterView(viewModel: RefinedSearchViewModel(appState: appState))
+         FilterView(viewModel: RefinedSearchViewModel(appState: appState))
+  }
 }
+

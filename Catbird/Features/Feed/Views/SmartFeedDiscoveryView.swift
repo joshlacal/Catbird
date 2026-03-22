@@ -1191,9 +1191,11 @@ struct InterestTag: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        SmartFeedDiscoveryView()
-            .environment(AppStateManager.shared)
-    }
+            SmartFeedDiscoveryView()
+                .environment(AppStateManager.shared)
+        }
+  }
 }
+

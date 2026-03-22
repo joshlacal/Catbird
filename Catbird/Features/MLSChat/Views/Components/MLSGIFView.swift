@@ -181,34 +181,36 @@ struct MLSGIFView: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  VStack(spacing: 20) {
-    // GIF with dimensions
-    MLSGIFView(
-      gifEmbed: MLSGIFEmbed(
-        tenorURL: "https://tenor.com/view/...",
-        mp4URL: "https://media.tenor.com/example/video.mp4",
-        title: "Dancing Cat",
-        thumbnailURL: "https://media.tenor.com/example/thumbnail.jpg",
-        width: 498,
-        height: 280
-      )
-    )
+  AsyncPreviewContent { appState in
+    VStack(spacing: 20) {
+        // GIF with dimensions
+        MLSGIFView(
+          gifEmbed: MLSGIFEmbed(
+            tenorURL: "https://tenor.com/view/...",
+            mp4URL: "https://media.tenor.com/example/video.mp4",
+            title: "Dancing Cat",
+            thumbnailURL: "https://media.tenor.com/example/thumbnail.jpg",
+            width: 498,
+            height: 280
+          )
+        )
 
-    // GIF without dimensions
-    MLSGIFView(
-      gifEmbed: MLSGIFEmbed(
-        tenorURL: "https://tenor.com/view/...",
-        mp4URL: "https://media.tenor.com/example2/video.mp4",
-        title: "Funny Reaction",
-        thumbnailURL: nil,
-        width: nil,
-        height: nil
-      )
-    )
+        // GIF without dimensions
+        MLSGIFView(
+          gifEmbed: MLSGIFEmbed(
+            tenorURL: "https://tenor.com/view/...",
+            mp4URL: "https://media.tenor.com/example2/video.mp4",
+            title: "Funny Reaction",
+            thumbnailURL: nil,
+            width: nil,
+            height: nil
+          )
+        )
+      }
+      .padding()
+      .environment(AppStateManager.shared)
   }
-  .padding()
-  .environment(AppStateManager.shared)
 }
+
 
 #endif

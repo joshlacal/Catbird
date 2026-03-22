@@ -6,6 +6,7 @@ enum BlueskyAgentError: LocalizedError {
     case foundationModelsUnavailable
     case modelUnavailable
     case missingClient
+    case notAThread
     case invalidThreadURI(String)
     case emptyResult(String)
     case underlying(Error)
@@ -18,6 +19,8 @@ enum BlueskyAgentError: LocalizedError {
             return "The on-device language model is unavailable or not ready."
         case .missingClient:
             return "An authenticated Bluesky client is required before issuing agent requests."
+        case .notAThread:
+            return "Thread summarization requires a post with visible thread context."
         case .invalidThreadURI(let value):
             return "The supplied thread identifier is invalid: \(value)."
         case .emptyResult(let context):
@@ -116,6 +119,11 @@ actor BlueskyIntelligenceAgent {
                         continuation.finish(throwing: BlueskyAgentError.emptyResult("thread (no valid posts)"))
                         return
                     }
+
+                    guard Self.hasMeaningfulThreadContext(posts) else {
+                        continuation.finish(throwing: BlueskyAgentError.notAThread)
+                        return
+                    }
                     
                         let session = try await ensureSummarizationSession(using: client)
                     
@@ -180,7 +188,7 @@ actor BlueskyIntelligenceAgent {
         }
     }
     
-        private static func isMeaningfulModelOutput(_ text: String) -> Bool {
+    private static func isMeaningfulModelOutput(_ text: String) -> Bool {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return false }
             switch trimmed.lowercased() {
@@ -190,6 +198,12 @@ actor BlueskyIntelligenceAgent {
                 return true
             }
         }
+
+    private static func hasMeaningfulThreadContext(_ posts: [FormattedThreadPost]) -> Bool {
+        let parentCount = posts.filter(\.isParent).count
+        let replyCount = posts.filter { !$0.isParent && !$0.isMain }.count
+        return posts.contains(where: \.isMain) && (parentCount > 0 || replyCount > 0)
+    }
 
     private func summarizeBatch(
         posts: [FormattedThreadPost],

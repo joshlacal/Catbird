@@ -13,6 +13,7 @@ struct AsyncProfileImage: View {
     let url: URL?
     let size: CGFloat
     let labels: [ComAtprotoLabelDefs.Label]?
+    private let imageRequest: ImageRequest?
     
     @Environment(AppState.self) private var appState
     
@@ -20,13 +21,15 @@ struct AsyncProfileImage: View {
         self.url = url
         self.size = size
         self.labels = labels
+        self.imageRequest = Self.resizedRequest(for: url, sizeInPoints: size)
     }
     
     // Build a Nuke request that decodes at the exact pixel size to avoid large decode/scale costs
-    private func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
+    private static func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
         guard let url = url else { return nil }
         let scale = PlatformScreenInfo.scale
-        let pixelSize = CGSize(width: sizeInPoints * scale, height: sizeInPoints * scale)
+        let pixelDimension = max(1, (sizeInPoints * scale).rounded(.toNearestOrAwayFromZero))
+        let pixelSize = CGSize(width: pixelDimension, height: pixelDimension)
         let processors: [any ImageProcessing] = [
             ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
         ]
@@ -105,63 +108,70 @@ struct AsyncProfileImage: View {
     var body: some View {
         let moderationState = getAvatarModerationState(labels)
         
-        ZStack {
-            // Background placeholder
-            Circle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(width: size, height: size)
-            
+        Group {
             if moderationState == .hide {
-                // Hidden: Show placeholder icon only (for minors or hide preference)
-                Image(systemName: "eye.slash.fill")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .foregroundColor(.secondary.opacity(0.5))
-                    .frame(width: size * 0.5, height: size * 0.5)
-            } else if let request = resizedRequest(for: url, sizeInPoints: size) {
-                // Show avatar (blurred or not)
+                Circle()
+                    .fill(Color.gray.opacity(0.2))
+                    .overlay {
+                        Image(systemName: "eye.slash.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .foregroundColor(.secondary.opacity(0.5))
+                            .frame(width: size * 0.5, height: size * 0.5)
+                    }
+            } else if let request = imageRequest {
                 LazyImage(request: request) { state in
-                    if state.isLoading {
-                        // Loading state
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .scaleEffect(0.7)
-                    } else if let image = state.image {
-                        // Success state
+                    if let image = state.image {
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
+                    } else if state.isLoading {
+                        Circle()
+                            .fill(Color.gray.opacity(0.2))
+                            .overlay {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .scaleEffect(0.7)
+                            }
                     } else {
-                        // Failure state
+                        Circle()
+                            .fill(Color.gray.opacity(0.2))
+                            .overlay {
+                                Image(systemName: "person.crop.circle.fill")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .foregroundColor(.accentColor.opacity(0.5))
+                                    .padding(size * 0.08)
+                            }
+                    }
+                }
+                .pipeline(ImageLoadingManager.shared.pipeline)
+                .priority(.high)
+                .blur(radius: moderationState == .blur ? 20 : 0)
+            } else {
+                Circle()
+                    .fill(Color.gray.opacity(0.2))
+                    .overlay {
                         Image(systemName: "person.crop.circle.fill")
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .foregroundColor(.accentColor.opacity(0.5))
+                            .padding(size * 0.08)
                     }
-                }
-                .priority(.high)
-                .frame(width: size, height: size)
-                .clipShape(Circle())
-                .blur(radius: moderationState == .blur ? 20 : 0)
-            } else {
-                // No URL provided
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .foregroundColor(.accentColor.opacity(0.5))
-                    .frame(width: size, height: size)
-                    .clipShape(Circle())
             }
         }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
     }
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     VStack(spacing: 20) {
-        AsyncProfileImage(url: URL(string: "https://example.com/missing.jpg"), size: 40)
-        AsyncProfileImage(url: URL(string: "https://avatars.githubusercontent.com/u/1?v=4"), size: 60)
-        AsyncProfileImage(url: nil, size: 80)
-    }
-    .padding()
+            AsyncProfileImage(url: URL(string: "https://example.com/missing.jpg"), size: 40)
+            AsyncProfileImage(url: URL(string: "https://avatars.githubusercontent.com/u/1?v=4"), size: 60)
+            AsyncProfileImage(url: nil, size: 80)
+        }
+        .padding()
+  }
 }

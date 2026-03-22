@@ -263,6 +263,9 @@ final class ProfileViewController: UIViewController, UIScrollViewDelegate {
     tabBar.updateSections(isLabeler: viewModel.isLabeler)
     tabBar.selectedTab = viewModel.selectedProfileTab
 
+    // Configure banner image for current profile
+    updateBannerForCurrentProfile()
+
     // Schedule profileInfoBottom calculation after layout
     DispatchQueue.main.async { [weak self] in
       self?.recalculateProfileInfoBottom()

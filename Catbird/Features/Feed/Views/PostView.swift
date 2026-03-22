@@ -37,7 +37,8 @@ struct PostView: View, Equatable, Identifiable {
   let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
   let isParentPost: Bool
   let isSelectable: Bool
-let isToYou: Bool
+  let isToYou: Bool
+  let hasVisibleThreadContext: Bool
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
 
@@ -84,20 +85,26 @@ var id: String {
     isSelectable: Bool,
     path: Binding<NavigationPath>,
     appState: AppState,
-    isToYou: Bool = false
+    isToYou: Bool = false,
+    hasVisibleThreadContext: Bool = false
   ) {
     self.post = post
     self.grandparentAuthor = grandparentAuthor
     self.isParentPost = isParentPost
     self.isSelectable = isSelectable
     self._path = path
-      self.isToYou = isToYou
+    self.isToYou = isToYou
+    self.hasVisibleThreadContext = hasVisibleThreadContext
 
     // Initialize states
     _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
     _viewModel = State(initialValue: PostViewModel(post: post, appState: appState))
     _contextMenuViewModel = State(
-      initialValue: PostContextMenuViewModel(appState: appState, post: post))
+      initialValue: PostContextMenuViewModel(
+        appState: appState,
+        post: post,
+        allowsThreadSummary: (hasVisibleThreadContext || isParentPost) && (post.replyCount ?? 0) > 0
+      ))
   }
 
   // MARK: - Body
@@ -220,7 +227,6 @@ var id: String {
       embedContent(embed, labels: postState.currentPost.labels)
         .environment(\.postID, id)
         .padding(.bottom, PostView.baseUnit)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     // Action buttons
@@ -237,19 +243,15 @@ var id: String {
     switch error {
     case .blocked(let blockedPost):
       BlockedPostView(blockedPost: blockedPost, path: $path)
-        .id("blocked-\(post.uri.uriString())")
 
     case .notFound(let reason):
       PostNotFoundView(uri: post.uri, reason: reason, path: $path)
-        .id("notfound-\(post.uri.uriString())")
 
     case .parseError:
       PostNotFoundView(uri: post.uri, reason: .parseError, path: $path)
-        .id("parseerror-\(post.uri.uriString())")
 
     case .permissionDenied:
       PostNotFoundView(uri: post.uri, reason: .permissionDenied, path: $path)
-        .id("permission-\(post.uri.uriString())")
     }
   }
 
@@ -290,7 +292,6 @@ var id: String {
 
         Post(post: feedPost, isSelectable: isSelectable, path: $path)
           .padding(.top, PostView.baseUnit)
-          .fixedSize(horizontal: false, vertical: true)
       }
     }
   }
@@ -316,7 +317,7 @@ var id: String {
       }
       
 #if canImport(FoundationModels)
-      if #available(iOS 26.0, macOS 15.0, *) {
+      if #available(iOS 26.0, macOS 15.0, *), contextMenuViewModel.allowsThreadSummary {
         Button(action: {
           contextMenuViewModel.summarizeThread()
         }) {
@@ -650,6 +651,8 @@ var id: String {
       switch agentError {
       case .missingClient:
         return ("Sign in to summarize threads.", false)
+      case .notAThread:
+        return ("There isn't enough conversation to summarize yet.", false)
       case .modelUnavailable:
         return ("Apple Intelligence is still preparing. Try again in a moment.", true)
       case .foundationModelsUnavailable:

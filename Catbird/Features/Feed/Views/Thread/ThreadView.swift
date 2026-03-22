@@ -240,7 +240,8 @@ private struct SwiftUIThreadView: View {
                 isParentPost: true,
                 isSelectable: false,
                 path: $path,
-                appState: appState
+                appState: appState,
+                hasVisibleThreadContext: true
             )
             .contentShape(Rectangle())
             .onTapGesture {
@@ -295,7 +296,8 @@ private struct SwiftUIThreadView: View {
                     isParentPost: replyPost.replies?.isEmpty == false,
                     isSelectable: false,
                     path: $path,
-                    appState: appState
+                    appState: appState,
+                    hasVisibleThreadContext: true
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -313,7 +315,8 @@ private struct SwiftUIThreadView: View {
                             isParentPost: false,
                             isSelectable: false,
                             path: $path,
-                            appState: appState
+                            appState: appState,
+                            hasVisibleThreadContext: true
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {

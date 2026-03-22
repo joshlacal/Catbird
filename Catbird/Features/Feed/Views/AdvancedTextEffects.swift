@@ -386,6 +386,8 @@ struct CrossPlatformAnimatedText: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     AdvancedTextEffects()
+  }
 }
+

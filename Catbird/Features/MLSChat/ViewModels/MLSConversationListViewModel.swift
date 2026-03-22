@@ -124,7 +124,7 @@ final class MLSConversationListViewModel {
             let expectedGen = MLSCoordinationAwareTask.captureGeneration()
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            let result = try await Task.detached(priority: .userInitiated) { [apiClient] in
+            let result: (convos: [BlueCatbirdMlsChatDefs.ConvoView], cursor: String?) = try await Task.detached(priority: .userInitiated) { [apiClient] in
                 try await apiClient.getConversations(
                     limit: 50,
                     cursor: nil

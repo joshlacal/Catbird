@@ -101,12 +101,14 @@ struct LoadMoreTrigger: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Preview with a simple loading action
-    LoadMoreTrigger {
-        try? await Task.sleep(for: .seconds(2))
-        logger.debug("More content loaded")
-    }
-    .frame(width: 300, height: 50)
-    .border(.gray)
+        LoadMoreTrigger {
+            try? await Task.sleep(for: .seconds(2))
+            logger.debug("More content loaded")
+        }
+        .frame(width: 300, height: 50)
+        .border(.gray)
+  }
 }
+

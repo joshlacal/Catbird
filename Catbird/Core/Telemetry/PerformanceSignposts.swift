@@ -31,6 +31,10 @@ enum PerformanceSignposts {
   private static let subsystem = "blue.catbird.performance"
   
   private static let feedLog = OSLog(subsystem: subsystem, category: "Feed")
+  private static let chatLog = OSLog(subsystem: subsystem, category: "Chat")
+  private static let listLog = OSLog(subsystem: subsystem, category: "List")
+  private static let profileLog = OSLog(subsystem: subsystem, category: "Profile")
+  private static let notificationsLog = OSLog(subsystem: subsystem, category: "Notifications")
   private static let cellLog = OSLog(subsystem: subsystem, category: "Cell")
   private static let imageLog = OSLog(subsystem: subsystem, category: "Image")
   private static let navigationLog = OSLog(subsystem: subsystem, category: "Navigation")
@@ -47,6 +51,57 @@ enum PerformanceSignposts {
     signpostIDCounter.withLock { counter in
       counter += 1
       return OSSignpostID(counter)
+    }
+  }
+  
+  // MARK: - App Surface Comparison
+  
+  enum AppSurface: String, CaseIterable {
+    case feed = "Feed"
+    case chat = "Chat"
+    case list = "List"
+    case profile = "Profile"
+    case notifications = "Notifications"
+  }
+  
+  private static func appSurfaceLog(for surface: AppSurface) -> OSLog {
+    switch surface {
+    case .feed:
+      feedLog
+    case .chat:
+      chatLog
+    case .list:
+      listLog
+    case .profile:
+      profileLog
+    case .notifications:
+      notificationsLog
+    }
+  }
+  
+  static func beginAppSurfaceLoad(_ surface: AppSurface, context: String) -> OSSignpostID {
+    let id = nextID()
+    os_signpost(.begin, log: appSurfaceLog(for: surface), name: "SurfaceLoad", signpostID: id, "%{public}s", context)
+    return id
+  }
+  
+  static func endAppSurfaceLoad(_ surface: AppSurface, id: OSSignpostID, itemCount: Int, success: Bool) {
+    os_signpost(.end, log: appSurfaceLog(for: surface), name: "SurfaceLoad", signpostID: id, "items: %d, success: %d", itemCount, success ? 1 : 0)
+  }
+  
+  static func trackAppSurfaceLoad<T>(
+    _ surface: AppSurface,
+    context: String,
+    _ operation: () async throws -> T
+  ) async rethrows -> T {
+    let id = beginAppSurfaceLoad(surface, context: context)
+    do {
+      let result = try await operation()
+      endAppSurfaceLoad(surface, id: id, itemCount: 0, success: true)
+      return result
+    } catch {
+      endAppSurfaceLoad(surface, id: id, itemCount: 0, success: false)
+      throw error
     }
   }
   

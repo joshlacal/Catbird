@@ -1170,6 +1170,13 @@ struct LoginView: View {
                     showTimeoutCountdown = false
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
+                } catch is CancellationError {
+                    // Task was cancelled (e.g., auth state changed to authenticated
+                    // before this task finished cleanup) — not a real error
+                    logger.notice("Authentication task cancelled (auth may have already succeeded)")
+                    isLoggingIn = false
+                    loginProgress = .idle
+                    showTimeoutCountdown = false
                 } catch {
                     // Other authentication errors (including timeout)
                     logger.error("Authentication error: \(error.localizedDescription)")
@@ -1466,12 +1473,13 @@ struct LoginView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     // Preview provider for LoginView
     
-    LoginView()
-        .applyAppStateEnvironment(appState)
+        LoginView()
+  }
 }
+
 
 // MARK: - View Modifiers
 

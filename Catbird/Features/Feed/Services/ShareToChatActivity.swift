@@ -968,7 +968,9 @@ import CatbirdMLSCore
         // Group avatar
         MLSGroupAvatarView(
           participants: participants,
-          size: 32
+          size: 32,
+          groupAvatarData: conversation.avatarImageData,
+          currentUserDID: appState.userDID
         )
 
         VStack(alignment: .leading, spacing: 2) {
@@ -1083,10 +1085,10 @@ import CatbirdMLSCore
                 conversation: conversation,
                 participants: participants,
                 isSelected: selectedConversation?.conversationID == conversation.conversationID,
-                showDivider: conversation.conversationID != filteredConversations.last?.conversationID
-              ) {
-                selectConversation(conversation)
-              }
+                showDivider: conversation.conversationID != filteredConversations.last?.conversationID,
+                action: { selectConversation(conversation) },
+                currentUserDID: appState.userDID
+              )
             }
           }
         }
@@ -1350,6 +1352,7 @@ import CatbirdMLSCore
     let isSelected: Bool
     let showDivider: Bool
     let action: () -> Void
+    var currentUserDID: String? = nil
 
     @State private var isPressed = false
 
@@ -1381,7 +1384,9 @@ import CatbirdMLSCore
           // Group avatar
           MLSGroupAvatarView(
             participants: participants,
-            size: 48
+            size: 48,
+            groupAvatarData: conversation.avatarImageData,
+            currentUserDID: currentUserDID
           )
 
           VStack(alignment: .leading, spacing: 4) {

@@ -113,43 +113,45 @@ struct MLSLinkCardView: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  VStack(spacing: 20) {
-    // Link with thumbnail
-    MLSLinkCardView(
-      linkEmbed: MLSLinkEmbed(
-        url: "https://bsky.app",
-        title: "Bluesky Social",
-        description: "Social media as it should be. Find your community among millions of users, unleash your creativity, and have some fun again.",
-        thumbnailURL: "https://bsky.app/static/social-card-default-gradient.png",
-        domain: "bsky.app"
-      )
-    )
+  AsyncPreviewContent { appState in
+    VStack(spacing: 20) {
+        // Link with thumbnail
+        MLSLinkCardView(
+          linkEmbed: MLSLinkEmbed(
+            url: "https://bsky.app",
+            title: "Bluesky Social",
+            description: "Social media as it should be. Find your community among millions of users, unleash your creativity, and have some fun again.",
+            thumbnailURL: "https://bsky.app/static/social-card-default-gradient.png",
+            domain: "bsky.app"
+          )
+        )
 
-    // Link without thumbnail
-    MLSLinkCardView(
-      linkEmbed: MLSLinkEmbed(
-        url: "https://example.com/article",
-        title: "Interesting Article",
-        description: "A detailed look at something fascinating...",
-        thumbnailURL: nil,
-        domain: "example.com"
-      )
-    )
+        // Link without thumbnail
+        MLSLinkCardView(
+          linkEmbed: MLSLinkEmbed(
+            url: "https://example.com/article",
+            title: "Interesting Article",
+            description: "A detailed look at something fascinating...",
+            thumbnailURL: nil,
+            domain: "example.com"
+          )
+        )
 
-    // Minimal link (just URL)
-    MLSLinkCardView(
-      linkEmbed: MLSLinkEmbed(
-        url: "https://github.com",
-        title: nil,
-        description: nil,
-        thumbnailURL: nil,
-        domain: "github.com"
-      )
-    )
+        // Minimal link (just URL)
+        MLSLinkCardView(
+          linkEmbed: MLSLinkEmbed(
+            url: "https://github.com",
+            title: nil,
+            description: nil,
+            thumbnailURL: nil,
+            domain: "github.com"
+          )
+        )
+      }
+      .padding()
+      .environment(AppStateManager.shared)
   }
-  .padding()
-  .environment(AppStateManager.shared)
 }
+
 
 #endif

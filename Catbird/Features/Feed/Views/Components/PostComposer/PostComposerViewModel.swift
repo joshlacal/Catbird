@@ -471,6 +471,7 @@ func saveDraftIfNeeded() {
     var rawVideoURL: URL?
     var rawVideoAsset: AVAsset?
     var isAudioVisualizerVideo: Bool = false
+    var isGifConversion: Bool = false
     
     init(pickerItem: PhotosPickerItem) {
       self.pickerItem = pickerItem

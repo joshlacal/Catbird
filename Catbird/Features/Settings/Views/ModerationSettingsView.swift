@@ -1146,9 +1146,10 @@ struct ContentPreviewView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        ModerationSettingsView()
-            .applyAppStateEnvironment(appState)
-    }
+            ModerationSettingsView()
+        }
+  }
 }
+

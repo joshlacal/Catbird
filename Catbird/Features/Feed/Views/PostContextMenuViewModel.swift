@@ -14,6 +14,7 @@ import OSLog
 final class PostContextMenuViewModel {
     let appState: AppState
     let post: AppBskyFeedDefs.PostView
+    let allowsThreadSummary: Bool
     
     private let logger = Logger(subsystem: "blue.catbird", category: "PostContextMenu")
     
@@ -30,9 +31,14 @@ final class PostContextMenuViewModel {
     // Thread summarization callback - wired by PostView when supported
     var onSummarizeThread: (() -> Void)?
 
-    init(appState: AppState, post: AppBskyFeedDefs.PostView) {
+    init(
+        appState: AppState,
+        post: AppBskyFeedDefs.PostView,
+        allowsThreadSummary: Bool = false
+    ) {
         self.appState = appState
         self.post = post
+        self.allowsThreadSummary = allowsThreadSummary
     }
 
     func deletePost() async {
@@ -138,27 +144,6 @@ final class PostContextMenuViewModel {
                         )
                     )
                 }
-                
-                // Also mute the thread in push notifications
-                let threadRootURI: String
-                if case let .knownType(replyRecord) = post.record,
-                   let reply = replyRecord as? AppBskyFeedPost,
-                   let replyRef = reply.reply {
-                    let rootURI = replyRef.root.uri
-                    threadRootURI = rootURI.uriString()
-                } else {
-                    // This is the thread root
-                    threadRootURI = post.uri.uriString()
-                }
-                
-                Task {
-                    do {
-                        try await appState.notificationManager.muteThreadNotifications(threadRootURI: threadRootURI)
-                        logger.debug("Thread also muted for push notifications")
-                    } catch {
-                        logger.error("Failed to mute thread for push notifications: \(error.localizedDescription)")
-                    }
-                }
             }
         } catch {
             logger.debug("Error muting thread: \(error)")
@@ -208,6 +193,7 @@ final class PostContextMenuViewModel {
     
 
     func summarizeThread() {
+        guard allowsThreadSummary else { return }
         onSummarizeThread?()
     }
     

@@ -487,10 +487,11 @@ struct ImageViewerItemView: UIViewRepresentable {
   
   private func loadImage(into imageView: UIImageView, context: Context) {
     guard let imageUrl = URL(string: image.fullsize.uriString()) else { return }
-    
+    let jxlUrl = ImageLoadingManager.cdnURL(imageUrl)
+
     // Use the shared pipeline to load the image
     ImageLoadingManager.shared.pipeline.loadImage(
-      with: imageUrl,
+      with: jxlUrl,
       completion: { result in
         if case .success(let response) = result {
           imageView.image = response.image
@@ -674,7 +675,7 @@ struct ImageViewerItemView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ImageViewerItemView")
   
   var body: some View {
-    AsyncImage(url: URL(string: image.fullsize.uriString())) { phase in
+    AsyncImage(url: image.fullsize.url.map { ImageLoadingManager.cdnURL($0) }) { phase in
       switch phase {
       case .empty:
         ProgressView()
@@ -1024,7 +1025,7 @@ struct EnhancedImageViewer: View {
   }
 
   private func prefetchFullSizeImages() async {
-    let urls = images.compactMap { URL(string: $0.fullsize.uriString()) }
+    let urls = images.compactMap { $0.fullsize.url.map { ImageLoadingManager.cdnURL($0) } }
     let manager = ImageLoadingManager.shared
     await manager.prefetchImages(urls: urls)
   }
@@ -1037,8 +1038,8 @@ struct EnhancedImageViewer: View {
           let topVC = window.rootViewController?.topmostPresentedViewController() else { return }
     
     // Load the image to be shared
-    let imageUrl = URL(string: images[currentIndex].fullsize.uriString())!
-    
+    let imageUrl = ImageLoadingManager.cdnURL(URL(string: images[currentIndex].fullsize.uriString())!)
+
     ImageLoadingManager.shared.pipeline.loadImage(
       with: imageUrl,
       completion: { result in
@@ -1239,31 +1240,49 @@ struct ZoomableImageWrapper: UIViewControllerRepresentable {
 class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   private let scrollView = UIScrollView()
   private let imageView = UIImageView()
-  private let image: AppBskyEmbedImages.ViewImage
+  private let accessibilityAltText: String
   private let liveTextSupported: Bool
   private var imageAnalysisInteraction: ImageAnalysisInteraction?
-  
+
+  // Source for the image: either a URL to load or a UIImage already in memory
+  private let imageSource: ImageSource
+
+  enum ImageSource {
+    case url(URL)
+    case loaded(UIImage)
+  }
+
+  /// Initialize with an AT Protocol image (loads from URL).
   init(image: AppBskyEmbedImages.ViewImage, liveTextEnabled: Bool, liveTextSupported: Bool) {
-    self.image = image
+    self.imageSource = .url(ImageLoadingManager.cdnURL(URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!))
+    self.accessibilityAltText = image.alt
     self.liveTextSupported = liveTextSupported
     super.init(nibName: nil, bundle: nil)
   }
-  
+
+  /// Initialize with a UIImage already in memory (e.g. decrypted MLS image).
+  init(uiImage: UIImage, altText: String?, liveTextSupported: Bool) {
+    self.imageSource = .loaded(uiImage)
+    self.accessibilityAltText = altText ?? "Image"
+    self.liveTextSupported = liveTextSupported
+    super.init(nibName: nil, bundle: nil)
+  }
+
   required init?(coder: NSCoder) {
     fatalError("init(coder:) has not been implemented")
   }
-  
+
   override func viewDidLoad() {
     super.viewDidLoad()
     setupScrollView()
     setupImageView()
     loadImage()
-    
+
     if liveTextSupported {
       setupLiveText()
     }
   }
-  
+
   private func setupScrollView() {
     scrollView.delegate = self
     scrollView.minimumZoomScale = 1.0
@@ -1272,7 +1291,7 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     scrollView.showsVerticalScrollIndicator = false
     scrollView.contentInsetAdjustmentBehavior = .never
     scrollView.translatesAutoresizingMaskIntoConstraints = false
-    
+
     view.addSubview(scrollView)
     NSLayoutConstraint.activate([
       scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -1280,18 +1299,18 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
       scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
     ])
-    
+
     let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
     doubleTap.numberOfTapsRequired = 2
     scrollView.addGestureRecognizer(doubleTap)
   }
-  
+
   private func setupImageView() {
     imageView.contentMode = .scaleAspectFit
     imageView.isUserInteractionEnabled = true
     imageView.translatesAutoresizingMaskIntoConstraints = false
     scrollView.addSubview(imageView)
-    
+
     NSLayoutConstraint.activate([
       imageView.topAnchor.constraint(equalTo: scrollView.topAnchor),
       imageView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
@@ -1300,40 +1319,44 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
       imageView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
       imageView.heightAnchor.constraint(equalTo: scrollView.heightAnchor)
     ])
-    
+
     imageView.isAccessibilityElement = true
-    imageView.accessibilityLabel = image.alt.isEmpty ? "Image" : image.alt
+    imageView.accessibilityLabel = accessibilityAltText.isEmpty ? "Image" : accessibilityAltText
     imageView.accessibilityTraits = .image
   }
-  
+
   private func setupLiveText() {
     let interaction = ImageAnalysisInteraction()
     imageView.addInteraction(interaction)
     interaction.preferredInteractionTypes = .automatic
     self.imageAnalysisInteraction = interaction
   }
-  
+
   private func loadImage() {
-    Task {
-      do {
-          if let url = image.fullsize.url {
-              let loadedImage = try await ImagePipeline.shared.image(for: url)
-              await MainActor.run {
-                  imageView.image = loadedImage
-                  
-                  if liveTextSupported, let interaction = imageAnalysisInteraction {
-                      analyzeImage(loadedImage, interaction: interaction)
-                  }
-              }
-          } else {
-              logger.error("Invalid image URL")
+    switch imageSource {
+    case .loaded(let uiImage):
+      imageView.image = uiImage
+      if liveTextSupported, let interaction = imageAnalysisInteraction {
+        analyzeImage(uiImage, interaction: interaction)
+      }
+
+    case .url(let url):
+      Task {
+        do {
+          let loadedImage = try await ImagePipeline.shared.image(for: url)
+          await MainActor.run {
+            imageView.image = loadedImage
+            if liveTextSupported, let interaction = imageAnalysisInteraction {
+              analyzeImage(loadedImage, interaction: interaction)
+            }
           }
-      } catch {
+        } catch {
           logger.error("Failed to load image: \(error)")
+        }
       }
     }
   }
-  
+
   private func analyzeImage(_ image: UIImage, interaction: ImageAnalysisInteraction) {
     Task {
       do {
@@ -1348,11 +1371,11 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
       }
     }
   }
-  
+
   func updateLiveText(enabled: Bool) {
     imageAnalysisInteraction?.preferredInteractionTypes = enabled ? .automatic : []
   }
-  
+
   @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
     if scrollView.zoomScale > scrollView.minimumZoomScale {
       scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
@@ -1367,15 +1390,35 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
       scrollView.zoom(to: zoomRect, animated: true)
     }
   }
-  
+
   func viewForZooming(in scrollView: UIScrollView) -> UIView? {
     return imageView
   }
-  
+
   func scrollViewDidZoom(_ scrollView: UIScrollView) {
     let offsetX = max((scrollView.bounds.width - scrollView.contentSize.width) * 0.5, 0)
     let offsetY = max((scrollView.bounds.height - scrollView.contentSize.height) * 0.5, 0)
     scrollView.contentInset = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
+  }
+}
+
+/// SwiftUI wrapper for displaying a UIImage with pinch-to-zoom, reusing ZoomableImageViewController.
+struct ZoomableUIImageWrapper: UIViewControllerRepresentable {
+  let uiImage: UIImage
+  let altText: String?
+  @Binding var liveTextEnabled: Bool
+  var liveTextSupported: Bool
+
+  func makeUIViewController(context: Context) -> ZoomableImageViewController {
+    ZoomableImageViewController(
+      uiImage: uiImage,
+      altText: altText,
+      liveTextSupported: liveTextSupported
+    )
+  }
+
+  func updateUIViewController(_ uiViewController: ZoomableImageViewController, context: Context) {
+    uiViewController.updateLiveText(enabled: liveTextEnabled)
   }
 }
 #endif

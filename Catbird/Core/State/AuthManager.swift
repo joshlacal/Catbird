@@ -225,7 +225,8 @@ final class AuthenticationManager: AuthProgressDelegate {
         throw AuthError.timeout
       }
       defer { group.cancelAll() }
-      return try await group.next()!
+      guard let result = try await group.next() else { throw AuthError.timeout }
+      return result
     }
   }
 
@@ -401,6 +402,21 @@ final class AuthenticationManager: AuthProgressDelegate {
       let appViewDID = self.customAppViewDID
       let chatDID = self.customChatDID
 
+#if DEBUG
+        let newClient = await Task.detached(priority: .userInitiated) {
+          try? await ATProtoClient(
+            oauthConfig: oauthCfg,
+            namespace: "blue.catbird",
+            authMode: .gateway,
+            gatewayURL: URL(string: "https://api.catbird.blue")!,
+//            gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
+            userAgent: "Catbird/1.0",
+            bskyAppViewDID: appViewDID,
+            bskyChatDID: chatDID,
+            accessGroup: accessGroup
+          )
+        }.value
+#else
       let newClient = await Task.detached(priority: .userInitiated) {
         try? await ATProtoClient(
           oauthConfig: oauthCfg,
@@ -413,7 +429,7 @@ final class AuthenticationManager: AuthProgressDelegate {
           accessGroup: accessGroup
         )
       }.value
-
+#endif
       // Update state on main actor
       client = newClient
       await client?.applicationDidBecomeActive()
@@ -694,16 +710,33 @@ final class AuthenticationManager: AuthProgressDelegate {
           suffix: "blue.catbird.shared")
       #endif
 
+        #if DEBUG
+          
       client = try? await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
         gatewayURL: URL(string: "https://api.catbird.blue")!,
+//        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
         accessGroup: accessGroup
       )
+        
+        #else
+        client = try? await ATProtoClient(
+          oauthConfig: oauthConfig,
+          namespace: "blue.catbird",
+          authMode: .gateway,
+          gatewayURL: URL(string: "https://api.catbird.blue")!,
+          userAgent: "Catbird/1.0",
+          bskyAppViewDID: customAppViewDID,
+          bskyChatDID: customChatDID,
+          accessGroup: accessGroup
+        )
+
+        #endif
       await client?.applicationDidBecomeActive()
       await client?.setAuthProgressDelegate(self)
       await client?.setFailureDelegate(self)
@@ -1486,17 +1519,31 @@ final class AuthenticationManager: AuthProgressDelegate {
         suffix: "blue.catbird.shared")
     #endif
 
+      #if DEBUG
     client = try? await ATProtoClient(
       oauthConfig: oauthConfig,
       namespace: "blue.catbird",
       authMode: .gateway,
       gatewayURL: URL(string: "https://api.catbird.blue")!,
+//      gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
       userAgent: "Catbird/1.0",
       bskyAppViewDID: customAppViewDID,
       bskyChatDID: customChatDID,
       accessGroup: accessGroup
     )
-
+      #else
+      client = try? await ATProtoClient(
+        oauthConfig: oauthConfig,
+        namespace: "blue.catbird",
+        authMode: .gateway,
+        gatewayURL: URL(string: "https://api.catbird.blue")!,
+        userAgent: "Catbird/1.0",
+        bskyAppViewDID: customAppViewDID,
+        bskyChatDID: customChatDID,
+        accessGroup: accessGroup
+      )
+      #endif
+      
     await client?.applicationDidBecomeActive()
     await client?.setAuthProgressDelegate(self)
     await client?.setFailureDelegate(self)
@@ -1741,7 +1788,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .authenticated")
       updateState(.authenticated(userDID: newDid))
-      MLSAppActivityState.updateActiveUserDID(newDid)
+      MLSNotificationCoordinator.updateActiveUserDID(newDid)
 
       // Account switching is now handled by AppStateManager.transitionToAuthenticated()
       // which is called automatically when the AuthManager state changes to .authenticated

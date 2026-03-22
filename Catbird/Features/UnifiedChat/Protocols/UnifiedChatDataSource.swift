@@ -13,6 +13,9 @@ protocol UnifiedChatDataSource: Observable, AnyObject {
   var isLoading: Bool { get }
   var error: Error? { get }
   var hasMoreMessages: Bool { get }
+  var showsTypingIndicator: Bool { get }
+  var typingParticipantAvatarURL: URL? { get }
+  var scrollToBottomTrigger: Int { get }
 
   func message(for id: String) -> Message?
   func loadMessages() async
@@ -21,6 +24,12 @@ protocol UnifiedChatDataSource: Observable, AnyObject {
   func toggleReaction(messageID: String, emoji: String)
   func addReaction(messageID: String, emoji: String)
   func deleteMessage(messageID: String) async
+}
+
+extension UnifiedChatDataSource {
+  var showsTypingIndicator: Bool { false }
+  var typingParticipantAvatarURL: URL? { nil }
+  var scrollToBottomTrigger: Int { 0 }
 }
 
 // MARK: - UnifiedChatDataSourceEvent

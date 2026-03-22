@@ -26,6 +26,7 @@ struct FeedPostRow: View, Equatable, Identifiable {
     var viewModel: FeedPostViewModel
     @Binding var navigationPath: NavigationPath
     var feedTypeIdentifier: String
+    var tracksVisibilityForFeedback: Bool = true
     @Environment(AppState.self) private var appState
     
     // MARK: - Body
@@ -37,7 +38,6 @@ struct FeedPostRow: View, Equatable, Identifiable {
                 path: $navigationPath
             )
             .equatable()
-            .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
             .onTapGesture {
                 viewModel.navigateToPost(navigationPath: $navigationPath)
@@ -102,7 +102,7 @@ struct FeedPostRow: View, Equatable, Identifiable {
         .transition(.identity)
         // Track post visibility for feed feedback (iOS 18.0+/macOS 15.0+)
         .onScrollVisibilityChange(threshold: 0.5) { isVisible in
-            if isVisible {
+            if tracksVisibilityForFeedback, isVisible {
                 if let postURI = try? ATProtocolURI(uriString: viewModel.post.feedViewPost.post.uri.uriString()) {
                     appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
                 }

@@ -11,6 +11,11 @@ final class CatalystToolbarCoordinator: NSObject {
   static let contextualActionID = NSToolbarItem.Identifier("contextualAction")
   static let settingsAvatarID = NSToolbarItem.Identifier("settingsAvatar")
 
+  // Tab subitem identifiers
+  static let tabIDs: [NSToolbarItem.Identifier] = (0..<5).map {
+    NSToolbarItem.Identifier("tab_\($0)")
+  }
+
   // MARK: - Action Closures
 
   var onTabSelected: ((Int) -> Void)?
@@ -28,47 +33,12 @@ final class CatalystToolbarCoordinator: NSObject {
   private(set) var currentTab: Int = 0
   private let toolbar: NSToolbar
 
-  // MARK: - Item Views
-
-  private lazy var segmentedControl: BadgedSegmentedControl = {
-    let titles = ["Home", "Search", "Notifications", "Profile", "Messages"]
-    let images = ["house", "magnifyingglass", "bell", "person", "envelope"]
-    let sc = BadgedSegmentedControl(frame: .zero)
-    for (i, title) in titles.enumerated() {
-      sc.insertSegment(action: UIAction(title: title, image: UIImage(systemName: images[i])) { [weak self] _ in
-        self?.handleSegmentChange(index: i)
-      }, at: i, animated: false)
-    }
-    sc.selectedSegmentIndex = 0
-    sc.sizeToFit()
-    sc.widthAnchor.constraint(greaterThanOrEqualToConstant: 400).isActive = true
-    return sc
-  }()
+  // MARK: - Items
 
   private var feedSelectorItem: NSToolbarItem?
   private var contextualItem: NSToolbarItem?
   private var composeItem: NSToolbarItem?
-
-  // MARK: - Avatar View
-
-  private var avatarHostingController: UIHostingController<AnyView>?
-
-  var avatarHostingView: UIView? {
-    didSet {
-      if let item = settingsAvatarItem, let view = avatarHostingView {
-        setCustomView(view, on: item)
-      }
-    }
-  }
-
-  func setAvatarView<V: View>(_ view: V) {
-    let hc = UIHostingController(rootView: AnyView(view))
-    hc.view.frame = CGRect(x: 0, y: 0, width: 30, height: 30)
-    hc.view.backgroundColor = .clear
-    avatarHostingController = hc
-    avatarHostingView = hc.view
-  }
-
+  private var tabGroup: NSToolbarItemGroup?
   private var settingsAvatarItem: NSToolbarItem?
 
   // MARK: - Init
@@ -77,7 +47,7 @@ final class CatalystToolbarCoordinator: NSObject {
     toolbar = NSToolbar(identifier: identifier)
     super.init()
     toolbar.delegate = self
-    toolbar.displayMode = .iconOnly
+    toolbar.displayMode = .iconAndLabel
     toolbar.allowsUserCustomization = false
   }
 
@@ -86,16 +56,27 @@ final class CatalystToolbarCoordinator: NSObject {
   // MARK: - Public API
 
   func selectTab(_ tab: Int) {
-    guard tab != segmentedControl.selectedSegmentIndex else { return }
-    segmentedControl.selectedSegmentIndex = tab
+    guard tab != currentTab, tab >= 0, tab < 5 else { return }
     currentTab = tab
+    tabGroup?.selectedIndex = tab
     updateContextualItems(for: tab)
     updateComposeTooltip(for: tab)
   }
 
   func updateBadges(notifications: Int, messages: Int) {
-    segmentedControl.setBadge(notifications, forSegment: 2)
-    segmentedControl.setBadge(messages, forSegment: 4)
+    // Badges on NSToolbarItemGroup subitems — update the label to include count
+    guard let group = tabGroup else { return }
+    let titles = ["Home", "Search", "Notifications", "Profile", "Messages"]
+    for (i, title) in titles.enumerated() {
+      let subitem = group.subitems[i]
+      if i == 2 && notifications > 0 {
+        subitem.label = "\(title) (\(notifications))"
+      } else if i == 4 && messages > 0 {
+        subitem.label = "\(title) (\(messages))"
+      } else {
+        subitem.label = title
+      }
+    }
   }
 
   func setFeedSelectorEnabled(_ enabled: Bool) {
@@ -173,15 +154,6 @@ final class CatalystToolbarCoordinator: NSObject {
     }
   }
 
-  // MARK: - Custom View Helper
-
-  /// Sets a UIView as the custom view on an NSToolbarItem using KVC.
-  /// In Mac Catalyst, NSToolbarItem.view is unavailable at compile time
-  /// but the underlying property exists at runtime.
-  private func setCustomView(_ view: UIView, on item: NSToolbarItem) {
-    item.setValue(view, forKey: "view")
-  }
-
   // MARK: - Actions
 
   @objc private func composeAction() {
@@ -198,6 +170,13 @@ final class CatalystToolbarCoordinator: NSObject {
   @objc private func searchFilterAction() { onSearchFilterTapped?() }
   @objc private func markAllReadAction() { onMarkAllReadTapped?() }
   @objc private func messageRequestsAction() { onMessageRequestsTapped?() }
+
+  @objc private func tabAction(_ sender: Any?) {
+    guard let group = tabGroup else { return }
+    let index = group.selectedIndex
+    guard index >= 0, index < 5 else { return }
+    handleSegmentChange(index: index)
+  }
 }
 
 // MARK: - NSToolbarDelegate
@@ -232,14 +211,34 @@ extension CatalystToolbarCoordinator: NSToolbarDelegate {
       item.toolTip = "Feed Selector"
       item.target = self
       item.action = #selector(feedSelectorAction)
-      item.isBordered = true
       feedSelectorItem = item
       return item
 
     case Self.tabSwitcherID:
-      let group = NSToolbarItemGroup(itemIdentifier: itemIdentifier)
-      setCustomView(segmentedControl, on: group)
+      let titles = ["Home", "Search", "Notifications", "Profile", "Messages"]
+      let images = ["house", "magnifyingglass", "bell", "person", "envelope"]
+
+      // Create individual subitems for each tab
+      let subitems: [NSToolbarItem] = (0..<5).map { i in
+        let subitem = NSToolbarItem(itemIdentifier: Self.tabIDs[i])
+        subitem.image = UIImage(systemName: images[i])
+        subitem.label = titles[i]
+        subitem.target = self
+        subitem.action = #selector(tabAction(_:))
+        return subitem
+      }
+
+      let group = NSToolbarItemGroup(
+        itemIdentifier: itemIdentifier,
+        titles: titles,
+        selectionMode: .selectOne,
+        labels: titles,
+        target: self,
+        action: #selector(tabAction(_:))
+      )
+      group.setSelected(true, at: 0)
       group.label = "Tabs"
+      tabGroup = group
       return group
 
     case Self.composeID:
@@ -249,27 +248,23 @@ extension CatalystToolbarCoordinator: NSToolbarDelegate {
       item.toolTip = "New Post"
       item.target = self
       item.action = #selector(composeAction)
-      item.isBordered = true
       composeItem = item
       return item
 
     case Self.contextualActionID:
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
       item.label = "Action"
-      item.isBordered = true
       contextualItem = item
       updateContextualItems(for: 0)
       return item
 
     case Self.settingsAvatarID:
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+      item.image = UIImage(systemName: "person.circle")
       item.label = "Settings"
       item.toolTip = "Profile & Settings"
       item.target = self
       item.action = #selector(settingsAction)
-      if let view = avatarHostingView {
-        setCustomView(view, on: item)
-      }
       settingsAvatarItem = item
       return item
 

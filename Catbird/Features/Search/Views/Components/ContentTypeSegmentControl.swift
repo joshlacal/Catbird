@@ -30,7 +30,9 @@ struct ContentTypeSegmentControl: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  ContentTypeSegmentControl(selectedContentType: .constant(.profiles))
-    .padding()
+  AsyncPreviewContent { appState in
+    ContentTypeSegmentControl(selectedContentType: .constant(.profiles))
+        .padding()
+  }
 }
+

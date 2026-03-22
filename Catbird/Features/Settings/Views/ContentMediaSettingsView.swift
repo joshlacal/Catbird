@@ -422,9 +422,10 @@ struct ContentMediaSettingsView: View {
 // MARK: - Preview
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
+  AsyncPreviewContent { appState in
     NavigationStack {
-        ContentMediaSettingsView()
-            .applyAppStateEnvironment(appState)
-    }
+            ContentMediaSettingsView()
+        }
+  }
 }
+

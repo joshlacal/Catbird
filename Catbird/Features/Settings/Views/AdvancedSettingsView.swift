@@ -371,9 +371,10 @@ struct AdvancedSettingsView: View {
 }
 
 #Preview {
-    @Previewable @Environment(AppState.self) var appState
-  NavigationStack {
-    AdvancedSettingsView()
-      .applyAppStateEnvironment(appState)
+  AsyncPreviewContent { appState in
+    NavigationStack {
+        AdvancedSettingsView()
+      }
   }
 }
+

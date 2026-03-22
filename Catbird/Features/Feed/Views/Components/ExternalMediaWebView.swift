@@ -9,10 +9,19 @@ import AppKit
 
 struct ExternalMediaWebView: Equatable {
     let url: URL
+    let htmlString: String?
     let shouldBlur: Bool
     @Binding var isLoading: Bool
     @Binding var hasError: Bool
-    
+
+    init(url: URL, shouldBlur: Bool, isLoading: Binding<Bool>, hasError: Binding<Bool>, htmlString: String? = nil) {
+        self.url = url
+        self.htmlString = htmlString
+        self.shouldBlur = shouldBlur
+        self._isLoading = isLoading
+        self._hasError = hasError
+    }
+
     // Add equatable conformance to prevent unnecessary recreation
     static func == (lhs: ExternalMediaWebView, rhs: ExternalMediaWebView) -> Bool {
         return lhs.url == rhs.url && lhs.shouldBlur == rhs.shouldBlur
@@ -25,14 +34,14 @@ struct ExternalMediaWebView: Equatable {
 extension ExternalMediaWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        
+
         // Configure for embedded content with better interactivity
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        
+
         // Enable user interaction
         configuration.suppressesIncrementalRendering = false
-        
+
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
@@ -42,21 +51,32 @@ extension ExternalMediaWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = UIColor.clear
         webView.scrollView.backgroundColor = UIColor.clear
-        
+
         // Enable user interaction and touch events
         webView.isUserInteractionEnabled = true
         webView.scrollView.isUserInteractionEnabled = true
-        
+
+        // Load content once at creation
+        if let html = htmlString {
+            webView.loadHTMLString(html, baseURL: url)
+        } else {
+            webView.load(URLRequest(url: url))
+        }
+        context.coordinator.loadedURL = url
+
         return webView
     }
-    
+
     func updateUIView(_ webView: WKWebView, context: Context) {
-        if webView.url != url {
-            let request = URLRequest(url: url)
-            webView.load(request)
+        guard context.coordinator.loadedURL != url else { return }
+        context.coordinator.loadedURL = url
+        if let html = htmlString {
+            webView.loadHTMLString(html, baseURL: url)
+        } else {
+            webView.load(URLRequest(url: url))
         }
     }
-    
+
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
@@ -65,27 +85,38 @@ extension ExternalMediaWebView: UIViewRepresentable {
 extension ExternalMediaWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        
+
         // Configure for embedded content
         // Note: Some iOS-specific properties don't exist on macOS
         configuration.suppressesIncrementalRendering = false
-        
+
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
-        
+
         // macOS specific setup
         webView.setValue(false, forKey: "drawsBackground")
         webView.setValue(NSColor.clear, forKey: "backgroundColor")
-        
+
+        // Load content once at creation
+        if let html = htmlString {
+            webView.loadHTMLString(html, baseURL: url)
+        } else {
+            webView.load(URLRequest(url: url))
+        }
+        context.coordinator.loadedURL = url
+
         return webView
     }
-    
+
     func updateNSView(_ webView: WKWebView, context: Context) {
-        if webView.url != url {
-            let request = URLRequest(url: url)
-            webView.load(request)
+        guard context.coordinator.loadedURL != url else { return }
+        context.coordinator.loadedURL = url
+        if let html = htmlString {
+            webView.loadHTMLString(html, baseURL: url)
+        } else {
+            webView.load(URLRequest(url: url))
         }
     }
     
@@ -100,7 +131,8 @@ extension ExternalMediaWebView: NSViewRepresentable {
 extension ExternalMediaWebView {
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let parent: ExternalMediaWebView
-        
+        var loadedURL: URL?
+
         init(_ parent: ExternalMediaWebView) {
             self.parent = parent
         }
@@ -214,10 +246,11 @@ struct EmbeddedMediaWebView: View {
     
     private var webViewContent: some View {
         ExternalMediaWebView(
-            url: embedURL, 
+            url: embedURL,
             shouldBlur: shouldBlur,
             isLoading: $isLoading,
-            hasError: $hasError
+            hasError: $hasError,
+            htmlString: youtubeHTML
         )
         .id(embedURL.absoluteString) // Stable identity prevents recreation
         .onChange(of: isLoading) { _, newValue in
@@ -227,6 +260,61 @@ struct EmbeddedMediaWebView: View {
         }
     }
     
+    private var youtubeHTML: String? {
+        switch embedType {
+        case .youtube(let videoId), .youtubeShorts(let videoId):
+            return Self.youtubePlayerHTML(videoId: videoId)
+        default:
+            return nil
+        }
+    }
+
+    private static func youtubePlayerHTML(videoId: String) -> String {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+        <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        html,body{width:100%;height:100%;overflow:hidden;background:#000}
+        #player{position:absolute;top:0;left:0;width:100%;height:100%}
+        #player iframe{width:100%!important;height:100%!important}
+        </style>
+        </head>
+        <body>
+        <div id="player"></div>
+        <script src="https://www.youtube.com/iframe_api"></script>
+        <script>
+        function onYouTubeIframeAPIReady(){
+          new YT.Player('player',{
+            width:'100%',
+            height:'100%',
+            videoId:'\(videoId)',
+            playerVars:{
+              playsinline:1,
+              autoplay:0,
+              rel:0,
+              modestbranding:1,
+              origin:'https://youtube.catbird.blue'
+            },
+            events:{
+              onError:function(e){
+                var msg=document.createElement('div');
+                msg.textContent='Video unavailable';
+                msg.style.cssText='color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:-apple-system,sans-serif;font-size:14px';
+                document.body.replaceChildren(msg);
+              }
+            }
+          })
+        }
+        </script>
+        </body>
+        </html>
+        """
+    }
+
     private var embedURL: URL {
         switch embedType {
         case .youtube(let videoId):

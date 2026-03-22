@@ -4,7 +4,7 @@ import CatbirdMLSCore
 
 #if os(iOS)
 
-/// Unified view for rendering MLS message embeds (post, link, or GIF)
+/// Unified view for rendering MLS message embeds (post, link, GIF, or image)
 struct MLSEmbedView: View {
   let embed: MLSEmbedData
   @Binding var navigationPath: NavigationPath
@@ -19,6 +19,16 @@ struct MLSEmbedView: View {
 
     case .post(let postEmbed):
       ChatPostEmbedView(postEmbed: postEmbed, navigationPath: $navigationPath)
+
+    case .image(let imageEmbed):
+      MLSImageView(imageEmbed: imageEmbed)
+
+    case .unknown:
+      Text("This message contains an attachment your app version cannot display.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding()
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
   }
 }

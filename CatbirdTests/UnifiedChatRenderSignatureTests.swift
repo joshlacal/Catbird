@@ -81,5 +81,62 @@ struct UnifiedChatRenderSignatureTests {
         
         #expect(signatureOther != signatureCurrent)
     }
-}
 
+    @Test("MLS display ordering does not sink missing metadata to the end")
+    func testMLSDisplayOrderingFallsBackWithoutSinkingMessage() {
+        let remoteWithoutOrdering = MLSMessageAdapter(
+            id: "remote-missing-order",
+            convoID: "convo-1",
+            text: "Earlier remote message",
+            senderDID: "did:plc:alice",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 100),
+            epoch: nil,
+            sequence: nil
+        )
+
+        let laterOrderedMessage = MLSMessageAdapter(
+            id: "ordered-later",
+            convoID: "convo-1",
+            text: "Later ordered message",
+            senderDID: "did:plc:bob",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 200),
+            epoch: 4,
+            sequence: 12
+        )
+
+        let sorted = [laterOrderedMessage, remoteWithoutOrdering].sorted(by: MLSMessageAdapter.sortsInDisplayOrder)
+
+        #expect(sorted.map(\.id) == ["remote-missing-order", "ordered-later"])
+    }
+
+    @Test("MLS display ordering keeps confirmed epoch and sequence authoritative")
+    func testMLSDisplayOrderingUsesConfirmedEpochAndSequence() {
+        let laterTimestampLowerSequence = MLSMessageAdapter(
+            id: "seq-1",
+            convoID: "convo-1",
+            text: "First by MLS order",
+            senderDID: "did:plc:alice",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 300),
+            epoch: 8,
+            sequence: 1
+        )
+
+        let earlierTimestampHigherSequence = MLSMessageAdapter(
+            id: "seq-2",
+            convoID: "convo-1",
+            text: "Second by MLS order",
+            senderDID: "did:plc:bob",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 200),
+            epoch: 8,
+            sequence: 2
+        )
+
+        let sorted = [earlierTimestampHigherSequence, laterTimestampLowerSequence].sorted(by: MLSMessageAdapter.sortsInDisplayOrder)
+
+        #expect(sorted.map(\.id) == ["seq-1", "seq-2"])
+    }
+}
