@@ -33,7 +33,7 @@ let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 struct CatbirdApp: App {
   #if os(iOS)
   // MARK: - App Delegate for UIKit callbacks
-    class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     // Note: Access AppState via AppStateManager.shared.activeState instead of storing it
 
     func application(
@@ -219,6 +219,74 @@ struct CatbirdApp: App {
         completionHandler(.noData)
       }
     }
+
+    override func buildMenu(with builder: UIMenuBuilder) {
+      super.buildMenu(with: builder)
+      guard builder.system == .main else { return }
+
+      #if targetEnvironment(macCatalyst)
+      // Tab switching: Cmd-1 through Cmd-5
+      let tabCommands = (1...5).map { index in
+        UIKeyCommand(
+          title: ["Home", "Search", "Notifications", "Profile", "Messages"][index - 1],
+          action: #selector(handleTabShortcut(_:)),
+          input: "\(index)",
+          modifierFlags: .command,
+          propertyList: index
+        )
+      }
+      let tabMenu = UIMenu(title: "Tabs", options: .displayInline, children: tabCommands)
+      builder.insertChild(tabMenu, atStartOfMenu: .view)
+
+      let refreshCommand = UIKeyCommand(
+        title: "Refresh",
+        action: #selector(handleRefreshShortcut),
+        input: "r",
+        modifierFlags: .command
+      )
+
+      let composeCommand = UIKeyCommand(
+        title: "New Post",
+        action: #selector(handleComposeShortcut),
+        input: "n",
+        modifierFlags: .command
+      )
+
+      let settingsCommand = UIKeyCommand(
+        title: "Settings\u{2026}",
+        action: #selector(handleSettingsShortcut),
+        input: ",",
+        modifierFlags: .command
+      )
+
+      let actionMenu = UIMenu(title: "", options: .displayInline, children: [refreshCommand, composeCommand, settingsCommand])
+      builder.insertChild(actionMenu, atEndOfMenu: .file)
+      #endif
+    }
+
+    #if targetEnvironment(macCatalyst)
+    @objc func handleTabShortcut(_ sender: UIKeyCommand) {
+      guard let index = sender.propertyList as? Int else { return }
+      CatalystSceneDelegate.activeCoordinator?.onTabSelected?(index - 1)
+    }
+
+    @objc func handleRefreshShortcut() {
+      CatalystSceneDelegate.activeCoordinator?.onRefreshTapped?()
+    }
+
+    @objc func handleComposeShortcut() {
+      let coordinator = CatalystSceneDelegate.activeCoordinator
+      if coordinator?.currentTab == 4 {
+        coordinator?.onNewMessageTapped?()
+      } else {
+        coordinator?.onComposeTapped?()
+      }
+    }
+
+    @objc func handleSettingsShortcut() {
+      CatalystSceneDelegate.activeCoordinator?.onSettingsTapped?()
+    }
+    #endif
 
     func application(
       _ application: UIApplication,

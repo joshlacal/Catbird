@@ -193,6 +193,7 @@ struct MainContentView: View {
   @State private var showingOnboarding = false
   @State private var hasRestoredState = false
   @State private var isRestoringFeed = false // Prevent saving during account switch
+  @State private var drawerNavigationPath = NavigationPath()
   // Snapshot the draft at presentation time so autosave mutations don't recreate the sheet content
   @State private var composerInitialDraft: PostComposerDraft?
   // Namespace for iOS 26 matched transitions
@@ -382,7 +383,11 @@ struct MainContentView: View {
                 .accessibilityIdentifier("tab_messages")
                 #endif
               }
-              
+              #if targetEnvironment(macCatalyst)
+              .toolbar(.hidden, for: .tabBar)
+              #endif
+
+              #if !targetEnvironment(macCatalyst)
               if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
                 FAB(
                   composeAction: { showingPostComposer = true },
@@ -398,6 +403,7 @@ struct MainContentView: View {
                 // Mark FAB as the source of the Liquid Glass morph on iOS 26
                     // Source tagging now occurs inside FAB on the compose button itself
               }
+              #endif
             }
           }
         } else {
@@ -491,7 +497,11 @@ struct MainContentView: View {
               .accessibilityIdentifier("tab_messages")
               #endif
             }
-            
+            #if targetEnvironment(macCatalyst)
+            .toolbar(.hidden, for: .tabBar)
+            #endif
+
+            #if !targetEnvironment(macCatalyst)
             if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
               FAB(
                 composeAction: { showingPostComposer = true },
@@ -507,10 +517,11 @@ struct MainContentView: View {
               // Mark FAB as the source of the Liquid Glass morph on iOS 26
                   // Source tagging now occurs inside FAB on the compose button itself
             }
+            #endif
           }
         }
       } drawer: {
-          NavigationStack(path: appState.navigationManager.pathBinding(for: 0)) {
+          NavigationStack(path: $drawerNavigationPath) {
               FeedsStartPage(
                 appState: appState,
                 selectedFeed: $selectedFeed,
@@ -520,7 +531,7 @@ struct MainContentView: View {
               .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
                   destination,
-                  path: appState.navigationManager.pathBinding(for: 0),
+                  path: $drawerNavigationPath,
                   appState: appState,
                   selectedTab: $selectedTab
                 )
@@ -631,24 +642,40 @@ struct MainContentView: View {
           }
         }
       }
+      .onChange(of: isDrawerOpen) { _, newValue in
+        // When drawer closes, reset the drawer navigation path to prevent stale state
+        if !newValue {
+          drawerNavigationPath = NavigationPath()
+        }
+      }
+      .onChange(of: drawerNavigationPath) { _, newPath in
+        // When navigating inside the drawer, update isRootView so the sidebar
+        // button and SideDrawer canOpen stay in sync.
+        if isDrawerOpen && newPath.count > 0 {
+          isRootView = false
+        } else if newPath.count == 0 && appState.navigationManager.tabPaths[0]?.count == 0 {
+          isRootView = true
+        }
+      }
       .onChange(of: appState.userDID) { oldDID, newDID in
         // Account switched - restore last feed for this account
         guard oldDID != newDID else { return }
         logger.debug("🔄 Account switched from \(oldDID) to \(newDID) - restoring last feed")
-        
+
         // Set flag to prevent saving during restoration
         isRestoringFeed = true
-        
+
         // IMMEDIATELY reset feed synchronously to prevent overlay
         selectedFeed = .timeline
         currentFeedName = "Timeline"
-        
+
         // Reset initialization flag
         hasInitializedFeed = false
-        
+
         // Clear drawer state
         isDrawerOpen = false
-        
+        drawerNavigationPath = NavigationPath()
+
         // THEN restore last feed for new account asynchronously
         Task {
           await restoreLastFeedForAccount()
@@ -911,21 +938,19 @@ struct MainContentView: View {
       NetworkStatusIndicator()
     }
     #if targetEnvironment(macCatalyst)
-    // Global Cmd-R binding for Mac Catalyst to refresh the current feed when on Home tab
-    .overlay(alignment: .topLeading) {
-      // Invisible button to register the keyboard shortcut reliably across the view
-      Button(action: {
-        Task { @MainActor in
-          if selectedTab == 0 { // Only refresh on the Home tab
-            let manager = FeedStateStore.shared.stateManager(for: selectedFeed, appState: appState)
-            await manager.refresh()
-          }
-        }
-      }) { EmptyView() }
-      .keyboardShortcut("r", modifiers: .command)
-      .opacity(0.001)
-      .accessibilityHidden(true)
-    }
+    .modifier(CatalystToolbarBridge(
+      selectedTab: $selectedTab,
+      isDrawerOpen: $isDrawerOpen,
+      isRootView: $isRootView,
+      showingPostComposer: $showingPostComposer,
+      showingNewMessageSheet: $showingNewMessageSheet,
+      showingSettings: $showingSettings,
+      appState: appState,
+      onRefresh: {
+        let manager = FeedStateStore.shared.stateManager(for: selectedFeed, appState: appState)
+        await manager.refresh()
+      }
+    ))
     #endif
     // Provide the composer transition namespace to descendants so reply buttons
     // and other triggers can participate in the zoom transition to the composer.
@@ -1045,7 +1070,11 @@ private struct AppStateThemeModifier: ViewModifier {
   }
 }
 
-#Preview {
-    ContentView()
-        .previewWithAuthenticatedState()
+#Preview("ContentView") {
+  AsyncPreviewContent { appState in
+    MainContentView(
+      selectedTab: .constant(0),
+      lastTappedTab: .constant(nil)
+    )
+  }
 }

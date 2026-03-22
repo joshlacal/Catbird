@@ -14,6 +14,9 @@ struct NotificationsView: View {
   @State private var scrollPosition: ScrollPosition = ScrollPosition(idType: String.self)
   @SceneStorage("notifications-scroll-position") private var savedScrollPositionId: String?
   @State private var selectedFilter: NotificationsViewModel.NotificationFilter = .all
+  @State private var lastLoadMoreTriggerTime: TimeInterval = .zero
+  @State private var showingSettings = false
+  private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsView")
 
@@ -76,8 +79,9 @@ struct NotificationsView: View {
       #if os(iOS)
         .toolbarTitleDisplayMode(.large)
       #endif
+        #if !targetEnvironment(macCatalyst)
         .toolbar {
-          ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .topBarLeading) {
             Button {
               navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
             } label: {
@@ -86,7 +90,7 @@ struct NotificationsView: View {
             }
           }
 
-          ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .topBarTrailing) {
             Button(action: {
               Task {
                 await viewModel.refreshNotifications()
@@ -96,6 +100,18 @@ struct NotificationsView: View {
                 .imageScale(.medium)
             }
           }
+
+            ToolbarItem(placement: .primaryAction) {
+            SettingsAvatarToolbarButton {
+              showingSettings = true
+            }
+          }
+        }
+        #endif
+        .sheet(isPresented: $showingSettings) {
+          SettingsView()
+            .applyAppStateEnvironment(appState)
+            .environment(appState)
         }
         .navigationDestination(for: NavigationDestination.self) { destination in
           NavigationHandler.viewForDestination(destination, path: navigationPath, appState: appState, selectedTab: $selectedTab)
@@ -212,6 +228,7 @@ struct NotificationsView: View {
   @ViewBuilder
   private var notificationsListWithHeader: some View {
     let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
       List {
@@ -219,7 +236,9 @@ struct NotificationsView: View {
         filterPicker
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
 
-        ForEach(viewModel.groupedNotifications, id: \.id) { group in
+        ForEach(indexedGroups, id: \.element.id) { item in
+          let index = item.offset
+          let group = item.element
           NotificationCard(
             group: group,
             onTap: { destination in
@@ -235,16 +254,7 @@ struct NotificationsView: View {
           .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           .onAppear {
-            let index =
-              viewModel.groupedNotifications.firstIndex(where: { $0.id == group.id }) ?? 0
-            let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
-
-            if index >= thresholdIndex && viewModel.hasMoreNotifications
-              && !viewModel.isLoadingMore {
-              Task {
-                await viewModel.loadMoreNotifications()
-              }
-            }
+            triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
           }
         }
 
@@ -272,6 +282,7 @@ struct NotificationsView: View {
   @ViewBuilder
   private var notificationsList: some View {
     let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
       List {
@@ -279,7 +290,9 @@ struct NotificationsView: View {
 //          .listRowSeparator(.hidden)
 //          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
 
-        ForEach(viewModel.groupedNotifications, id: \.id) { group in
+        ForEach(indexedGroups, id: \.element.id) { item in
+          let index = item.offset
+          let group = item.element
           NotificationCard(
             group: group,
             onTap: { destination in
@@ -295,16 +308,7 @@ struct NotificationsView: View {
           .alignmentGuide(.listRowSeparatorTrailing) { _ in 0 }
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           .onAppear {
-            let index =
-              viewModel.groupedNotifications.firstIndex(where: { $0.id == group.id }) ?? 0
-            let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
-
-            if index >= thresholdIndex && viewModel.hasMoreNotifications
-              && !viewModel.isLoadingMore {
-              Task {
-                await viewModel.loadMoreNotifications()
-              }
-            }
+            triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
           }
         }
 
@@ -337,6 +341,24 @@ struct NotificationsView: View {
     }
   }
 
+  
+  private func shouldLoadMoreNotifications(currentIndex: Int) -> Bool {
+    let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
+    return currentIndex >= thresholdIndex && viewModel.hasMoreNotifications && !viewModel.isLoadingMore
+  }
+  
+  @MainActor
+  private func triggerLoadMoreNotificationsIfNeeded(currentIndex: Int) {
+    guard shouldLoadMoreNotifications(currentIndex: currentIndex) else { return }
+    
+    let now = Date().timeIntervalSinceReferenceDate
+    guard now - lastLoadMoreTriggerTime >= loadMoreTriggerDedupInterval else { return }
+    
+    lastLoadMoreTriggerTime = now
+    Task {
+      await viewModel.loadMoreNotifications()
+    }
+  }
   
   private func retryLoadNotifications() async {
     viewModel.clearError()

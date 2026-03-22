@@ -24,6 +24,7 @@ struct ChatTabView: View {
   @State private var lastErrorMessage: String?
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
   @State private var showingNewMessageSheet = false
+  @State private var showingSettings = false
   @State private var mlsSettingsRefreshTrigger = false  // Triggers view refresh when MLS settings change
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
@@ -132,6 +133,7 @@ struct ChatTabView: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(.thinMaterial)
     }
+    #if !targetEnvironment(macCatalyst)
     .overlay(alignment: .bottomTrailing) {
       if shouldShowChatFAB {
         ChatFAB(newMessageAction: {
@@ -141,6 +143,7 @@ struct ChatTabView: View {
         .padding(.trailing, 20)
       }
     }
+    #endif
   }
 
   @ViewBuilder
@@ -296,10 +299,7 @@ struct ChatTabView: View {
       let success = try await apiClient.optOut()
       if success {
         if let conversationManager = await appState.getMLSConversationManager() {
-          if let did = conversationManager.userDid,
-             let deviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: did) {
-            try? await conversationManager.removeDeviceRecord(deviceId: deviceInfo.deviceId)
-          }
+          try? await conversationManager.removeCurrentDeviceRecord()
         }
         logger.info("Successfully opted out from MLS on server")
       } else {
@@ -352,6 +352,7 @@ struct ChatTabView: View {
     #endif
     .themedNavigationBar(appState.themeManager)
     .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 400)
+    #if !targetEnvironment(macCatalyst)
     .toolbar {
       ToolbarItem(placement: .cancellationAction) {
         MessageRequestsButton()
@@ -359,9 +360,20 @@ struct ChatTabView: View {
       ToolbarItem(placement: .primaryAction) {
         ChatToolbarMenu()
       }
+      ToolbarItem(placement: .primaryAction) {
+        SettingsAvatarToolbarButton {
+          showingSettings = true
+        }
+      }
+    }
+    #endif
+    .sheet(isPresented: $showingSettings) {
+      SettingsView()
+        .applyAppStateEnvironment(appState)
+        .environment(appState)
     }
   }
-  
+
   @ViewBuilder
   private var searchResultsContent: some View {
     if !appState.chatManager.filteredProfiles.isEmpty {

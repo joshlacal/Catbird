@@ -44,6 +44,22 @@ struct HomeView: View {
     }
       .onAppear {
         capturedAppState.navigationManager.updateCurrentTab(0)
+        // Sync isRootView on appear to recover from any stale state
+        let currentPathCount = navigationPath.wrappedValue.count
+        if currentPathCount == 0 && !isRootView {
+          isRootView = true
+        }
+      }
+      .onChange(of: selectedTab) { _, newTab in
+        // When returning to the Home tab, re-sync isRootView from navigation path
+        if newTab == 0 {
+          let currentPathCount = navigationPath.wrappedValue.count
+          let expectedIsRoot = currentPathCount == 0
+          if isRootView != expectedIsRoot {
+            isRootView = expectedIsRoot
+            logger.debug("[\(id)] Synced isRootView to \(expectedIsRoot) on tab switch")
+          }
+        }
       }
       .onChange(of: selectedFeed) { oldValue, newValue in
         handleSelectedFeedChange(oldValue: oldValue, newValue: newValue)
@@ -53,6 +69,17 @@ struct HomeView: View {
       }
       .onChange(of: navigationPath.wrappedValue) { oldPath, newPath in
         handleNavigationChange(oldCount: oldPath.count, newCount: newPath.count)
+      }
+      .onChange(of: isDrawerOpen) { _, newValue in
+        // When drawer closes, re-sync isRootView from the tab navigation path
+        // to recover from any state corruption during drawer navigation
+        if !newValue {
+          let tabPathCount = navigationPath.wrappedValue.count
+          if tabPathCount == 0 && !isRootView {
+            isRootView = true
+            logger.debug("[\(id)] Restored isRootView to true after drawer close")
+          }
+        }
       }
   }
   
@@ -67,27 +94,13 @@ struct HomeView: View {
         .toolbarTitleDisplayMode(.large)
         #endif
         .ensureNavigationFonts()
+        #if !targetEnvironment(macCatalyst)
         .toolbar {
           leadingToolbarContent
 //          centerToolbarContent
           trailingToolbarContent
-          #if targetEnvironment(macCatalyst)
-          // Add a refresh button for Mac Catalyst and bind Cmd-R
-          ToolbarItem(placement: .primaryAction) {
-            Button {
-              Task { @MainActor in
-                let manager = FeedStateStore.shared.stateManager(for: selectedFeed, appState: appState)
-                await manager.refresh()
-              }
-            } label: {
-              Image(systemName: "arrow.clockwise")
-            }
-            .keyboardShortcut("r", modifiers: .command)
-            .help("Refresh Feed")
-            .accessibilityLabel("Refresh feed")
-          }
-          #endif
         }
+        #endif
         .navigationDestination(for: NavigationDestination.self) { destination in
           NavigationHandler.viewForDestination(
             destination,
@@ -160,26 +173,9 @@ struct HomeView: View {
   
   private var trailingToolbarContent: some ToolbarContent {
     ToolbarItem(placement: .primaryAction) {
-      Button(action: {
+      SettingsAvatarToolbarButton {
         showingSettings = true
-      }) {
-        let avatarURL = appState.currentUserProfile?.finalAvatarURL()
-
-        return AvatarView(
-          did: appState.userDID,
-          client: appState.atProtoClient,
-          size: 30,
-          avatarURL: avatarURL
-        )
-        .scaledToFit()
-        .frame(width: 30, height: 30)
-        .clipShape(Circle())
-        .id("\(appState.userDID)-\(appState.currentUserProfile?.avatar?.description ?? "noavatar")")
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Profile and settings")
-      .accessibilityHint("Opens your profile and app settings")
-      .accessibilityAddTraits(.isButton)
     }
   }
 

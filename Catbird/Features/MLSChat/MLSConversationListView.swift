@@ -19,12 +19,12 @@ struct MLSConversationListView: View {
     
     @AppStorage("chatMode") private var chatModeRaw: String = ChatTabView.ChatMode.bluesky.rawValue
 
-    @State private var viewModel: MLSConversationListViewModel?
     @State private var searchText = ""
     @State private var selectedConvoId: String?
     @State private var showingNewConversation = false
     @State private var showingJoinConversation = false
     @State private var showingChatRequests = false
+    @State private var showingSettings = false
     @State private var isLoadingConversations = false
     @State private var isInitializingMLS = false
     @State private var showingErrorAlert = false
@@ -34,10 +34,17 @@ struct MLSConversationListView: View {
     @State private var conversations: [MLSConversationModel] = []
     @State private var conversationParticipants: [String: [MLSParticipantViewModel]] = [:]
     @State private var conversationUnreadCounts: [String: Int] = [:]
+    @State private var conversationLastMessages: [String: (senderDID: String, text: String)] = [:]
     @State private var pollingTask: Task<Void, Never>?
+    @State private var stateObserver: MLSStateObserver?
+    @State private var observedConversationManager: MLSConversationManager?
+    @State private var isListViewVisible = false
     @State private var recentMemberChanges: [String: MemberChangeInfo] = [:]
     @State private var pendingChatRequestCount: Int = 0
     @State private var pollCycleCount: Int = 0  // OOM FIX: Track poll cycles for periodic checkpoint
+    @State private var conversationToLeave: MLSConversationModel?
+    @State private var showingLeaveConfirmation = false
+    @State private var isLeavingConversation = false
     
     // ACCOUNT SWITCH FIX: Track stale AppState after account switch
     @State private var initialUserDID: String?  // Capture which user this view was created for
@@ -89,6 +96,23 @@ struct MLSConversationListView: View {
             return false
         }
     }
+
+    private struct ConversationListSnapshot {
+        let conversations: [MLSConversationModel]
+        let conversationParticipants: [String: [MLSParticipantViewModel]]
+        let conversationUnreadCounts: [String: Int]
+        let conversationLastMessages: [String: (senderDID: String, text: String)]
+        let recentMemberChanges: [String: MemberChangeInfo]
+        let pendingChatRequestCount: Int
+        let selectedConversationId: String?
+        let keyPackageStatus: KeyPackageStatus
+        let capturedAt: Date
+    }
+
+    @MainActor
+    private static var snapshotCacheByUserDID: [String: ConversationListSnapshot] = [:]
+
+    private let snapshotMaxAge: TimeInterval = 180
     
     // ACCOUNT SWITCH FIX: Check if this view's AppState is stale (account switched)
     // Only consider stale during explicit account transitions, NOT during ephemeral push notification access
@@ -196,10 +220,28 @@ struct MLSConversationListView: View {
                 Text("\nRetrying... (attempt \(attempt) of \(appState.mlsServiceState.maxRetries))")
             }
         }
+        .alert("Leave Conversation?", isPresented: $showingLeaveConfirmation) {
+            Button("Cancel", role: .cancel) {
+                conversationToLeave = nil
+            }
+            Button("Leave", role: .destructive) {
+                if let conversation = conversationToLeave {
+                    leaveConversation(conversation)
+                }
+                conversationToLeave = nil
+            }
+        } message: {
+            Text("Are you sure you want to leave this conversation? You will no longer be able to send or receive messages.")
+        }
         .sheet(isPresented: $showingNewConversation) {
-            MLSNewConversationView(onConversationCreated: {
-                await refreshConversations()
-            })
+            MLSNewConversationView(
+                onConversationCreated: {
+                    await refreshConversations()
+                },
+                onNavigateToConversation: { convoId in
+                    appState.navigationManager.targetMLSConversationId = convoId
+                }
+            )
             .environment(appState)
             .applyAppStateEnvironment(appState)
             .presentationDetents([.large])
@@ -238,72 +280,17 @@ struct MLSConversationListView: View {
                 stopPolling()
                 return
             }
-            
-            if viewModel == nil {
-                // NOTIFICATION FIX: If MLS is still initializing, wait for it to become ready
-                // instead of immediately showing an error. This handles account switching.
-                let maxWaitTime: TimeInterval = 10.0
-                let checkInterval: TimeInterval = 0.3
-                var elapsed: TimeInterval = 0
-                
-                // Wait for database to become available if MLS is initializing
-                // CRITICAL FIX: Use labeled loop so break exits the while loop, not just the switch
-                waitLoop: while appState.mlsDatabase == nil && elapsed < maxWaitTime {
-                    let status = appState.mlsServiceState.status
-                    switch status {
-                    case .notStarted, .initializing, .retrying:
-                        logger.debug("MLS service status: \(String(describing: status)), waiting...")
-                        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-                        elapsed += checkInterval
-                    case .ready:
-                        // Ready but database ref might be updating, give it a moment
-                        try? await Task.sleep(nanoseconds: 100_000_000)
-                        elapsed += 0.1
-                    case .failed, .databaseFailed:
-                        // Don't wait for a failed state - exit the loop immediately
-                        break waitLoop
-                    }
-                    
-                    // Also check for account switch during wait
-                    if isViewStale {
-                        logger.warning("Account changed while waiting for MLS")
-                        isAppStateStale = true
-                        keyPackageStatus = .error("Account changed. Please go back and re-enter.")
-                        stopPolling()
-                        return
-                    }
-                }
-                
-                guard let database = appState.mlsDatabase,
-                      let apiClient = await appState.getMLSAPIClient() else {
-                    logger.error("Cannot initialize view: mlsDatabase or apiClient not available after waiting")
 
-                    // Check MLS service state and provide appropriate error message
-                    switch appState.mlsServiceState.status {
-                    case .databaseFailed(let message):
-                        errorMessage = "Database error: \(message)"
-                    case .failed(let message):
-                        errorMessage = message
-                    case .notStarted, .initializing:
-                        // Still not ready after waiting - show a helpful message
-                        errorMessage = "MLS service is still initializing. Please try again in a moment."
-                    default:
-                        errorMessage = "MLS service not available"
-                    }
-
-                    showingErrorAlert = true
-                    return
-                }
-
-                viewModel = MLSConversationListViewModel(
-                    database: database,
-                    apiClient: apiClient
-                )
+            let restoredSnapshot = await MainActor.run {
+                restoreCachedSnapshotIfAvailable()
             }
 
-            await initializeMLSAndLoadConversations()
+            await initializeMLSAndLoadConversations(showLoadingUI: !restoredSnapshot)
             await loadRecentMemberChanges()
             await refreshChatRequestCount()
+            await MainActor.run {
+                cacheCurrentSnapshot()
+            }
             
             // NOTIFICATION FIX: Check if there's a pending deep-link conversation to navigate to
             // This handles the case where targetMLSConversationId was set before .task completed
@@ -314,7 +301,9 @@ struct MLSConversationListView: View {
             }
         }
         .onAppear {
+            isListViewVisible = true
             startPolling()
+            Task { await startStateObservation() }
             
             // NOTIFICATION FIX: Also check for pending navigation on appear
             // This catches cases where the view is re-appearing with a pending target
@@ -325,7 +314,10 @@ struct MLSConversationListView: View {
             }
         }
         .onDisappear {
+            isListViewVisible = false
+            cacheCurrentSnapshot()
             stopPolling()
+            Task { await stopStateObservation() }
         }
     }
     
@@ -384,10 +376,66 @@ struct MLSConversationListView: View {
         pollingTask?.cancel()
         pollingTask = nil
     }
+
+    @MainActor
+    private func startStateObservation() async {
+        guard stateObserver == nil else { return }
+        let observer = MLSStateObserver { event in
+            Task { @MainActor in
+                await self.handleMLSStateEvent(event)
+            }
+        }
+
+        stateObserver = observer
+        guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
+            if stateObserver?.id == observer.id {
+                stateObserver = nil
+            }
+            logger.debug("Skipping list state observation: conversation manager unavailable")
+            return
+        }
+
+        guard isListViewVisible, stateObserver?.id == observer.id else {
+            logger.debug("Skipping late list state observer registration after view disappearance")
+            if stateObserver?.id == observer.id {
+                stateObserver = nil
+            }
+            return
+        }
+
+        observedConversationManager = manager
+        manager.addObserver(observer)
+        logger.debug("Registered MLS state observer for conversation list")
+    }
+
+    @MainActor
+    private func stopStateObservation() async {
+        guard let observer = stateObserver else { return }
+
+        if let manager = observedConversationManager {
+            manager.removeObserver(observer)
+        }
+
+        stateObserver = nil
+        observedConversationManager = nil
+        logger.debug("Removed MLS state observer for conversation list")
+    }
+
+    @MainActor
+    private func handleMLSStateEvent(_ event: MLSStateEvent) async {
+        guard !isAppStateStale else { return }
+
+        switch event {
+        case .syncCompleted:
+            await loadMLSConversations()
+        default:
+            break
+        }
+    }
     
     // MARK: - Initialization
     
-    private func initializeMLSAndLoadConversations() async {
+    private func initializeMLSAndLoadConversations(showLoadingUI: Bool = true) async {
         // ACCOUNT SWITCH FIX: Early exit if view is stale
         if isViewStale {
             logger.warning("initializeMLSAndLoadConversations: Aborting - AppState is stale")
@@ -401,8 +449,12 @@ struct MLSConversationListView: View {
         }
         
         await MainActor.run {
-            isInitializingMLS = true
-            keyPackageStatus = .checking
+            if showLoadingUI {
+                isInitializingMLS = true
+            }
+            if !keyPackageStatus.isReady {
+                keyPackageStatus = .checking
+            }
         }
 
         // CRITICAL FIX: Add timeout and proper error handling for account switching scenarios
@@ -443,18 +495,16 @@ struct MLSConversationListView: View {
                 keyPackageStatus = .ready
             }
 
-            // Sync conversations from server first
-            do {
-                try await manager.syncWithServer()
-                logger.info("Synced conversations from server")
-            } catch {
-                logger.error("Failed to sync conversations: \(error.localizedDescription)")
-            }
-
-            // Then load from local database
+            // Load from local database first so the list paints immediately.
             await loadMLSConversations()
             await MainActor.run {
                 isInitializingMLS = false
+                cacheCurrentSnapshot()
+            }
+
+            // Refresh from server in background to avoid blocking UI on navigation.
+            Task {
+                await syncWithServerAndReloadConversations()
             }
             return
         }
@@ -476,6 +526,9 @@ struct MLSConversationListView: View {
                 keyPackageStatus = .ready
             }
             await loadMLSConversations()
+            await MainActor.run {
+                cacheCurrentSnapshot()
+            }
         } catch {
             logger.error("Failed to initialize MLS: \(error.localizedDescription)")
             await MainActor.run {
@@ -485,6 +538,22 @@ struct MLSConversationListView: View {
 
         await MainActor.run {
             isInitializingMLS = false
+        }
+    }
+
+    private func syncWithServerAndReloadConversations() async {
+        if let manager = await appState.getMLSConversationManager(timeout: 10.0) {
+            do {
+                try await manager.syncWithServer()
+                logger.info("Synced conversations from server")
+            } catch {
+                logger.error("Failed to sync conversations: \(error.localizedDescription)")
+            }
+        }
+
+        await loadMLSConversations()
+        await MainActor.run {
+            cacheCurrentSnapshot()
         }
     }
     
@@ -615,7 +684,24 @@ struct MLSConversationListView: View {
 //                .disabled(!keyPackageStatus.isReady)
 //            }
 // Disable for now, have to figure out ID joining
+            
+            
+              ToolbarItem(placement: .primaryAction) {
+                ChatToolbarMenu()
+              }
+              ToolbarItem(placement: .primaryAction) {
+                SettingsAvatarToolbarButton {
+                  showingSettings = true
+                }
+              }
+
         }
+        .sheet(isPresented: $showingSettings) {
+          SettingsView()
+            .applyAppStateEnvironment(appState)
+            .environment(appState)
+        }
+
         .refreshable {
             // Sync from server first, then reload from database
             if let manager = await appState.getMLSConversationManager(timeout: 10.0) {
@@ -624,18 +710,7 @@ struct MLSConversationListView: View {
             await loadMLSConversations()
             await refreshChatRequestCount()
         }
-        // On Catalyst, show FAB in sidebar to keep it constrained to the sidebar column
-        #if targetEnvironment(macCatalyst)
-        .overlay(alignment: .bottomTrailing) {
-            if shouldShowChatFAB {
-                ChatFAB(newMessageAction: {
-                    showingNewConversation = true
-                })
-                .padding(.bottom, 20)
-                .padding(.trailing, 20)
-            }
-        }
-        #endif
+        // On Catalyst, the NSToolbar compose button replaces the ChatFAB
     }
     
     @ViewBuilder
@@ -752,32 +827,36 @@ struct MLSConversationListView: View {
                     conversation: conversation,
                     participants: conversationParticipants[conversation.conversationID] ?? [],
                     recentMemberChange: recentMemberChanges[conversation.conversationID],
-                    unreadCount: conversationUnreadCounts[conversation.conversationID] ?? 0
+                    unreadCount: conversationUnreadCounts[conversation.conversationID] ?? 0,
+                    lastMessage: conversationLastMessages[conversation.conversationID]
                 )
                     .tag(conversation.conversationID)
                     .accessibilityIdentifier("mls.convoRow.\(accessibilitySafeIdPrefix(conversation.conversationID))")
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            deleteConversation(conversation)
+                            conversationToLeave = conversation
+                            showingLeaveConfirmation = true
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Leave", systemImage: "trash")
                         }
 
                         Button {
-                            archiveConversation(conversation)
+                            toggleMute(conversation)
                         } label: {
-                            Label("Archive", systemImage: "archivebox")
+                            Label(conversation.isMuted ? "Unmute" : "Mute",
+                                  systemImage: conversation.isMuted ? "bell" : "bell.slash")
                         }
-                        .tint(.blue)
+                        .tint(conversation.isMuted ? .blue : .orange)
                     }
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button {
-                            toggleReadStatus(conversation)
-                        } label: {
-                            Label(unreadCountForConversation(conversation) > 0 ? "Mark Read" : "Mark Unread", 
-                                  systemImage: unreadCountForConversation(conversation) > 0 ? "envelope.open" : "envelope.badge")
+                        if unreadCountForConversation(conversation) > 0 {
+                            Button {
+                                toggleReadStatus(conversation)
+                            } label: {
+                                Label("Mark Read", systemImage: "envelope.open")
+                            }
+                            .tint(.blue)
                         }
-                        .tint(.blue)
                     }
             }
         }
@@ -911,6 +990,57 @@ struct MLSConversationListView: View {
         let prefix = String(filtered.prefix(maxLength))
         return prefix.isEmpty ? "unknown" : prefix
     }
+
+    @MainActor
+    private func restoreCachedSnapshotIfAvailable() -> Bool {
+        guard let snapshot = Self.snapshotCacheByUserDID[appState.userDID] else {
+            return false
+        }
+
+        if Date().timeIntervalSince(snapshot.capturedAt) > snapshotMaxAge {
+            Self.snapshotCacheByUserDID[appState.userDID] = nil
+            return false
+        }
+
+        conversations = snapshot.conversations
+        conversationParticipants = snapshot.conversationParticipants
+        conversationUnreadCounts = snapshot.conversationUnreadCounts
+        conversationLastMessages = snapshot.conversationLastMessages
+        recentMemberChanges = snapshot.recentMemberChanges
+        pendingChatRequestCount = snapshot.pendingChatRequestCount
+        keyPackageStatus = snapshot.keyPackageStatus
+
+        if let cachedSelection = snapshot.selectedConversationId,
+           snapshot.conversations.contains(where: { $0.conversationID == cachedSelection }) {
+            selectedConvoId = cachedSelection
+        }
+
+        return true
+    }
+
+    @MainActor
+    private func cacheCurrentSnapshot() {
+        guard !isAppStateStale else { return }
+        guard keyPackageStatus.isReady ||
+                !conversations.isEmpty ||
+                !conversationParticipants.isEmpty ||
+                !conversationUnreadCounts.isEmpty ||
+                pendingChatRequestCount > 0 else {
+            return
+        }
+
+        Self.snapshotCacheByUserDID[appState.userDID] = ConversationListSnapshot(
+            conversations: conversations,
+            conversationParticipants: conversationParticipants,
+            conversationUnreadCounts: conversationUnreadCounts,
+            conversationLastMessages: conversationLastMessages,
+            recentMemberChanges: recentMemberChanges,
+            pendingChatRequestCount: pendingChatRequestCount,
+            selectedConversationId: selectedConvoId,
+            keyPackageStatus: keyPackageStatus,
+            capturedAt: Date()
+        )
+    }
     
     // MARK: - Actions
 
@@ -939,6 +1069,7 @@ struct MLSConversationListView: View {
 
             await MainActor.run {
                 recentMemberChanges = changes
+                cacheCurrentSnapshot()
             }
         } catch {
             logger.error("Failed to load recent member changes: \(error)")
@@ -977,27 +1108,58 @@ struct MLSConversationListView: View {
                 )
             }
 
+            // Fetch last message preview per conversation (sender name resolved later from enriched participants)
+            let lastMessages = try await MLSGRDBManager.shared.read(for: userDID) { db -> [String: (senderDID: String, text: String)] in
+                var previews: [String: (senderDID: String, text: String)] = [:]
+                for conversation in acceptedConversations {
+                    let convoID = conversation.conversationID
+                    if let message = try MLSMessageModel
+                        .filter(MLSMessageModel.Columns.conversationID == convoID)
+                        .filter(MLSMessageModel.Columns.currentUserDID == userDID)
+                        .order(MLSMessageModel.Columns.timestamp.desc)
+                        .limit(1)
+                        .fetchOne(db)
+                    {
+                        let text: String
+                        if let payload = message.parsedPayload {
+                            if let plaintext = payload.text, !plaintext.isEmpty {
+                                text = plaintext
+                            } else if case .some(.image(_)) = payload.embed {
+                                text = "Sent a photo"
+                            } else {
+                                text = ""
+                            }
+                        } else {
+                            text = message.payloadExpired ? "Message expired" : "Encrypted message"
+                        }
+                        previews[convoID] = (senderDID: message.senderID, text: text)
+                    }
+                }
+                return previews
+            }
+
             await MainActor.run {
-                // Sort conversations: unread first, then by lastMessageAt
+                // Sort conversations by most recent message (newest first)
                 let sortedConversations = acceptedConversations.sorted { lhs, rhs in
-                    let lhsUnread = unreadCounts[lhs.conversationID] ?? 0
-                    let rhsUnread = unreadCounts[rhs.conversationID] ?? 0
-                    
-                    // Unread conversations come first
-                    if lhsUnread > 0 && rhsUnread == 0 {
-                        return true
-                    }
-                    if rhsUnread > 0 && lhsUnread == 0 {
-                        return false
-                    }
-                    
-                    // Both have unread or both don't - sort by lastMessageAt
                     let lhsDate = lhs.lastMessageAt ?? lhs.createdAt
                     let rhsDate = rhs.lastMessageAt ?? rhs.createdAt
                     return lhsDate > rhsDate
                 }
-                conversations = sortedConversations
-                conversationUnreadCounts = unreadCounts
+
+                // Only update state if data actually changed to avoid SwiftUI flickering
+                let convoIDs = sortedConversations.map(\.conversationID)
+                let existingIDs = conversations.map(\.conversationID)
+                let countsChanged = unreadCounts != conversationUnreadCounts
+                let messagesChanged = lastMessages.keys != conversationLastMessages.keys
+                    || lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID }
+
+                if convoIDs != existingIDs || countsChanged || messagesChanged {
+                    conversations = sortedConversations
+                    conversationUnreadCounts = unreadCounts
+                    conversationLastMessages = lastMessages
+                    cacheCurrentSnapshot()
+                }
+
                 if selectedConvoId != nil, !acceptedConversations.contains(where: { $0.conversationID == selectedConvoId }) {
                     selectedConvoId = nil
                 }
@@ -1022,8 +1184,45 @@ struct MLSConversationListView: View {
             }
         }
 
-        // IMPROVEMENT: Use centralized MLSProfileEnricher so profiles are cached
-        // This ensures profiles are already in cache when opening a conversation detail
+        // Seed enricher cache from DB-persisted profiles so they're available immediately
+        var dbProfiles: [MLSProfileEnricher.ProfileData] = []
+        for members in membersByConvoID.values {
+            for member in members where member.handle != nil || member.displayName != nil {
+                dbProfiles.append(MLSProfileEnricher.ProfileData(
+                    did: member.did,
+                    handle: member.handle ?? "",
+                    displayName: member.displayName,
+                    avatarURL: nil
+                ))
+            }
+        }
+        await appState.mlsProfileEnricher.seedFromDatabase(dbProfiles)
+
+        // Show DB-cached profiles immediately while network fetch runs
+        let dbProfilesByDID = Dictionary(
+            dbProfiles.map { (MLSProfileEnricher.canonicalDID($0.did), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var updatedParticipants: [String: [MLSParticipantViewModel]] = [:]
+        for (convoID, members) in membersByConvoID {
+            let participants = members.map { member -> MLSParticipantViewModel in
+                let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
+                let profile = dbProfilesByDID[canonicalDID]
+                return MLSParticipantViewModel(
+                    id: member.did,
+                    handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
+                    displayName: profile?.displayName ?? member.displayName,
+                    avatarURL: profile?.avatarURL
+                )
+            }
+            updatedParticipants[convoID] = participants
+        }
+        await MainActor.run {
+            conversationParticipants = updatedParticipants
+            cacheCurrentSnapshot()
+        }
+
+        // Fetch fresh profiles from network and update
         var profilesByDID: [String: MLSProfileEnricher.ProfileData] = [:]
         if let client = appState.atProtoClient {
             profilesByDID = await appState.mlsProfileEnricher.ensureProfiles(
@@ -1033,8 +1232,9 @@ struct MLSConversationListView: View {
             )
         }
 
-        // Convert members to participants with enriched profile data
-        var updatedParticipants: [String: [MLSParticipantViewModel]] = [:]
+        // Re-apply with network-fetched profiles (includes avatars)
+        guard !profilesByDID.isEmpty else { return }
+        var enrichedParticipants: [String: [MLSParticipantViewModel]] = [:]
         for (convoID, members) in membersByConvoID {
             let participants = members.map { member -> MLSParticipantViewModel in
                 let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
@@ -1046,29 +1246,90 @@ struct MLSConversationListView: View {
                     avatarURL: profile?.avatarURL
                 )
             }
-            updatedParticipants[convoID] = participants
+            enrichedParticipants[convoID] = participants
         }
 
         await MainActor.run {
-            conversationParticipants = updatedParticipants
+            conversationParticipants = enrichedParticipants
+            cacheCurrentSnapshot()
         }
         logger.info("Loaded participants for \(membersByConvoID.count) conversations")
     }
 
-    private func deleteConversation(_ conversation: MLSConversationModel) {
-        // Note: Conversation deletion in E2EE chat requires careful handling:
-        // 1. Server-side: User must leave the conversation via API (leaveConversation)
-        // 2. Local-only: Delete conversation record from GRDB
-        // 3. Crypto: Clean up MLS group state from FFI storage
-        // For now, users should use the "Leave Conversation" option which handles all three.
-        logger.info("Deleting conversation: \(conversation.conversationID)")
+    private func leaveConversation(_ conversation: MLSConversationModel) {
+        let convoID = conversation.conversationID
+        logger.info("Leaving conversation: \(convoID)")
+        isLeavingConversation = true
+
+        Task {
+            do {
+                guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
+                    await MainActor.run {
+                        isLeavingConversation = false
+                        errorMessage = "MLS service not available."
+                        showingErrorAlert = true
+                    }
+                    return
+                }
+
+                try await manager.leaveConversation(convoId: convoID)
+
+                await MainActor.run {
+                    logger.info("Successfully left conversation: \(convoID)")
+                    conversations.removeAll { $0.conversationID == convoID }
+                    conversationParticipants.removeValue(forKey: convoID)
+                    conversationUnreadCounts.removeValue(forKey: convoID)
+                    conversationLastMessages.removeValue(forKey: convoID)
+                    recentMemberChanges.removeValue(forKey: convoID)
+
+                    if selectedConvoId == convoID {
+                        selectedConvoId = nil
+                    }
+
+                    isLeavingConversation = false
+                    cacheCurrentSnapshot()
+                }
+
+                // Update badge count
+                await appState.updateMLSUnreadCount()
+
+                // Notify detail view if it was showing this conversation
+                NotificationCenter.default.post(
+                    name: Notification.Name("MLSConversationLeft"),
+                    object: convoID
+                )
+            } catch {
+                logger.error("Failed to leave conversation: \(error.localizedDescription)")
+                await MainActor.run {
+                    isLeavingConversation = false
+                    errorMessage = "Failed to leave conversation: \(error.localizedDescription)"
+                    showingErrorAlert = true
+                }
+            }
+        }
     }
 
-    private func archiveConversation(_ conversation: MLSConversationModel) {
-        // Note: Archive requires adding an 'isArchived' column to MLSConversationModel
-        // and updating MLSStorage to support archival queries.
-        // Archived conversations would be hidden from main list but still decryptable.
-        logger.info("Archiving conversation: \(conversation.conversationID)")
+    private func toggleMute(_ conversation: MLSConversationModel) {
+        let convoID = conversation.conversationID
+        let newMutedUntil: Date? = conversation.isMuted ? nil : .distantFuture
+
+        Task {
+            do {
+                guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
+
+                try await manager.storage.setMutedUntil(
+                    conversationID: convoID,
+                    currentUserDID: appState.userDID,
+                    mutedUntil: newMutedUntil,
+                    database: manager.database
+                )
+
+                logger.info("\(conversation.isMuted ? "Unmuted" : "Muted") conversation: \(convoID)")
+                await loadMLSConversations()
+            } catch {
+                logger.error("Failed to toggle mute: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func toggleReadStatus(_ conversation: MLSConversationModel) {
@@ -1079,17 +1340,41 @@ struct MLSConversationListView: View {
             do {
                 if currentUnread > 0 {
                     // Mark all messages as read using smart routing
-                    let markedCount = try await MLSGRDBManager.shared.write(for: appState.userDID) { db in
-                        try MLSStorageHelpers.markAllMessagesAsReadSync(
+                    let (markedCount, latestCursor) = try await MLSGRDBManager.shared.write(for: appState.userDID) { db in
+                        let latestMessage = try MLSMessageModel
+                            .filter(MLSMessageModel.Columns.conversationID == convoID)
+                            .filter(MLSMessageModel.Columns.currentUserDID == appState.userDID)
+                            .order(MLSMessageModel.Columns.epoch.desc, MLSMessageModel.Columns.sequenceNumber.desc)
+                            .limit(1)
+                            .fetchOne(db)
+                        
+                        let markedCount = try MLSStorageHelpers.markAllMessagesAsReadSync(
                             in: db,
                             conversationID: convoID,
                             currentUserDID: appState.userDID
+                        )
+                        
+                        if let latestMessage {
+                            _ = try MLSStorageHelpers.upsertReadFrontierSync(
+                                in: db,
+                                conversationID: convoID,
+                                currentUserDID: appState.userDID,
+                                epoch: latestMessage.epoch,
+                                sequenceNumber: latestMessage.sequenceNumber,
+                                messageID: latestMessage.messageID
+                            )
+                        }
+                        
+                        return (
+                            markedCount,
+                            latestMessage.map { (epoch: $0.epoch, sequenceNumber: $0.sequenceNumber, messageID: $0.messageID) }
                         )
                     }
                     logger.info("Marked \(markedCount) messages as read in conversation \(convoID)")
                     
                     await MainActor.run {
                         conversationUnreadCounts[convoID] = 0
+                        cacheCurrentSnapshot()
                     }
                     
                     // Update AppState's MLS unread count
@@ -1111,12 +1396,7 @@ struct MLSConversationListView: View {
     }
 
     private func refreshConversations() async {
-        // Sync from server first
-        if let manager = await appState.getMLSConversationManager(timeout: 10.0) {
-            try? await manager.syncWithServer()
-        }
-        // Then reload from local database
-        await loadMLSConversations()
+        await syncWithServerAndReloadConversations()
     }
 
     @MainActor
@@ -1126,6 +1406,7 @@ struct MLSConversationListView: View {
         do {
             let pendingRequests = try await manager.fetchPendingRequestConversations()
             pendingChatRequestCount = pendingRequests.count
+            cacheCurrentSnapshot()
         } catch {
             logger.debug("Failed to refresh chat request count: \(error.localizedDescription)")
         }
@@ -1139,18 +1420,34 @@ struct MLSConversationRowView: View {
     let participants: [MLSParticipantViewModel]
     let recentMemberChange: MemberChangeInfo?
     let unreadCount: Int
+    var lastMessage: (senderDID: String, text: String)? = nil
 
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
-    
+
     private var hasUnread: Bool { unreadCount > 0 }
+
+    private var lastMessageSenderName: String {
+        guard let lastMessage else { return "" }
+        let did = lastMessage.senderDID
+        if did.lowercased() == appState.userDID.lowercased() {
+            return "You"
+        }
+        if let participant = participants.first(where: { $0.id.lowercased() == did.lowercased() }) {
+            if let name = participant.displayName, !name.isEmpty { return name }
+            if !participant.handle.isEmpty { return participant.handle }
+        }
+        return ""
+    }
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.base) {
             // Composite avatar for group chat
             MLSGroupAvatarView(
                 participants: participants,
-                size: DesignTokens.Size.avatarMD
+                size: DesignTokens.Size.avatarLG,
+                groupAvatarData: conversation.avatarImageData,
+                currentUserDID: appState.userDID
             )
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
@@ -1212,10 +1509,16 @@ struct MLSConversationRowView: View {
                                 .foregroundColor(change.color)
                         }
                         .lineLimit(1)
-                    } else {
-                        Text("Epoch \(conversation.epoch)")
+                    } else if let lastMessage {
+                        Text(lastMessageSenderName.isEmpty ? lastMessage.text : "\(lastMessageSenderName): \(lastMessage.text)")
                             .designFootnote()
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(conversation.joinMethod == .externalCommit ? "This device joined" : "Encrypted chat")
+                            .designFootnote()
+                            .foregroundColor(.secondary)
+                            .italic()
                             .lineLimit(1)
                     }
 
@@ -1237,12 +1540,18 @@ struct MLSConversationRowView: View {
     }
 
     private var conversationTitle: String {
-        // Use conversation title if set
+        // Use conversation title if set (typically group chats)
         if let title = conversation.title, !title.isEmpty {
             return title
         }
 
-        // Fallback title for untitled conversations
+        // For 1:1 conversations, show the other participant's name
+         let currentUserDID = appState.userDID
+            let others = participants.filter { $0.id.lowercased() != currentUserDID.lowercased() }
+            if let other = others.first {
+                return other.displayName ?? other.handle
+            }
+
         return "Secure Chat"
     }
 
@@ -1314,9 +1623,9 @@ struct MemberChangeInfo {
 
 #Preview {
     @Previewable @State var selectedTab = 4
-    @Previewable @Environment(AppState.self) var appState
-    MLSConversationListView(selectedTab: $selectedTab)
-        .environment(AppStateManager.shared)
+    AsyncPreviewContent { appState in
+        MLSConversationListView(selectedTab: $selectedTab)
+    }
 }
 
 #endif

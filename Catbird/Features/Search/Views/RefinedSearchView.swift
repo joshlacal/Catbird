@@ -33,7 +33,8 @@ struct RefinedSearchView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var lastHandledSearchRequestID: UUID?
     @State private var isApplyingPendingSearchRequest = false
-    
+    @State private var showingSettings = false
+
     private let logger = Logger(subsystem: "blue.catbird", category: "RefinedSearchView")
     
     // MARK: - Initialization
@@ -255,10 +256,22 @@ struct RefinedSearchView: View {
         .onSubmit(of: .search) {
             commitSearch()
         }
+        #if !targetEnvironment(macCatalyst)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 searchMenuButton
             }
+            ToolbarItem(placement: .primaryAction) {
+                SettingsAvatarToolbarButton {
+                    showingSettings = true
+                }
+            }
+        }
+        #endif
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+                .applyAppStateEnvironment(appState)
+                .environment(appState)
         }
         .navigationDestination(for: NavigationDestination.self) { destination in
             destinationView(for: destination)
