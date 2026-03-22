@@ -1,4 +1,5 @@
 import AVFoundation
+import BackgroundTasks
 import CryptoKit
 import Sentry
 
@@ -49,8 +50,26 @@ struct CatbirdApp: App {
         // Set notification center delegate for handling MLS notifications
         UNUserNotificationCenter.current().delegate = self
 
-      // BGTask registration moved to CatbirdApp.init() to ensure it happens before SwiftUI rendering
-      
+      // BGTask handlers MUST be registered before didFinishLaunchingWithOptions returns
+      if #available(iOS 13.0, *) {
+        BGTaskSchedulerManager.registerIfNeeded()
+        ChatBackgroundRefreshManager.registerIfNeeded()
+        BackgroundCacheRefreshManager.registerIfNeeded()
+        // MLSBackgroundRefreshManager is actor-isolated, so register directly
+        BGTaskScheduler.shared.register(
+          forTaskWithIdentifier: MLSBackgroundRefreshManager.taskIdentifier,
+          using: nil
+        ) { task in
+          guard let processingTask = task as? BGProcessingTask else {
+            task.setTaskCompleted(success: false)
+            return
+          }
+          Task {
+            await MLSBackgroundRefreshManager.shared.handleRegisteredTask(processingTask)
+          }
+        }
+      }
+
       // Request widget updates at app launch
       Task { @MainActor in
         try? await Task.sleep(for: .seconds(1))
@@ -199,6 +218,18 @@ struct CatbirdApp: App {
         logger.debug("Not an MLS notification, ignoring. Keys: \(userInfo.keys.map { String(describing: $0) }.joined(separator: ", "))")
         completionHandler(.noData)
       }
+    }
+
+    func application(
+      _ application: UIApplication,
+      configurationForConnecting connectingSceneSession: UISceneSession,
+      options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+      let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+      #if targetEnvironment(macCatalyst)
+      config.delegateClass = CatalystSceneDelegate.self
+      #endif
+      return config
     }
   }
 
@@ -801,7 +832,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       BGTaskSchedulerManager.registerIfNeeded()
       ChatBackgroundRefreshManager.registerIfNeeded()
       BackgroundCacheRefreshManager.registerIfNeeded()
-      MLSBackgroundRefreshManager.registerIfNeeded()
+      // MLSBackgroundRefreshManager is registered directly in didFinishLaunchingWithOptions
       logger.debug("✅ Background tasks registered")
     }
     #endif
@@ -894,9 +925,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             .task(priority: .high) {
               await initializeApplicationIfNeeded()
             }
-            .task(priority: .background) {
-              await registerBackgroundTasks()
-            }
 
         case .degraded(let container, let reason):
           // Running in safe mode with in-memory database
@@ -916,9 +944,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           .task(priority: .high) {
             await initializeApplicationIfNeeded()
           }
-          .task(priority: .background) {
-            await registerBackgroundTasks()
-          }
 
         case .failed(let error):
           ErrorRecoveryView(error: error, retry: {
@@ -928,6 +953,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           })
         }
       }
+      .catalystPlainButtons()
       .onOpenURL { url in
           logger.info("Received URL: \(url.absoluteString)")
 
