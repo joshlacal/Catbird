@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 import Petrel
@@ -295,3 +296,5 @@ final class GifCollectionViewCell: UICollectionViewCell {
         alpha = 1.0
     }
 }
+
+#endif

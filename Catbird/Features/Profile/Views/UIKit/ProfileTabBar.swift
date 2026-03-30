@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import SwiftUI
 import os
@@ -171,3 +172,5 @@ struct GlassTabSelectorView: View {
     }
   }
 }
+
+#endif

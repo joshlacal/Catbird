@@ -204,7 +204,7 @@ private struct InlineTopicSummaryLine: View {
             guard !isLoading, summary == nil else { return }
             isLoading = true
             defer { isLoading = false }
-            if #available(iOS 26.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
                 let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
                 await MainActor.run { summary = text }
 

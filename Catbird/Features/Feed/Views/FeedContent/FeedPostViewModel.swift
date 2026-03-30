@@ -93,6 +93,9 @@ final class FeedPostViewModel {
             return
         }
 
+        // Skip update if data hasn't changed (prevents observation loops on macOS SwiftUI List)
+        guard newPost.serializedPost != post.serializedPost else { return }
+
         // Clear cached FeedViewPost since we're getting new data
         _cachedFeedViewPost = nil
 

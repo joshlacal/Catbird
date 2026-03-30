@@ -688,6 +688,11 @@ extension Font {
     #elseif canImport(AppKit) && os(macOS) && !targetEnvironment(macCatalyst)
 
     /// macOS version - simplified dynamic font (pure macOS only, not Mac Catalyst)
+    ///
+    /// macOS has no Dynamic Type system, so this simply returns a fixed-size font.
+    /// The `maxContentSizeCategory` parameter is ignored — it only serves as a
+    /// ceiling for iOS Dynamic Type scaling and has no equivalent on macOS.
+    /// Platform-appropriate sizing is handled by FontManager.sizeScale.
     static func customDynamicFont(
         baseSize: CGFloat,
         weight: Font.Weight = .regular,
@@ -695,9 +700,10 @@ extension Font {
         relativeTo textStyle: Font.TextStyle,
         maxContentSizeCategory: CrossPlatformContentSizeCategory? = nil
     ) -> Font {
-        // On macOS, apply a simple scale factor based on the maxContentSizeCategory if provided
-        let scaledSize = maxContentSizeCategory?.scaleFactor ?? 1.0
-        return .system(size: baseSize * scaledSize, weight: weight, design: design)
+        // No Dynamic Type on macOS — use baseSize directly.
+        // FontManager.sizeScale already applies the macOS platform scale (0.765)
+        // and user font size preference before passing the size here.
+        return .system(size: baseSize, weight: weight, design: design)
     }
     
     /// macOS version - simplified custom system font (pure macOS only, not Mac Catalyst)

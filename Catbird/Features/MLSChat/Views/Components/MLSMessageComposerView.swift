@@ -1,4 +1,5 @@
 import CatbirdMLSCore
+import GameController
 import OSLog
 import Petrel
 import PhotosUI
@@ -29,6 +30,8 @@ import SwiftUI
     @State private var detectedLinkEmbed: MLSLinkEmbed?
 
     var imageSender: MLSImageSender?
+    var onVoiceTapped: (() -> Void)?
+    var isRecording: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var isTextFieldFocused: Bool
@@ -149,6 +152,10 @@ import SwiftUI
         Label("Image", systemImage: "photo.fill")
           .designCaption()
           .foregroundColor(.accentColor)
+      case .audio:
+        Label("Voice", systemImage: "waveform")
+          .designCaption()
+          .foregroundColor(.accentColor)
       case .unknown:
         Label("Attachment", systemImage: "paperclip")
           .designCaption()
@@ -168,9 +175,6 @@ import SwiftUI
             cornerRadius: composerCornerRadius
           )
         )
-        #if !targetEnvironment(macCatalyst)
-        .ignoresSafeArea(.container, edges: [.horizontal, .bottom])
-        #endif
       .accessibilityIdentifier("mls.composer.\(accessibilityConvoIdPrefix)")
     }
 
@@ -182,7 +186,7 @@ import SwiftUI
         textField
         sendButton
       }
-      .padding(.horizontal, DesignTokens.Spacing.base)
+      .padding(.horizontal, DesignTokens.Spacing.lg)
       .padding(.vertical, DesignTokens.Spacing.sm)
       .safeAreaPadding(.bottom, DesignTokens.Spacing.sm)
       .background(Color.clear)
@@ -225,7 +229,7 @@ import SwiftUI
       ZStack(alignment: .topLeading) {
         if text.isEmpty {
           Text(placeholderText)
-            .designBody()
+            .font(.system(size: DesignTokens.FontSize.body))
             .foregroundColor(.secondary)
             .padding(.top, 6)
             .padding(.leading, 5)  // Match TextEditor's internal leading inset
@@ -233,23 +237,33 @@ import SwiftUI
         }
 
         TextEditor(text: $text)
-          .designBody()
+          .font(.system(size: DesignTokens.FontSize.body))
+          .lineSpacing(0)
           .frame(minHeight: 36, maxHeight: 120)
           .scrollContentBackground(.hidden)
           .background(Color.clear)
           .padding(.top, 6)
           .focused($isTextFieldFocused)
-          #if targetEnvironment(macCatalyst)
-          .onKeyPress(.return, phases: .down) { press in
-            if press.modifiers.contains(.shift) {
-              return .ignored  // Let Shift+Enter insert a newline
-            }
-            sendMessage()
-            return .handled
-          }
-          #endif
           .accessibilityIdentifier("mls.composer.textInput.\(accessibilityConvoIdPrefix)")
           .onChange(of: text) { _, newValue in
+            #if targetEnvironment(macCatalyst)
+            // On Catalyst, Enter sends; Shift+Enter or Option+Enter inserts a newline
+            if newValue.hasSuffix("\n") {
+              let kb = GCKeyboard.coalesced?.keyboardInput
+              let modifierHeld =
+                kb?.button(forKeyCode: .leftShift)?.isPressed == true
+                || kb?.button(forKeyCode: .rightShift)?.isPressed == true
+                || kb?.button(forKeyCode: .leftAlt)?.isPressed == true
+                || kb?.button(forKeyCode: .rightAlt)?.isPressed == true
+              if !modifierHeld {
+                text = String(newValue.dropLast())
+                if canSend {
+                  sendMessage()
+                }
+                return
+              }
+            }
+            #endif
             // Detect URLs for link previews
             if supportsEmbeds {
               detectLinkInText(newValue)
@@ -263,23 +277,51 @@ import SwiftUI
 
     @ViewBuilder
     private var sendButton: some View {
-      Button {
-        sendMessage()
-      } label: {
-        Image(systemName: "arrow.up")
-          .font(.system(size: 15, weight: .semibold))
-          .foregroundStyle(Color.white)
-          .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
-          .background(canSend ? Color.accentColor : Color.secondary.opacity(0.25))
-          .clipShape(.circle)
-
+      if canSend {
+        Button {
+          sendMessage()
+        } label: {
+          Image(systemName: "arrow.up")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
+            .background(Color.accentColor)
+            .clipShape(.circle)
+        }
+        .contentShape(Circle())
+        .accessibilityLabel("Send message")
+        .accessibilityIdentifier("mls.composer.sendButton.\(accessibilityConvoIdPrefix)")
+        .padding(.bottom, 3)
+      } else if let onVoice = onVoiceTapped {
+        Button(action: onVoice) {
+          Image(systemName: isRecording ? "stop.circle.fill" : "mic.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
+            .background(isRecording ? Color.red : Color.accentColor)
+            .clipShape(.circle)
+        }
+        .contentShape(Circle())
+        .accessibilityLabel(isRecording ? "Stop recording" : "Record voice message")
+        .accessibilityIdentifier("mls.composer.micButton.\(accessibilityConvoIdPrefix)")
+        .padding(.bottom, 3)
+      } else {
+        Button {
+          sendMessage()
+        } label: {
+          Image(systemName: "arrow.up")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
+            .background(Color.secondary.opacity(0.25))
+            .clipShape(.circle)
+        }
+        .contentShape(Circle())
+        .disabled(true)
+        .opacity(0.5)
+        .accessibilityLabel("Send message")
+        .padding(.bottom, 3)
       }
-      .contentShape(Circle())
-      .disabled(!canSend)
-      .opacity(canSend ? 1.0 : 0.5)
-      .accessibilityLabel("Send message")
-      .accessibilityIdentifier("mls.composer.sendButton.\(accessibilityConvoIdPrefix)")
-      .padding(.bottom, 3)
     }
 
     private func accessibilitySafeIdPrefix(_ value: String, maxLength: Int = 12) -> String {
@@ -370,6 +412,22 @@ import SwiftUI
             )
             .designCaption()
             .foregroundColor(.secondary)
+          }
+        }
+
+      case .audio(let audioEmbed):
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          Image(systemName: "waveform")
+            .font(.system(size: 32))
+            .foregroundColor(.secondary)
+
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Voice Message")
+              .designFootnote()
+              .fontWeight(.semibold)
+            Text("\(audioEmbed.durationMs / 1000)s")
+              .designCaption()
+              .foregroundColor(.secondary)
           }
         }
 
@@ -702,9 +760,6 @@ import SwiftUI
 
 }
 
-#endif
-
-
 #Preview("GIF Embed Content") {
     MLSMessageComposerPreview(
         initialEmbed: .gif(
@@ -719,3 +774,5 @@ import SwiftUI
         )
     )
 }
+
+#endif

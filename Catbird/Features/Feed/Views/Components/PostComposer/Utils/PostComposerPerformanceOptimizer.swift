@@ -217,7 +217,7 @@ final class PostComposerPerformanceOptimizer {
         #elseif os(macOS)
         // macOS doesn't have memory warnings like iOS, so we'll skip this
         memoryPressureObserver = NotificationCenter.default.addObserver(
-            forName: .NSApplicationDidBecomeActive,
+            forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in

@@ -54,7 +54,9 @@ struct RepositoryBrowserView: View {
         NavigationStack {
             mainViewContent
                 .navigationTitle("Repository Browser")
+                #if os(iOS)
                 .toolbarTitleDisplayMode(.large)
+                #endif
                 .toolbar {
                     toolbarItems
                 }
@@ -94,13 +96,13 @@ struct RepositoryBrowserView: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .automatic) {
             Button("Done") {
                 dismiss()
             }
         }
 
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .automatic) {
             Menu {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     viewModel?.refresh()
@@ -494,15 +496,17 @@ private struct FilterSheetView: View {
                 }
             }
             .navigationTitle("Filter Options")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .automatic) {
                     Button("Reset") {
                         viewModel.clearFilters()
                     }
                 }
 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }
@@ -527,7 +531,9 @@ private struct ExportSheetView: View {
         NavigationView {
             exportFormContent
                 .navigationTitle("Export Data")
+                #if os(iOS)
                 .toolbarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     exportToolbarItems
                 }
@@ -609,14 +615,14 @@ private struct ExportSheetView: View {
 
     @ToolbarContentBuilder
     private var exportToolbarItems: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarLeading) {
+        ToolbarItem(placement: .automatic) {
             Button("Cancel") {
                 dismiss()
             }
             .disabled(viewModel.isExporting)
         }
 
-        ToolbarItem(placement: .navigationBarTrailing) {
+        ToolbarItem(placement: .automatic) {
             Button("Export") {
                 handleExportAction()
             }

@@ -63,7 +63,7 @@ struct MediaItemView: View {
             if !isVideo, let onEditImage = onEditImage {
                 VStack {
                     HStack {
-                        if #available(iOS 26.0, *) {
+                        if #available(iOS 26.0, macOS 26.0, *) {
                             Button(action: onEditImage) {
                                 Image(systemName: "slider.horizontal.3")
                                     .appFont(size: 14)

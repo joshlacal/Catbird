@@ -86,7 +86,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
     
     // MARK: - Enhanced Link Creation with URL Card Integration
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     func createLinkWithURLCardIntegration(url: URL, displayText: String? = nil, range: NSRange) {
         logger.debug("Creating link with URL card integration: \(url.absoluteString)")
         
@@ -99,7 +99,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
         insertLinkWithURLCardIntegration(url: url, displayText: displayText, at: attributedRange)
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func insertLinkWithURLCardIntegration(url: URL, displayText: String? = nil, at range: Range<AttributedString.Index>) {
         // Use existing insertLinkWithAttributedString method without forcing URL card generation.
         insertLinkWithAttributedString(url: url, displayText: displayText, at: range)
@@ -160,7 +160,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
     
     private func removeLinkFacet(_ linkFacet: RichTextFacetUtils.LinkFacet) {
         // Remove link formatting from attributed text
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             removeLinkFromAttributedString(linkFacet)
         } else {
             removeLinkFromNSAttributedString(linkFacet)
@@ -170,7 +170,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
         updatePostContent()
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func removeLinkFromAttributedString(_ linkFacet: RichTextFacetUtils.LinkFacet) {
         // Convert NSRange to AttributedString range
         let start = attributedPostText.index(attributedPostText.startIndex, offsetByCharacters: linkFacet.range.location)
@@ -200,7 +200,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
         postText = mutableText.string
         
         // Update AttributedString for iOS 26+ compatibility
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             attributedPostText = AttributedString(mutableText)
         }
     }

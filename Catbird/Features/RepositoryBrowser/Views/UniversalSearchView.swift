@@ -22,7 +22,7 @@ struct RepositoryUniversalSearchView: View {
             VStack(spacing: 0) {
                 // Experimental warning header
                 ExperimentalSearchHeader(repository: repository)
-                    .background(Color(UIColor.systemGroupedBackground))
+                    .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
                 
                 // Search content
                 if viewModel.searchQuery.isEmpty {
@@ -36,9 +36,11 @@ struct RepositoryUniversalSearchView: View {
                 }
             }
             .navigationTitle("Universal Search")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Menu {
                         Button("Advanced Search", systemImage: "magnifyingglass.circle") {
                             showingAdvancedSearch = true
@@ -126,7 +128,7 @@ struct RepositoryUniversalSearchView: View {
                                         .foregroundColor(.secondary)
                                 }
                                 .padding()
-                                .background(Color(UIColor.secondarySystemGroupedBackground))
+                                .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -771,7 +773,7 @@ private struct QuickStatView: View {
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -942,9 +944,11 @@ private struct AdvancedSearchView: View {
                 }
             }
             .navigationTitle("Advanced Search")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .automatic) {
                     Button("Reset") {
                         viewModel.dateRangeStart = nil
                         viewModel.dateRangeEnd = nil
@@ -955,7 +959,7 @@ private struct AdvancedSearchView: View {
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }
@@ -1002,7 +1006,7 @@ private struct SearchResultDetailView: View {
                         Text(result.content)
                             .font(.body)
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
@@ -1017,9 +1021,11 @@ private struct SearchResultDetailView: View {
                 .padding()
             }
             .navigationTitle("Search Result")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }
@@ -1204,7 +1210,7 @@ private struct MetadataItem: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

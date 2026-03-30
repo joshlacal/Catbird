@@ -2,6 +2,8 @@ import CatbirdMLSCore
 import UserNotifications
 import OSLog
 
+#if os(iOS)
+
 /// Handler for MLS-related push notifications
 ///
 /// Processes silent push notifications from the MLS server and triggers
@@ -100,3 +102,5 @@ actor MLSNotificationHandler {
     }
   }
 }
+
+#endif

@@ -6,13 +6,13 @@
 //
 
 import Foundation
-import BackgroundTasks
 import SwiftData
 import Petrel
 import OSLog
-import UIKit
 
 #if os(iOS)
+import BackgroundTasks
+import UIKit
 @available(iOS 13.0, *)
 enum BackgroundCacheRefreshManager {
   private static let taskIdentifier = "blue.catbird.cache.refresh"

@@ -550,7 +550,7 @@ extension Color {
         #if os(iOS)
         return Color(.systemGray4)
         #elseif os(macOS)
-        return Color(.controlAccentColor)
+        return Color(nsColor: NSColor.systemGray.withAlphaComponent(0.4))
         #endif
     }
     

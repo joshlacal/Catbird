@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import SwiftUI
 import Petrel
@@ -574,3 +575,5 @@ private func emptyView(message: String) -> some View {
   .frame(maxWidth: .infinity, minHeight: 200)
   .padding(.top, 40)
 }
+
+#endif

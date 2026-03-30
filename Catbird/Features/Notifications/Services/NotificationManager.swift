@@ -1781,7 +1781,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         }
 
         if let message {
-          let sender = (message.senderID != nil && message.senderID != "unknown") ? message.senderID : nil
+          let sender: String? = (!message.senderID.isEmpty && message.senderID != "unknown") ? message.senderID : nil
           if let plaintext = message.plaintext { return (plaintext, sender) }
 
           // Control messages (reactions/readReceipts/etc) often have nil plaintext; derive from payload.
@@ -1867,6 +1867,23 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       "🔓 [FG] Starting MLS notification handling for message: \(messageId.prefix(16))...")
     notificationLogger.info("🔓 [FG] Recipient DID: \(recipientDid.prefix(24))...")
 
+    // Check per-conversation mute before any decryption or cache work
+    do {
+      let conversation = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
+        try CatbirdMLSCore.MLSConversationModel
+          .filter(CatbirdMLSCore.MLSConversationModel.Columns.conversationID == convoId)
+          .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDid)
+          .fetchOne(db)
+      }
+      if let conversation, conversation.isMuted {
+        notificationLogger.info("🔇 [FG] Conversation \(convoId.prefix(16))... muted until \(conversation.mutedUntil?.description ?? "forever") - suppressing notification")
+        completionHandler([])
+        return
+      }
+    } catch {
+      notificationLogger.warning("⚠️ [FG] Mute check failed: \(error.localizedDescription) - proceeding with notification")
+    }
+
     // If we already have the payload cached (by server order), avoid any decryption attempt.
     if let cached = await getCachedPlaintextByOrder() {
       CatbirdMLSCore.MLSNotificationMetrics.increment(
@@ -1883,6 +1900,19 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         originalNotification: originalNotification,
         completionHandler: completionHandler
       )
+      return
+    }
+
+    if await CatbirdMLSCore.MLSCoreContext.shared.isStorageAccessSuspended(for: recipientDid) {
+      let suspensionDescription =
+        await CatbirdMLSCore.MLSCoreContext.shared.storageAccessSuspensionDescription(
+          for: recipientDid
+        )
+        ?? "MLS storage recovery in progress"
+      notificationLogger.warning(
+        "⏸️ [FG] Skipping foreground MLS decrypt while storage is suspended: \(suspensionDescription)"
+      )
+      completionHandler([.banner, .sound])
       return
     }
 
@@ -1942,11 +1972,16 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           )
           notificationLogger.info(
             "📦 [FG] Cache HIT (attempt \(attempt + 1)) - using cached content")
+          var resolvedSender = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
+          if resolvedSender == nil {
+            resolvedSender = await getMLSSenderDIDByOrder(convoId: convoId, recipientDid: recipientDid, epoch: epoch, seq: seq)
+          }
           await presentDecryptedNotification(
             plaintext: cachedPlaintext,
             convoId: convoId,
             messageId: messageId,
             recipientDid: recipientDid,
+            senderDid: resolvedSender,
             originalNotification: originalNotification,
             completionHandler: completionHandler
           )
@@ -2000,11 +2035,16 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           source: "foreground_inactive_message_cache"
         )
         notificationLogger.info("📦 [FG] Cache HIT - using cached content")
+        var resolvedSender = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
+        if resolvedSender == nil {
+          resolvedSender = await getMLSSenderDIDByOrder(convoId: convoId, recipientDid: recipientDid, epoch: epoch, seq: seq)
+        }
         await presentDecryptedNotification(
           plaintext: cachedPlaintext,
           convoId: convoId,
           messageId: messageId,
           recipientDid: recipientDid,
+          senderDid: resolvedSender,
           originalNotification: originalNotification,
           completionHandler: completionHandler
         )
@@ -2050,6 +2090,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           convoId: convoId,
           messageId: captured.serverMessageId,
           recipientDid: recipientDid,
+          senderDid: captured.senderDid,
           originalNotification: originalNotification,
           completionHandler: completionHandler
         )
@@ -2075,11 +2116,16 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         messageID: messageId, userDid: recipientDid
       ) {
         notificationLogger.info("📦 [FG] Cache HIT after sync - using cached content")
+        var resolvedSender = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
+        if resolvedSender == nil {
+          resolvedSender = await getMLSSenderDIDByOrder(convoId: convoId, recipientDid: recipientDid, epoch: epoch, seq: seq)
+        }
         await presentDecryptedNotification(
           plaintext: cachedPlaintext,
           convoId: convoId,
           messageId: messageId,
           recipientDid: recipientDid,
+          senderDid: resolvedSender,
           originalNotification: originalNotification,
           completionHandler: completionHandler
         )
@@ -2238,7 +2284,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     targetEpoch: Int?,
     targetSeq: Int?,
     targetCiphertext: Data
-  ) async -> (plaintext: String, serverMessageId: String)? {
+  ) async -> (plaintext: String, serverMessageId: String, senderDid: String?)? {
     notificationLogger.info("🔄 [FG] Fetching pending messages for recipient's group sync...")
     notificationLogger.info("🔄 [FG] Target message ID: \(targetMessageId.prefix(16))...")
 
@@ -2287,6 +2333,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       var processedCount = 0
       var capturedPlaintext: String? = nil
       var capturedServerMessageId: String? = nil
+      var capturedSenderDid: String? = nil
 
       // No advisory lock needed - SQLite WAL handles concurrent access
       // Cross-process coordination uses MLSNotificationCoordinator.
@@ -2351,12 +2398,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
                   capturedPlaintext = displayText
                   capturedServerMessageId = message.id
+                  capturedSenderDid = senderDid
                   notificationLogger.info(
                     "🎯 [FG] CAPTURED target message during sync! (type: \(payload.messageType.rawValue))"
                   )
                 } else {
                   capturedPlaintext = textContent
                   capturedServerMessageId = message.id
+                  capturedSenderDid = senderDid
                   notificationLogger.info("🎯 [FG] CAPTURED target message (raw text) during sync!")
                 }
               }
@@ -2525,7 +2574,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       if let capturedPlaintext, let capturedServerMessageId {
         notificationLogger.info("✅ [FG] Target message was captured during sync!")
-        return (capturedPlaintext, capturedServerMessageId)
+        return (capturedPlaintext, capturedServerMessageId, capturedSenderDid)
       } else {
         notificationLogger.info("ℹ️ [FG] Target message was NOT in the sync batch")
         return nil
@@ -2568,6 +2617,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   /// Get or create an MLS API client for a specific user
   private func getOrCreateAPIClient(for userDid: String) async -> MLSAPIClient? {
+    #if os(iOS)
     if let recipientAppState = await getAppStateForUser(userDid),
       let existingClient = await recipientAppState.getMLSAPIClient()
     {
@@ -2594,6 +2644,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     let apiClient = await MLSAPIClient(client: standaloneClient, environment: .production)
     notificationLogger.info("🔄 [FG] Created standalone MLS API client for recipient")
     return apiClient
+    #else
+    return nil
+    #endif
   }
 
   /// Check if a group exists in the MLS context
@@ -2896,6 +2949,15 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     originalNotification: UNNotification,
     completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) async {
+    // Suppress notification if user is currently viewing this conversation
+    #if os(iOS)
+    if MLSActiveConversationTracker.shared.isActive(convoId) {
+      notificationLogger.info("🔇 [FG] User viewing conversation \(convoId.prefix(16))... - suppressing notification")
+      completionHandler([])
+      return
+    }
+    #endif
+
     // For foreground notifications, we can't modify the content directly.
     // Instead, we schedule a new local notification with the decrypted content
     // and suppress the original push notification.
@@ -2978,7 +3040,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       convoId: convoId, recipientDid: recipientDid)
 
     // Prefer known sender DID (from MLS credential), fall back to DB lookup, then push payload.
-    var senderDid = knownSenderDid
+    // Treat empty strings as nil to trigger fallbacks.
+    var senderDid = knownSenderDid?.isEmpty == false ? knownSenderDid : nil
     if senderDid == nil {
       senderDid = await getMLSSenderDID(messageId: messageId, recipientDid: recipientDid)
     }
@@ -2986,21 +3049,43 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       senderDid = originalNotification.request.content.userInfo["sender_did"] as? String
     }
 
-    let canonicalSenderDid = senderDid.map(canonicalDID)
+    let canonicalSenderDid = senderDid.flatMap { did in
+      let canonical = canonicalDID(did)
+      return canonical.isEmpty ? nil : canonical
+    }
 
     var senderName: String? = nil
     var senderAvatarURL: URL? = nil
 
     if let senderDid = canonicalSenderDid {
-      if let memberInfo = await getMLSMemberInfo(
-        senderDid: senderDid, convoId: convoId, recipientDid: recipientDid)
-      {
-        senderName = memberInfo.displayName ?? memberInfo.handle
-        senderAvatarURL = memberInfo.avatarURL.flatMap(URL.init(string:))
+      // 1. Try the in-memory profile cache (fastest, most reliable in foreground)
+      #if os(iOS)
+      if let profile = await appState?.mlsProfileEnricher.getCachedProfile(for: senderDid) {
+        senderName = profile.displayName ?? profile.handle
+        senderAvatarURL = profile.avatarURL
+      }
+      #endif
+
+      // 2. Fall back to DB member table
+      if senderName == nil {
+        if let memberInfo = await getMLSMemberInfo(
+          senderDid: senderDid, convoId: convoId, recipientDid: recipientDid)
+        {
+          senderName = memberInfo.displayName ?? memberInfo.handle
+          if senderAvatarURL == nil {
+            senderAvatarURL = memberInfo.avatarURL.flatMap(URL.init(string:))
+          }
+        }
       }
 
+      // 3. Fall back to Bluesky API
       if senderName == nil {
-        senderName = formatShortDID(senderDid)
+        if let profile = await fetchProfileViaClient(did: senderDid) {
+          senderName = profile.displayName ?? profile.handle
+          if senderAvatarURL == nil {
+            senderAvatarURL = profile.avatarURL.flatMap(URL.init(string:))
+          }
+        }
       }
     }
 
@@ -3050,6 +3135,23 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   // MARK: - Foreground rich notification helpers
 
+  private func fetchProfileViaClient(did: String) async -> (displayName: String?, handle: String, avatarURL: String?)? {
+    guard let client = appState?.atProtoClient else { return nil }
+    do {
+      let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: did))
+      let (_, profile) = try await client.app.bsky.actor.getProfile(input: params)
+      guard let profile else { return nil }
+      return (
+        displayName: profile.displayName,
+        handle: profile.handle.description,
+        avatarURL: profile.avatar?.uriString()
+      )
+    } catch {
+      notificationLogger.debug("⚠️ [FG] Profile fetch failed: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
   private func canonicalDID(_ did: String) -> String {
     let trimmed = did.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: true).first.map(
@@ -3073,6 +3175,30 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
 
       return conversation?.title
+    } catch {
+      return nil
+    }
+  }
+
+  private func getMLSSenderDIDByOrder(
+    convoId: String, recipientDid: String, epoch: Int?, seq: Int?
+  ) async -> String? {
+    guard let epoch, let seq else { return nil }
+    do {
+      let normalizedRecipientDid = recipientDid.trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+      let message = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDid) { db in
+        try CatbirdMLSCore.MLSMessageModel
+          .filter(CatbirdMLSCore.MLSMessageModel.Columns.conversationID == convoId)
+          .filter(CatbirdMLSCore.MLSMessageModel.Columns.currentUserDID == normalizedRecipientDid)
+          .filter(CatbirdMLSCore.MLSMessageModel.Columns.epoch == Int64(epoch))
+          .filter(CatbirdMLSCore.MLSMessageModel.Columns.sequenceNumber == Int64(seq))
+          .fetchOne(db)
+      }
+      guard let senderID = message?.senderID, !senderID.isEmpty, senderID != "unknown" else {
+        return nil
+      }
+      return senderID
     } catch {
       return nil
     }
@@ -3193,7 +3319,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         if let convoId = convoId {
           notificationLogger.info(
             "MLS notification tapped - navigating to conversation: \(convoId.prefix(16))...")
+          #if os(iOS)
           await handleMLSNotificationNavigation(convoId)
+          #endif
         }
 
         await MainActor.run {
@@ -3436,6 +3564,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   /// Handle navigation from a notification tap
   private func handleNotificationNavigation(uriString: String, type: String) async {
+    #if os(iOS)
     // Handle chat notifications differently
     if type == "chat" {
       await handleChatNotificationNavigation(uriString)
@@ -3447,6 +3576,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       await handleMLSNotificationNavigation(uriString)
       return
     }
+    #endif
 
     // CRITICAL FIX: Get the CURRENT AppState from AppStateManager, not the cached reference
     // After account switch, self.appState may point to the OLD account's AppState
@@ -3479,6 +3609,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   }
 
   /// Handle navigation from an MLS message notification tap
+  #if os(iOS)
   private func handleMLSNotificationNavigation(_ convoId: String) async {
     // CRITICAL FIX: Get the CURRENT AppState from AppStateManager, not the cached reference
     // After account switch, self.appState may point to the OLD account's AppState
@@ -3503,6 +3634,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     notificationLogger.info("Waiting for MLS service to be ready (max \(maxWaitTime)s)...")
 
+    #if os(iOS)
     while shouldWait && elapsed < maxWaitTime {
       let status = await MainActor.run { currentAppState.mlsServiceState.status }
       switch status {
@@ -3520,6 +3652,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         elapsed += checkInterval
       }
     }
+    #endif
 
     if elapsed >= maxWaitTime {
       notificationLogger.warning(
@@ -3549,8 +3682,10 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       notificationLogger.info("Successfully navigated to MLS conversation \(convoId.prefix(16))...")
     }
   }
+  #endif
 
   /// Handle navigation from a chat notification tap
+  #if os(iOS)
   private func handleChatNotificationNavigation(_ uriString: String) async {
     // CRITICAL FIX: Get the CURRENT AppState from AppStateManager, not the cached reference
     // After account switch, self.appState may point to the OLD account's AppState
@@ -3587,6 +3722,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       notificationLogger.info("Successfully navigated to chat conversation \(conversationID)")
     }
   }
+  #endif
 
   /// Create a NavigationDestination from notification data
   private func createNavigationDestination(from uriString: String, type: String) throws

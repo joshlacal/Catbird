@@ -74,7 +74,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var lastOldestMessageID: String?
   private var lastMessageCount: Int = 0
   private var isAtBottom = true
-  private let bottomProximityThreshold: CGFloat = 120
+  /// Tight threshold for treating the transcript as bottom-locked.
+  private let bottomLockThreshold: CGFloat = 24
+  /// Looser threshold for auto-scrolling when genuinely new items arrive.
+  private let bottomAutoScrollThreshold: CGFloat = 120
   private var isLoadingOlderMessages = false
   
   // Callbacks for message actions
@@ -84,6 +87,22 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
+  /// Extra bottom inset to keep content above the floating composer.
+  private var composerInset: CGFloat = 100
+  /// Current keyboard overlap with this view (0 when keyboard is hidden).
+  private var keyboardOverlap: CGFloat = 0
+
+  // MARK: - Inline Composer
+
+  private var composerView: UIKitMLSComposerView?
+  private var composerBottomConstraint: NSLayoutConstraint?
+  private var onComposerSend: ((String) -> Void)?
+  private var onComposerAttach: (() -> Void)?
+  private var onComposerTypingChanged: ((Bool) -> Void)?
+  private var onComposerVoice: (() -> Void)?
+  private var onComposerPhoto: (() -> Void)?
+  private var onComposerGif: (() -> Void)?
+  private var onComposerSharePost: (() -> Void)?
 
   private var reactionOverlayControl: UIControl?
   private var reactionOverlayHost: UIHostingController<UnifiedQuickReactionBar>?
@@ -107,6 +126,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   deinit {
     observationTask?.cancel()
+    NotificationCenter.default.removeObserver(self)
   }
 
   // MARK: - Lifecycle
@@ -116,6 +136,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     setupCollectionView()
     setupDataSource()
     setupObservation()
+    setupKeyboardObservers()
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -153,8 +174,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.showsVerticalScrollIndicator = true
     collectionView.contentInsetAdjustmentBehavior = .automatic
 
-    // Extra bottom inset so the last message clears the floating composer
-    collectionView.contentInset.bottom = 100
+    // Extra bottom inset so the last message clears the floating composer.
+    collectionView.contentInset.bottom = composerInset
 
     // Keep the collection view in a normal (unflipped) coordinate space.
     // We preserve scroll position when prepending older messages by adjusting contentOffset.
@@ -187,8 +208,70 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     return UICollectionViewCompositionalLayout(section: section)
   }
 
+  // MARK: - Keyboard Tracking
+
+  private func setupKeyboardObservers() {
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(keyboardWillChangeFrame(_:)),
+      name: UIResponder.keyboardWillChangeFrameNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(keyboardWillShow(_:)),
+      name: UIResponder.keyboardWillShowNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(keyboardWillHide(_:)),
+      name: UIResponder.keyboardWillHideNotification,
+      object: nil
+    )
+  }
+
+  @objc private func keyboardWillChangeFrame(_ note: Notification) {
+    guard
+      let endFrame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+      let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
+      let curveRaw = note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt
+    else { return }
+
+    let viewFrame = view.convert(view.bounds, to: nil)
+    let overlap = max(0, viewFrame.maxY - endFrame.minY)
+    keyboardOverlap = overlap
+    let newBottom = composerInset + overlap
+
+    let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+    UIView.animate(withDuration: duration, delay: 0, options: options) {
+      self.collectionView.contentInset.bottom = newBottom
+      self.collectionView.verticalScrollIndicatorInsets.bottom = newBottom
+    }
+  }
+
+  @objc private func keyboardWillShow(_ note: Notification) {
+    let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+    // Scroll to bottom after the keyboard + inset animation settles
+    DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+      self?.scrollToBottom(animated: true)
+    }
+  }
+
+  @objc private func keyboardWillHide(_ note: Notification) {
+    let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+    let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt) ?? 7
+    keyboardOverlap = 0
+
+    let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+    UIView.animate(withDuration: duration, delay: 0, options: options) {
+      self.collectionView.contentInset.bottom = self.composerInset
+      self.collectionView.verticalScrollIndicatorInsets.bottom = self.composerInset
+    }
+  }
+
   private func setupDataSource() {
-    let messageRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
+    let messageRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
       [weak self] cell, _, messageID in
       guard
         let self,
@@ -239,7 +322,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       .margins(.all, 0)
     }
 
-    let dateSeparatorRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Date> {
+    let dateSeparatorRegistration = UICollectionView.CellRegistration<UICollectionViewCell, Date> {
       cell, _, date in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
       cell.selectedBackgroundView = nil
@@ -254,7 +337,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       .margins(.all, 0)
     }
 
-    let typingIndicatorRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, TypingAvatarItem> {
+    let typingIndicatorRegistration = UICollectionView.CellRegistration<UICollectionViewCell, TypingAvatarItem> {
       cell, _, item in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
 
@@ -265,7 +348,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       .margins(.all, 0)
     }
 
-    let historyBoundaryRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
+    let historyBoundaryRegistration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
       cell, _, text in
       cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
       cell.selectedBackgroundView = nil
@@ -342,6 +425,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   @MainActor
   private func processObservationCycle() async {
     let newItems = currentSnapshotItems()
+    let itemsChanged = newItems != lastSnapshotItems
     let newSignaturesByID = currentMessageSignaturesByID()
     let stableIDs = Set(lastMessageSignaturesByID.keys).intersection(newSignaturesByID.keys)
     let changedMessageIDs = Set(stableIDs.filter {
@@ -353,22 +437,29 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     let shouldForceScrollToBottom = currentTrigger != lastScrollToBottomTrigger
     lastScrollToBottomTrigger = currentTrigger
 
-    if newItems != lastSnapshotItems || !changedMessageIDs.isEmpty {
+    if itemsChanged || !changedMessageIDs.isEmpty {
       lastSnapshotItems = newItems
       lastMessageSignaturesByID = newSignaturesByID
-      if shouldForceScrollToBottom {
-        isAtBottom = true
-      }
-      await updateSnapshot(reconfiguringMessageIDs: changedMessageIDs)
+      await updateSnapshot(
+        items: newItems,
+        itemsChanged: itemsChanged,
+        forceScrollToBottom: shouldForceScrollToBottom,
+        reconfiguringMessageIDs: changedMessageIDs
+      )
     } else if shouldForceScrollToBottom {
-      scrollToBottom(animated: true)
+      scrollToBottom(animated: false)
     }
   }
 
   // MARK: - Snapshot Updates
 
   @MainActor
-  private func updateSnapshot(reconfiguringMessageIDs: Set<String>) async {
+  private func updateSnapshot(
+    items: [Item],
+    itemsChanged: Bool,
+    forceScrollToBottom: Bool,
+    reconfiguringMessageIDs: Set<String>
+  ) async {
     guard diffableDataSource != nil else { return }
     
     // Capture current state before update for scroll position maintenance
@@ -379,8 +470,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       previousContentOffsetY +
       collectionView.bounds.height -
       collectionView.adjustedContentInset.bottom
-    let wasNearBottom = previousVisibleBottom >= previousContentHeight - bottomProximityThreshold
-    let shouldScrollToBottomAfterUpdate = (previousItemCount == 0) || isAtBottom || wasNearBottom
+    let wasLockedToBottom = previousVisibleBottom >= previousContentHeight - bottomLockThreshold
+    let wasNearBottom = previousVisibleBottom >= previousContentHeight - bottomAutoScrollThreshold
+    let userIsInteracting =
+      collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
+    let shouldAutoScrollForNewItems =
+      itemsChanged &&
+      ((previousItemCount == 0) || wasLockedToBottom || wasNearBottom)
+    let shouldPinBottomAfterUpdate =
+      !userIsInteracting &&
+      (forceScrollToBottom || wasLockedToBottom || shouldAutoScrollForNewItems)
     let currentOldestMessageID = dataSource.messages.first?.id
     let currentMessageCount = dataSource.messages.count
     let didPrependOlderMessages =
@@ -392,8 +491,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     snapshot.appendSections([.messages])
-
-    let items = currentSnapshotItems()
     snapshot.appendItems(items, toSection: .messages)
     
     if !reconfiguringMessageIDs.isEmpty {
@@ -402,7 +499,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     
     // When prepending older messages or performing initial load, disable animation.
     let isInitialPopulate = !hasPerformedInitialScroll && previousItemCount == 0 && items.count > 0
-    let shouldAnimate = !isInitialPopulate && !didPrependOlderMessages && previousItemCount > 0
 
     if isInitialPopulate {
       // Apply without any animation for the initial load, then scroll to bottom
@@ -416,30 +512,30 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       hasPerformedInitialScroll = true
       lastOldestMessageID = currentOldestMessageID
       lastMessageCount = currentMessageCount
-    } else {
-      diffableDataSource.apply(snapshot, animatingDifferences: shouldAnimate) { [weak self] in
+    } else if didPrependOlderMessages {
+      // Apply without animation, then restore scroll position so viewport stays stable.
+      diffableDataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
         guard let self else { return }
-
-        // Keep the user's viewport stable when older messages are inserted at the top.
-        if didPrependOlderMessages {
-          self.collectionView.layoutIfNeeded()
-          let newContentHeight = self.collectionView.contentSize.height
-          let deltaHeight = newContentHeight - previousContentHeight
-          self.collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
-        } else if shouldScrollToBottomAfterUpdate {
-          self.scrollToBottom(animated: shouldAnimate)
-        }
-
+        self.collectionView.layoutIfNeeded()
+        let newContentHeight = self.collectionView.contentSize.height
+        let deltaHeight = newContentHeight - previousContentHeight
+        self.collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
         self.lastOldestMessageID = currentOldestMessageID
         self.lastMessageCount = currentMessageCount
       }
-    }
-  }
-
-  func refreshIfNeeded() {
-    Task { @MainActor [weak self] in
-      guard let self else { return }
-      await self.updateSnapshot(reconfiguringMessageIDs: [])
+    } else {
+      // Apply silently for all other updates. If we're bottom-locked or this was a
+      // true append/explicit bottom request, snap to the bottom in the same layout
+      // pass so observation churn cannot interrupt a visible scroll animation.
+      UIView.performWithoutAnimation {
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+        collectionView.layoutIfNeeded()
+        if shouldPinBottomAfterUpdate {
+          scrollToBottom(animated: false)
+        }
+      }
+      lastOldestMessageID = currentOldestMessageID
+      lastMessageCount = currentMessageCount
     }
   }
 
@@ -449,6 +545,74 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   func updateAppState(_ newAppState: AppState) {
     appState = newAppState
+  }
+
+  // MARK: - Inline Composer Management
+
+  func installComposer(config: InlineComposerConfig) {
+    guard composerView == nil else {
+      updateComposerCallbacks(config: config)
+      return
+    }
+
+    let composer = UIKitMLSComposerView()
+    composer.delegate = self
+    composer.placeholderText = config.placeholderText
+
+    onComposerSend = config.onSend
+    onComposerAttach = config.onAttachTapped
+    onComposerTypingChanged = config.onTypingChanged
+    onComposerVoice = config.onVoiceTapped
+    onComposerPhoto = config.onPhotoPicker
+    onComposerGif = config.onGifPicker
+    onComposerSharePost = config.onPostPicker
+    composerView?.isRecording = config.isRecording
+
+    view.addSubview(composer)
+
+    // Pin horizontally and to keyboard layout guide bottom
+    let bottomConstraint = view.keyboardLayoutGuide.topAnchor.constraint(
+      equalTo: composer.bottomAnchor
+    )
+    composerBottomConstraint = bottomConstraint
+
+    NSLayoutConstraint.activate([
+      composer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      composer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      bottomConstraint,
+    ])
+
+    composerView = composer
+
+    // Update inset after layout pass
+    view.layoutIfNeeded()
+    updateComposerInset()
+  }
+
+  func updateComposerCallbacks(config: InlineComposerConfig) {
+    onComposerSend = config.onSend
+    onComposerAttach = config.onAttachTapped
+    onComposerTypingChanged = config.onTypingChanged
+    onComposerVoice = config.onVoiceTapped
+    onComposerPhoto = config.onPhotoPicker
+    onComposerGif = config.onGifPicker
+    onComposerSharePost = config.onPostPicker
+    composerView?.isRecording = config.isRecording
+    composerView?.placeholderText = config.placeholderText
+  }
+
+  private func updateComposerInset() {
+    guard let composer = composerView else { return }
+    let height = composer.systemLayoutSizeFitting(
+      CGSize(width: view.bounds.width, height: UIView.layoutFittingCompressedSize.height),
+      withHorizontalFittingPriority: .required,
+      verticalFittingPriority: .fittingSizeLevel
+    ).height
+    let newInset = max(height, 60)
+    guard abs(newInset - composerInset) > 1 else { return }
+    composerInset = newInset
+    collectionView.contentInset.bottom = composerInset + keyboardOverlap
+    collectionView.verticalScrollIndicatorInsets.bottom = composerInset + keyboardOverlap
   }
 
   // MARK: - Actions
@@ -652,10 +816,18 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   func scrollToBottom(animated: Bool = true) {
-    guard collectionView.numberOfItems(inSection: 0) > 0 else { return }
-    let lastItemIndex = collectionView.numberOfItems(inSection: 0) - 1
+    guard let dataSource = diffableDataSource else { return }
+    let snapshot = dataSource.snapshot()
+    guard
+      snapshot.numberOfSections > 0,
+      snapshot.numberOfItems(inSection: snapshot.sectionIdentifiers[0]) > 0
+    else { return }
+    let section = snapshot.sectionIdentifiers[0]
+    let items = snapshot.itemIdentifiers(inSection: section)
+    guard let lastItem = items.last else { return }
+    collectionView.layoutIfNeeded()
     collectionView.scrollToItem(
-      at: IndexPath(item: lastItemIndex, section: 0),
+      at: dataSource.indexPath(for: lastItem) ?? IndexPath(item: items.count - 1, section: 0),
       at: .bottom,
       animated: animated
     )
@@ -670,7 +842,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       scrollView.bounds.height -
       scrollView.adjustedContentInset.bottom
 
-    isAtBottom = visibleBottom >= scrollView.contentSize.height - bottomProximityThreshold
+    isAtBottom = visibleBottom >= scrollView.contentSize.height - bottomLockThreshold
 
     // Trigger pagination when approaching the top (older messages)
     let threshold: CGFloat = 200
@@ -752,6 +924,47 @@ private struct TypingIndicatorView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.leading, 12)
     .onAppear { animate = true }
+  }
+}
+
+// MARK: - UIKitMLSComposerDelegate
+
+@available(iOS 16.0, *)
+extension ChatCollectionViewController: UIKitMLSComposerDelegate {
+  func composerDidChangeHeight(_ composer: UIKitMLSComposerView, height: CGFloat) {
+    updateComposerInset()
+  }
+
+  func composerDidTapSend(_ composer: UIKitMLSComposerView, text: String) {
+    onComposerSend?(text)
+    // Trigger scroll to bottom after sending
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+      self?.scrollToBottom(animated: true)
+    }
+  }
+
+  func composerDidTapAttach(_ composer: UIKitMLSComposerView) {
+    onComposerAttach?()
+  }
+
+  func composerDidChangeTypingState(_ composer: UIKitMLSComposerView, isTyping: Bool) {
+    onComposerTypingChanged?(isTyping)
+  }
+
+  func composerDidTapVoice(_ composer: UIKitMLSComposerView) {
+    onComposerVoice?()
+  }
+
+  func composerDidTapPhoto(_ composer: UIKitMLSComposerView) {
+    onComposerPhoto?()
+  }
+
+  func composerDidTapGif(_ composer: UIKitMLSComposerView) {
+    onComposerGif?()
+  }
+
+  func composerDidTapSharePost(_ composer: UIKitMLSComposerView) {
+    onComposerSharePost?()
   }
 }
 #endif

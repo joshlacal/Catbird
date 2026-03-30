@@ -11,7 +11,7 @@
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 211DC2F72EA803CB00608AF4 /* Petrel */; };
-		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		212D4B5F2ED221A30036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B5E2ED221A30036E016 /* CatbirdMLSCore */; };
 		212D4B662ED265F80036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B652ED265F80036E016 /* CatbirdMLSCore */; };
 		212D4B682ED266870036E016 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 212D4B672ED266870036E016 /* CatbirdMLSCore */; };
@@ -21,8 +21,8 @@
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
 		215795952D9E16F60030A8C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 215795942D9E16F60030A8C7 /* PrivacyInfo.xcprivacy */; };
 		215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */ = {isa = PBXBuildFile; productRef = 215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */; };
-		217ECDA92EB4268100BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; productRef = 217ECDA82EB4268100BD113B /* Mantis */; };
-		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
+		217ECDA92EB4268100BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 217ECDA82EB4268100BD113B /* Mantis */; };
+		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
 		219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */ = {isa = PBXBuildFile; productRef = 219DA5B82EED838E00F717FA /* EmojiKit */; };
 		219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58022EBC27F500C8D6F2 /* Security.framework */; };
 		219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58042EBC27FF00C8D6F2 /* Foundation.framework */; };
@@ -132,6 +132,39 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		21292B322F71F40C00DE8633 /* Exceptions for "CatbirdFeedWidget" folder in "CatbirdFeedWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppIntent.swift,
+				Assets.xcassets,
+				CatbirdFeedWidget.swift,
+				CatbirdFeedWidgetBundle.swift,
+				FeedWidgetModels.swift,
+				WidgetAvatarView.swift,
+				WidgetPerformanceOptimizations.swift,
+				WidgetPostCard.swift,
+				WidgetThemeProvider.swift,
+				WidgetTypography.swift,
+			);
+			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
+		};
+		21292B332F71F40C00DE8633 /* Exceptions for "CatbirdFeedWidget" folder in "NotificationServiceExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppIntent.swift,
+				Assets.xcassets,
+				CatbirdFeedWidget.swift,
+				CatbirdFeedWidgetBundle.swift,
+				FeedWidgetModels.swift,
+				Info.plist,
+				WidgetAvatarView.swift,
+				WidgetPerformanceOptimizations.swift,
+				WidgetPostCard.swift,
+				WidgetThemeProvider.swift,
+				WidgetTypography.swift,
+			);
+			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
+		};
 		212D4B4A2ED1FE740036E016 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -178,13 +211,6 @@
 			);
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
 		};
-		21DDE6022DF4EDB5009E9825 /* Exceptions for "CatbirdFeedWidget" folder in "CatbirdFeedWidgetExtension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -194,6 +220,15 @@
 				21DDCCF82DD2AD48004947CD /* Exceptions for "CatbirdNotificationWidget" folder in "CatbirdNotificationWidgetExtension" target */,
 			);
 			path = CatbirdNotificationWidget;
+			sourceTree = "<group>";
+		};
+		21292B272F71F40C00DE8633 /* CatbirdFeedWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				21292B322F71F40C00DE8633 /* Exceptions for "CatbirdFeedWidget" folder in "CatbirdFeedWidgetExtension" target */,
+				21292B332F71F40C00DE8633 /* Exceptions for "CatbirdFeedWidget" folder in "NotificationServiceExtension" target */,
+			);
+			path = CatbirdFeedWidget;
 			sourceTree = "<group>";
 		};
 		212D4B402ED1FE740036E016 /* NotificationServiceExtension */ = {
@@ -229,14 +264,6 @@
 				21B987882E65BD3800686783 /* Exceptions for "SharedDraftImporter" folder in "SharedDraftImporter" target */,
 			);
 			path = SharedDraftImporter;
-			sourceTree = "<group>";
-		};
-		21DDE5F12DF4EDAF009E9825 /* CatbirdFeedWidget */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				21DDE6022DF4EDB5009E9825 /* Exceptions for "CatbirdFeedWidget" folder in "CatbirdFeedWidgetExtension" target */,
-			);
-			path = CatbirdFeedWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -327,8 +354,8 @@
 				212E94142D60132A00D3E1DD /* CatbirdTests */,
 				212E941E2D60132A00D3E1DD /* CatbirdUITests */,
 				21196F5B2DC25F5B00662CC3 /* CatbirdNotificationWidget */,
-				21DDE5F12DF4EDAF009E9825 /* CatbirdFeedWidget */,
 				21B9877B2E65BD3800686783 /* SharedDraftImporter */,
+				21292B272F71F40C00DE8633 /* CatbirdFeedWidget */,
 				212D4B402ED1FE740036E016 /* NotificationServiceExtension */,
 				21E108282D70BE6F0030A71C /* Frameworks */,
 				21EBFE092EB53D9300E707B6 /* Catbird.app */,
@@ -388,6 +415,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				21292B272F71F40C00DE8633 /* CatbirdFeedWidget */,
 				212D4B402ED1FE740036E016 /* NotificationServiceExtension */,
 			);
 			name = NotificationServiceExtension;
@@ -521,9 +549,6 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				21DDE5F12DF4EDAF009E9825 /* CatbirdFeedWidget */,
 			);
 			name = CatbirdFeedWidgetExtension;
 			productName = CatbirdFeedWidgetExtension;
@@ -748,12 +773,12 @@
 /* Begin PBXTargetDependency section */
 		21196F6A2DC25F6000662CC3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = 21196F572DC25F5B00662CC3 /* CatbirdNotificationWidgetExtension */;
 			targetProxy = 21196F692DC25F6000662CC3 /* PBXContainerItemProxy */;
 		};
 		212D4B452ED1FE740036E016 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			platformFilter = ios;
 			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 			targetProxy = 212D4B442ED1FE740036E016 /* PBXContainerItemProxy */;
 		};
@@ -769,11 +794,13 @@
 		};
 		21B987832E65BD3800686783 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = 21B987792E65BD3800686783 /* SharedDraftImporter */;
 			targetProxy = 21B987822E65BD3800686783 /* PBXContainerItemProxy */;
 		};
 		21DDE5FD2DF4EDB5009E9825 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
 			targetProxy = 21DDE5FC2DF4EDB5009E9825 /* PBXContainerItemProxy */;
 		};
@@ -855,11 +882,24 @@
 		212D4B482ED1FE740036E016 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
 				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
@@ -869,7 +909,7 @@
 				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -878,33 +918,48 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.NotificationServiceExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Debug;
 		};
 		212D4B492ED1FE740036E016 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
 				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -913,16 +968,18 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = blue.catbird.NotificationServiceExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 			};
 			name = Release;
 		};
@@ -946,14 +1003,15 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
-				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = LaunchScreen.storyboard;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(inherited)",
@@ -969,8 +1027,10 @@
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphoneos*]" = LaunchScreen;
+				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphonesimulator*]" = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
@@ -997,9 +1057,9 @@
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = YES;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1028,14 +1088,15 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
-				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = LaunchScreen.storyboard;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(PROJECT_DIR)",
 					"$(inherited)",
@@ -1051,8 +1112,10 @@
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphoneos*]" = LaunchScreen;
+				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphonesimulator*]" = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
@@ -1079,9 +1142,9 @@
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = YES;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -10,6 +10,7 @@ struct MLSMessageView: View {
   let isCurrentUser: Bool
   let timestamp: Date
   let senderName: String
+  let senderDID: String
   let senderAvatarURL: URL?
   let messageState: MessageSendState? // nil for confirmed messages
   let onRetry: (() -> Void)? // Retry action for failed messages
@@ -25,8 +26,13 @@ struct MLSMessageView: View {
     HStack(alignment: .bottom, spacing: DesignTokens.Spacing.sm) {
       // Avatar for other users
       if !isCurrentUser {
-        AsyncProfileImage(url: senderAvatarURL, size: DesignTokens.Size.avatarSM)
-          .frame(width: DesignTokens.Size.avatarSM, height: DesignTokens.Size.avatarSM)
+        Button {
+          navigationPath.append(NavigationDestination.profile(senderDID))
+        } label: {
+          AsyncProfileImage(url: senderAvatarURL, size: DesignTokens.Size.avatarSM)
+            .frame(width: DesignTokens.Size.avatarSM, height: DesignTokens.Size.avatarSM)
+        }
+        .buttonStyle(.plain)
       }
 
       VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: DesignTokens.Spacing.xs) {
@@ -217,6 +223,17 @@ struct MLSMessageView: View {
     case .image(let imageEmbed):
       MLSImageView(imageEmbed: imageEmbed)
 
+    case .audio:
+      HStack(spacing: 8) {
+        Image(systemName: "waveform")
+          .foregroundStyle(.secondary)
+        Text("Voice message")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      .padding()
+      .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+
     case .unknown:
       Text("This message contains an attachment your app version cannot display.")
         .font(.caption)
@@ -329,6 +346,7 @@ private struct BulletPoint: View {
           isCurrentUser: false,
           timestamp: Date(),
           senderName: "Alice",
+          senderDID: "did:plc:alice",
           senderAvatarURL: nil,
           messageState: nil,
           onRetry: nil,
@@ -345,6 +363,7 @@ private struct BulletPoint: View {
           isCurrentUser: true,
           timestamp: Date(),
           senderName: "You",
+          senderDID: "did:plc:me",
           senderAvatarURL: nil,
           messageState: .sending,
           onRetry: nil,
@@ -361,6 +380,7 @@ private struct BulletPoint: View {
           isCurrentUser: true,
           timestamp: Date(),
           senderName: "You",
+          senderDID: "did:plc:me",
           senderAvatarURL: nil,
           messageState: .failed("Network error"),
           onRetry: { },
@@ -378,6 +398,7 @@ private struct BulletPoint: View {
           isCurrentUser: false,
           timestamp: Date(),
           senderName: "Bob",
+          senderDID: "did:plc:bob",
           senderAvatarURL: nil,
           messageState: nil,
           onRetry: nil,
@@ -398,6 +419,7 @@ private struct BulletPoint: View {
           isCurrentUser: true,
           timestamp: Date(),
           senderName: "You",
+          senderDID: "did:plc:me",
           senderAvatarURL: nil,
           messageState: nil,
           onRetry: nil,
@@ -419,6 +441,7 @@ private struct BulletPoint: View {
           isCurrentUser: false,
           timestamp: Date().addingTimeInterval(-3600),
           senderName: "Bob",
+          senderDID: "did:plc:bob",
           senderAvatarURL: nil,
           messageState: nil,
           onRetry: nil,

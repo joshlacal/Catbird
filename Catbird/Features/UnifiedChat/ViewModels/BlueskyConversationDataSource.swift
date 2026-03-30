@@ -3,6 +3,8 @@ import SwiftUI
 import Observation
 import Petrel
 
+#if os(iOS)
+
 /// Data source that wraps ChatManager for Bluesky conversations
 @MainActor
 @Observable
@@ -166,3 +168,5 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     }
   }
 }
+
+#endif

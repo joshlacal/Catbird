@@ -8,7 +8,7 @@
 import SwiftUI
 import Foundation
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 struct LinkEditingOverlay: View {
     let attributedText: AttributedString
     let textSelection: AttributedTextSelection?

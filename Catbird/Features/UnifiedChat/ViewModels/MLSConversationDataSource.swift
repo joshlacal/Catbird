@@ -3,6 +3,7 @@ import OSLog
 import Petrel
 import SwiftUI
 import CatbirdMLSCore
+import GRDB
 
 #if os(iOS)
   import CatbirdMLSCore
@@ -37,16 +38,14 @@ import CatbirdMLSCore
     private(set) var typingParticipantAvatarURL: URL?
     private(set) var scrollToBottomTrigger: Int = 0
 
-    // When a refresh is requested while isLoading is true, queue it
-    // so it runs after the current load finishes
-    private var pendingRefresh: Bool = false
-
     var draftText: String = ""
     var attachedEmbed: MLSEmbedData?
 
     // Local reactions cache for optimistic updates
     private var localReactions: [String: [MLSMessageReaction]] = [:]
     private var reactionReloadTask: Task<Void, Never>?
+    private var messageObservation: AnyDatabaseCancellable?
+    private weak var observedDatabase: DatabasePool?
     private var typingParticipants: [String: Date] = [:]
     private var typingCleanupTask: Task<Void, Never>?
     private var localTypingActive: Bool = false
@@ -55,6 +54,7 @@ import CatbirdMLSCore
     // Pagination tracking
     private var oldestLoadedEpoch: Int = Int.max
     private var oldestLoadedSeq: Int = Int.max
+    private var remoteReadCutoff: (epoch: Int64, sequenceNumber: Int64)?
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDataSource")
 
@@ -103,6 +103,348 @@ import CatbirdMLSCore
       self.conversationId = conversationId
       self.currentUserDID = MLSStorageHelpers.normalizeDID(currentUserDID)
       self.appState = appState
+    }
+
+    // MARK: - Observation
+
+    /// Start observing the MLS messages table via GRDB ValueObservation.
+    /// The first emission is synchronous (scheduling: .immediate), so cached
+    /// messages appear on the very first frame.
+    private func startObserving(database: DatabasePool) {
+      // Guard against re-observing the same database instance
+      guard observedDatabase !== database else { return }
+      stopObserving()
+
+      let convoId = conversationId
+      let userDID = currentUserDID
+
+      let observation = ValueObservation.tracking { db in
+        try MLSMessageModel
+          .filter(MLSMessageModel.Columns.conversationID == convoId)
+          .filter(MLSMessageModel.Columns.currentUserDID == userDID)
+          .filter(MLSMessageModel.Columns.payloadExpired == false)
+          .order(MLSMessageModel.Columns.epoch.asc, MLSMessageModel.Columns.sequenceNumber.asc)
+          .fetchAll(db)
+      }
+
+      messageObservation = observation.start(
+        in: database,
+        scheduling: .immediate,
+        onError: { [weak self] error in
+          self?.logger.error("ValueObservation error: \(error.localizedDescription)")
+        },
+        onChange: { [weak self] models in
+          Task { @MainActor [weak self] in
+            await self?.handleObservedModels(models)
+          }
+        }
+      )
+      observedDatabase = database
+    }
+
+    /// Stop the current database observation and release references.
+    func stopObserving() {
+      messageObservation?.cancel()
+      messageObservation = nil
+      observedDatabase = nil
+    }
+
+    /// Core conversion logic: turns raw `MLSMessageModel` rows into
+    /// `MLSMessageAdapter` values and updates the published `messages` array.
+    private func handleObservedModels(_ models: [MLSMessageModel]) async {
+      guard let appState = appState,
+        let database = appState.mlsDatabase
+      else { return }
+
+      let storage = MLSStorage.shared
+
+      // Seed member cache from DB if empty
+      if memberCache.isEmpty {
+        do {
+          let members = try await storage.fetchMembers(
+            conversationID: conversationId,
+            currentUserDID: currentUserDID,
+            database: database
+          )
+          for member in members {
+            memberCache[MLSProfileEnricher.canonicalDID(member.did)] = (
+              handle: member.handle,
+              displayName: member.displayName
+            )
+          }
+          logger.debug("Loaded \(members.count) members from database for fallback names")
+        } catch {
+          logger.error("Failed to load members: \(error.localizedDescription)")
+        }
+      }
+
+      // Seed profile cache from the enricher
+      let enricher = appState.mlsProfileEnricher
+      let memberDIDs = Array(memberCache.keys)
+      let enricherProfiles = await enricher.getCachedProfiles(for: memberDIDs)
+      for (canonical, profile) in enricherProfiles {
+        if profileCache[canonical] == nil || profileCache[canonical]?.avatarURL == nil {
+          profileCache[canonical] = profile
+        }
+      }
+
+      // Load remote read cursors
+      let remoteReadCursors: [MLSRemoteReadCursorModel]
+      do {
+        remoteReadCursors = try await storage.fetchRemoteReadCursors(
+          conversationID: conversationId,
+          currentUserDID: currentUserDID,
+          database: database
+        )
+      } catch {
+        remoteReadCursors = []
+        logger.error("Failed to load remote read cursors: \(error.localizedDescription)")
+      }
+
+      var messageCoordinatesByID: [String: (epoch: Int64, sequenceNumber: Int64)] = [:]
+      for model in models {
+        messageCoordinatesByID[model.messageID] = (model.epoch, model.sequenceNumber)
+      }
+      remoteReadCutoff = resolveRemoteReadCutoff(
+        from: remoteReadCursors,
+        coordinatesByMessageID: messageCoordinatesByID
+      )
+
+      // Load cached reactions
+      let messageIDs = models.map(\.messageID)
+      await loadCachedReactions(
+        for: messageIDs,
+        database: database,
+        replaceExisting: true,
+        refreshMessages: false
+      )
+
+      // Convert models to adapters
+      var adapters: [MLSMessageAdapter] = []
+      var unknownDIDs: Set<String> = []
+
+      for model in models {
+        guard let payload = model.parsedPayload, !model.payloadExpired else {
+          continue
+        }
+
+        // Skip control messages (reactions, etc.) but allow text and system messages
+        guard payload.messageType == .text || payload.messageType == .system else {
+          continue
+        }
+
+        // SAFETY: Skip placeholder error messages that shouldn't be displayed
+        let text = payload.text ?? ""
+        let isPlaceholderError =
+          model.processingError != nil
+          && (text.isEmpty || text.contains("Message unavailable")
+            || text.contains("Decryption Failed") || text.contains("Self-sent message"))
+        if isPlaceholderError {
+          logger.debug("Skipping placeholder error message: \(model.messageID)")
+          continue
+        }
+
+        // Map system message content keys to display text
+        let displayText: String
+        if payload.messageType == .system {
+          switch text {
+          case "history_boundary.new_member":
+            displayText = "You joined this conversation"
+          case "history_boundary.device_rejoined":
+            displayText = "Messages before this point aren't available on this device"
+          default:
+            displayText = text
+          }
+        } else {
+          displayText = text
+        }
+
+        let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
+        let profile = profileCache[canonicalSenderDID]
+
+        // SAFETY: Don't attach reactions to messages with processing errors
+        let hasError = model.processingError != nil || model.validationFailureReason != nil
+        let reactions = hasError ? [] : (localReactions[model.messageID] ?? [])
+
+        // Build profile data with fallbacks
+        let senderProfile: MLSMessageAdapter.MLSProfileData?
+        if let profile = profile {
+          senderProfile = .init(
+            displayName: profile.displayName,
+            avatarURL: profile.avatarURL,
+            handle: profile.handle
+          )
+        } else if let memberData = memberCache[canonicalSenderDID],
+          (memberData.handle != nil || memberData.displayName != nil)
+        {
+          senderProfile = .init(
+            displayName: memberData.displayName,
+            avatarURL: nil,
+            handle: memberData.handle
+          )
+        } else {
+          senderProfile = nil
+          unknownDIDs.insert(canonicalSenderDID)
+        }
+
+        // Determine send state
+        let isFromCurrentUser = MLSStorageHelpers.normalizeDID(model.senderID) == currentUserDID
+        let sendState: MessageSendState =
+          (
+            isFromCurrentUser
+              && isReadByRemoteParticipant(
+                epoch: Int(model.epoch),
+                sequenceNumber: Int(model.sequenceNumber),
+                cutoff: remoteReadCutoff
+              )
+          ) ? .read : .sent
+
+        let adapter = MLSMessageAdapter(
+          id: model.messageID,
+          convoID: conversationId,
+          text: displayText,
+          senderDID: model.senderID,
+          currentUserDID: currentUserDID,
+          sentAt: model.timestamp,
+          senderProfile: senderProfile,
+          reactions: reactions,
+          embed: payload.embed,
+          sendState: sendState,
+          epoch: Int(model.epoch),
+          sequence: Int(model.sequenceNumber),
+          processingError: model.processingError,
+          processingAttempts: Int(model.processingAttempts),
+          validationFailureReason: model.validationFailureReason
+        )
+        adapters.append(adapter)
+
+        // Track oldest for pagination
+        let epoch = Int(model.epoch)
+        let seq = Int(model.sequenceNumber)
+        if epoch < oldestLoadedEpoch || (epoch == oldestLoadedEpoch && seq < oldestLoadedSeq) {
+          oldestLoadedEpoch = epoch
+          oldestLoadedSeq = seq
+        }
+      }
+
+      sortMessagesInDisplayOrder(&adapters)
+
+      // Clear typing indicators for senders who just sent a message
+      let existingIDs = Set(messages.map { $0.id })
+      for adapter in adapters where !existingIDs.contains(adapter.id) {
+        clearTypingForSender(adapter.senderID)
+      }
+
+      self.messages = adapters
+      self.hasMoreMessages = models.count >= 50
+      applyRemoteReadCutoffToLoadedMessages()
+      scheduleDelayedReactionReload(messageIDs: messageIDs, database: database)
+
+      // Fetch profiles for unknown senders
+      if !unknownDIDs.isEmpty {
+        logger.debug("Fetching profiles for \(unknownDIDs.count) unknown sender DIDs")
+        await loadProfilesForMessages(adapters)
+      } else if !hasLoadedInitialProfiles {
+        await loadProfilesForMessages(adapters)
+        hasLoadedInitialProfiles = true
+      }
+
+      logger.info("Loaded \(adapters.count) MLS messages via observation")
+    }
+
+    private func shouldAdvanceRemoteReadCutoff(
+      existing: (epoch: Int64, sequenceNumber: Int64)?,
+      candidate: (epoch: Int64, sequenceNumber: Int64)
+    ) -> Bool {
+      guard let existing else { return true }
+      if candidate.epoch != existing.epoch {
+        return candidate.epoch > existing.epoch
+      }
+      return candidate.sequenceNumber > existing.sequenceNumber
+    }
+
+    private func resolveRemoteReadCutoff(
+      from cursors: [MLSRemoteReadCursorModel],
+      coordinatesByMessageID: [String: (epoch: Int64, sequenceNumber: Int64)]
+    ) -> (epoch: Int64, sequenceNumber: Int64)? {
+      var best: (epoch: Int64, sequenceNumber: Int64)?
+
+      for cursor in cursors {
+        let candidate: (epoch: Int64, sequenceNumber: Int64)?
+        if let epoch = cursor.epoch, let sequenceNumber = cursor.sequenceNumber {
+          candidate = (epoch, sequenceNumber)
+        } else if
+          let messageID = cursor.messageID,
+          let resolved = coordinatesByMessageID[messageID]
+        {
+          candidate = resolved
+        } else {
+          candidate = nil
+        }
+
+        guard let candidate else { continue }
+        if shouldAdvanceRemoteReadCutoff(existing: best, candidate: candidate) {
+          best = candidate
+        }
+      }
+
+      return best
+    }
+
+    private func isReadByRemoteParticipant(
+      epoch: Int?,
+      sequenceNumber: Int?,
+      cutoff: (epoch: Int64, sequenceNumber: Int64)?
+    ) -> Bool {
+      guard let cutoff, let epoch, let sequenceNumber else { return false }
+      let epochValue = Int64(epoch)
+      let sequenceValue = Int64(sequenceNumber)
+      return epochValue < cutoff.epoch
+        || (epochValue == cutoff.epoch && sequenceValue <= cutoff.sequenceNumber)
+    }
+
+    private func updateSendState(
+      for adapter: MLSMessageAdapter,
+      sendState: MessageSendState
+    ) -> MLSMessageAdapter {
+      MLSMessageAdapter(
+        id: adapter.id,
+        convoID: adapter.mlsConversationID,
+        text: adapter.text,
+        senderDID: adapter.senderID,
+        currentUserDID: currentUserDID,
+        sentAt: adapter.sentAt,
+        senderProfile: adapter.mlsProfile,
+        reactions: localReactions[adapter.id] ?? [],
+        embed: adapter.mlsEmbed,
+        sendState: sendState,
+        epoch: adapter.mlsEpoch,
+        sequence: adapter.mlsSequence,
+        processingError: adapter.processingError,
+        processingAttempts: adapter.processingAttempts,
+        validationFailureReason: adapter.validationFailureReason
+      )
+    }
+
+    private func applyRemoteReadCutoffToLoadedMessages() {
+      guard let cutoff = remoteReadCutoff else { return }
+
+      var didUpdate = false
+      messages = messages.map { adapter in
+        guard adapter.isFromCurrentUser else { return adapter }
+        let shouldBeRead = isReadByRemoteParticipant(
+          epoch: adapter.mlsEpoch,
+          sequenceNumber: adapter.mlsSequence,
+          cutoff: cutoff
+        )
+        guard shouldBeRead, adapter.sendState != .read else { return adapter }
+        didUpdate = true
+        return updateSendState(for: adapter, sendState: .read)
+      }
+
+      if didUpdate {
+        logger.info("📬 [READ_RECEIPTS] Applied persisted remote read cutoff to loaded messages")
+      }
     }
 
     /// Preload profiles for known participants before loading messages
@@ -366,268 +708,13 @@ import CatbirdMLSCore
     }
 
     func loadMessages() async {
-      guard !isLoading else {
-        pendingRefresh = true
-        return
-      }
-      isLoading = true
-      error = nil
-      pendingRefresh = false
-
-      defer {
-        isLoading = false
-        if pendingRefresh {
-          pendingRefresh = false
-          Task { @MainActor [weak self] in
-            await self?.loadMessages()
-          }
-        }
-      }
-
       guard let appState = appState,
         let database = appState.mlsDatabase
       else {
         logger.error("Cannot load messages: database not available")
         return
       }
-
-      do {
-        let storage = MLSStorage.shared
-
-        // IMPROVEMENT: Load member data from database first as fallback for display names
-        // This ensures we always have at least handle info even before network profile fetch
-        if memberCache.isEmpty {
-          let members = try await storage.fetchMembers(
-            conversationID: conversationId,
-            currentUserDID: currentUserDID,
-            database: database
-          )
-          for member in members {
-            memberCache[MLSProfileEnricher.canonicalDID(member.did)] = (
-              handle: member.handle,
-              displayName: member.displayName
-            )
-          }
-          logger.debug("Loaded \(members.count) members from database for fallback names")
-        }
-
-        // Seed profileCache from the enricher's actor-level cache before building messages.
-        // This ensures profiles fetched in prior sessions or from the conversation list
-        // are available immediately, avoiding a blank-then-populate flash.
-        let enricher = appState.mlsProfileEnricher
-        let memberDIDs = Array(memberCache.keys)
-        let enricherProfiles = await enricher.getCachedProfiles(for: memberDIDs)
-        for (canonical, profile) in enricherProfiles {
-          if profileCache[canonical] == nil || profileCache[canonical]?.avatarURL == nil {
-            profileCache[canonical] = profile
-          }
-        }
-        if !enricherProfiles.isEmpty {
-          logger.debug("Seeded \(enricherProfiles.count) profile(s) from enricher cache")
-        }
-
-        // Fetch messages from local storage
-        let messageModels = try await storage.fetchMessagesForConversation(
-          conversationId,
-          currentUserDID: currentUserDID,
-          database: database,
-          limit: 50
-        )
-
-        let messageIDs = messageModels.map(\.messageID)
-        await loadCachedReactions(
-          for: messageIDs,
-          database: database,
-          replaceExisting: true,
-          refreshMessages: false
-        )
-
-        // Convert to adapters
-        var adapters: [MLSMessageAdapter] = []
-        var unknownDIDs: Set<String> = []
-
-        // Find the latest read receipt from other users to determine read state
-        // Read receipts reference a messageId; all current-user messages up to that point are read
-        var latestReadReceiptMessageID: String?
-        for model in messageModels {
-          guard let payload = model.parsedPayload, !model.payloadExpired else { continue }
-          if payload.messageType == .readReceipt,
-            let receipt = payload.readReceipt,
-            MLSStorageHelpers.normalizeDID(model.senderID) != currentUserDID
-          {
-            latestReadReceiptMessageID = receipt.messageId
-          }
-        }
-
-        // Build set of current-user message IDs that should be marked as .read
-        var readMessageIDs = Set<String>()
-        if let targetID = latestReadReceiptMessageID {
-          for model in messageModels {
-            guard let payload = model.parsedPayload, !model.payloadExpired else { continue }
-            guard payload.messageType == .text else { continue }
-            if MLSStorageHelpers.normalizeDID(model.senderID) == currentUserDID {
-              readMessageIDs.insert(model.messageID)
-            }
-            if model.messageID == targetID { break }
-          }
-        }
-
-        for model in messageModels {
-          guard let payload = model.parsedPayload, !model.payloadExpired else {
-            continue
-          }
-
-          // Skip control messages (reactions, etc.) but allow text and system messages
-          guard payload.messageType == .text || payload.messageType == .system else {
-            continue
-          }
-
-          // SAFETY: Skip placeholder error messages that shouldn't be displayed
-          // These are created when messages fail to decrypt (e.g., reactions, self-messages)
-          // Check for known placeholder text patterns
-          let text = payload.text ?? ""
-          let isPlaceholderError =
-            model.processingError != nil
-            && (text.isEmpty || text.contains("Message unavailable")
-              || text.contains("Decryption Failed") || text.contains("Self-sent message"))
-          if isPlaceholderError {
-            logger.debug("Skipping placeholder error message: \(model.messageID)")
-            continue
-          }
-
-          // Map system message content keys to display text
-          let displayText: String
-          if payload.messageType == .system {
-            switch text {
-            case "history_boundary.new_member":
-              displayText = "You joined this conversation"
-            case "history_boundary.device_rejoined":
-              displayText = "Messages before this point aren't available on this device"
-            default:
-              displayText = text
-            }
-          } else {
-            displayText = text
-          }
-
-          let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
-          let profile = profileCache[canonicalSenderDID]
-          
-          // SAFETY: Don't attach reactions to messages with processing errors
-          // They will remain cached but not displayed on error bubbles
-          let hasError = model.processingError != nil || model.validationFailureReason != nil
-          let reactions = hasError ? [] : (localReactions[model.messageID] ?? [])
-
-          // Build profile data with fallbacks:
-          // 1. Use cached profile if available
-          // 2. Fall back to member database data (handle/displayName)
-          // 3. Track unknown DIDs for async profile fetch
-          let senderProfile: MLSMessageAdapter.MLSProfileData?
-          if let profile = profile {
-            senderProfile = .init(
-              displayName: profile.displayName,
-              avatarURL: profile.avatarURL,
-              handle: profile.handle
-            )
-          } else if let memberData = memberCache[canonicalSenderDID],
-            (memberData.handle != nil || memberData.displayName != nil)
-          {
-            // Use member database data as fallback
-            senderProfile = .init(
-              displayName: memberData.displayName,
-              avatarURL: nil,
-              handle: memberData.handle
-            )
-          } else {
-            senderProfile = nil
-            unknownDIDs.insert(canonicalSenderDID)
-          }
-
-          // Determine send state: if a read receipt references this message or a later one,
-          // mark current-user's messages as .read
-          let isFromCurrentUser = MLSStorageHelpers.normalizeDID(model.senderID) == currentUserDID
-          let sendState: MessageSendState =
-            (isFromCurrentUser && readMessageIDs.contains(model.messageID)) ? .read : .sent
-
-          let adapter = MLSMessageAdapter(
-            id: model.messageID,
-            convoID: conversationId,
-            text: displayText,
-            senderDID: model.senderID,
-            currentUserDID: currentUserDID,
-            sentAt: model.timestamp,
-            senderProfile: senderProfile,
-            reactions: reactions,
-            embed: payload.embed,
-            sendState: sendState,
-            epoch: Int(model.epoch),
-            sequence: Int(model.sequenceNumber),
-            processingError: model.processingError,
-            processingAttempts: Int(model.processingAttempts),
-            validationFailureReason: model.validationFailureReason
-          )
-          adapters.append(adapter)
-
-          // Track oldest for pagination
-          let epoch = Int(model.epoch)
-          let seq = Int(model.sequenceNumber)
-          if epoch < oldestLoadedEpoch || (epoch == oldestLoadedEpoch && seq < oldestLoadedSeq) {
-            oldestLoadedEpoch = epoch
-            oldestLoadedSeq = seq
-          }
-        }
-
-        sortMessagesInDisplayOrder(&adapters)
-
-        // Merge with existing messages instead of replacing
-        // This preserves scroll position and avoids UI flicker
-        let existingIDs = Set(messages.map { $0.id })
-        let newMessages = adapters.filter { !existingIDs.contains($0.id) }
-
-        // Clear typing indicators for senders who just sent a message
-        for message in newMessages {
-          clearTypingForSender(message.senderID)
-        }
-
-        if newMessages.isEmpty && messages.count == adapters.count {
-          // No changes, just update existing messages in place for reactions/profiles
-          self.messages = adapters
-        } else {
-          // Merge: keep existing, add new ones
-          var merged = messages
-          for adapter in adapters {
-            if let existingIndex = merged.firstIndex(where: { $0.id == adapter.id }) {
-              // Update existing message (for reactions, profile updates, etc.)
-              merged[existingIndex] = adapter
-            } else {
-              // Add new message
-              merged.append(adapter)
-            }
-          }
-          sortMessagesInDisplayOrder(&merged)
-          self.messages = merged
-        }
-
-        self.hasMoreMessages = messageModels.count >= 50
-        scheduleDelayedReactionReload(messageIDs: messageIDs, database: database)
-
-        // IMPROVEMENT: Only fetch profiles for DIDs we don't have yet
-        // If no unknown DIDs, skip the network call entirely
-        if !unknownDIDs.isEmpty {
-          logger.debug("Fetching profiles for \(unknownDIDs.count) unknown sender DIDs")
-          await loadProfilesForMessages(adapters)
-        } else if !hasLoadedInitialProfiles {
-          // First load - ensure we try to fetch even if we have member fallbacks
-          await loadProfilesForMessages(adapters)
-          hasLoadedInitialProfiles = true
-        }
-
-        logger.info("Loaded \(adapters.count) MLS messages")
-
-      } catch {
-        self.error = error
-        logger.error("Failed to load MLS messages: \(error.localizedDescription)")
-      }
+      startObserving(database: database)
     }
 
     func loadMoreMessages() async {
@@ -665,6 +752,28 @@ import CatbirdMLSCore
           replaceExisting: false,
           refreshMessages: false
         )
+
+        let remoteReadCursors = try await storage.fetchRemoteReadCursors(
+          conversationID: conversationId,
+          currentUserDID: currentUserDID,
+          database: database
+        )
+
+        var messageCoordinatesByID: [String: (epoch: Int64, sequenceNumber: Int64)] = [:]
+        for adapter in messages {
+          if let epoch = adapter.mlsEpoch, let sequenceNumber = adapter.mlsSequence {
+            messageCoordinatesByID[adapter.id] = (Int64(epoch), Int64(sequenceNumber))
+          }
+        }
+        for model in olderModels {
+          messageCoordinatesByID[model.messageID] = (model.epoch, model.sequenceNumber)
+        }
+        if let resolvedCutoff = resolveRemoteReadCutoff(
+          from: remoteReadCursors,
+          coordinatesByMessageID: messageCoordinatesByID
+        ), shouldAdvanceRemoteReadCutoff(existing: remoteReadCutoff, candidate: resolvedCutoff) {
+          remoteReadCutoff = resolvedCutoff
+        }
 
         var adapters: [MLSMessageAdapter] = []
         var unknownDIDs: Set<String> = []
@@ -743,7 +852,14 @@ import CatbirdMLSCore
             senderProfile: senderProfile,
             reactions: reactions,
             embed: payload.embed,
-            sendState: .sent,
+            sendState: (
+              MLSStorageHelpers.normalizeDID(model.senderID) == currentUserDID
+                && isReadByRemoteParticipant(
+                  epoch: Int(model.epoch),
+                  sequenceNumber: Int(model.sequenceNumber),
+                  cutoff: remoteReadCutoff
+                )
+            ) ? .read : .sent,
             epoch: Int(model.epoch),
             sequence: Int(model.sequenceNumber),
             processingError: model.processingError,
@@ -766,7 +882,9 @@ import CatbirdMLSCore
         let uniqueAdapters = adapters.filter { !existingIDs.contains($0.id) }
         self.messages = uniqueAdapters + self.messages
         sortMessagesInDisplayOrder(&self.messages)
-        self.hasMoreMessages = olderModels.count >= 50
+        applyRemoteReadCutoffToLoadedMessages()
+        // Stop paginating if no displayable messages were found (all errors/placeholders)
+        self.hasMoreMessages = olderModels.count >= 50 && !adapters.isEmpty
 
         // Only fetch profiles for unknown DIDs
         if !unknownDIDs.isEmpty {
@@ -1165,46 +1283,23 @@ import CatbirdMLSCore
       let normalizedReaderDID = MLSStorageHelpers.normalizeDID(readerDID)
       guard normalizedReaderDID != currentUserDID else { return }
 
-      // Find the target message to get its position in the list
-      guard let targetIndex = messages.firstIndex(where: { $0.id == readUpToMessageID }) else {
+      guard
+        let targetMessage = messages.first(where: { $0.id == readUpToMessageID }),
+        let epoch = targetMessage.mlsEpoch,
+        let sequenceNumber = targetMessage.mlsSequence
+      else {
         logger.debug(
           "📬 [READ_RECEIPTS] Target message \(readUpToMessageID.prefix(16)) not found in loaded messages"
         )
         return
       }
 
-      var didUpdate = false
-      for i in 0...targetIndex {
-        let adapter = messages[i]
-        // Only update current user's messages that aren't already read
-        guard adapter.isFromCurrentUser, adapter.sendState != .read else { continue }
-
-        let updatedAdapter = MLSMessageAdapter(
-          id: adapter.id,
-          convoID: adapter.mlsConversationID,
-          text: adapter.text,
-          senderDID: adapter.senderID,
-          currentUserDID: currentUserDID,
-          sentAt: adapter.sentAt,
-          senderProfile: adapter.mlsProfile,
-          reactions: localReactions[adapter.id] ?? [],
-          embed: adapter.mlsEmbed,
-          sendState: .read,
-          epoch: adapter.mlsEpoch,
-          sequence: adapter.mlsSequence,
-          processingError: adapter.processingError,
-          processingAttempts: adapter.processingAttempts,
-          validationFailureReason: adapter.validationFailureReason
-        )
-        messages[i] = updatedAdapter
-        didUpdate = true
-      }
-
-      if didUpdate {
-        logger.info(
-          "📬 [READ_RECEIPTS] Updated message states to .read up to \(readUpToMessageID.prefix(16))"
-        )
-      }
+      applyReadReceipt(
+        readUpToEpoch: Int64(epoch),
+        sequenceNumber: Int64(sequenceNumber),
+        readerDID: readerDID,
+        messageID: readUpToMessageID
+      )
     }
 
 
@@ -1213,34 +1308,50 @@ import CatbirdMLSCore
       let normalizedReaderDID = MLSStorageHelpers.normalizeDID(readerDID)
       guard normalizedReaderDID != currentUserDID else { return }
 
-      var didUpdate = false
-      for i in messages.indices {
-        let adapter = messages[i]
-        guard adapter.isFromCurrentUser, adapter.sendState != .read else { continue }
-
-        let updatedAdapter = MLSMessageAdapter(
-          id: adapter.id,
-          convoID: adapter.mlsConversationID,
-          text: adapter.text,
-          senderDID: adapter.senderID,
-          currentUserDID: currentUserDID,
-          sentAt: adapter.sentAt,
-          senderProfile: adapter.mlsProfile,
-          reactions: localReactions[adapter.id] ?? [],
-          embed: adapter.mlsEmbed,
-          sendState: .read,
-          epoch: adapter.mlsEpoch,
-          sequence: adapter.mlsSequence,
-          processingError: adapter.processingError,
-          processingAttempts: adapter.processingAttempts,
-          validationFailureReason: adapter.validationFailureReason
-        )
-        messages[i] = updatedAdapter
-        didUpdate = true
+      var latestCurrentUserCursor: (epoch: Int64, sequenceNumber: Int64)?
+      for adapter in messages where adapter.isFromCurrentUser {
+        guard let epoch = adapter.mlsEpoch, let sequenceNumber = adapter.mlsSequence else { continue }
+        let candidate = (epoch: Int64(epoch), sequenceNumber: Int64(sequenceNumber))
+        if shouldAdvanceRemoteReadCutoff(existing: latestCurrentUserCursor, candidate: candidate) {
+          latestCurrentUserCursor = candidate
+        }
       }
 
-      if didUpdate {
-        logger.info("📬 [READ_RECEIPTS] Marked all current-user messages as .read")
+      guard let latestCurrentUserCursor else {
+        logger.debug("📬 [READ_RECEIPTS] No loaded current-user messages available for all-read event")
+        return
+      }
+
+      applyReadReceipt(
+        readUpToEpoch: latestCurrentUserCursor.epoch,
+        sequenceNumber: latestCurrentUserCursor.sequenceNumber,
+        readerDID: readerDID
+      )
+    }
+
+    func applyReadReceipt(
+      readUpToEpoch epoch: Int64,
+      sequenceNumber: Int64,
+      readerDID: String,
+      messageID: String? = nil
+    ) {
+      let normalizedReaderDID = MLSStorageHelpers.normalizeDID(readerDID)
+      guard normalizedReaderDID != currentUserDID else { return }
+
+      let candidate = (epoch: epoch, sequenceNumber: sequenceNumber)
+      guard shouldAdvanceRemoteReadCutoff(existing: remoteReadCutoff, candidate: candidate) else {
+        return
+      }
+
+      remoteReadCutoff = candidate
+      applyRemoteReadCutoffToLoadedMessages()
+
+      if let messageID {
+        logger.info(
+          "📬 [READ_RECEIPTS] Updated message states to .read up to \(messageID.prefix(16))"
+        )
+      } else {
+        logger.info("📬 [READ_RECEIPTS] Updated message states to .read via persisted remote cursor")
       }
     }
 
@@ -1296,95 +1407,6 @@ import CatbirdMLSCore
           validationFailureReason: adapter.validationFailureReason
         )
       }
-    }
-
-    // MARK: - Refresh
-
-    /// Debounce task for refreshFromStorage to avoid rapid reloads
-    private var refreshDebounceTask: Task<Void, Never>?
-
-    /// Immediately append a new message to the displayed messages array.
-    /// This provides instant UI updates for real-time websocket messages
-    /// without waiting for a database round-trip.
-    func appendMessageImmediately(
-      id: String,
-      convoID: String,
-      text: String,
-      senderDID: String,
-      sentAt: Date,
-      embed: MLSEmbedData? = nil,
-      epoch: Int? = nil,
-      sequence: Int? = nil
-    ) {
-      guard !messages.contains(where: { $0.id == id }) else { return }
-
-      let canonicalSenderDID = MLSProfileEnricher.canonicalDID(senderDID)
-      let profile = profileCache[canonicalSenderDID]
-
-      let senderProfile: MLSMessageAdapter.MLSProfileData?
-      if let profile {
-        senderProfile = .init(
-          displayName: profile.displayName,
-          avatarURL: profile.avatarURL,
-          handle: profile.handle
-        )
-      } else if let memberData = memberCache[canonicalSenderDID],
-        (memberData.handle != nil || memberData.displayName != nil)
-      {
-        senderProfile = .init(
-          displayName: memberData.displayName,
-          avatarURL: nil,
-          handle: memberData.handle
-        )
-      } else {
-        senderProfile = nil
-      }
-
-      let adapter = MLSMessageAdapter(
-        id: id,
-        convoID: convoID,
-        text: text,
-        senderDID: senderDID,
-        currentUserDID: currentUserDID,
-        sentAt: sentAt,
-        senderProfile: senderProfile,
-        embed: embed,
-        sendState: .sent,
-        epoch: epoch,
-        sequence: sequence
-      )
-
-      clearTypingForSender(senderDID)
-
-      var updated = messages
-      updated.append(adapter)
-      sortMessagesInDisplayOrder(&updated)
-      messages = updated
-    }
-
-    /// Called when new messages have been decrypted and stored
-    /// Triggers a debounced refresh from storage to update the UI
-    @MainActor
-    func onMessagesDecrypted() {
-      // Cancel any pending refresh
-      refreshDebounceTask?.cancel()
-
-      // Schedule a debounced refresh
-      refreshDebounceTask = Task {
-        do {
-          try await Task.sleep(for: .milliseconds(100))
-        } catch {
-          return  // Task was cancelled
-        }
-
-        guard !Task.isCancelled else { return }
-        await refreshFromStorage()
-      }
-    }
-
-    /// Refresh messages from local storage (call after new messages arrive via SSE)
-    func refreshFromStorage() async {
-      await loadMessages()
     }
 
     private func sortMessagesInDisplayOrder(_ messages: inout [MLSMessageAdapter]) {

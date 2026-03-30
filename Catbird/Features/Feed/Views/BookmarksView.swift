@@ -45,9 +45,11 @@ struct BookmarksView: View {
       }
     }
     .navigationTitle("Bookmarks")
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.large)
+    #endif
     .toolbar {
-      ToolbarItem(placement: .navigationBarTrailing) {
+      ToolbarItem(placement: .automatic) {
         if isLoading {
           ProgressView()
             .scaleEffect(0.8)

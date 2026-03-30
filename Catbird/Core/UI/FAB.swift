@@ -41,7 +41,7 @@ struct FAB: View {
                 }
                 
                 if showFeedsButton {
-                    if #available(iOS 26.0, *) {
+                    if #available(iOS 26.0, macOS 26.0, *) {
                         feedsButton
                             .clipShape(Circle())
                             .glassEffect()
@@ -50,7 +50,7 @@ struct FAB: View {
                     }
                 }
                 Spacer()
-                if #available(iOS 26.0, *) {
+                if #available(iOS 26.0, macOS 26.0, *) {
                     composeButton
                         .clipShape(Circle())
                         .glassEffect(.regular.tint(.accentColor).interactive())
@@ -72,7 +72,7 @@ struct FAB: View {
     
     @ViewBuilder
     private var feedsButton: some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
 
         Button(action: feedsAction) {
             Image(systemName: "square.grid.3x3.square")
@@ -83,7 +83,7 @@ struct FAB: View {
                 .frame(width: circleSize, height: circleSize)
                 .contentShape(Circle())
         }
-        .buttonStyle(.glassProminent)
+        .buttonStyle(.glassProminent) // requires iOS 26+ / macOS 26+
         } else {
             Button(action: feedsAction) {
                 Image(systemName: "square.grid.3x3.square")
@@ -99,7 +99,7 @@ struct FAB: View {
     
     private var composeButton: some View {
         Button(action: composeAction) {
-            if #available(iOS 26.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
 
             // Center the SF Symbol at 30x30, then place the badge
             // relative to the symbol's bounds (not the full 62pt circle).
@@ -115,7 +115,7 @@ struct FAB: View {
 //
 //            )
             .contentShape(Circle())
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.glassProminent) // requires iOS 26+ / macOS 26+
             // Mark the actual compose button as the matched transition source
             // instead of tagging the entire FAB container from the outside.
             .composerMatchedSource(namespace: composerNamespace)
@@ -171,7 +171,7 @@ struct FAB: View {
 
 #Preview("FAB") {
   ZStack {
-    Color(.systemGroupedBackground).ignoresSafeArea()
+    Color.systemGroupedBackground.ignoresSafeArea()
     FAB(
       composeAction: {},
       feedsAction: {},

@@ -63,7 +63,7 @@ struct TrendingTopicsSection: View {
         }
         // Prefetch summaries for visible topics (maxItems)
         .task(id: topics.prefix(maxItems).map { $0.summaryIdentityKey }.joined(separator: ",")) {
-            if #available(iOS 26.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
                 await TopicSummaryService.shared.primeSummaries(for: Array(topics.prefix(maxItems)), appState: appState, max: maxItems)
             }
         }
@@ -186,7 +186,7 @@ struct TrendingTopicsSection: View {
                     .padding(.top, 2)
 
                     // Topic summary (iOS 26+ via Foundation Models). Hidden if unavailable.
-                    if #available(iOS 26.0, *) {
+                    if #available(iOS 26.0, macOS 26.0, *) {
                         TrendingTopicSummaryLine(topic: topic)
                             .id(topic.summaryIdentityKey)
                     }
@@ -317,7 +317,7 @@ private extension AppBskyUnspeccedDefs.TrendView {
 
 // MARK: - Summary Line Subview
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct TrendingTopicSummaryLine: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme

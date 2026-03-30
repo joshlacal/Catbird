@@ -20,6 +20,7 @@ struct MLSGroupDetailView: View {
   let participantProfiles: [String: MLSProfileEnricher.ProfileData]
 
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.toastManager) private var toastManager
 
   @State private var groupName: String = ""
   @State private var members: [MLSMemberModel] = []
@@ -34,6 +35,9 @@ struct MLSGroupDetailView: View {
   @State private var localAvatarData: Data?
   @State private var isUploadingAvatar = false
   @State private var showMemberHistory = false
+  @State private var showingRemoveConfirmation = false
+  @State private var memberToRemove: MLSMemberModel?
+  @State private var isPerformingMemberAction = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSGroupDetailView")
   private let storage = MLSStorage.shared
@@ -111,6 +115,21 @@ struct MLSGroupDetailView: View {
         }
       } message: {
         Text("You will no longer receive messages from this conversation. This cannot be undone.")
+      }
+      .confirmationDialog(
+        "Remove Member",
+        isPresented: $showingRemoveConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Remove", role: .destructive) {
+          if let member = memberToRemove {
+            Task { await removeMember(member) }
+          }
+        }
+      } message: {
+        if let member = memberToRemove {
+          Text("Remove \(displayName(for: member)) from this group? They won't be able to read new messages.")
+        }
       }
       .sheet(isPresented: $showMemberHistory) {
         NavigationStack {
@@ -290,6 +309,39 @@ struct MLSGroupDetailView: View {
       } else {
         ForEach(members.filter(\.isActive)) { member in
           memberRow(member)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+              if isCurrentUserAdmin
+                && member.did.lowercased() != currentUserDID.lowercased()
+              {
+                Button(role: .destructive) {
+                  memberToRemove = member
+                  showingRemoveConfirmation = true
+                } label: {
+                  Label("Remove", systemImage: "person.badge.minus")
+                }
+              }
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+              if isCurrentUserAdmin
+                && member.did.lowercased() != currentUserDID.lowercased()
+              {
+                if member.role == .admin {
+                  Button {
+                    Task { await demoteMember(member) }
+                  } label: {
+                    Label("Demote", systemImage: "arrow.down.circle")
+                  }
+                  .tint(.orange)
+                } else {
+                  Button {
+                    Task { await promoteMember(member) }
+                  } label: {
+                    Label("Make Admin", systemImage: "star.fill")
+                  }
+                  .tint(.blue)
+                }
+              }
+            }
         }
 
         NavigationLink {
@@ -568,6 +620,60 @@ struct MLSGroupDetailView: View {
       errorMessage = "Failed to leave conversation."
       isLeaving = false
     }
+  }
+
+  @MainActor
+  private func removeMember(_ member: MLSMemberModel) async {
+    isPerformingMemberAction = true
+    do {
+      try await conversationManager.removeMember(from: conversationId, memberDid: member.did)
+      members = try await conversationManager.fetchConversationMembers(convoId: conversationId)
+      logger.info("Removed member \(member.did) from conversation")
+    } catch {
+      logger.error("Failed to remove member: \(error.localizedDescription)")
+      errorMessage = "Failed to remove member."
+    }
+    isPerformingMemberAction = false
+  }
+
+  @MainActor
+  private func promoteMember(_ member: MLSMemberModel) async {
+    isPerformingMemberAction = true
+    do {
+      try await conversationManager.promoteAdmin(convoId: conversationId, memberDid: member.did)
+      members = try await conversationManager.fetchConversationMembers(convoId: conversationId)
+      logger.info("Promoted \(member.did) to admin")
+      toastManager.show(
+        ToastItem(
+          message: "\(displayName(for: member)) is now an admin",
+          icon: "checkmark.circle.fill"
+        )
+      )
+    } catch {
+      logger.error("Failed to promote member: \(error.localizedDescription)")
+      errorMessage = "Failed to promote member."
+    }
+    isPerformingMemberAction = false
+  }
+
+  @MainActor
+  private func demoteMember(_ member: MLSMemberModel) async {
+    isPerformingMemberAction = true
+    do {
+      try await conversationManager.demoteAdmin(convoId: conversationId, memberDid: member.did)
+      members = try await conversationManager.fetchConversationMembers(convoId: conversationId)
+      logger.info("Demoted \(member.did) from admin")
+      toastManager.show(
+        ToastItem(
+          message: "\(displayName(for: member)) is no longer an admin",
+          icon: "checkmark.circle.fill"
+        )
+      )
+    } catch {
+      logger.error("Failed to demote member: \(error.localizedDescription)")
+      errorMessage = "Failed to demote member."
+    }
+    isPerformingMemberAction = false
   }
 }
 

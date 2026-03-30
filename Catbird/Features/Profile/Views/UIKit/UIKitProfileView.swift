@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 import Petrel
@@ -85,3 +86,5 @@ struct UIKitProfileContentView: View {
 // MARK: - Modifier Extensions on UIKitProfileContentView
 // All sheets, alerts, toolbar, and navigation destinations are applied in UnifiedProfileView
 // via the profileViewConfiguration wrapper so they remain in the SwiftUI host.
+
+#endif

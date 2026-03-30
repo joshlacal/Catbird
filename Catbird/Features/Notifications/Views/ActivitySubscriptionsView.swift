@@ -44,7 +44,11 @@ struct ActivitySubscriptionsView: View {
         }
       }
     }
+    #if os(iOS)
     .listStyle(.insetGrouped)
+    #else
+    .listStyle(.automatic)
+    #endif
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .task {
       if service.subscriptions.isEmpty && !service.isLoading {

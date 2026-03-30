@@ -9,12 +9,6 @@
 		<string>webcredentials:catbird.blue</string>
 		<string>applinks:catbird.blue</string>
 	</array>
-	<key>com.apple.developer.devicecheck.app-attest-opt-in</key>
-	<array>
-		<string>CDhash</string>
-	</array>
-	<key>com.apple.developer.devicecheck.appattest-environment</key>
-	<string>development</string>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
 		<string>iCloud.Catbird</string>
@@ -26,6 +20,10 @@
 	</array>
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
+	<key>com.apple.developer.sensitivecontentanalysis.client</key>
+	<array>
+		<string>analysis</string>
+	</array>
 	<key>com.apple.developer.ubiquity-container-identifiers</key>
 	<array>
 		<string>iCloud.Catbird</string>
@@ -41,5 +39,7 @@
 		<string>$(AppIdentifierPrefix)blue.catbird</string>
 		<string>$(AppIdentifierPrefix)blue.catbird.shared</string>
 	</array>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>

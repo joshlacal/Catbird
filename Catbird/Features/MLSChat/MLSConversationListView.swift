@@ -35,6 +35,7 @@ struct MLSConversationListView: View {
     @State private var conversationParticipants: [String: [MLSParticipantViewModel]] = [:]
     @State private var conversationUnreadCounts: [String: Int] = [:]
     @State private var conversationLastMessages: [String: (senderDID: String, text: String)] = [:]
+    @State private var conversationLatestActivity: [String: Date] = [:]
     @State private var pollingTask: Task<Void, Never>?
     @State private var stateObserver: MLSStateObserver?
     @State private var observedConversationManager: MLSConversationManager?
@@ -102,6 +103,7 @@ struct MLSConversationListView: View {
         let conversationParticipants: [String: [MLSParticipantViewModel]]
         let conversationUnreadCounts: [String: Int]
         let conversationLastMessages: [String: (senderDID: String, text: String)]
+        let conversationLatestActivity: [String: Date]
         let recentMemberChanges: [String: MemberChangeInfo]
         let pendingChatRequestCount: Int
         let selectedConversationId: String?
@@ -149,7 +151,9 @@ struct MLSConversationListView: View {
         .navigationSplitViewStyle(.automatic)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         // Hide tab bar when viewing a conversation on iPhone
+        #if !targetEnvironment(macCatalyst)
         .toolbar(selectedConvoId != nil && !shouldUseSplitView ? .hidden : .visible, for: .tabBar)
+        #endif
         // On Catalyst, the FAB is shown in sidebarContent; on iOS show it here
         #if !targetEnvironment(macCatalyst)
         .overlay(alignment: .bottomTrailing) {
@@ -859,6 +863,13 @@ struct MLSConversationListView: View {
                         }
                     }
             }
+
+            // Spacer so the FAB doesn't cover the last row
+            Spacer()
+                .frame(height: 80)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
         }
         .listStyle(.plain)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
@@ -937,22 +948,29 @@ struct MLSConversationListView: View {
     // MARK: - Filtered Conversations
 
     private var filteredConversations: [MLSConversationModel] {
+        let base: [MLSConversationModel]
         if searchText.isEmpty {
-            return conversations
+            base = conversations
+        } else {
+            base = conversations.filter { conversation in
+                // Search by conversation title
+                if let title = conversation.title, title.localizedCaseInsensitiveContains(searchText) {
+                    return true
+                }
+
+                // Search by conversation ID (contains participant info in some cases)
+                if conversation.conversationID.localizedCaseInsensitiveContains(searchText) {
+                    return true
+                }
+
+                return false
+            }
         }
-        
-        return conversations.filter { conversation in
-            // Search by conversation title
-            if let title = conversation.title, title.localizedCaseInsensitiveContains(searchText) {
-                return true
-            }
-
-            // Search by conversation ID (contains participant info in some cases)
-            if conversation.conversationID.localizedCaseInsensitiveContains(searchText) {
-                return true
-            }
-
-            return false
+        // Sort by actual latest message timestamp from messages table
+        return base.sorted { lhs, rhs in
+            let lhsDate = conversationLatestActivity[lhs.conversationID] ?? lhs.createdAt
+            let rhsDate = conversationLatestActivity[rhs.conversationID] ?? rhs.createdAt
+            return lhsDate > rhsDate
         }
     }
 
@@ -984,8 +1002,10 @@ struct MLSConversationListView: View {
         let filtered = value.unicodeScalars.compactMap { scalar -> Character? in
             guard scalar.isASCII else { return nil }
             let v = scalar.value
-            let isAlphaNum = (v >= 48 && v <= 57) || (v >= 65 && v <= 90) || (v >= 97 && v <= 122)
-            return isAlphaNum ? Character(scalar) : nil
+            let isDigit = v >= 48 && v <= 57
+            let isUpper = v >= 65 && v <= 90
+            let isLower = v >= 97 && v <= 122
+            return (isDigit || isUpper || isLower) ? Character(scalar) : nil
         }
         let prefix = String(filtered.prefix(maxLength))
         return prefix.isEmpty ? "unknown" : prefix
@@ -1006,6 +1026,7 @@ struct MLSConversationListView: View {
         conversationParticipants = snapshot.conversationParticipants
         conversationUnreadCounts = snapshot.conversationUnreadCounts
         conversationLastMessages = snapshot.conversationLastMessages
+        conversationLatestActivity = snapshot.conversationLatestActivity
         recentMemberChanges = snapshot.recentMemberChanges
         pendingChatRequestCount = snapshot.pendingChatRequestCount
         keyPackageStatus = snapshot.keyPackageStatus
@@ -1034,6 +1055,7 @@ struct MLSConversationListView: View {
             conversationParticipants: conversationParticipants,
             conversationUnreadCounts: conversationUnreadCounts,
             conversationLastMessages: conversationLastMessages,
+            conversationLatestActivity: conversationLatestActivity,
             recentMemberChanges: recentMemberChanges,
             pendingChatRequestCount: pendingChatRequestCount,
             selectedConversationId: selectedConvoId,
@@ -1108,41 +1130,65 @@ struct MLSConversationListView: View {
                 )
             }
 
-            // Fetch last message preview per conversation (sender name resolved later from enriched participants)
-            let lastMessages = try await MLSGRDBManager.shared.read(for: userDID) { db -> [String: (senderDID: String, text: String)] in
+            // Fetch last message preview and latest activity timestamp per conversation
+            // Single DB read for both preview text and sort timestamps
+            let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: (senderDID: String, text: String)], [String: Date]) in
                 var previews: [String: (senderDID: String, text: String)] = [:]
+                var latestActivity: [String: Date] = [:]
                 for conversation in acceptedConversations {
                     let convoID = conversation.conversationID
-                    if let message = try MLSMessageModel
+                    let recentMessages = try MLSMessageModel
                         .filter(MLSMessageModel.Columns.conversationID == convoID)
                         .filter(MLSMessageModel.Columns.currentUserDID == userDID)
                         .order(MLSMessageModel.Columns.timestamp.desc)
-                        .limit(1)
-                        .fetchOne(db)
-                    {
-                        let text: String
+                        .limit(20)
+                        .fetchAll(db)
+
+                    // The first message's timestamp is the latest activity for sorting
+                    if let newest = recentMessages.first {
+                        latestActivity[convoID] = newest.timestamp
+                    }
+
+                    for message in recentMessages {
+                        // Skip placeholder error messages (failed decryptions, self-sent errors)
+                        if message.processingError != nil {
+                            let text = message.parsedPayload?.text ?? ""
+                            if text.isEmpty || text.contains("Message unavailable")
+                                || text.contains("Decryption Failed") || text.contains("Self-sent message") {
+                                continue
+                            }
+                        }
+
                         if let payload = message.parsedPayload {
-                            if let plaintext = payload.text, !plaintext.isEmpty {
-                                text = plaintext
-                            } else if case .some(.image(_)) = payload.embed {
-                                text = "Sent a photo"
-                            } else {
-                                text = ""
+                            switch payload.messageType {
+                            case .text, .system, nil:
+                                if let plaintext = payload.text, !plaintext.isEmpty {
+                                    previews[convoID] = (senderDID: message.senderID, text: plaintext)
+                                } else if case .some(.image(_)) = payload.embed {
+                                    previews[convoID] = (senderDID: message.senderID, text: "Sent a photo")
+                                } else {
+                                    continue
+                                }
+                            case .reaction:
+                                previews[convoID] = (senderDID: message.senderID, text: "Reacted to a message")
+                            case .readReceipt, .typing, .adminRoster, .adminAction:
+                                continue
                             }
                         } else {
-                            text = message.payloadExpired ? "Message expired" : "Encrypted message"
+                            continue
                         }
-                        previews[convoID] = (senderDID: message.senderID, text: text)
+                        break
                     }
                 }
-                return previews
+                return (previews, latestActivity)
             }
 
             await MainActor.run {
-                // Sort conversations by most recent message (newest first)
+                // Sort by actual latest message timestamp from the messages table,
+                // falling back to conversation createdAt for empty conversations
                 let sortedConversations = acceptedConversations.sorted { lhs, rhs in
-                    let lhsDate = lhs.lastMessageAt ?? lhs.createdAt
-                    let rhsDate = rhs.lastMessageAt ?? rhs.createdAt
+                    let lhsDate = latestActivityByConvo[lhs.conversationID] ?? lhs.createdAt
+                    let rhsDate = latestActivityByConvo[rhs.conversationID] ?? rhs.createdAt
                     return lhsDate > rhsDate
                 }
 
@@ -1150,13 +1196,15 @@ struct MLSConversationListView: View {
                 let convoIDs = sortedConversations.map(\.conversationID)
                 let existingIDs = conversations.map(\.conversationID)
                 let countsChanged = unreadCounts != conversationUnreadCounts
+                let activityChanged = latestActivityByConvo != conversationLatestActivity
                 let messagesChanged = lastMessages.keys != conversationLastMessages.keys
                     || lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID }
 
-                if convoIDs != existingIDs || countsChanged || messagesChanged {
+                if convoIDs != existingIDs || countsChanged || messagesChanged || activityChanged {
                     conversations = sortedConversations
                     conversationUnreadCounts = unreadCounts
                     conversationLastMessages = lastMessages
+                    conversationLatestActivity = latestActivityByConvo
                     cacheCurrentSnapshot()
                 }
 

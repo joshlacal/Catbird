@@ -28,12 +28,25 @@ struct ContentMediaSettingsView: View {
                     set: { appState.appSettings.autoplayVideos = $0 }
                 ))
                 .tint(.blue)
-                
+
                 Toggle("Open Links In-App", isOn: Binding(
                     get: { appState.appSettings.useInAppBrowser },
                     set: { appState.appSettings.useInAppBrowser = $0 }
                 ))
                 .tint(.blue)
+            }
+
+            // Sensitive Content
+            Section {
+                Toggle("Scan for Sensitive Content", isOn: Binding(
+                    get: { appState.appSettings.sensitiveContentScanningEnabled },
+                    set: { appState.appSettings.sensitiveContentScanningEnabled = $0 }
+                ))
+                .tint(.blue)
+            } header: {
+                Text("Chat Safety")
+            } footer: {
+                Text("Uses on-device analysis to detect nudity in chat images. Analysis is performed entirely on your device and is never sent to a server.")
             }
             
             // Feed Content Settings
@@ -380,6 +393,7 @@ struct ContentMediaSettingsView: View {
     
     private func resetToDefaults() {
         // Reset media playback settings
+        appState.appSettings.sensitiveContentScanningEnabled = true
         appState.appSettings.autoplayVideos = true
         appState.appSettings.useInAppBrowser = true
         appState.appSettings.showTrendingTopics = true

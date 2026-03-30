@@ -43,8 +43,11 @@ extension PostComposerViewUIKit {
       }
       .sheet(isPresented: $showingAccountSwitcher) {
         // Pass current draft when switching accounts from composer
+        // NOTE: Do NOT inject appState here — AccountSwitcherView only needs AppStateManager,
+        // and a captured appState becomes stale after account switch, causing EXC_BREAKPOINT
+        // in EnvironmentValues.subscript.getter during sheet dismissal transitions.
         AccountSwitcherView(showsDismissButton: true, draftToTransfer: vm.saveDraftState())
-          .applyAppStateEnvironment(appState)
+          .environment(AppStateManager.shared)
           .onDisappear {
             handleAccountSwitchComplete(vm: vm)
           }
@@ -83,7 +86,9 @@ extension PostComposerViewUIKit {
             set: { vm.outlineTags = $0 }
           ))
           .navigationTitle("Outline Hashtags")
+          #if os(iOS)
           .navigationBarTitleDisplayMode(.inline)
+          #endif
           .toolbar {
             ToolbarItem(placement: .cancellationAction) {
               Button("Done") { showingOutlineTagsEditor = false }

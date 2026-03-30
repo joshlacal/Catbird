@@ -1,7 +1,7 @@
 import SwiftUI
-import VisionKit
 
 #if os(iOS)
+import VisionKit
 import UIKit
 
 /// Fullscreen image viewer for MLS chat images.

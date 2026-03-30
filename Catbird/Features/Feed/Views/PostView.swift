@@ -317,7 +317,7 @@ var id: String {
       }
       
 #if canImport(FoundationModels)
-      if #available(iOS 26.0, macOS 15.0, *), contextMenuViewModel.allowsThreadSummary {
+      if #available(iOS 26.0, macOS 26.0, *), contextMenuViewModel.allowsThreadSummary {
         Button(action: {
           contextMenuViewModel.summarizeThread()
         }) {
@@ -592,7 +592,7 @@ var id: String {
       return
     }
 
-    if #available(iOS 26.0, macOS 15.0, *) {
+    if #available(iOS 26.0, macOS 26.0, *) {
       let agent = appState.blueskyAgent
       let targetURI = postState.currentPost.uri
 
@@ -807,7 +807,9 @@ private struct ThreadSummarySheet: View {
       }
       .padding(DesignTokens.Spacing.lg)
       .navigationTitle("Thread Summary")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Close") { dismiss() }

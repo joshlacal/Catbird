@@ -23,6 +23,13 @@ struct MLSEmbedView: View {
     case .image(let imageEmbed):
       MLSImageView(imageEmbed: imageEmbed)
 
+    case .audio:
+      Text("Voice message")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding()
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+
     case .unknown:
       Text("This message contains an attachment your app version cannot display.")
         .font(.caption)

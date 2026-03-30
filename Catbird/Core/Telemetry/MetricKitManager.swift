@@ -10,6 +10,7 @@ import OSLog
 /// - Tracks extended launch measurements
 /// - Provides custom signpost logging for key operations
 /// - Persists metrics for analysis
+@available(iOS 26, macOS 26, *)
 @MainActor
 final class MetricKitManager: NSObject, @unchecked Sendable {
   
@@ -228,10 +229,12 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
       metricLogger.warning("  ⚠️ \(diskExceptions.count) disk write exception(s)")
     }
     
-    // Log app launch diagnostics
+    // Log app launch diagnostics (iOS only)
+    #if os(iOS)
     if let launchDiagnostics = payload.appLaunchDiagnostics, !launchDiagnostics.isEmpty {
       metricLogger.warning("  ⚠️ \(launchDiagnostics.count) app launch diagnostic(s)")
     }
+    #endif
   }
   
   // MARK: - Persistence
@@ -281,6 +284,7 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
 
 // MARK: - MXMetricManagerSubscriber
 
+@available(iOS 26, macOS 26, *)
 extension MetricKitManager: MXMetricManagerSubscriber {
   
   nonisolated func didReceive(_ payloads: [MXMetricPayload]) {

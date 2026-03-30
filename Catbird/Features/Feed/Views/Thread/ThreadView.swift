@@ -42,12 +42,13 @@ private struct UIKitThreadViewWrapper: View {
 
 #if os(macOS)
 /// Pure SwiftUI ThreadView implementation optimized for macOS
+/// Uses the V2 thread API (flat array of ThreadItem with depth values)
 private struct SwiftUIThreadView: View {
     @Environment(AppState.self) private var appState: AppState
     @Environment(\.modelContext) private var modelContext
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
-    
+
     @State private var threadManager: ThreadManager?
     @State private var isLoading = true
     @State private var hasInitialized = false
@@ -55,17 +56,19 @@ private struct SwiftUIThreadView: View {
     @State private var contentOpacity: Double = 0
     @State private var scrollPosition = ScrollPosition(idType: String.self)
     @State private var hasScrolledToMainPost = false
-    
+
+    // V2 types: ParentPost and ReplyWrapper from ThreadManager.swift
     @State private var parentPosts: [ParentPost] = []
     @State private var mainPost: AppBskyFeedDefs.PostView? = nil
-    @State private var mainBlocked: AppBskyFeedDefs.BlockedPost? = nil
-    @State private var mainNotFound: AppBskyFeedDefs.NotFoundPost? = nil
+    @State private var mainItemIsBlocked = false
+    @State private var mainItemIsNotFound = false
     @State private var replyWrappers: [ReplyWrapper] = []
-    
+    @State private var hasMoreParents = false
+
     private static let mainPostID = "main-post-id"
-    
+
     private let logger = Logger(subsystem: "blue.catbird", category: "ThreadView")
-    
+
     var body: some View {
         ZStack {
             if isLoading {
@@ -76,7 +79,7 @@ private struct SwiftUIThreadView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-            } else if mainPost != nil || mainBlocked != nil || mainNotFound != nil {
+            } else if mainPost != nil || mainItemIsBlocked || mainItemIsNotFound {
                 modernThreadView
                     .opacity(contentOpacity)
                     .onAppear {
@@ -87,15 +90,23 @@ private struct SwiftUIThreadView: View {
                                 hasScrolledToMainPost = true
                             }
                         }
-                        
+
                         withAnimation(.easeInOut(duration: 0.3)) {
                             contentOpacity = 1
                         }
                     }
-            } else if let nf = mainNotFound {
-                PostNotFoundView(uri: nf.uri, reason: .notFound, path: $path)
-            } else if let blocked = mainBlocked {
-                BlockedPostView(blockedPost: blocked, path: $path)
+            } else if mainItemIsNotFound {
+                ContentUnavailableView {
+                    Label("Post Not Found", systemImage: "questionmark.circle")
+                } description: {
+                    Text("This post may have been deleted.")
+                }
+            } else if mainItemIsBlocked {
+                ContentUnavailableView {
+                    Label("Post Blocked", systemImage: "hand.raised")
+                } description: {
+                    Text("This post is from a blocked account.")
+                }
             } else {
                 ContentUnavailableView {
                     Label("Post Not Available", systemImage: "exclamationmark.circle")
@@ -112,42 +123,60 @@ private struct SwiftUIThreadView: View {
             await loadInitialThread()
         }
     }
-    
+
     private func jumpToMainPost() {
         scrollPosition = ScrollPosition(id: SwiftUIThreadView.mainPostID, anchor: .center)
     }
-    
+
     private var modernThreadView: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 parentsSection
-                
+
                 if let post = mainPost {
                     mainPostSection(post)
                         .id(SwiftUIThreadView.mainPostID)
                         .padding(.bottom, 12)
-                } else if let blocked = mainBlocked {
-                    BlockedPostView(blockedPost: blocked, path: $path)
-                        .padding(.vertical, 8)
-                        .id(SwiftUIThreadView.mainPostID)
-                        .padding(.bottom, 12)
-                } else if let nf = mainNotFound {
-                    PostNotFoundView(uri: nf.uri, reason: .notFound, path: $path)
-                        .padding(.vertical, 8)
-                        .id(SwiftUIThreadView.mainPostID)
-                        .padding(.bottom, 12)
+                } else if mainItemIsBlocked {
+                    HStack {
+                        Image(systemName: "hand.raised")
+                            .foregroundColor(.red)
+                        Text("This post is from a blocked account.")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(8)
+                    .id(SwiftUIThreadView.mainPostID)
+                    .padding(.bottom, 12)
+                } else if mainItemIsNotFound {
+                    HStack {
+                        Image(systemName: "questionmark.circle")
+                            .foregroundColor(.orange)
+                        Text("Post not found")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                    .id(SwiftUIThreadView.mainPostID)
+                    .padding(.bottom, 12)
                 }
-                
+
                 repliesSection
-                
+
                 // Extra space at bottom for comfortable scrolling
                 Spacer(minLength: 200)
             }
             .padding(.horizontal, 16)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
         .scrollPosition($scrollPosition, anchor: .top)
     }
-    
+
     private var parentsSection: some View {
         LazyVStack(spacing: 8) {
             if isLoadingMoreParents {
@@ -160,23 +189,25 @@ private struct SwiftUIThreadView: View {
                 }
                 .padding(.vertical, 8)
             }
-            
+
             if !parentPosts.isEmpty {
                 // Invisible trigger for loading more parents
-                Color.clear
-                    .frame(height: 20)
-                    .onAppear {
-                        logger.debug("Top of parents section appeared, triggering loadMoreParents")
-                        loadMoreParents()
-                    }
-                    .id("load-trigger-\(parentPosts.count)")
-                
-                // Display parents in reverse chronological order
-                ForEach(Array(parentPosts.reversed()), id: \.id) { parentPost in
+                if hasMoreParents {
+                    Color.clear
+                        .frame(height: 20)
+                        .onAppear {
+                            logger.debug("Top of parents section appeared, triggering loadMoreParents")
+                            loadMoreParents()
+                        }
+                        .id("load-trigger-\(parentPosts.count)")
+                }
+
+                // Parents are already ordered from oldest (most negative depth) to newest
+                ForEach(parentPosts, id: \.id) { parentPost in
                     parentPostView(for: parentPost)
                         .id(parentPost.id)
                         .onAppear {
-                            if parentPost.id == parentPosts.first?.id {
+                            if hasMoreParents && parentPost.id == parentPosts.first?.id {
                                 logger.debug("Oldest parent post appeared, triggering loadMoreParents")
                                 loadMoreParents()
                             }
@@ -185,7 +216,7 @@ private struct SwiftUIThreadView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private func mainPostSection(_ post: AppBskyFeedDefs.PostView) -> some View {
         VStack(spacing: 0) {
@@ -196,7 +227,7 @@ private struct SwiftUIThreadView: View {
                 appState: appState
             )
             .padding(.vertical, 8)
-            
+
             Divider()
                 .padding(.horizontal, -16)
         }
@@ -207,21 +238,12 @@ private struct SwiftUIThreadView: View {
                 .padding(.vertical, -4)
         )
     }
-    
+
     private var repliesSection: some View {
         LazyVStack(spacing: 8) {
             ForEach(replyWrappers, id: \.id) { wrapper in
-                if case .appBskyFeedDefsThreadViewPost(let replyPost) = wrapper.reply {
-                    recursiveReplyView(
-                        reply: replyPost,
-                        opAuthorID: mainPost?.author.did.didString() ?? "",
-                        depth: 0,
-                        maxDepth: 3
-                    )
-                } else {
-                    replyView(for: wrapper, opAuthorID: mainPost?.author.did.didString() ?? "")
-                }
-                
+                replyView(for: wrapper, opAuthorID: mainPost?.author.did.didString() ?? "")
+
                 if wrapper.id != replyWrappers.last?.id {
                     Divider()
                         .padding(.horizontal, -16)
@@ -229,14 +251,15 @@ private struct SwiftUIThreadView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private func parentPostView(for parentPost: ParentPost) -> some View {
-        switch parentPost.post {
-        case .appBskyFeedDefsThreadViewPost(let post):
+        let threadItem = parentPost.threadItem
+        switch threadItem.value {
+        case .appBskyUnspeccedDefsThreadItemPost(let itemPost):
             PostView(
-                post: post.post,
-                grandparentAuthor: nil,
+                post: itemPost.post,
+                grandparentAuthor: parentPost.grandparentAuthor,
                 isParentPost: true,
                 isSelectable: false,
                 path: $path,
@@ -245,7 +268,7 @@ private struct SwiftUIThreadView: View {
             )
             .contentShape(Rectangle())
             .onTapGesture {
-                path.append(NavigationDestination.post(post.post.uri))
+                path.append(NavigationDestination.post(itemPost.post.uri))
             }
             .background(
                 RoundedRectangle(cornerRadius: 8)
@@ -253,8 +276,8 @@ private struct SwiftUIThreadView: View {
                     .padding(.horizontal, -4)
                     .padding(.vertical, -2)
             )
-            
-        case .appBskyFeedDefsNotFoundPost(let notFoundPost):
+
+        case .appBskyUnspeccedDefsThreadItemNotFound:
             HStack {
                 Image(systemName: "questionmark.circle")
                     .foregroundColor(.orange)
@@ -266,11 +289,21 @@ private struct SwiftUIThreadView: View {
             .padding()
             .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground).opacity(0.5))
             .cornerRadius(8)
-            
-        case .appBskyFeedDefsBlockedPost(let blockedPost):
-            BlockedPostView(blockedPost: blockedPost, path: $path)
-            
-        case .unexpected(let unexpected):
+
+        case .appBskyUnspeccedDefsThreadItemBlocked:
+            HStack {
+                Image(systemName: "hand.raised")
+                    .foregroundColor(.red)
+                Text("Blocked post")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding()
+            .background(Color.red.opacity(0.1))
+            .cornerRadius(8)
+
+        default:
             HStack {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundColor(.orange)
@@ -284,51 +317,54 @@ private struct SwiftUIThreadView: View {
             .cornerRadius(8)
         }
     }
-    
+
     @ViewBuilder
     private func replyView(for wrapper: ReplyWrapper, opAuthorID: String) -> some View {
-        switch wrapper.reply {
-        case .appBskyFeedDefsThreadViewPost(let replyPost):
+        let threadItem = wrapper.threadItem
+        switch threadItem.value {
+        case .appBskyUnspeccedDefsThreadItemPost(let itemPost):
+            let indentLevel = max(0, wrapper.depth - 1)
             VStack(alignment: .leading, spacing: 4) {
                 PostView(
-                    post: replyPost.post,
+                    post: itemPost.post,
                     grandparentAuthor: nil,
-                    isParentPost: replyPost.replies?.isEmpty == false,
+                    isParentPost: wrapper.hasReplies,
                     isSelectable: false,
                     path: $path,
                     appState: appState,
-                    hasVisibleThreadContext: true
+                    hasVisibleThreadContext: wrapper.hasReplies
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    path.append(NavigationDestination.post(replyPost.post.uri))
+                    path.append(NavigationDestination.post(itemPost.post.uri))
                 }
-                
-                // Show nested reply preview
-                if let replies = replyPost.replies, !replies.isEmpty {
-                    let nestedReplyToShow = selectMostRelevantReply(replies, opAuthorID: opAuthorID)
-                    
-                    if case .appBskyFeedDefsThreadViewPost(let nestedPost) = nestedReplyToShow {
-                        PostView(
-                            post: nestedPost.post,
-                            grandparentAuthor: nil,
-                            isParentPost: false,
-                            isSelectable: false,
-                            path: $path,
-                            appState: appState,
-                            hasVisibleThreadContext: true
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            path.append(NavigationDestination.post(nestedPost.post.uri))
+
+                // Show "Continue thread" button for posts with more replies not in the flat list
+                if itemPost.moreReplies > 0 {
+                    Button(action: {
+                        path.append(NavigationDestination.post(itemPost.post.uri))
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.turn.down.right")
+                                .font(.caption)
+                            Text("Continue thread (\(itemPost.moreReplies) more)")
+                                .font(.subheadline)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
                         }
-                        .padding(.leading, 20)
-                        .opacity(0.8)
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.1))
+                        .cornerRadius(8)
                     }
+                    .padding(.leading, CGFloat(indentLevel * 16))
                 }
             }
-            
-        case .appBskyFeedDefsNotFoundPost(let notFoundPost):
+            .padding(.leading, CGFloat(indentLevel * 16))
+
+        case .appBskyUnspeccedDefsThreadItemNotFound:
             HStack {
                 Image(systemName: "questionmark.circle")
                     .foregroundColor(.red)
@@ -339,11 +375,20 @@ private struct SwiftUIThreadView: View {
             .padding()
             .background(Color.red.opacity(0.1))
             .cornerRadius(8)
-            
-        case .appBskyFeedDefsBlockedPost(let blocked):
-            BlockedPostView(blockedPost: blocked, path: $path)
-            
-        case .unexpected(let unexpected):
+
+        case .appBskyUnspeccedDefsThreadItemBlocked:
+            HStack {
+                Image(systemName: "hand.raised")
+                    .foregroundColor(.red)
+                Text("Reply from blocked account")
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding()
+            .background(Color.red.opacity(0.1))
+            .cornerRadius(8)
+
+        default:
             HStack {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundColor(.orange)
@@ -356,130 +401,38 @@ private struct SwiftUIThreadView: View {
             .cornerRadius(8)
         }
     }
-    
-    @ViewBuilder
-    private func recursiveReplyView(
-        reply: AppBskyFeedDefs.ThreadViewPost,
-        opAuthorID: String,
-        depth: Int,
-        maxDepth: Int
-    ) -> some View {
-        Group {
-            VStack(alignment: .leading, spacing: 4) {
-            let showConnectingLine = reply.replies?.isEmpty == false && depth < maxDepth
-            
-            PostView(
-                post: reply.post,
-                grandparentAuthor: nil,
-                isParentPost: showConnectingLine,
-                isSelectable: false,
-                path: $path,
-                appState: appState
-            )
-            .contentShape(Rectangle())
-            .onTapGesture {
-                path.append(NavigationDestination.post(reply.post.uri))
-            }
-            .padding(.leading, CGFloat(depth * 16))
-            
-            // Continue thread button at max depth
-            if depth == maxDepth && reply.replies?.isEmpty == false {
-                Button(action: {
-                    path.append(NavigationDestination.post(reply.post.uri))
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.turn.down.right")
-                            .font(.caption)
-                        Text("Continue thread (\(reply.replies?.count ?? 0) more)")
-                            .font(.subheadline)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                    }
-                    .foregroundColor(.accentColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.accentColor.opacity(0.1))
-                    .cornerRadius(8)
-                }
-                .padding(.leading, CGFloat((depth + 1) * 16))
-            }
-            // Show nested replies within depth limit
-            else if depth < maxDepth, let replies = reply.replies, !replies.isEmpty {
-                let topReply = selectMostRelevantReply(replies, opAuthorID: opAuthorID)
-                
-                if case .appBskyFeedDefsThreadViewPost(let nestedPost) = topReply {
-                    AnyView(recursiveReplyView(
-                        reply: nestedPost,
-                        opAuthorID: opAuthorID,
-                        depth: depth + 1,
-                        maxDepth: maxDepth
-                    ))
-                }
-            }
-        }
-    }
-}
-    
+
     // MARK: - Data Loading Methods
-    
+
     private func loadMoreParents() {
         guard !isLoadingMoreParents, let threadManager = threadManager else {
             logger.debug("loadMoreParents: Skipped - already loading or no manager")
             return
         }
-        
-        guard !parentPosts.isEmpty else {
-            logger.debug("loadMoreParents: Skipped - no parent posts exist")
+
+        guard !parentPosts.isEmpty, hasMoreParents else {
+            logger.debug("loadMoreParents: Skipped - no parent posts or no more parents available")
             return
         }
-        
-        let oldestParent = parentPosts.last!
+
+        // Find the oldest parent's URI
+        guard let oldestParent = parentPosts.first else { return }
+
         isLoadingMoreParents = true
-        
+
         Task { @MainActor in
-            var postURI: ATProtocolURI? = nil
-            var oldestParentPost = oldestParent.post
-            
-            // Handle pending posts
-            if case .pending = oldestParentPost {
-                logger.debug("loadMoreParents: Found pending post, loading deferred data")
-                await oldestParentPost.loadPendingData()
+            let uri = oldestParent.threadItem.uri
+            let success = await threadManager.loadMoreParents(uri: uri)
+
+            if success {
+                // Re-process thread data after loading more parents
+                processThreadData()
             }
-            
-            // Extract URI from valid post
-            if case .appBskyFeedDefsThreadViewPost(let threadViewPost) = oldestParentPost {
-                postURI = threadViewPost.post.uri
-            } else {
-                // Search for earlier valid post
-                for i in (0..<parentPosts.count - 1).reversed() {
-                    if case .appBskyFeedDefsThreadViewPost(let post) = parentPosts[i].post {
-                        postURI = post.post.uri
-                        break
-                    }
-                }
-            }
-            
-            if let postURI = postURI {
-                let success = await threadManager.loadMoreParents(uri: postURI)
-                
-                // Refresh data from manager
-                if let threadUnion = threadManager.threadViewPost,
-                   case .appBskyFeedDefsThreadViewPost(let threadViewPost) = threadUnion {
-                    
-                    let fullChainFromManager = collectParentPosts(from: threadViewPost.parent)
-                    
-                    if parentPosts != fullChainFromManager {
-                        logger.debug("loadMoreParents: Updating parentPosts. Old: \(parentPosts.count), New: \(fullChainFromManager.count)")
-                        parentPosts = fullChainFromManager
-                    }
-                }
-            }
-            
+
             isLoadingMoreParents = false
         }
     }
-    
+
     private func loadInitialThread() async {
         logger.debug("loadInitialThread: Starting for URI: \(postURI.uriString())")
         isLoading = true
@@ -488,226 +441,136 @@ private struct SwiftUIThreadView: View {
         threadManager = ThreadManager(appState: appState)
         threadManager?.setModelContext(modelContext)
         await threadManager?.loadThread(uri: postURI)
-        
+
         processThreadData()
         logger.debug("loadInitialThread: Completed. Parents: \(parentPosts.count)")
         isLoading = false
     }
-    
+
+    /// Process the flat V2 thread array into parent posts, main post, and replies.
+    /// V2 API returns a flat `[ThreadItem]` where:
+    ///   - depth < 0: parent posts (most negative = oldest ancestor)
+    ///   - depth == 0: the anchor/main post
+    ///   - depth > 0: reply posts
     private func processThreadData() {
         guard let threadManager = threadManager,
-              let threadUnion = threadManager.threadViewPost else {
+              let threadData = threadManager.threadData else {
             return
         }
-        
-        switch threadUnion {
-        case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-            parentPosts = collectParentPosts(from: threadViewPost.parent)
-            mainPost = threadViewPost.post
-            mainBlocked = nil
-            mainNotFound = nil
-            
-            if let replies = threadViewPost.replies {
-                replyWrappers = selectRelevantReplies(replies, opAuthorID: threadViewPost.post.author.did.didString())
-            } else {
-                replyWrappers = []
-            }
-            
-        case .appBskyFeedDefsBlockedPost(let blocked):
+
+        let thread = threadData.thread
+
+        // Find the anchor post (depth == 0)
+        guard let anchorItem = thread.first(where: { $0.depth == 0 }) else {
+            // No anchor found - clear everything
             parentPosts = []
             mainPost = nil
-            mainBlocked = blocked
-            mainNotFound = nil
+            mainItemIsBlocked = false
+            mainItemIsNotFound = false
             replyWrappers = []
-        case .appBskyFeedDefsNotFoundPost(let nf):
-            parentPosts = []
+            hasMoreParents = false
+            return
+        }
+
+        // Process the anchor/main post
+        switch anchorItem.value {
+        case .appBskyUnspeccedDefsThreadItemPost(let itemPost):
+            mainPost = itemPost.post
+            mainItemIsBlocked = false
+            mainItemIsNotFound = false
+        case .appBskyUnspeccedDefsThreadItemBlocked:
             mainPost = nil
-            mainBlocked = nil
-            mainNotFound = nf
-            replyWrappers = []
+            mainItemIsBlocked = true
+            mainItemIsNotFound = false
+        case .appBskyUnspeccedDefsThreadItemNotFound:
+            mainPost = nil
+            mainItemIsBlocked = false
+            mainItemIsNotFound = true
         default:
-            parentPosts = []
             mainPost = nil
-            mainBlocked = nil
-            mainNotFound = nil
-            replyWrappers = []
+            mainItemIsBlocked = false
+            mainItemIsNotFound = false
         }
-    }
-    
-    private func collectParentPosts(from initialPost: AppBskyFeedDefs.ThreadViewPostParentUnion?) -> [ParentPost] {
+
+        // Extract parent posts (depth < 0), sorted from most negative (oldest) to -1 (closest to anchor)
+        let parentItems = thread
+            .filter { $0.depth < 0 }
+            .sorted { $0.depth < $1.depth }
+
+        // Build ParentPost array with grandparent author tracking
         var parents: [ParentPost] = []
-        var currentPost = initialPost
-        var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil
-        var depth = 0
-        
-        while let post = currentPost {
-            depth += 1
-            switch post {
-            case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-                let postURI = threadViewPost.post.uri.uriString()
-                parents.append(ParentPost(id: postURI, post: post, grandparentAuthor: grandparentAuthor))
-                grandparentAuthor = threadViewPost.post.author
-                currentPost = threadViewPost.parent
-                
-            case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-                let uri = notFoundPost.uri.uriString()
-                parents.append(ParentPost(id: uri, post: post, grandparentAuthor: grandparentAuthor))
-                currentPost = nil
-                
-            case .appBskyFeedDefsBlockedPost(let blockedPost):
-                let uri = blockedPost.uri.uriString()
-                parents.append(ParentPost(id: uri, post: post, grandparentAuthor: grandparentAuthor))
-                currentPost = nil
-                
-            case .pending(let pendingData):
-                // Try to decode the pending post to get the full ThreadViewPost with embeds
-                if let threadViewPost = try? post.getThreadViewPost() {
-                    let postURI = threadViewPost.post.uri.uriString()
-                    // Use the decoded ThreadViewPost wrapped in a union so embeds are properly included
-                    let decodedUnion: AppBskyFeedDefs.ThreadViewPostParentUnion = .appBskyFeedDefsThreadViewPost(threadViewPost)
-                    parents.append(ParentPost(id: postURI, post: decodedUnion, grandparentAuthor: grandparentAuthor))
-                    grandparentAuthor = threadViewPost.post.author
-                    currentPost = threadViewPost.parent
+        for (index, item) in parentItems.enumerated() {
+            let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
+            if index > 0 {
+                // The grandparent is the item before this one in the parent chain
+                if case .appBskyUnspeccedDefsThreadItemPost(let prevPost) = parentItems[index - 1].value {
+                    grandparentAuthor = prevPost.post.author
                 } else {
-                    // Fallback: if we can't decode, use the pending post as-is
-                    let pendingID = "pending-\(pendingData.type)-\(depth)"
-                    parents.append(ParentPost(id: pendingID, post: post, grandparentAuthor: grandparentAuthor))
-                    currentPost = nil
+                    grandparentAuthor = nil
                 }
-                
-            case .unexpected(_):
-                let unexpectedID = "unexpected-\(depth)-\(UUID().uuidString.prefix(8))"
-                parents.append(ParentPost(id: unexpectedID, post: post, grandparentAuthor: grandparentAuthor))
-                currentPost = nil
-            }
-        }
-        
-        return parents
-    }
-    
-    // MARK: - Helper Methods
-    
-    private func selectMostRelevantReply(
-        _ replies: [AppBskyFeedDefs.ThreadViewPostRepliesUnion],
-        opAuthorID: String
-    ) -> AppBskyFeedDefs.ThreadViewPostRepliesUnion {
-        // Priority: 1) From OP, 2) Has replies, 3) Most recent
-        
-        if let opReply = replies.first(where: { reply in
-            if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-                return post.post.author.did.didString() == opAuthorID
-            }
-            return false
-        }) {
-            return opReply
-        }
-        
-        if let threadReply = replies.first(where: { reply in
-            if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-                return !(post.replies?.isEmpty ?? true)
-            }
-            return false
-        }) {
-            return threadReply
-        }
-        
-        return replies.first!
-    }
-    
-    private func selectRelevantReplies(
-        _ replies: [AppBskyFeedDefs.ThreadViewPostRepliesUnion],
-        opAuthorID: String
-    ) -> [ReplyWrapper] {
-        let wrappedReplies = replies.map { reply -> ReplyWrapper in
-            let id = getReplyID(reply)
-            let isFromOP: Bool
-            let hasReplies: Bool
-            
-            if case .appBskyFeedDefsThreadViewPost(let post) = reply {
-                isFromOP = post.post.author.did.didString() == opAuthorID
-                hasReplies = !(post.replies?.isEmpty ?? true)
             } else {
+                grandparentAuthor = nil
+            }
+
+            parents.append(ParentPost(
+                id: item.uri.uriString(),
+                threadItem: item,
+                grandparentAuthor: grandparentAuthor
+            ))
+        }
+        parentPosts = parents
+
+        // Check if the topmost parent has moreParents flag
+        if let topParent = parentItems.first,
+           case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = topParent.value {
+            hasMoreParents = itemPost.moreParents
+        } else {
+            hasMoreParents = false
+        }
+
+        // Extract the OP author DID for reply sorting
+        let opAuthorID = mainPost?.author.did.didString() ?? ""
+
+        // Extract reply items (depth > 0), keeping original order from API
+        let replyItems = thread.filter { $0.depth > 0 }
+
+        // Build ReplyWrapper array from the flat reply items
+        // The V2 API returns replies in display order, so we preserve that
+        var wrappers: [ReplyWrapper] = []
+
+        for (index, item) in replyItems.enumerated() {
+            let isFromOP: Bool
+            let isOpThread: Bool
+            let hasReplies: Bool
+
+            switch item.value {
+            case .appBskyUnspeccedDefsThreadItemPost(let itemPost):
+                isFromOP = itemPost.post.author.did.didString() == opAuthorID
+                isOpThread = itemPost.opThread
+                // Check if there's a deeper reply following this one in the list
+                let hasChildInList = index + 1 < replyItems.count && replyItems[index + 1].depth > item.depth
+                hasReplies = hasChildInList || itemPost.moreReplies > 0
+            default:
                 isFromOP = false
+                isOpThread = false
                 hasReplies = false
             }
-            
-            return ReplyWrapper(id: id, reply: reply, isFromOP: isFromOP, hasReplies: hasReplies)
+
+            wrappers.append(ReplyWrapper(
+                id: item.uri.uriString(),
+                threadItem: item,
+                depth: item.depth,
+                isFromOP: isFromOP,
+                isOpThread: isOpThread,
+                hasReplies: hasReplies
+            ))
         }
-        
-        return wrappedReplies.sorted { first, second in
-            if first.isFromOP != second.isFromOP {
-                return first.isFromOP
-            }
-            if first.hasReplies != second.hasReplies {
-                return first.hasReplies
-            }
-            return first.id > second.id
-        }
-    }
-    
-    private func getReplyID(_ reply: AppBskyFeedDefs.ThreadViewPostRepliesUnion) -> String {
-        switch reply {
-        case .appBskyFeedDefsThreadViewPost(let threadViewPost):
-            return threadViewPost.post.uri.uriString()
-        case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-            return notFoundPost.uri.uriString()
-        case .appBskyFeedDefsBlockedPost(let blockedPost):
-            return blockedPost.uri.uriString()
-        case .unexpected, .pending:
-            return UUID().uuidString
-        }
-    }
-    
-    // MARK: - Data Structures
-    
-    struct ReplyWrapper: Identifiable, Equatable {
-        let id: String
-        let reply: AppBskyFeedDefs.ThreadViewPostRepliesUnion
-        let isFromOP: Bool
-        let hasReplies: Bool
-        
-        static func == (lhs: ReplyWrapper, rhs: ReplyWrapper) -> Bool {
-            return lhs.id == rhs.id
-        }
-    }
-    
-    struct ParentPost: Identifiable, Equatable {
-        let id: String
-        let post: AppBskyFeedDefs.ThreadViewPostParentUnion
-        let grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
-        
-        static func == (lhs: ParentPost, rhs: ParentPost) -> Bool {
-            return lhs.id == rhs.id
-        }
+
+        replyWrappers = wrappers
     }
 }
 
-// MARK: - Extensions
-
-extension AppBskyFeedDefs.ThreadViewPostParentUnion {
-    func getThreadViewPost() throws -> AppBskyFeedDefs.ThreadViewPost? {
-        switch self {
-        case .appBskyFeedDefsThreadViewPost(let post):
-            return post
-        case .pending(let data):
-            if data.type == "app.bsky.feed.defs#threadViewPost" {
-                do {
-                    // Configure decoder with original data to support nested pending decodes (e.g., embeds)
-                    let decoder = JSONDecoder()
-                    decoder.userInfo[.originalData] = data.rawData
-                    decoder.userInfo[.debugEnabled] = true
-                    let threadViewPost = try decoder.decode(AppBskyFeedDefs.ThreadViewPost.self, from: data.rawData)
-                    return threadViewPost
-                } catch {
-                    return nil
-                }
-            }
-            return nil
-        default:
-            return nil
-        }
-    }
-}
+#endif
 
 struct NavigationTitleDisplayModeModifier: ViewModifier {
     func body(content: Content) -> some View {
@@ -718,7 +581,6 @@ struct NavigationTitleDisplayModeModifier: ViewModifier {
         #endif
     }
 }
-#endif
 
 #Preview("ThreadView") {
   @Previewable @State var path = NavigationPath()

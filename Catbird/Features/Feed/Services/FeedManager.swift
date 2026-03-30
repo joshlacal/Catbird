@@ -26,9 +26,11 @@ final class FeedManager {
         }
         
         let feedName = fetchType.displayName
-        await MetricKitSignposts.beginFeedLoad(feedName: feedName)
+        if #available(iOS 26, *) {
+          await MetricKitSignposts.beginFeedLoad(feedName: feedName)
+        }
         let perfSignpostId = PerformanceSignposts.beginFeedLoad(feedName: feedName)
-        
+
         do {
             let result: ([AppBskyFeedDefs.FeedViewPost], String?)
             switch fetchType {
@@ -43,11 +45,15 @@ final class FeedManager {
             case .likes(let did):
                 result = try await fetchAuthorLikes(client: client, did: did, cursor: cursor)
             }
-            await MetricKitSignposts.endFeedLoad(feedName: feedName, postCount: result.0.count, success: true)
+            if #available(iOS 26, *) {
+              await MetricKitSignposts.endFeedLoad(feedName: feedName, postCount: result.0.count, success: true)
+            }
             PerformanceSignposts.endFeedLoad(id: perfSignpostId, postCount: result.0.count, success: true)
             return result
         } catch {
-            await MetricKitSignposts.endFeedLoad(feedName: feedName, success: false)
+            if #available(iOS 26, *) {
+              await MetricKitSignposts.endFeedLoad(feedName: feedName, success: false)
+            }
             PerformanceSignposts.endFeedLoad(id: perfSignpostId, postCount: 0, success: false)
             throw error
         }

@@ -52,7 +52,9 @@ struct PostComposerAudioRecordingView: View {
         .padding(.horizontal, 20)
       }
       .navigationTitle("Record Audio")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel", systemImage: "xmark") {

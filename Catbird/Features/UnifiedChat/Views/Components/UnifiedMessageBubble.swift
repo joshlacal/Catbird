@@ -120,21 +120,26 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
   @ViewBuilder
   private var avatarView: some View {
-    if let avatarURL = message.senderAvatarURL {
-      LazyImage(url: avatarURL) { state in
-        if let image = state.image {
-          image
-            .resizable()
-            .scaledToFill()
-        } else {
-          placeholderAvatar
+    Button {
+      navigationPath.append(NavigationDestination.profile(message.senderID))
+    } label: {
+      if let avatarURL = message.senderAvatarURL {
+        LazyImage(url: avatarURL) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .scaledToFill()
+          } else {
+            placeholderAvatar
+          }
         }
+        .frame(width: 32, height: 32)
+        .clipShape(Circle())
+      } else {
+        placeholderAvatar
       }
-      .frame(width: 32, height: 32)
-      .clipShape(Circle())
-    } else {
-      placeholderAvatar
     }
+    .buttonStyle(.plain)
   }
 
   private var placeholderAvatar: some View {
@@ -228,8 +233,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     let mlsDebugInfo = (message as? MLSMessageAdapter)?.debugInfo
 
     let isImageOnly: Bool = {
-      if case .image = message.embed, message.text.isEmpty, mlsDebugInfo == nil {
-        return true
+      if message.text.isEmpty, mlsDebugInfo == nil {
+        if case .image = message.embed { return true }
+        if case .audio = message.embed { return true }
       }
       return false
     }()
@@ -254,7 +260,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
         // Embed preview
         if let embed = message.embed {
-          UnifiedEmbedView(embed: embed, navigationPath: $navigationPath)
+          UnifiedEmbedView(embed: embed, isOwnMessage: message.isFromCurrentUser, navigationPath: $navigationPath)
             .frame(maxWidth: maxBubbleWidth)
         }
 
@@ -334,9 +340,15 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             DetailRow(label: "Sent At", value: info.sentAt.formatted(date: .abbreviated, time: .standard))
           }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.automatic)
+        #endif
         .navigationTitle("Message Error")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
       }
     }
 

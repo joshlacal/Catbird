@@ -261,9 +261,10 @@ struct SettingsView: View {
           #endif
         }
         
+        #if os(iOS)
         Section("Experimental") {
           Toggle(isOn: Binding(
-            get: { 
+            get: {
               return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
             },
             set: { newValue in
@@ -296,6 +297,7 @@ struct SettingsView: View {
           }
           .tint(.orange)
         }
+        #endif
 
         Section {
             LogoutButton(isLoggingOut: $isLoggingOut, handleLogout: handleLogout)
@@ -318,6 +320,7 @@ struct SettingsView: View {
       }
       .sheet(isPresented: $isShowingAccountSwitcher) {
         AccountSwitcherView()
+          .environment(AppStateManager.shared)
       }
       .alert(isPresented: .constant(error != nil)) {
         Alert(
@@ -409,13 +412,14 @@ struct SettingsView: View {
   
   /// Opt in to MLS on the server and initialize device/key packages
   /// CRITICAL: Must initialize MLS before optIn to ensure key packages are uploaded
+  #if os(iOS)
   private func optInToMLS() async {
     let userDID = appState.userDID
-    
+
     do {
       // Initialize MLS first (device registration + key packages)
       try await appState.initializeMLS()
-      
+
       // Then call optIn to mark user as available
       guard let apiClient = await appState.getMLSAPIClient() else {
         return
@@ -437,13 +441,13 @@ struct SettingsView: View {
       // User will need to try again
     }
   }
-  
+
   /// Opt out from MLS on the server when user disables the feature
   private func optOutFromMLS() async {
     guard let apiClient = await appState.getMLSAPIClient() else {
       return
     }
-    
+
     do {
       _ = try await apiClient.optOut()
       if let conversationManager = await appState.getMLSConversationManager() {
@@ -453,6 +457,7 @@ struct SettingsView: View {
       // Silently fail - the local toggle is already off
     }
   }
+  #endif
   
   // MARK: - Authentication Helpers
 

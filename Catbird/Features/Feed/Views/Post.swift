@@ -173,7 +173,7 @@ struct Post: View, Equatable {
             }
         .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
         .modifier(TranslationTaskModifier(config: translationConfig) { session in
-            if #available(iOS 18.0, macCatalyst 26.0, *),
+            if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *),
                let translationSession = session as? TranslationSession {
                 await performTranslation(session: translationSession)
             }
@@ -365,7 +365,7 @@ struct Post: View, Equatable {
     }
 
     private func setupTranslation(sourceLanguage: Locale.Language) async {
-        if #available(iOS 18.0, macCatalyst 26.0, *) {
+        if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *) {
             let normalizedSourceLanguage = normalizedTranslationLanguage(sourceLanguage)
             let normalizedTargetLanguage = normalizedTranslationLanguage(targetLanguage)
             let availability = LanguageAvailability()
@@ -373,7 +373,7 @@ struct Post: View, Equatable {
             
             logger.debug("Translation status: \(String(describing: status)) for \(String(describing: normalizedSourceLanguage)) -> \(String(describing: normalizedTargetLanguage))")
             
-            if case .installed = status, #available(iOS 26.0, macCatalyst 26.0, *) {
+            if case .installed = status, #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *) {
                 // Models already downloaded — translate directly without triggering
                 // the .translationTask() modifier (which shows the system download UI).
                 logger.debug("Models installed; translating directly via TranslationSession")
@@ -420,7 +420,7 @@ struct Post: View, Equatable {
         }
     }
     
-    @MainActor @available(iOS 18.0, macCatalyst 26.0, *)
+    @MainActor @available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *)
     private func performTranslation(session: TranslationSession) async {
         logger.debug("Starting translation...")
         isTranslating = true
@@ -450,7 +450,7 @@ struct Post: View, Equatable {
             }
         } catch {
             // If models aren’t installed, prompt and retry once.
-            if #available(iOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
+            if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
                 logger.debug("Translate threw notInstalled; retrying after prepareTranslation prompt…")
                 do {
                     try await session.prepareTranslation()
@@ -469,7 +469,7 @@ struct Post: View, Equatable {
 
             logger.debug("Translation error: \(error.localizedDescription)")
             withAnimation {
-                if #available(iOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
+                if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
                     translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
                 } else {
                     let errorMessage = error.localizedDescription
@@ -510,7 +510,7 @@ struct TranslationTaskModifier: ViewModifier {
     let action: (Any) async -> Void
     
     func body(content: Content) -> some View {
-        if #available(iOS 18.0, macCatalyst 26.0, *) {
+        if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *) {
             if let config = config as? TranslationSession.Configuration {
                 content.translationTask(config) { session in
                     await action(session)

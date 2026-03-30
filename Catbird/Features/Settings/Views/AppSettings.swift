@@ -472,6 +472,14 @@ import OSLog
     }
     
     // Content and Media
+    var sensitiveContentScanningEnabled: Bool {
+        get { settingsModel?.sensitiveContentScanningEnabled ?? defaults.sensitiveContentScanningEnabled }
+        set {
+            settingsModel?.sensitiveContentScanningEnabled = newValue
+            saveChanges()
+        }
+    }
+
     var autoplayVideos: Bool {
         get { settingsModel?.autoplayVideos ?? defaults.autoplayVideos }
         set {

@@ -2,6 +2,20 @@
 import SwiftUI
 import UIKit
 
+/// Configuration for the inline UIKit composer hosted inside ChatCollectionViewController.
+/// Pass `nil` to omit the composer (e.g. for ConversationView, UnifiedChatView).
+struct InlineComposerConfig {
+  var placeholderText: String = "Message"
+  var onSend: (String) -> Void
+  var onAttachTapped: () -> Void
+  var onTypingChanged: ((Bool) -> Void)?
+  var onVoiceTapped: (() -> Void)?
+  var onPhotoPicker: (() -> Void)?
+  var onGifPicker: (() -> Void)?
+  var onPostPicker: (() -> Void)?
+  var isRecording: Bool = false
+}
+
 @available(iOS 16.0, *)
 struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewControllerRepresentable {
   @Environment(AppState.self) private var appState
@@ -10,6 +24,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   @Binding var navigationPath: NavigationPath
   var onMessageLongPress: ((DataSource.Message) -> Void)?
   var onRequestEmojiPicker: ((String) -> Void)?
+  var composerConfig: InlineComposerConfig?
 
   func makeUIViewController(context: Context) -> ChatCollectionViewController<DataSource> {
     let controller = ChatCollectionViewController(
@@ -19,6 +34,9 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     )
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
+    if let config = composerConfig {
+      controller.installComposer(config: config)
+    }
     return controller
   }
 
@@ -30,7 +48,9 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.updateAppState(appState)
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
-    controller.refreshIfNeeded()
+    if let config = composerConfig {
+      controller.updateComposerCallbacks(config: config)
+    }
   }
 }
 #endif

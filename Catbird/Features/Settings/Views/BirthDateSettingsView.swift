@@ -62,9 +62,11 @@ struct BirthDateSettingsView: View {
                 }
             }
             .navigationTitle("Birth Date")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     if hasChanges {
                         Button("Save") {
                             updateBirthDate()
@@ -73,8 +75,8 @@ struct BirthDateSettingsView: View {
                         .fontWeight(.semibold)
                     }
                 }
-                
-                ToolbarItem(placement: .topBarLeading) {
+
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
@@ -123,7 +125,9 @@ struct BirthDateSettingsView: View {
                 in: minimumDate...maximumDate,
                 displayedComponents: .date
             )
+            #if os(iOS)
             .datePickerStyle(.wheel)
+            #endif
             .labelsHidden()
             
             if let age = calculatedAge {

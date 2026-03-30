@@ -230,7 +230,7 @@ struct SearchErrorView: View {
                     
                     Text(error.localizedDescription)
                         .appFont(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Color(uiColor: .tertiaryLabel))
+                        .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                         .padding(12)
                         .background(Color.secondarySystemBackground)
                         .cornerRadius(8)

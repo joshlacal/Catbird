@@ -19,6 +19,13 @@ struct MLSImageView: View {
   @State private var showFullscreen = false
   @Namespace private var imageTransition
 
+  /// Whether the user is allowed to reveal sensitive content.
+  /// Adults with adult content enabled can reveal; minors and users with adult content off cannot.
+  @MainActor
+  private var canRevealSensitiveContent: Bool {
+    appState.ageVerificationManager.currentAgeGroup == .adult && appState.isAdultContentEnabled
+  }
+
   private var aspectRatio: CGFloat {
     let w = CGFloat(max(imageEmbed.width, 1))
     let h = CGFloat(max(imageEmbed.height, 1))
@@ -113,11 +120,13 @@ struct MLSImageView: View {
             .font(.title2)
           Text("This may contain sensitive content")
             .font(.caption)
-          Button("Show") {
-            withAnimation { isRevealed = true }
+          if canRevealSensitiveContent {
+            Button("Show") {
+              withAnimation { isRevealed = true }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
           }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
         }
         .foregroundStyle(.white)
       }
@@ -159,6 +168,7 @@ struct MLSImageView: View {
     .sheet(isPresented: $showSensitiveModal) {
       SensitiveContentModalView(
         image: uiImage,
+        canReveal: canRevealSensitiveContent,
         onReveal: { isRevealed = true; showSensitiveModal = false },
         onDismiss: { showSensitiveModal = false }
       )
@@ -208,8 +218,8 @@ struct MLSImageView: View {
     // Check cache first
     if let cached = await MLSImageCache.shared.get(blobId: imageEmbed.blobId) {
       image = cached
-      // Run SCA on cached image too
-      if let cgImage = cached.cgImage {
+      // Run SCA on cached image too (respects app-level toggle)
+      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = cached.cgImage {
         analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
       }
       loadState = .loaded
@@ -252,8 +262,8 @@ struct MLSImageView: View {
       // Cache
       await MLSImageCache.shared.put(blobId: imageEmbed.blobId, imageData: plaintext)
 
-      // SensitiveContentAnalysis check
-      if let cgImage = uiImage.cgImage {
+      // SensitiveContentAnalysis check (respects app-level toggle)
+      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = uiImage.cgImage {
         analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
       }
 

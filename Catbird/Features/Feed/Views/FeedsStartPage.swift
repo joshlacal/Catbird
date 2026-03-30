@@ -1373,6 +1373,7 @@ private extension View {
             }
             .sheet(isPresented: isShowingAccountSwitcher) {
                 AccountSwitcherView()
+                    .environment(AppStateManager.shared)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(.thinMaterial)

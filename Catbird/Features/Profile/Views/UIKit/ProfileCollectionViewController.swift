@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import SwiftUI
 import Petrel
@@ -597,3 +598,5 @@ extension ProfileCollectionViewController: UICollectionViewDelegate {
     }
   }
 }
+
+#endif

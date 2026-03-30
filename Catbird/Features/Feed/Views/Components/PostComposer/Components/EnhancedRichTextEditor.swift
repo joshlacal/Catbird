@@ -9,6 +9,12 @@ import SwiftUI
 import Petrel
 import os
 
+// MARK: - Link Creation Protocol
+
+protocol LinkCreationDelegate: AnyObject {
+    func requestLinkCreation(for text: String, in range: NSRange)
+}
+
 #if os(iOS)
 import UIKit
 
@@ -64,12 +70,6 @@ class LinkEditableTextView: UITextView {
             }
         }
     }
-}
-
-// MARK: - Link Creation Protocol
-
-protocol LinkCreationDelegate: AnyObject {
-    func requestLinkCreation(for text: String, in range: NSRange)
 }
 
 // MARK: - Enhanced Rich Text Editor with Link Support
@@ -1013,14 +1013,27 @@ struct EnhancedRichTextEditor: View {
   @Binding var attributedText: NSAttributedString
   @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
   @Binding var pendingSelectionRange: NSRange?
-  
+
   let placeholder: String
   let onImagePasted: (NSImage) -> Void
   let onGenmojiDetected: ([String]) -> Void
   let onTextChanged: (NSAttributedString, Int) -> Void
   let onLinkCreationRequested: (String, NSRange) -> Void
+  var focusOnAppear: Bool = false
+  var focusActivationID: UUID = UUID()
+  var onPhotosAction: (() -> Void)? = nil
+  var onVideoAction: (() -> Void)? = nil
+  var onAudioAction: (() -> Void)? = nil
+  var onGifAction: (() -> Void)? = nil
+  var onLabelsAction: (() -> Void)? = nil
+  var onThreadgateAction: (() -> Void)? = nil
+  var onLanguageAction: (() -> Void)? = nil
+  var onThreadAction: (() -> Void)? = nil
+  var onLinkAction: (() -> Void)? = nil
+  var allowTenor: Bool = false
+  var onTextViewCreated: ((Any) -> Void)? = nil
   var onHeightChange: ((CGFloat) -> Void)? = nil
-  
+
   var body: some View {
     Text("Rich text editing not available on macOS")
       .foregroundColor(.secondary)
@@ -1059,7 +1072,11 @@ private extension NSAttributedString {
         preservedAttrs[.foregroundColor] = color
       } else if !hasLink {
         // If no color is set and it's not a link, ensure we use the dynamic label color
+        #if os(iOS)
         preservedAttrs[.foregroundColor] = UIColor.label
+        #elseif os(macOS)
+        preservedAttrs[.foregroundColor] = NSColor.labelColor
+        #endif
       }
       
       mutable.setAttributes(preservedAttrs, range: range)

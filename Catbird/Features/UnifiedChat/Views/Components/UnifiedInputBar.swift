@@ -7,6 +7,8 @@ struct UnifiedInputBar: View {
   var attachedEmbed: UnifiedEmbed?
   var onRemoveEmbed: (() -> Void)?
   var onAttachTapped: (() -> Void)?
+  var onMicTapped: (() -> Void)?
+  var isRecording: Bool = false
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
@@ -56,14 +58,29 @@ struct UnifiedInputBar: View {
             .fill(Color.gray.opacity(0.1))
         )
 
-      // Send button
-      Button(action: sendMessage) {
-        Image(systemName: "arrow.up.circle.fill")
-          .font(.title2)
-          .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.5))
+      // Send or Mic button
+      if canSend {
+        Button(action: sendMessage) {
+          Image(systemName: "arrow.up.circle.fill")
+            .font(.title2)
+            .foregroundStyle(Color.accentColor)
+        }
+        .animation(.easeInOut(duration: 0.2), value: canSend)
+      } else if let onMic = onMicTapped {
+        Button(action: onMic) {
+          Image(systemName: "mic.circle.fill")
+            .font(.title2)
+            .foregroundStyle(isRecording ? Color.red : Color.secondary)
+        }
+        .animation(.easeInOut(duration: 0.2), value: isRecording)
+      } else {
+        Button(action: sendMessage) {
+          Image(systemName: "arrow.up.circle.fill")
+            .font(.title2)
+            .foregroundStyle(Color.secondary.opacity(0.5))
+        }
+        .disabled(true)
       }
-      .disabled(!canSend)
-      .animation(.easeInOut(duration: 0.2), value: canSend)
     }
   }
 
@@ -115,6 +132,8 @@ struct UnifiedInputBar: View {
       return tile.name
     case .image:
       return "Image"
+    case .audio:
+      return "Voice Message"
     }
   }
 
@@ -132,6 +151,8 @@ struct UnifiedInputBar: View {
         return tile.tileDescription ?? tile.uri
     case .image(let imageData):
       return "\(imageData.width)x\(imageData.height)"
+    case .audio(let data):
+      return "\(data.durationMs / 1000)s"
     }
   }
 

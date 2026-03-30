@@ -10,8 +10,8 @@ import NukeUI
 import Petrel
 import SwiftUI
 import OSLog
-import VisionKit
 #if os(iOS)
+import VisionKit
 import UIKit
 import LazyPager
 #elseif os(macOS)

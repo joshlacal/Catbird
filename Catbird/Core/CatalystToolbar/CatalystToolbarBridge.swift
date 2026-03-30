@@ -34,6 +34,11 @@ struct CatalystToolbarBridge: ViewModifier {
       .onChange(of: appState.totalMessagesUnreadCount) { _, _ in
         updateBadges()
       }
+      .onChange(of: appState.currentUserProfile?.avatar?.description) { _, _ in
+        if let coordinator = CatalystSceneDelegate.activeCoordinator {
+          loadAvatar(coordinator: coordinator)
+        }
+      }
   }
 
   private func setupCoordinator() {
@@ -41,6 +46,7 @@ struct CatalystToolbarBridge: ViewModifier {
 
     coordinator.onTabSelected = { tab in
       selectedTab = tab
+      appState.navigationManager.updateCurrentTab(tab)
     }
     coordinator.onComposeTapped = {
       showingPostComposer = true
@@ -71,6 +77,25 @@ struct CatalystToolbarBridge: ViewModifier {
     coordinator.selectTab(selectedTab)
     coordinator.setFeedSelectorEnabled(isRootView)
     updateBadges()
+
+    // Load avatar image
+    loadAvatar(coordinator: coordinator)
+  }
+
+  private func loadAvatar(coordinator: CatalystToolbarCoordinator) {
+    guard let avatarURL = appState.currentUserProfile?.finalAvatarURL() else { return }
+    Task {
+      do {
+        let (data, _) = try await URLSession.shared.data(from: avatarURL)
+        if let image = UIImage(data: data) {
+          await MainActor.run {
+            coordinator.updateAvatarImage(image)
+          }
+        }
+      } catch {
+        // Fall back to person.circle — already set
+      }
+    }
   }
 
   private func updateBadges() {

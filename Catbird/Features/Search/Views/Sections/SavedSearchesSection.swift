@@ -92,7 +92,7 @@ struct SavedSearchesSection: View {
                         if !search.filters.languages.isEmpty {
                             Text("• \(search.filters.languages.count) filter\(search.filters.languages.count == 1 ? "" : "s")")
                                 .appFont(AppTextRole.caption)
-                                .foregroundColor(Color(uiColor: .tertiaryLabel))
+                                .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                         }
                     }
                 }
@@ -101,7 +101,7 @@ struct SavedSearchesSection: View {
                 
                 Text(formatLastUsed(search.lastUsed))
                     .appFont(AppTextRole.caption2)
-                    .foregroundColor(Color(uiColor: .tertiaryLabel))
+                    .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
@@ -292,11 +292,11 @@ struct AllSavedSearchesView: View {
                         HStack(spacing: 12) {
                             Label("Created \(formatDate(search.createdAt))", systemImage: "calendar")
                                 .appFont(AppTextRole.caption2)
-                                .foregroundColor(Color(uiColor: .tertiaryLabel))
+                                .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                             
                             Label("Used \(formatLastUsed(search.lastUsed))", systemImage: "clock")
                                 .appFont(AppTextRole.caption2)
-                                .foregroundColor(Color(uiColor: .tertiaryLabel))
+                                .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                         }
                         .padding(.top, 4)
                     }

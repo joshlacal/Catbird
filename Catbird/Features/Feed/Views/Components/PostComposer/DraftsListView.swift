@@ -25,7 +25,9 @@ struct DraftsListView: View {
         }
       }
       .navigationTitle("Drafts")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Close") {

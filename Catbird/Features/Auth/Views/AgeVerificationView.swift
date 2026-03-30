@@ -40,17 +40,19 @@ struct AgeVerificationView: View {
                 }
             }
             .navigationTitle("Age Verification")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Continue") {
                         submitAgeVerification()
                     }
                     .disabled(isLoading || !isValidAge)
                     .fontWeight(.semibold)
                 }
-                
-                ToolbarItem(placement: .topBarLeading) {
+
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") {
                         dismiss()
                     }
@@ -104,7 +106,9 @@ struct AgeVerificationView: View {
                 in: minimumDate...maximumDate,
                 displayedComponents: .date
             )
+            #if os(iOS)
             .datePickerStyle(.wheel)
+            #endif
             .labelsHidden()
             
             if let age = calculatedAge {

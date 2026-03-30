@@ -325,6 +325,10 @@ final class AppState {
     /// Observable counter that triggers SwiftUI updates when MLS conversations change
     var mlsConversationsDidChange: Int = 0
 
+    /// Observable counter that triggers active chat views to reload messages from DB.
+    /// Bumped when the NSE decrypts messages and the app reloads state from disk.
+    var nseStateReloadTrigger: Int = 0
+
     /// Profile enricher for MLS participants
     @ObservationIgnored
     let mlsProfileEnricher = MLSProfileEnricher()
@@ -453,7 +457,7 @@ final class AppState {
               }
 
 #if canImport(FoundationModels)
-              if #available(iOS 26.0, macOS 15.0, *), !isFaultOrderingMode {
+              if #available(iOS 26.0, macOS 26.0, *), !isFaultOrderingMode {
                 let agent = self.blueskyAgent
                 Task {
                   await agent.updateClient(client)
@@ -461,7 +465,7 @@ final class AppState {
               }
 #endif
 #if canImport(FoundationModels)
-              if #available(iOS 26.0, macOS 15.0, *), !isFaultOrderingMode {
+              if #available(iOS 26.0, macOS 26.0, *), !isFaultOrderingMode {
                 Task(priority: .background) {
                   await TopicSummaryService.shared.prepareLaunchWarmup(appState: self)
                 }
@@ -548,7 +552,7 @@ final class AppState {
             self.activitySubscriptionService.updateClient(nil)
             self.postHidingManager.updatePreferencesManager(nil)
 #if canImport(FoundationModels)
-            if #available(iOS 26.0, macOS 15.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
               if let agent = self.blueskyAgentStorage as? BlueskyIntelligenceAgent {
                 Task {
                   await agent.updateClient(nil)
@@ -1125,7 +1129,7 @@ final class AppState {
   }
 
   #if canImport(FoundationModels)
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     var blueskyAgent: BlueskyIntelligenceAgent {
       if let blueskyAgentStorage = blueskyAgentStorage as? BlueskyIntelligenceAgent {
         return blueskyAgentStorage
@@ -1370,6 +1374,15 @@ final class AppState {
           trustChecker: trustChecker
         )
 
+        // Propagate fresh database pools to AppState after corruption recovery.
+        manager.onDatabaseRefreshed = { [weak self] newDatabase in
+          Task { @MainActor in
+            if let pool = newDatabase as? DatabasePool {
+              self?.mlsDatabase = pool
+            }
+          }
+        }
+
         // Initialize the manager before storing and returning it
         do {
           try await manager.initialize()
@@ -1568,7 +1581,9 @@ final class AppState {
     if AppStateManager.shared.isUserUnderStorageMaintenance(userDID) {
       logger.warning("MLS: Storage maintenance in progress for user: \(userDID) - skipping database open")
       self.mlsDatabase = nil
-      mlsServiceState.status = .failed("Storage maintenance in progress")
+      #if os(iOS)
+        mlsServiceState.status = .failed("Storage maintenance in progress")
+      #endif
       return
     }
 
@@ -1598,18 +1613,22 @@ final class AppState {
         logger.error("   This typically indicates an account switching race condition")
         logger.error("   The database will be retried after the switch completes")
         self.mlsDatabase = nil
-        mlsServiceState.status = .failed("Account switching in progress - please wait")
+        #if os(iOS)
+          mlsServiceState.status = .failed("Account switching in progress - please wait")
+        #endif
 
       case .needsUserAction(let reason):
         // SAFE RECOVERY: Database needs manual reset via Diagnostics
         logger.critical("🔧 MLS database needs user action: \(reason)")
         self.mlsDatabase = nil
-        mlsServiceState.markDatabaseFailed(message: reason)
+        #if os(iOS)
+          mlsServiceState.markDatabaseFailed(message: reason)
+        #endif
 
       default:
         logger.error("❌ Failed to setup MLS database: \(error.localizedDescription)")
         self.mlsDatabase = nil
-        
+
         // SAFE RECOVERY: Check if hard reset is needed, but DON'T auto-perform it.
         // The MLSGRDBManager now uses a recovery ladder that requires user confirmation.
         if await MLSGRDBManager.shared.needsHardReset(for: userDID) {
@@ -1617,35 +1636,52 @@ final class AppState {
           logger.critical("   Use Settings ▸ Diagnostics ▸ Reset MLS Storage to recover")
 
           // Show user-friendly error in the service state
-          mlsServiceState.markDatabaseFailed(
-            message: "MLS storage needs repair. Go to Settings → Diagnostics → Reset MLS Storage."
-          )
+          #if os(iOS)
+            mlsServiceState.markDatabaseFailed(
+              message: "MLS storage needs repair. Go to Settings → Diagnostics → Reset MLS Storage."
+            )
+          #endif
         }
 
         // Check if database is in a severely failed state
         if await MLSGRDBManager.shared.isInFailedState(for: userDID) {
-          mlsServiceState.markDatabaseFailed(message: "Database severely corrupted. Please restart the app.")
+          #if os(iOS)
+            mlsServiceState.markDatabaseFailed(message: "Database severely corrupted. Please restart the app.")
+          #endif
         }
       }
     } catch {
       logger.error("❌ Failed to setup MLS database: \(error.localizedDescription)")
       self.mlsDatabase = nil
-      
+
       // SAFE RECOVERY: Check if hard reset is needed, but DON'T auto-perform it.
       if await MLSGRDBManager.shared.needsHardReset(for: userDID) {
         logger.critical("🔥 [Recovery] Database needs hard reset - user action required")
         logger.critical("   Use Settings ▸ Diagnostics ▸ Reset MLS Storage to recover")
 
-        mlsServiceState.markDatabaseFailed(
-          message: "MLS storage needs repair. Go to Settings → Diagnostics → Reset MLS Storage."
-        )
+        #if os(iOS)
+          mlsServiceState.markDatabaseFailed(
+            message: "MLS storage needs repair. Go to Settings → Diagnostics → Reset MLS Storage."
+          )
+        #endif
       }
 
       // Check if database is in a severely failed state
       if await MLSGRDBManager.shared.isInFailedState(for: userDID) {
+        #if os(iOS)
           mlsServiceState.markDatabaseFailed(message: "Database severely corrupted. Please restart the app.")
+        #endif
       }
     }
+  }
+
+  /// Updates the stored MLS database pool after corruption recovery.
+  /// Called via `MLSConversationManager.onDatabaseRefreshed` when the pool
+  /// is closed and recreated, ensuring all code paths that read
+  /// `appState.mlsDatabase` get the fresh pool automatically.
+  @MainActor
+  func updateMLSDatabase(_ database: DatabasePool) {
+    self.mlsDatabase = database
   }
 
   /// Clear MLS database for current user (called on logout)
@@ -1713,11 +1749,29 @@ final class AppState {
     if let manager = mlsConversationManagerStorage {
       await manager.reloadStateFromDisk()
       logger.info("✅ [AppState] MLS state reload complete")
-      
+
+      // Re-establish database connection if it was released during NSE handshake.
+      // The nseWillClose handler sets mlsDatabase = nil; we need it back for
+      // the data source's loadMessages() which reads via appState.mlsDatabase.
+      if mlsDatabase == nil {
+        do {
+          let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
+          self.mlsDatabase = database
+          logger.info("✅ [AppState] Re-established MLS database after NSE handshake")
+        } catch {
+          logger.error("❌ [AppState] Failed to re-establish MLS database: \(error.localizedDescription)")
+        }
+      }
+
       // Also reload conversations to pick up any new messages decrypted by NSE
       // This updates the UI with messages the NSE may have stored in the database
       await loadMLSConversations()
       logger.info("✅ [AppState] MLS conversations reloaded after state sync")
+
+      // Signal active chat views to refresh messages from the database.
+      // Without this, the conversation list updates but the open chat detail
+      // view never re-reads the DB to pick up NSE-decrypted messages.
+      nseStateReloadTrigger += 1
     } else {
       logger.debug("⏭️ [AppState] No MLS manager - skipping state reload")
     }
@@ -1756,48 +1810,50 @@ final class AppState {
     #endif
   }
   
-  /// Recover MLS database after a codec error by reconnecting
-  /// Uses progressive repair: WAL/SHM repair first, then full reset if needed
-  /// - Parameter userDID: User's decentralized identifier
-  /// - Returns: True if recovery was successful
-  @MainActor
-  private func recoverMLSDatabase(for userDID: String) async -> Bool {
-    logger.warning("🔄 Attempting MLS database recovery for user: \(userDID)")
-    
-    // Check if we're in cooldown period
-    if mlsServiceState.isInDatabaseCooldown {
-      let remaining = Int(mlsServiceState.databaseRetryCooldown - Date().timeIntervalSince(mlsServiceState.databaseFailedAt ?? Date()))
-      logger.warning("⏳ Database recovery on cooldown (\(remaining)s remaining)")
-      return false
-    }
-    
-    // Clear local references
-    self.mlsDatabase = nil
-    self.mlsConversationManagerStorage = nil
-    
-    do {
-      // Force reconnection through MLSGRDBManager (which uses progressive repair)
-      let database = try await MLSGRDBManager.shared.reconnectDatabase(for: userDID)
-      self.mlsDatabase = database
-      
-      // Clear any failure state
-      mlsServiceState.clearDatabaseFailure()
-      await MLSGRDBManager.shared.clearRepairState(for: userDID)
-      
-      logger.info("✅ MLS database recovered successfully for user: \(userDID)")
-      return true
-    } catch {
-      logger.error("❌ MLS database recovery failed: \(error.localizedDescription)")
-      
-      // Check if database is in severely failed state (max repairs exceeded)
-      if await MLSGRDBManager.shared.isInFailedState(for: userDID) {
-          mlsServiceState.markDatabaseFailed(message: "Database recovery failed. Please restart the app to try again.")
-        logger.error("🚨 Database in FAILED state - stopping all operations until app restart")
+  #if os(iOS)
+    /// Recover MLS database after a codec error by reconnecting
+    /// Uses progressive repair: WAL/SHM repair first, then full reset if needed
+    /// - Parameter userDID: User's decentralized identifier
+    /// - Returns: True if recovery was successful
+    @MainActor
+    private func recoverMLSDatabase(for userDID: String) async -> Bool {
+      logger.warning("🔄 Attempting MLS database recovery for user: \(userDID)")
+
+      // Check if we're in cooldown period
+      if mlsServiceState.isInDatabaseCooldown {
+        let remaining = Int(mlsServiceState.databaseRetryCooldown - Date().timeIntervalSince(mlsServiceState.databaseFailedAt ?? Date()))
+        logger.warning("⏳ Database recovery on cooldown (\(remaining)s remaining)")
+        return false
       }
-      
-      return false
+
+      // Clear local references
+      self.mlsDatabase = nil
+      self.mlsConversationManagerStorage = nil
+
+      do {
+        // Force reconnection through MLSGRDBManager (which uses progressive repair)
+        let database = try await MLSGRDBManager.shared.reconnectDatabase(for: userDID)
+        self.mlsDatabase = database
+
+        // Clear any failure state
+        mlsServiceState.clearDatabaseFailure()
+        await MLSGRDBManager.shared.clearRepairState(for: userDID)
+
+        logger.info("✅ MLS database recovered successfully for user: \(userDID)")
+        return true
+      } catch {
+        logger.error("❌ MLS database recovery failed: \(error.localizedDescription)")
+
+        // Check if database is in severely failed state (max repairs exceeded)
+        if await MLSGRDBManager.shared.isInFailedState(for: userDID) {
+          mlsServiceState.markDatabaseFailed(message: "Database recovery failed. Please restart the app to try again.")
+          logger.error("🚨 Database in FAILED state - stopping all operations until app restart")
+        }
+
+        return false
+      }
     }
-  }
+  #endif
 
   // MARK: - User Profile Methods
 

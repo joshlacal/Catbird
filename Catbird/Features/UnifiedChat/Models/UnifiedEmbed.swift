@@ -10,6 +10,7 @@ enum UnifiedEmbed: Hashable, Sendable {
   case post(PostEmbedData)
   case tile(TileEmbedData)
   case image(ImageEmbedData)
+  case audio(AudioEmbedData)
 }
 
 // MARK: - BlueskyRecordEmbedData
@@ -60,4 +61,18 @@ struct ImageEmbedData: Hashable, Sendable {
   let height: Int
   let altText: String?
   let blurhash: String?
+}
+
+// MARK: - AudioEmbedData
+
+struct AudioEmbedData: Hashable, Sendable {
+  let blobId: String
+  let key: Data
+  let iv: Data
+  let sha256: String
+  let contentType: String
+  let size: UInt64
+  let durationMs: UInt64
+  let waveform: [Float]
+  let transcript: String?
 }

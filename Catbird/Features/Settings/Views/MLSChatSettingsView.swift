@@ -118,7 +118,9 @@ struct MLSChatSettingsView: View {
       }
     }
     .navigationTitle("Chat Privacy")
+    #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
+    #endif
     .task {
       await loadSettings()
     }

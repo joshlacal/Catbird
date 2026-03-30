@@ -22,6 +22,10 @@ import OSLog
     // MARK: - Computed Properties
     
     /// Scale factor based on font size preference
+    ///
+    /// On macOS, applies a platform scale factor (0.765) to convert iOS-based
+    /// Typography.Size constants to appropriate macOS sizes.
+    /// iOS body = 17pt, macOS system body = 13pt → 13/17 ≈ 0.765
     var sizeScale: CGFloat {
         let baseScale: CGFloat
         switch fontSize {
@@ -37,13 +41,18 @@ import OSLog
             baseScale = 1.0
         }
 
-        // Apply additional scaling for Mac Catalyst
         #if targetEnvironment(macCatalyst)
-        let catalystScale = baseScale
-        return catalystScale
-        #endif
-
+        // Mac Catalyst applies its own 77% scaling at the rendering level,
+        // so no additional adjustment is needed here.
         return baseScale
+        #elseif os(macOS)
+        // Native macOS: scale down from iOS base sizes (17pt body) to macOS sizes (13pt body).
+        // 13/17 ≈ 0.765
+        let macOSPlatformScale: CGFloat = 0.765
+        return baseScale * macOSPlatformScale
+        #else
+        return baseScale
+        #endif
     }
     
     /// Font design based on style preference

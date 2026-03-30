@@ -98,11 +98,12 @@ class NotificationService: UNNotificationServiceExtension {
     self.contentHandler = contentHandler
     bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
 
-    logger.info("📬 [NSE] didReceive called - processing push notification")
+    let pid = ProcessInfo.processInfo.processIdentifier
+    logger.info("📬 [NSE/\(pid)] didReceive called - processing push notification")
 
     // Log FFI build ID for verification (should match main app)
     let ffiBuildId = getFfiBuildId()
-    logger.info("🔧 [NSE-FFI] Build ID: \(ffiBuildId)")
+    logger.info("🔧 [NSE-FFI/\(pid)] Build ID: \(ffiBuildId)")
 
     guard let bestAttemptContent = bestAttemptContent else {
       logger.error("❌ [NSE] Failed to create mutable content copy")
@@ -380,6 +381,9 @@ class NotificationService: UNNotificationServiceExtension {
       do {
         self.logger.debug("📭 [NSE] Cache MISS - proceeding with decryption")
 
+        // WAL health probe BEFORE we touch the database — corruption baseline
+        MLSGRDBManager.probeWALHealth(for: recipientDid, label: "PRE_DECRYPT")
+
         // CRITICAL FIX: Ensure MLS context is for the correct recipient user
         // This handles account switching where the NSE may have stale context cached
         self.logger.info(
@@ -493,6 +497,9 @@ class NotificationService: UNNotificationServiceExtension {
         self.logger.info(
           "✅ [NSE] Decryption SUCCESS - plaintext length=\(decryptResult.plaintext.count), sender=\(decryptResult.senderDID?.prefix(24) ?? "unknown")..."
         )
+
+        // WAL health probe AFTER decryption — detect if decrypt corrupted the WAL
+        MLSGRDBManager.probeWALHealth(for: recipientDid, label: "POST_DECRYPT")
 
         // ═══════════════════════════════════════════════════════════════════════════
         // CRITICAL FIX: Signal to foreground app that NSE advanced the ratchet
@@ -840,9 +847,16 @@ class NotificationService: UNNotificationServiceExtension {
     logger.warning(
       "⏱️ [NSE] serviceExtensionTimeWillExpire called - system is terminating extension")
 
+    // Log WAL state at the moment iOS is killing us — critical for corruption diagnosis
+    if let recipientDid = activeRecipientDID {
+      MLSGRDBManager.probeWALHealth(for: recipientDid, label: "TIME_WILL_EXPIRE")
+    }
+
     // Emergency cleanup before system kills us
+    // CRITICAL: NSE must use PASSIVE checkpoint — TRUNCATE from NSE while main app
+    // has the DB open causes WAL corruption (two processes racing for exclusive WAL access).
     MLSCoreContext.emergencyCloseAllContexts()
-    MLSGRDBManager.emergencyCloseAllDatabases()
+    MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
 
     if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
       if bestAttemptContent.body.isEmpty || bestAttemptContent.body == "Decrypting..." {
@@ -866,9 +880,11 @@ class NotificationService: UNNotificationServiceExtension {
   private func bestEffortNSECleanup(recipientDid: String) {
     logger.info("🧹 [NSE] Best-effort cleanup for \(recipientDid.prefix(24))...")
 
+    // Log WAL state BEFORE cleanup — if corruption happens during cleanup, this is the "before" snapshot
+    MLSGRDBManager.probeWALHealth(for: recipientDid, label: "PRE_CLEANUP")
+
     // 1. Close all Rust FFI contexts (flushes ratchet state to disk)
-    // NOTE: This sets suspensionInProgress = true. We clear it at the top
-    // of didReceive so the next notification in a reused NSE process works.
+    // NOTE: This sets suspensionInProgress = true internally.
     MLSCoreContext.emergencyCloseAllContexts()
 
     // 2. Close all GRDB DatabasePools registered in the static emergency list.
@@ -878,7 +894,23 @@ class NotificationService: UNNotificationServiceExtension {
     // calls getEphemeralDatabasePool() (which caches pools in uncachedEphemeralPools
     // and registers them via registerForEmergencyClose). This is the primary leak
     // this cleanup is targeting.
-    MLSGRDBManager.emergencyCloseAllDatabases()
+    //
+    // CRITICAL FIX: Use PASSIVE checkpoint mode. NSE must NEVER use TRUNCATE because:
+    // - TRUNCATE requires exclusive WAL access
+    // - The main app may have the same DB open with its own WAL connections
+    // - Two processes doing TRUNCATE on the same WAL file causes corruption
+    // - PASSIVE is safe: it checkpoints what it can without blocking
+    MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
+
+    // Log WAL state AFTER cleanup — compare with PRE_CLEANUP to detect damage
+    MLSGRDBManager.probeWALHealth(for: recipientDid, label: "POST_CLEANUP")
+
+    // 3. CRITICAL: Clear the suspension flag immediately after cleanup.
+    // The NSE process is reused across notifications. If we leave the flag set,
+    // the next notification's getContext() call will be blocked — especially when
+    // this defer block runs concurrently with the next didReceive (which clears
+    // the flag early, but our deferred cleanup re-sets it via emergencyCloseAllContexts).
+    MLSCoreContext.clearSuspensionFlag()
 
     logger.info("✅ [NSE] Cleanup complete")
   }
@@ -1478,10 +1510,15 @@ class NotificationService: UNNotificationServiceExtension {
         logger.info("👤 [NSE] Found member info from database: \(senderName ?? "unknown")")
       }
 
-      // Last resort: use shortened DID as identifier
+      // Fallback: fetch from Bluesky API via standalone client
       if senderName == nil {
-        senderName = formatShortDID(senderDid)
-        logger.info("👤 [NSE] Using shortened DID as sender name: \(senderName ?? "unknown")")
+        if let profile = await fetchProfileViaClient(senderDid: senderDid, recipientDid: recipientDid) {
+          senderName = profile.displayName ?? profile.handle
+          senderAvatarURL = profile.avatarURL
+          logger.info("👤 [NSE] Resolved sender via public API: \(senderName ?? "unknown")")
+        } else {
+          logger.warning("👤 [NSE] Could not resolve sender: \(senderDid.prefix(24))...")
+        }
       }
     }
 
@@ -1687,7 +1724,24 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  /// Gets cached profile from App Group UserDefaults
+  /// Fetch a Bluesky profile via the NSE's standalone ATProtoClient.
+  private func fetchProfileViaClient(senderDid: String, recipientDid: String) async -> (displayName: String?, handle: String, avatarURL: String?)? {
+    guard let client = await createStandaloneClientForUser(recipientDid) else { return nil }
+    do {
+      let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: senderDid))
+      let (_, profile) = try await client.app.bsky.actor.getProfile(input: params)
+      guard let profile else { return nil }
+      return (
+        displayName: profile.displayName,
+        handle: profile.handle.description,
+        avatarURL: profile.avatar?.uriString()
+      )
+    } catch {
+      logger.debug("⚠️ [NSE] Profile fetch failed: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
   /// Downloads and attaches profile photo to the notification
   private func attachProfilePhoto(to content: UNMutableNotificationContent, from url: URL) async {
     logger.debug(

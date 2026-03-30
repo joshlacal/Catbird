@@ -1,3 +1,4 @@
+#if os(iOS)
 import Petrel
 import SwiftUI
 import UIKit
@@ -3128,3 +3129,5 @@ extension ReplyWrapper {
     return threadItem.uri
   }
 }
+
+#endif

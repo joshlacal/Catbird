@@ -288,6 +288,7 @@ final class AppStateManager {
       
       // Prepare the previous AppState for storage reset if it exists
       if let previousAppState = authenticatedStates[previousUserDID] {
+        #if os(iOS)
         // FIX #5: Stop all streams and pause sync BEFORE database closure
         previousAppState.stopMLSStreams()
 
@@ -308,6 +309,7 @@ final class AppStateManager {
         if !shutdownOk {
           logger.critical("🚨 [transitionToAuthenticated] MLS shutdown timed out - forcing ahead")
         }
+        #endif
       }
       
       // Ensure the database is fully closed and checkpointed
@@ -669,7 +671,9 @@ final class AppStateManager {
       return
     }
 
+    #if os(iOS)
     await state.prepareMLSStorageReset()
+    #endif
   }
 
   // MARK: - Memory Management

@@ -247,9 +247,11 @@ final class DeviceManagementViewModel {
             let deleted = output?.success ?? false
             logger.info("Device deleted: \(deleted)")
 
+            #if os(iOS)
             if deleted, let conversationManager = await appState?.getMLSConversationManager() {
                 try? await conversationManager.removeCurrentDeviceRecord()
             }
+            #endif
 
             // Remove from local list
             devices.removeAll { $0.deviceId == device.deviceId }

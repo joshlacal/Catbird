@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import Synchronization
 
@@ -67,3 +68,20 @@ extension CatbirdBackgroundTask {
     return try await operationTask.value
   }
 }
+
+#else
+
+/// No-op on macOS — background tasks are not needed.
+final class CatbirdBackgroundTask: @unchecked Sendable {
+  init(name: String, expirationHandler: (@Sendable () -> Void)? = nil) {}
+  func end() {}
+
+  static func perform<T: Sendable>(
+    named name: String,
+    operation: @Sendable @escaping () async throws -> T
+  ) async throws -> T {
+    try await operation()
+  }
+}
+
+#endif

@@ -990,6 +990,7 @@ struct UnifiedProfileView: View {
     }
     .sheet(isPresented: $isShowingAccountSwitcher) {
       AccountSwitcherView()
+        .environment(AppStateManager.shared)
     }
     .sheet(isPresented: $isShowingAddToListSheet) {
       if let profile = profileForAddToList {

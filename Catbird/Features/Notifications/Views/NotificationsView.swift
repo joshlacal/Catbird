@@ -70,6 +70,22 @@ struct NotificationsView: View {
     #endif
   }
 
+  private var notificationsLeadingPlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .topBarLeading
+    #else
+    .automatic
+    #endif
+  }
+
+  private var notificationsTrailingPlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .topBarTrailing
+    #else
+    .automatic
+    #endif
+  }
+
   @ViewBuilder
   private func navigationStack(using navigationPath: Binding<NavigationPath>) -> some View {
     NavigationStack(path: navigationPath) {
@@ -81,7 +97,7 @@ struct NotificationsView: View {
       #endif
         #if !targetEnvironment(macCatalyst)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+          ToolbarItem(placement: notificationsLeadingPlacement) {
             Button {
               navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
             } label: {
@@ -90,7 +106,7 @@ struct NotificationsView: View {
             }
           }
 
-            ToolbarItem(placement: .topBarTrailing) {
+          ToolbarItem(placement: notificationsTrailingPlacement) {
             Button(action: {
               Task {
                 await viewModel.refreshNotifications()
@@ -101,7 +117,7 @@ struct NotificationsView: View {
             }
           }
 
-            ToolbarItem(placement: .primaryAction) {
+          ToolbarItem(placement: .primaryAction) {
             SettingsAvatarToolbarButton {
               showingSettings = true
             }

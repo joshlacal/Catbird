@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import Nuke
 import os
@@ -148,3 +149,5 @@ final class ProfileBannerView: UIView {
     CATransaction.commit()
   }
 }
+
+#endif

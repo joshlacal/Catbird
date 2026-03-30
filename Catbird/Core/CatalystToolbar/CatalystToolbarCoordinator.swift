@@ -47,7 +47,7 @@ final class CatalystToolbarCoordinator: NSObject {
     toolbar = NSToolbar(identifier: identifier)
     super.init()
     toolbar.delegate = self
-    toolbar.displayMode = .iconAndLabel
+    toolbar.displayMode = .iconOnly
     toolbar.allowsUserCustomization = false
   }
 
@@ -105,6 +105,9 @@ final class CatalystToolbarCoordinator: NSObject {
   func updateContextualItems(for tab: Int) {
     guard let item = contextualItem else { return }
 
+    // Feed selector only visible on Home tab
+    feedSelectorItem?.isHidden = (tab != 0)
+
     switch tab {
     case 0:
       item.image = UIImage(systemName: "arrow.clockwise")
@@ -113,7 +116,6 @@ final class CatalystToolbarCoordinator: NSObject {
       item.target = self
       item.action = #selector(refreshAction)
       item.isEnabled = true
-      feedSelectorItem?.isEnabled = true
 
     case 1:
       item.image = UIImage(systemName: "line.3.horizontal.decrease.circle")
@@ -122,7 +124,6 @@ final class CatalystToolbarCoordinator: NSObject {
       item.target = self
       item.action = #selector(searchFilterAction)
       item.isEnabled = true
-      feedSelectorItem?.isEnabled = false
 
     case 2:
       item.image = UIImage(systemName: "checkmark.circle")
@@ -131,12 +132,10 @@ final class CatalystToolbarCoordinator: NSObject {
       item.target = self
       item.action = #selector(markAllReadAction)
       item.isEnabled = true
-      feedSelectorItem?.isEnabled = false
 
     case 3:
       item.image = nil
       item.isEnabled = false
-      feedSelectorItem?.isEnabled = false
 
     case 4:
       item.image = UIImage(systemName: "tray.and.arrow.down")
@@ -145,13 +144,25 @@ final class CatalystToolbarCoordinator: NSObject {
       item.target = self
       item.action = #selector(messageRequestsAction)
       item.isEnabled = true
-      feedSelectorItem?.isEnabled = false
 
     default:
       item.image = nil
       item.isEnabled = false
-      feedSelectorItem?.isEnabled = false
     }
+  }
+
+  // MARK: - Avatar
+
+  func updateAvatarImage(_ image: UIImage?) {
+    guard let image = image else { return }
+    let size = CGSize(width: 24, height: 24)
+    UIGraphicsBeginImageContextWithOptions(size, false, 0)
+    let rect = CGRect(origin: .zero, size: size)
+    UIBezierPath(ovalIn: rect).addClip()
+    image.draw(in: rect)
+    let circularImage = UIGraphicsGetImageFromCurrentImageContext()
+    UIGraphicsEndImageContext()
+    settingsAvatarItem?.image = circularImage
   }
 
   // MARK: - Actions

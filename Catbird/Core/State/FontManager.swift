@@ -39,13 +39,6 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         }
         return CrossPlatformContentSizeCategory(from: app.preferredContentSizeCategory)
         #elseif os(macOS)
-        // On macOS and Mac Catalyst, check if we're running as Catalyst
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            // Running as Mac Catalyst - use iOS behavior but with adjusted scaling
-            if let preferredContentSizeCategory = UIApplication.shared.preferredContentSizeCategory as? UIContentSizeCategory {
-                return CrossPlatformContentSizeCategory(from: preferredContentSizeCategory)
-            }
-        }
         // Pure macOS - use a default medium size since there's no system Dynamic Type
         return .medium
         #endif
@@ -169,19 +162,8 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             object: nil
         )
         #elseif os(macOS)
-        // On Mac Catalyst, we can still observe Dynamic Type changes
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(contentSizeCategoryDidChange),
-                name: UIContentSizeCategory.didChangeNotification,
-                object: nil
-            )
-            logger.debug("Dynamic Type observer setup completed for Mac Catalyst")
-        } else {
-            // Pure macOS doesn't have system Dynamic Type
-            logger.debug("Dynamic Type observer setup completed for macOS (no system notifications available)")
-        }
+        // Pure macOS doesn't have system Dynamic Type
+        logger.debug("Dynamic Type observer setup completed for macOS (no system notifications available)")
         #endif
     }
     
@@ -198,21 +180,8 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
 
         logger.info("Dynamic Type size changed to: \(newCategory.rawValue)")
         #elseif os(macOS)
-        // On Mac Catalyst, handle Dynamic Type changes like iOS
-        if ProcessInfo.processInfo.isiOSAppOnMac {
-            let newCategory = CrossPlatformContentSizeCategory(from: UIApplication.shared.preferredContentSizeCategory)
-            if Thread.isMainThread {
-                currentContentSizeCategory = newCategory
-            } else {
-                Task { @MainActor in
-                    self.currentContentSizeCategory = newCategory
-                }
-            }
-            logger.info("Dynamic Type size changed on Mac Catalyst to: \(newCategory.rawValue)")
-        } else {
-            // Pure macOS - no automatic update
-            logger.info("Content size category change notification received on macOS (no automatic update)")
-        }
+        // Pure macOS - no automatic update
+        logger.info("Content size category change notification received on macOS (no automatic update)")
         #endif
 
         // Always post notification for UI updates when content size changes
@@ -234,6 +203,10 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     // MARK: - Computed Properties
     
     /// Scale factor based on font size preference
+    ///
+    /// On macOS, applies a platform scale factor (0.765) to convert iOS-based
+    /// Typography.Size constants to appropriate macOS sizes.
+    /// iOS body = 17pt, macOS system body = 13pt → 13/17 ≈ 0.765
     var sizeScale: CGFloat {
         let baseScale: CGFloat
         switch fontSize {
@@ -249,13 +222,18 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             baseScale = 1.0
         }
 
-        // Apply additional scaling for Mac Catalyst
         #if targetEnvironment(macCatalyst)
-        let catalystScale = baseScale
-        return catalystScale
-        #endif
-
+        // Mac Catalyst applies its own 77% scaling at the rendering level,
+        // so no additional adjustment is needed here.
         return baseScale
+        #elseif os(macOS)
+        // Native macOS: scale down from iOS base sizes (17pt body) to macOS sizes (13pt body).
+        // 13/17 ≈ 0.765
+        let macOSPlatformScale: CGFloat = 0.765
+        return baseScale * macOSPlatformScale
+        #else
+        return baseScale
+        #endif
     }
     
     /// Font design based on style preference

@@ -1,7 +1,10 @@
 import SwiftUI
 
+#if os(iOS)
+
 struct SensitiveContentModalView: View {
   let image: UIImage
+  let canReveal: Bool
   let onReveal: () -> Void
   let onDismiss: () -> Void
 
@@ -16,10 +19,17 @@ struct SensitiveContentModalView: View {
           .font(.headline)
           .multilineTextAlignment(.center)
 
-        Text("Someone sent you an image that may not be appropriate. You can choose to view it or go back.")
-          .font(.body)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
+        if canReveal {
+          Text("Someone sent you an image that may not be appropriate. You can choose to view it or go back.")
+            .font(.body)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+        } else {
+          Text("This image has been hidden because it may contain nudity or adult content.")
+            .font(.body)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+        }
 
         Spacer()
 
@@ -28,9 +38,11 @@ struct SensitiveContentModalView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 
-          Button("Show Image", action: onReveal)
-            .font(.callout)
-            .foregroundStyle(.secondary)
+          if canReveal {
+            Button("Show Image", action: onReveal)
+              .font(.callout)
+              .foregroundStyle(.secondary)
+          }
         }
       }
       .padding(32)
@@ -38,3 +50,5 @@ struct SensitiveContentModalView: View {
     }
   }
 }
+
+#endif

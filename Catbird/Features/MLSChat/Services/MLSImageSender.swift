@@ -3,11 +3,11 @@ import CryptoKit
 import Foundation
 import OSLog
 import Petrel
-import PhotosUI
 import SwiftUI
-import UIKit
 
 #if os(iOS)
+import PhotosUI
+import UIKit
 
   private let mlsImageSenderLogger = Logger(subsystem: "blue.catbird", category: "MLSImageSender")
   private let maxBlobBytes = 10 * 1024 * 1024

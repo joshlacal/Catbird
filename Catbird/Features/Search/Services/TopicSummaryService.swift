@@ -9,7 +9,7 @@ import FoundationModels
 
 /// Summarizes a trending topic using recent posts from its linked feed.
 /// Uses Apple Intelligence on-device Foundation Models when available (iOS 26+).
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 actor TopicSummaryService {
     static let shared = TopicSummaryService()
 
@@ -264,7 +264,7 @@ actor TopicSummaryService {
     }
 
     #if canImport(FoundationModels)
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func prepareLanguageModel() -> SystemLanguageModel? {
         if let cachedModel {
             prewarmLanguageModel(using: cachedModel)
@@ -284,7 +284,7 @@ actor TopicSummaryService {
         }
     }
 
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func prewarmLanguageModel(using model: SystemLanguageModel) {
         guard !hasPrewarmedModel else { return }
 
@@ -492,7 +492,7 @@ actor TopicSummaryService {
 
 // MARK: - Post-processing helpers
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 extension TopicSummaryService {
 
     /// Cleanup output from streaming - combines extractOneSentence and sanitizeSummary logic

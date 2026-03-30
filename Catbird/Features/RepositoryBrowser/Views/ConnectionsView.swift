@@ -23,7 +23,7 @@ struct RepositoryConnectionsView: View {
             VStack(spacing: 0) {
                 // Experimental warning header
                 ExperimentalConnectionsHeader(repository: repository)
-                    .background(Color(UIColor.systemGroupedBackground))
+                    .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
                 
                 // Main content
                 if viewModel.connections.isEmpty && !viewModel.isLoading {
@@ -33,9 +33,11 @@ struct RepositoryConnectionsView: View {
                 }
             }
             .navigationTitle("Social Connections")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Menu {
                         Button("Refresh", systemImage: "arrow.clockwise") {
                             viewModel.loadConnections()
@@ -522,15 +524,17 @@ private struct ConnectionDetailView: View {
                 .padding()
             }
             .navigationTitle("Connection Detail")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .automatic) {
                     Button("Close") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Raw Data") {
                         showingRawData = true
                     }
@@ -586,7 +590,7 @@ private struct ConnectionTechnicalDetailsView: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -620,16 +624,18 @@ private struct ConnectionRawDataView: View {
                         Text(connection.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
                 .padding()
             }
             .navigationTitle("Raw Data")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }
@@ -715,7 +721,7 @@ private struct ConnectionsAnalyticsView: View {
                                     .fontWeight(.bold)
                             }
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                     }
@@ -723,9 +729,11 @@ private struct ConnectionsAnalyticsView: View {
                 .padding()
             }
             .navigationTitle("Analytics")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }
@@ -854,7 +862,7 @@ private struct StatisticBadge: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
@@ -899,7 +907,7 @@ private struct MetadataItem: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

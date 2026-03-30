@@ -146,7 +146,7 @@ struct ListDetailView: View {
       .pickerStyle(.segmented)
       .padding(.horizontal, 16)
       .padding(.vertical, 8)
-      .background(Color(UIColor.systemGroupedBackground))
+      .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
       
       // Tab Content
       TabView(selection: $viewModel.selectedTab) {
@@ -156,7 +156,9 @@ struct ListDetailView: View {
         feedView(viewModel: viewModel)
           .tag(ListDetailTab.feed)
       }
+      #if os(iOS)
       .tabViewStyle(.page(indexDisplayMode: .never))
+      #endif
     }
     .navigationTitle(viewModel.listDetails?.name ?? "List")
     #if os(iOS)
@@ -263,7 +265,7 @@ struct ListDetailView: View {
       
       Divider()
     }
-    .background(Color(UIColor.systemGroupedBackground))
+    .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
   }
   
   @ViewBuilder

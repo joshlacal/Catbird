@@ -337,6 +337,7 @@ struct MLSNewConversationView: View {
         .cornerRadius(DesignTokens.Size.radiusMD)
         .padding(.horizontal)
         .padding(.top, 12)
+        .padding(.bottom, 8)
     }
     
     @ViewBuilder

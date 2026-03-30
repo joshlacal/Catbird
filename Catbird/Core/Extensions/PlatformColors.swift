@@ -351,7 +351,7 @@ public extension PlatformColor {
         #if os(iOS)
         return UIColor.systemGray4
         #elseif os(macOS)
-        return NSColor.controlAccentColor
+        return NSColor.systemGray.withAlphaComponent(0.4)
         #endif
     }
     

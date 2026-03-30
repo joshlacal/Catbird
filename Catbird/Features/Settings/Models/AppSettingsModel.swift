@@ -54,6 +54,7 @@ final class AppSettingsModel {
     var enableViaAttribution: Bool = true
     
     // Content and Media
+    var sensitiveContentScanningEnabled: Bool = true
     var autoplayVideos: Bool = true
     var useInAppBrowser: Bool = true
     var showTrendingTopics: Bool = true

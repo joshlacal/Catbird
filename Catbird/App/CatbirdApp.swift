@@ -1,5 +1,7 @@
 import AVFoundation
+#if os(iOS)
 import BackgroundTasks
+#endif
 import CryptoKit
 import Sentry
 
@@ -44,8 +46,10 @@ struct CatbirdApp: App {
         SentryService.start()
 
         // Initialize MetricKit for performance and diagnostic monitoring
-        MetricKitManager.shared.start()
-        MetricKitManager.shared.beginExtendedLaunchMeasurement(taskName: "AppInitialization")
+        if #available(iOS 26, *) {
+          MetricKitManager.shared.start()
+          MetricKitManager.shared.beginExtendedLaunchMeasurement(taskName: "AppInitialization")
+        }
 
         // Set notification center delegate for handling MLS notifications
         UNUserNotificationCenter.current().delegate = self
@@ -181,10 +185,22 @@ struct CatbirdApp: App {
             completionHandler(.noData)
             return
           }
+          // Protect with background task assertion to prevent 0xdead10cc if the app
+          // transitions to background while this notification-triggered work is in flight.
+          var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+          bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "MLSNotification") {
+            MLSClient.interruptAllContexts()
+            MLSCoreContext.interruptAllContexts()
+            UIApplication.shared.endBackgroundTask(bgTaskId)
+            bgTaskId = .invalid
+          }
           await MLSNotificationHandler.shared.handleNotification(
             userInfo: userInfo,
             appState: activeState
           )
+          if bgTaskId != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTaskId)
+          }
           completionHandler(.newData)
         }
       } else if let convoId = userInfo["convoId"] as? String ?? userInfo["conversationId"] as? String {
@@ -373,7 +389,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     #endif
 
     #if canImport(FoundationModels)
-    if #available(iOS 26.0, macOS 15.0, *) {
+    if #available(iOS 26.0, macOS 26.0, *) {
       Task(priority: .background) {
         await TopicSummaryService.shared.prepareModelWarmupIfNeeded()
       }
@@ -385,7 +401,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   /// Current schema version - increment this when making breaking schema changes
   /// This forces a database reset for users with older incompatible schemas
-  private static let currentSchemaVersion = 3  // Increment when schema changes break migration
+  private static let currentSchemaVersion = 4  // Increment when schema changes break migration
 
   /// Checks if database needs reset due to schema version mismatch
   private func shouldResetDatabase() -> Bool {
@@ -1063,7 +1079,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               }
             }
           } else if url.scheme == "blue.catbird" && url.host == "e2e" {
-            // Handle E2E testing commands (only in E2E mode)
+            // Handle E2E testing commands (only in E2E mode, iOS only)
+            #if os(iOS)
             logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
             if appStateManager.isE2EMode {
               Task { @MainActor in
@@ -1073,6 +1090,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             } else {
               logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
             }
+            #endif
           } else {
             // Handle all other URLs through the URLHandler
             if let appState = self.appState {
@@ -1086,9 +1104,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       #if os(macOS)
       .windowStyle(.automatic)
       .defaultSize(width: 1200, height: 800)
-      .commands {
-        AppCommands()
-      }
       #endif
     }
   }
@@ -1205,17 +1220,27 @@ private extension CatbirdApp {
     // Using MainActor.assumeIsolated because onChange runs on main thread.
     // ═══════════════════════════════════════════════════════════════════════════
     if newPhase == .inactive || newPhase == .background {
+      #if os(iOS)
       if let appState = appStateManager.lifecycle.appState {
         // SYNCHRONOUS cancellation - must happen before GRDB suspension
         MainActor.assumeIsolated {
           appState.mlsConversationManager?.suspendMLSOperations()
         }
       }
+      #endif
 
       // Block new MLS FFI work immediately while we transition to background.
       // (MLSClient + MLSCoreContext each maintain their own UniFFI MlsContext caches.)
       MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
       MLSCoreContext.markSuspensionInProgress()
+
+      // CRITICAL: Interrupt in-flight SQLCipher operations SYNCHRONOUSLY.
+      // sqlite3_interrupt() is safe from any thread and causes in-flight sqlite3_step
+      // to return SQLITE_INTERRUPT immediately, releasing the Rust Mutex.
+      // This must happen BEFORE the async Task to cover the case where iOS suspends
+      // before the Task is scheduled (proven by crash: 3-second 0xdead10cc).
+      MLSClient.interruptAllContexts()
+      MLSCoreContext.interruptAllContexts()
     }
 
     // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
@@ -1224,24 +1249,31 @@ private extension CatbirdApp {
       reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
     )
 
+    #if os(iOS)
     // CRITICAL FIX: Synchronously acquire background task assertion
     // This bridges the gap between the synchronous onChange callback and the async Task execution.
-    // Without this, aggressive OS suspension (especially in Release builds) can freeze the app 
-    // before the Task starts or while it's waiting for the MainActor, potentially causing 
+    // Without this, aggressive OS suspension (especially in Release builds) can freeze the app
+    // before the Task starts or while it's waiting for the MainActor, potentially causing
     // 0xdead10cc crashes if file locks are held or acquired during the transition.
     var taskId: UIBackgroundTaskIdentifier = .invalid
     if newPhase == .inactive || newPhase == .background {
       taskId = UIApplication.shared.beginBackgroundTask(withName: "ScenePhaseTransition") {
-        // Expiration handler: Clean up if we run out of time
-        logger.warning("⏳ ScenePhaseTransition background task expired")
+        // Expiration: iOS is reclaiming time. Force-close everything NOW.
+        logger.warning("ScenePhaseTransition expired — force-closing all contexts")
+        MLSClient.interruptAllContexts()
+        MLSCoreContext.interruptAllContexts()
+        MLSClient.emergencyCloseAllContexts(reason: "ScenePhaseTransition expired")
+        MLSCoreContext.emergencyCloseAllContexts()
         if taskId != .invalid {
           UIApplication.shared.endBackgroundTask(taskId)
           taskId = .invalid
         }
       }
     }
+    #endif
 
     Task { @MainActor in
+      #if os(iOS)
       // Ensure we release the background assertion when this update task completes
       defer {
         if taskId != .invalid {
@@ -1249,38 +1281,71 @@ private extension CatbirdApp {
           taskId = .invalid
         }
       }
+      #endif
 
       await FeedStateStore.shared.handleScenePhaseChange(newPhase)
 
 #if os(iOS)
-      if let appState = appStateManager.lifecycle.appState {
-        MLSNotificationCoordinator.setMainAppActive(
-          newPhase == .active,
-          activeUserDID: appState.userDID
-        )
-      } else {
-        MLSNotificationCoordinator.setMainAppActive(newPhase == .active, activeUserDID: nil)
+      // ═══════════════════════════════════════════════════════════════════════════
+      // 0xdead10cc FIX: Close Rust FFI connections on background.
+      // Rust FFI holds WAL locks with no suspension mechanism — must close explicitly.
+      // GRDB manages its own suspension via observesSuspensionNotifications.
+      // iOS exempts SQLite WAL file handles from 0xdead10cc (plaintext header).
+      //
+      // CRITICAL ORDERING: Signal NSE that app is active IMMEDIATELY on foreground,
+      // but delay the "inactive" signal until AFTER Rust FFI contexts are closed
+      // and GRDB has time to suspend. This prevents the NSE from writing to the
+      // shared database while GRDB's pool is mid-suspension.
+      // ═══════════════════════════════════════════════════════════════════════════
+      if newPhase == .active {
+        // Tell NSE immediately: "I'm active, don't decrypt"
+        if let appState = appStateManager.lifecycle.appState {
+          MLSNotificationCoordinator.setMainAppActive(true, activeUserDID: appState.userDID)
+        } else {
+          MLSNotificationCoordinator.setMainAppActive(true, activeUserDID: nil)
+        }
       }
 
-      // ═══════════════════════════════════════════════════════════════════════════
-      // 0xdead10cc FIX: Close Rust FFI connections on background within RAII task.
-      // GRDB handles its own suspension via observesSuspensionNotifications.
-      // SwiftData autosave handles persistence. Only Rust FFI needs explicit close
-      // because it holds WAL locks in the App Group container with no suspension mechanism.
-      // ═══════════════════════════════════════════════════════════════════════════
       if oldPhase == .active, (newPhase == .inactive || newPhase == .background) {
-        // RAII background task protects the Rust close operation
-        let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose")
-        // Close Rust FFI connections (MLSClient + MLSCoreContext) — releases WAL locks in App Group
+        // WAL health snapshot BEFORE suspension — baseline for corruption detection
+        MLSGRDBManager.probeWALHealth(for: "all", label: "APP_SUSPENDING")
+
+        // RAII background task protects the close operations
+        let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose") {
+          // Last resort: iOS is killing our background time
+          MLSClient.interruptAllContexts()
+          MLSCoreContext.interruptAllContexts()
+          MLSClient.emergencyCloseAllContexts(reason: "MLSSuspensionClose expired")
+          MLSCoreContext.emergencyCloseAllContexts()
+        }
+
+        // Step 1: Close Rust FFI connections — releases WAL locks in App Group
         MLSClient.emergencyCloseAllContexts(reason: "scenePhase active→\(String(describing: newPhase))")
         MLSCoreContext.emergencyCloseAllContexts()
+
+        // Step 2: Give GRDB time to complete its auto-suspension (checkpoint + release readers).
+        // observesSuspensionNotifications fires on didEnterBackground which may be
+        // slightly after scenePhase changes. 200ms is enough for the checkpoint to complete.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
+        // Step 3: NOW signal NSE that it's safe to decrypt.
+        // At this point, Rust FFI is closed and GRDB is fully suspended.
+        if let appState = appStateManager.lifecycle.appState {
+          MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: appState.userDID)
+        } else {
+          MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: nil)
+        }
+
         bgTask.end()
-        logger.info("✅ [0xdead10cc-FIX] Rust FFI contexts closed for suspension")
+        logger.info("✅ [0xdead10cc-FIX] Rust FFI closed + NSE green-lit for suspension")
       }
 
       // Reload MLS state from disk when returning to foreground.
       // The NSE may have advanced the MLS ratchet while the app was in background.
       if (oldPhase == .background || oldPhase == .inactive), newPhase == .active {
+        // WAL health snapshot ON RESUME — detect corruption from NSE activity while suspended
+        MLSGRDBManager.probeWALHealth(for: "all", label: "APP_RESUMING")
+
         // CRITICAL: Clear suspension flag FIRST so getContext() works
         MLSCoreContext.clearSuspensionFlag()
         MLSClient.clearSuspensionFlag(reason: "scenePhase → active")
@@ -1289,6 +1354,30 @@ private extension CatbirdApp {
         MLSDatabaseCoordinator.shared.resumeFromSuspension()
 
         if let appState = appStateManager.lifecycle.appState {
+          do {
+            let resumeResult = try await MLSGRDBManager.shared.prepareForForegroundResume(
+              for: appState.userDID
+            )
+            switch resumeResult {
+            case .ready:
+              logger.debug("✅ [RESUME] MLS storage healthy before foreground reopen")
+            case .repaired:
+              logger.info("✅ [RESUME] MLS storage repaired before foreground reopen")
+            case .reset:
+              logger.warning(
+                "🧰 [RESUME] MLS storage was rebuilt before foreground reopen after verified corruption"
+              )
+            }
+            appState.mlsServiceState.clearDatabaseFailure()
+          } catch {
+            logger.error("❌ [RESUME] Foreground MLS preparation failed: \(error.localizedDescription)")
+            // Don't return early — let the app continue to the MLS state reload.
+            // The conversation view will retry loading, and the pool may recover
+            // on its own once GRDB fully resumes. Blocking here just guarantees
+            // "Couldn't load messages" with no chance of recovery.
+            logger.warning("🔄 [RESUME] Continuing despite preparation failure — pool may self-heal")
+          }
+
           // Creates fresh Rust connections on demand
           await appState.reloadMLSStateFromDisk()
 
@@ -1369,7 +1458,7 @@ private extension CatbirdApp {
       appState.configureDataServices(modelContainer: modelContext.container)
 
       #if canImport(FoundationModels)
-      if #available(iOS 26.0, macOS 15.0, *) {
+      if #available(iOS 26.0, macOS 26.0, *) {
         Task(priority: .background) {
           await TopicSummaryService.shared.prepareLaunchWarmup(appState: appState)
         }
@@ -1561,7 +1650,11 @@ private extension CatbirdApp {
                 .foregroundColor(.white)
             }
             .padding(32)
+            #if os(iOS)
             .background(Color(.systemGray6))
+            #else
+            .background(Color(.controlBackgroundColor))
+            #endif
             .cornerRadius(16)
           }
           .ignoresSafeArea()
@@ -1744,8 +1837,9 @@ private extension CatbirdApp {
   }
 #endif
 
+#if os(iOS)
   // MARK: - E2E Testing URL Handlers
-  
+
   /// Handle E2E testing URL commands
   /// Format: blue.catbird://e2e/{command}?{params}
   /// Commands:
@@ -2587,6 +2681,7 @@ private extension CatbirdApp {
       e2eLogger.error("[E2E] Failed to write result: \(error.localizedDescription)")
     }
   }
+#endif
 }
 
 // MARK: - Biometric Authentication Overlay
@@ -2923,4 +3018,3 @@ extension CatbirdApp.AppDelegate {
   }
 }
 #endif 
-

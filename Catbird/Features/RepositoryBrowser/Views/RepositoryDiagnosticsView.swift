@@ -37,7 +37,7 @@ struct RepositoryDiagnosticsView: View {
                             .foregroundColor(.secondary)
                     }
                     .padding()
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                     .cornerRadius(12)
                     
                     // Repository Info
@@ -127,9 +127,11 @@ struct RepositoryDiagnosticsView: View {
                 .padding()
             }
             .navigationTitle("Diagnostics")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
@@ -198,7 +200,7 @@ struct RepositoryDiagnosticsView: View {
                 }
             }
             .padding()
-            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
             .cornerRadius(8)
             
             // Sample Data
@@ -235,7 +237,7 @@ struct RepositoryDiagnosticsView: View {
                                 .lineLimit(3)
                         }
                         .padding()
-                        .background(Color(UIColor.tertiarySystemGroupedBackground))
+                        .background(Color(platformColor: PlatformColor.platformTertiarySystemGroupedBackground))
                         .cornerRadius(8)
                     }
                 }
@@ -287,7 +289,7 @@ struct RepositoryDiagnosticsView: View {
                     }
                 }
                 .padding()
-                .background(Color(UIColor.secondarySystemGroupedBackground))
+                .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                 .cornerRadius(8)
             }
         }
@@ -628,7 +630,7 @@ private struct DiagnosticItem: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .cornerRadius(8)
     }
 }

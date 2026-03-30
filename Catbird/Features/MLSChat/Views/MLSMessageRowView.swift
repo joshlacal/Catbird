@@ -110,6 +110,7 @@ import SwiftUI
           isCurrentUser: message.user.isCurrentUser,
           timestamp: message.createdAt,
           senderName: message.user.name,
+          senderDID: message.user.id,
           senderAvatarURL: message.user.avatarURL,
           messageState: nil,
           onRetry: nil,

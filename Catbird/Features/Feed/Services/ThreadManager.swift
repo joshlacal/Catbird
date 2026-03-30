@@ -83,9 +83,10 @@ final class ThreadManager: StateInvalidationSubscriber {
       return false
     }
 
+    let uriString = uri.uriString()
     let descriptor = FetchDescriptor<CachedFeedViewPost>(
       predicate: #Predicate<CachedFeedViewPost> { post in
-          post.uri == uri && post.feedType == "thread-cache"
+          post.id.starts(with: uriString) && post.feedType == "thread-cache"
       }
     )
 

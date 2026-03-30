@@ -285,9 +285,11 @@ struct ChatShareSheet: UIViewControllerRepresentable {
 
 #endif
 
+#if os(iOS)
 #Preview("ChatAccountSettingsView") {
   NavigationStack {
     ChatAccountSettingsView()
   }
   .previewWithAuthenticatedState()
 }
+#endif

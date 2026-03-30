@@ -1,9 +1,9 @@
 import Foundation
-import BackgroundTasks
 import OSLog
-import UIKit
 
 #if os(iOS)
+import BackgroundTasks
+import UIKit
 @available(iOS 13.0, *)
 enum ChatBackgroundRefreshManager {
   private static let taskIdentifier = "blue.catbird.chat.refresh"

@@ -362,6 +362,20 @@ struct MLSMessageAdapter: UnifiedChatMessage {
           blurhash: imageEmbed.blurhash
         )
       )
+    case .audio(let audioEmbed):
+      return .audio(
+        AudioEmbedData(
+          blobId: audioEmbed.blobId,
+          key: audioEmbed.key,
+          iv: audioEmbed.iv,
+          sha256: audioEmbed.sha256,
+          contentType: audioEmbed.contentType,
+          size: audioEmbed.size,
+          durationMs: audioEmbed.durationMs,
+          waveform: audioEmbed.waveform,
+          transcript: audioEmbed.transcript
+        )
+      )
     case .unknown:
       return nil
     }

@@ -557,7 +557,9 @@ extension PostComposerViewModel {
         defer { isPosting = false }
         
         // Start MetricKit tracking for post composition
-        await MetricKitSignposts.beginPostComposition()
+        if #available(iOS 26, *) {
+          await MetricKitSignposts.beginPostComposition()
+        }
         
         logger.info("Creating post with text: \(self.postText)")
         
@@ -659,18 +661,24 @@ extension PostComposerViewModel {
                 ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
                 appState.composerDraftManager.clearDraft()
                 logger.info("Post queued offline")
-                await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                if #available(iOS 26, *) {
+                  await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                }
                 return
             }
-            await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+            if #available(iOS 26, *) {
+              await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+            }
             throw error
         }
-        
+
         // Clear draft on successful post creation
         appState.composerDraftManager.clearDraft()
-        
+
         // End MetricKit tracking for successful post
-        await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
+        if #available(iOS 26, *) {
+          await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
+        }
         
         logger.info("Post created successfully")
     }

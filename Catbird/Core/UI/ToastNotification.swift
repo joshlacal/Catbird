@@ -88,7 +88,7 @@ struct ToastView: View {
     .background(
       Group {
         // Only iOS 26+/macOS 15+ has the real glass effect; older OSes need a visible fallback.
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
           Color.clear
         } else {
           Capsule()
@@ -184,7 +184,7 @@ private extension View {
   // Applies the new glassEffect when available; otherwise returns self.
   @ViewBuilder
   func glassEffectCompatibility() -> some View {
-      if #available(iOS 26.0, macOS 15.0, *) {
+      if #available(iOS 26.0, macOS 26.0, *) {
       self.glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
     } else {
       self
@@ -192,9 +192,15 @@ private extension View {
   }
 }
 
+#if os(iOS)
+private let toastPreviewBackgroundColor = Color(.systemBackground)
+#elseif os(macOS)
+private let toastPreviewBackgroundColor = Color(.windowBackgroundColor)
+#endif
+
 #Preview("Toast Notification") {
   ZStack {
-    Color(.systemBackground).ignoresSafeArea()
+    toastPreviewBackgroundColor.ignoresSafeArea()
     ToastView(
       toast: ToastItem(message: "Post published successfully"),
       onDismiss: {}
@@ -204,7 +210,7 @@ private extension View {
 
 #Preview("Toast - Warning") {
   ZStack {
-    Color(.systemBackground).ignoresSafeArea()
+    toastPreviewBackgroundColor.ignoresSafeArea()
     ToastView(
       toast: ToastItem(message: "Connection lost", icon: "wifi.slash"),
       onDismiss: {}

@@ -110,6 +110,14 @@ private struct AsyncPreviewStateModifier: ViewModifier {
   }
 }
 
+// MARK: - Platform Helpers
+
+#if os(iOS)
+private let platformBackgroundColor = Color(.systemBackground)
+#elseif os(macOS)
+private let platformBackgroundColor = Color(.windowBackgroundColor)
+#endif
+
 // MARK: - Placeholder Views
 
 /// Shown while preview authentication is in progress
@@ -123,7 +131,7 @@ private struct PreviewLoadingView: View {
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemBackground))
+    .background(platformBackgroundColor)
   }
 }
 
@@ -143,6 +151,6 @@ private struct PreviewUnconfiguredView: View {
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemBackground))
+    .background(platformBackgroundColor)
   }
 }

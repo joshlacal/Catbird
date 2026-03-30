@@ -9,7 +9,7 @@ import CatbirdMLSCore
 import OSLog
 import SwiftUI
 
-//#if os(iOS)
+#if os(iOS)
 
   /// Sheet displaying reaction details grouped by emoji with reactor profiles
   struct MLSReactionDetailsSheet: View {
@@ -217,4 +217,4 @@ import SwiftUI
 //    let avatarURL: URL?
 //  }
 //
-//#endif
+#endif

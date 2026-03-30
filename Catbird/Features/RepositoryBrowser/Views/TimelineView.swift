@@ -25,7 +25,7 @@ struct RepositoryTimelineView: View {
             VStack(spacing: 0) {
                 // Experimental warning header
                 ExperimentalTimelineHeader(repository: repository)
-                    .background(Color(UIColor.systemGroupedBackground))
+                    .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
                 
                 // Timeline content
                 if viewModel.posts.isEmpty && !viewModel.isLoading {
@@ -35,9 +35,11 @@ struct RepositoryTimelineView: View {
                 }
             }
             .navigationTitle("Timeline")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Menu {
                         Button("Refresh", systemImage: "arrow.clockwise") {
                             viewModel.loadPosts()
@@ -160,7 +162,7 @@ struct RepositoryTimelineView: View {
                 }
             }
             .padding()
-            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
             .cornerRadius(8)
             
             Button("Retry Loading") {
@@ -412,7 +414,7 @@ private struct TimelineDateHeader: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(Color(UIColor.systemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
     }
 }
 
@@ -553,7 +555,7 @@ private struct StatisticBadge: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
@@ -597,7 +599,7 @@ private struct PostDetailView: View {
                         Text(post.displayText)
                             .font(.body)
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
@@ -635,15 +637,17 @@ private struct PostDetailView: View {
                 .padding()
             }
             .navigationTitle("Post Detail")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .automatic) {
                     Button("Close") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Raw Data") {
                         showingRawData = true
                     }
@@ -691,7 +695,7 @@ private struct MetadataItem: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -736,7 +740,7 @@ private struct TechnicalDetailsView: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -770,7 +774,7 @@ private struct RawDataView: View {
                         Text(post.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
@@ -783,7 +787,7 @@ private struct RawDataView: View {
                             Text(post.facets)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
-                                .background(Color(UIColor.secondarySystemGroupedBackground))
+                                .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                     }
@@ -796,7 +800,7 @@ private struct RawDataView: View {
                             Text(post.embeds)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
-                                .background(Color(UIColor.secondarySystemGroupedBackground))
+                                .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                     }
@@ -804,9 +808,11 @@ private struct RawDataView: View {
                 .padding()
             }
             .navigationTitle("Raw Data")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }

@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import UIKit
 
@@ -60,3 +61,5 @@ actor MLSImageCache {
     }
   }
 }
+
+#endif

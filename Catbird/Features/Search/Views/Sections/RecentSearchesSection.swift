@@ -99,7 +99,7 @@ struct RecentSearchesSection: View {
 
         Image(systemName: "arrow.up.left")
           .appFont(AppTextRole.caption)
-          .foregroundColor(Color(uiColor: .tertiaryLabel))
+          .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
       }
       .padding(.vertical, 12)
       .padding(.horizontal, 16)
@@ -128,7 +128,7 @@ struct RecentSearchesSection: View {
     HStack(spacing: 12) {
       Image(systemName: "magnifyingglass")
         .appFont(size: 24)
-        .foregroundColor(Color(uiColor: .tertiaryLabel))
+        .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
 
       VStack(alignment: .leading, spacing: 4) {
         Text("No Recent Searches")
@@ -137,7 +137,7 @@ struct RecentSearchesSection: View {
 
         Text("Your search history will appear here")
           .appFont(AppTextRole.caption)
-          .foregroundColor(Color(uiColor: .tertiaryLabel))
+          .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
       }
 
       Spacer()

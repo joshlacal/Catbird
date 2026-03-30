@@ -128,7 +128,8 @@ struct FeedCollectionViewWrapper: View {
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
-    
+    var headerView: AnyView? = nil
+
     var body: some View {
         VStack {
             if stateManager.posts.isEmpty && stateManager.isLoading {
@@ -175,7 +176,7 @@ struct FeedCollectionViewWrapper: View {
                             }
                         }
                     }
-                    
+
                     if stateManager.isLoading {
                         HStack {
                             Spacer()
@@ -189,12 +190,25 @@ struct FeedCollectionViewWrapper: View {
                     }
                 }
                 .listStyle(.plain)
+                .contentMargins(.top, 8, for: .scrollContent)
                 .refreshable {
                     await stateManager.refreshUserInitiated()
                 }
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity)
             }
         }
         .catalystPlainButtons()
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    Task { await stateManager.refreshUserInitiated() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
+        }
         .task {
             // Always try to load initial data if posts are empty
             if stateManager.posts.isEmpty {

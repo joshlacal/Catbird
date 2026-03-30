@@ -244,7 +244,9 @@ struct GifPickerView: View {
         }
     }
     
+    @ViewBuilder
     private var gifGridSection: some View {
+        #if os(iOS)
         GifWaterfallCollectionView(
             gifs: gifs,
             isLoadingMore: isLoadingMore,
@@ -261,6 +263,21 @@ struct GifPickerView: View {
             }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #else
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                ForEach(gifs) { gif in
+                    GifVideoView(gif: gif, onTap: {
+                        onGifSelected(gif)
+                        dismiss()
+                    })
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #endif
     }
     
     // MARK: - API Calls

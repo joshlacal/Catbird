@@ -61,7 +61,9 @@ private extension ContentView {
       .environment(appStateManager)
       .onAppear {
         // Finish extended launch measurement when main content appears
-        MetricKitManager.shared.finishExtendedLaunchMeasurement()
+        if #available(iOS 26, *) {
+          MetricKitManager.shared.finishExtendedLaunchMeasurement()
+        }
       }
   }
 
@@ -140,8 +142,13 @@ struct ContentViewLoadingView: View {
         Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
           .ignoresSafeArea()
       } else {
+        #if os(iOS)
         Color(uiColor: .systemBackground)
           .ignoresSafeArea()
+        #elseif os(macOS)
+        Color(nsColor: .windowBackgroundColor)
+          .ignoresSafeArea()
+        #endif
       }
 
       VStack(spacing: 20) {
@@ -198,11 +205,67 @@ struct MainContentView: View {
   @State private var composerInitialDraft: PostComposerDraft?
   // Namespace for iOS 26 matched transitions
   @Namespace private var composeTransitionNamespace
+  #if os(iOS)
+  @AppStorage("chatMode") private var chatModeRaw: String = ChatTabView.ChatMode.bluesky.rawValue
+  #else
+  @AppStorage("chatMode") private var chatModeRaw: String = "bluesky"
+  #endif
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
     appState.navigationManager
   }
+
+  #if os(macOS)
+  /// Extracted binding to reduce type-checker complexity in macOS TabView
+  private var macOSTabSelection: Binding<Int> {
+    Binding(
+      get: { selectedTab },
+      set: { newValue in
+        if selectedTab == newValue {
+          logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
+          lastTappedTab = newValue
+        }
+        selectedTab = newValue
+        navigationManager.updateCurrentTab(newValue)
+      }
+    )
+  }
+
+  @TabContentBuilder<Int>
+  private var macOSProfileTab: some TabContent<Int> {
+    Tab("Profile", systemImage: "person", value: 3) {
+      NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+        UnifiedProfileView(
+          appState: appState,
+          selectedTab: $selectedTab,
+          lastTappedTab: $lastTappedTab,
+          path: appState.navigationManager.pathBinding(for: 3)
+        )
+        .id(appState.userDID)
+        .navigationDestination(for: NavigationDestination.self) { destination in
+          NavigationHandler.viewForDestination(
+            destination,
+            path: appState.navigationManager.pathBinding(for: 3),
+            appState: appState,
+            selectedTab: $selectedTab
+          )
+        }
+      }
+    }
+  }
+
+  @TabContentBuilder<Int>
+  private var macOSChatTab: some TabContent<Int> {
+    Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: 4) {
+      MacOSChatTabView(
+        selectedTab: $selectedTab,
+        lastTappedTab: $lastTappedTab
+      )
+      .id(appState.userDID)
+    }
+  }
+  #endif
   
   // MARK: - Per-Account Feed Memory
   
@@ -619,11 +682,24 @@ struct MainContentView: View {
         )
       }
       .sheet(isPresented: $showingNewMessageSheet) {
-        NewMessageView()
+        if chatModeRaw == ChatTabView.ChatMode.mls.rawValue {
+          MLSNewConversationView(
+            onConversationCreated: {},
+            onNavigateToConversation: { convoId in
+              appState.navigationManager.targetMLSConversationId = convoId
+            }
+          )
+          .environment(appState)
           .applyAppStateEnvironment(appState)
-          .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
+          .presentationDetents([.large])
           .presentationDragIndicator(.visible)
-          .presentationBackground(.thinMaterial)
+        } else {
+          NewMessageView()
+            .applyAppStateEnvironment(appState)
+            .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(.thinMaterial)
+        }
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
@@ -732,19 +808,7 @@ struct MainContentView: View {
       #elseif os(macOS)
       // macOS content goes here directly without SideDrawer
       TabView(
-        selection: Binding(
-          get: { selectedTab },
-          set: { newValue in
-            if selectedTab == newValue {
-              logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-              lastTappedTab = newValue
-            }
-            selectedTab = newValue
-
-            // Update the navigation manager with the new tab index
-            navigationManager.updateCurrentTab(newValue)
-          }
-        )
+        selection: macOSTabSelection
       ) {
         // Home Tab
         Tab("Home", systemImage: "house", value: 0) {
@@ -780,28 +844,11 @@ struct MainContentView: View {
         }
         .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
 
-        // Profile Tab - Hidden on iPhone to save space
-        if !PlatformDeviceInfo.isPhone {
-          Tab("Profile", systemImage: "person", value: 3) {
-            NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-              UnifiedProfileView(
-                appState: appState,
-                selectedTab: $selectedTab,
-                lastTappedTab: $lastTappedTab,
-                path: appState.navigationManager.pathBinding(for: 3)
-              )
-              .id(appState.userDID)
-              .navigationDestination(for: NavigationDestination.self) { destination in
-                NavigationHandler.viewForDestination(
-                  destination,
-                  path: appState.navigationManager.pathBinding(for: 3),
-                  appState: appState,
-                  selectedTab: $selectedTab
-                )
-              }
-            }
-          }
-        }
+        // Profile Tab
+        macOSProfileTab
+
+        // Chat Tab
+        macOSChatTab
       }
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
@@ -927,9 +974,9 @@ struct MainContentView: View {
           await MainActor.run {
             currentFeedName = "Timeline"
           }
-        } else if case .list(_, let name) = selectedFeed {
+        } else if case .list(let uri) = selectedFeed {
           await MainActor.run {
-            currentFeedName = name
+            currentFeedName = uri.description
           }
         }
       }
@@ -938,6 +985,11 @@ struct MainContentView: View {
       NetworkStatusIndicator()
     }
     #if targetEnvironment(macCatalyst)
+    .sheet(isPresented: $showingSettings) {
+      SettingsView()
+        .applyAppStateEnvironment(appState)
+        .environment(appState)
+    }
     .modifier(CatalystToolbarBridge(
       selectedTab: $selectedTab,
       isDrawerOpen: $isDrawerOpen,
@@ -978,11 +1030,15 @@ extension View {
   @available(iOS 18.0, macOS 15.0, *)
   @ViewBuilder
   func applyComposerNavigationTransition(enabled: Bool, sourceID: String, namespace: Namespace.ID) -> some View {
+    #if os(iOS)
     if enabled {
       self.navigationTransition(.zoom(sourceID: sourceID, in: namespace))
     } else {
       self
     }
+    #else
+    self
+    #endif
   }
 }
 

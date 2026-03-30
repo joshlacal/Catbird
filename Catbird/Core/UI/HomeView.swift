@@ -85,6 +85,35 @@ struct HomeView: View {
   
   @ViewBuilder
   private func mainNavigationView(navigationPath: Binding<NavigationPath>) -> some View {
+    #if os(macOS)
+    NavigationSplitView {
+      MacOSFeedsSidebar(
+        selectedFeed: $selectedFeed,
+        currentFeedName: $currentFeedName
+      )
+    } detail: {
+      NavigationStack(path: navigationPath) {
+        feedContentView(navigationPath: navigationPath)
+          .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+          .platformIgnoresSafeArea()
+          .navigationTitle(currentFeedName)
+          .ensureNavigationFonts()
+          .toolbar {
+            trailingToolbarContent
+          }
+          .navigationDestination(for: NavigationDestination.self) { destination in
+            NavigationHandler.viewForDestination(
+              destination,
+              path: navigationPath,
+              appState: appState,
+              selectedTab: .constant(0)
+            )
+            .ensureDeepNavigationFonts()
+          }
+      }
+    }
+    .navigationSplitViewStyle(.balanced)
+    #else
     NavigationStack(path: navigationPath) {
       feedContentView(navigationPath: navigationPath)
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
@@ -111,6 +140,7 @@ struct HomeView: View {
           .ensureDeepNavigationFonts()
         }
     }
+    #endif
   }
   
   @ViewBuilder
@@ -129,7 +159,7 @@ struct HomeView: View {
   
   
   private var leadingToolbarContent: some ToolbarContent {
-      ToolbarItem(placement: .topBarLeading) {
+    ToolbarItem(placement: leadingToolbarPlacement) {
       Button(action: {
         isDrawerOpen = true
       }) {
@@ -140,6 +170,14 @@ struct HomeView: View {
       .accessibilityLabel("Feed selector")
       .accessibilityHint("Opens feed selection drawer")
     }
+  }
+
+  private var leadingToolbarPlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .topBarLeading
+    #else
+    .automatic
+    #endif
   }
   
 //  private var centerToolbarContent: some ToolbarContent {

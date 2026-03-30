@@ -46,11 +46,13 @@ struct PostComposerView: View {
     @State private var attributedTextSelectionStorage: Any?
 
     // Convenience accessors for iOS 26+
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private var attributedTextSelection: AttributedTextSelection? {
         get { attributedTextSelectionStorage as? AttributedTextSelection }
         set { attributedTextSelectionStorage = newValue }
     }
+
+
     
     // Audio recording state
     @State private var showingAudioRecorder = false
@@ -75,7 +77,7 @@ struct PostComposerView: View {
             wrappedValue: PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState))
         self.onMinimize = onMinimize
         
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
         } else {
             self._attributedTextSelectionStorage = State(wrappedValue: nil)
@@ -92,13 +94,21 @@ struct PostComposerView: View {
         self._viewModel = State(wrappedValue: viewModel)
         self.onMinimize = onMinimize
         
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
         } else {
             self._attributedTextSelectionStorage = State(wrappedValue: nil)
         }
     }
     
+    private var composerLeadingPlacement: ToolbarItemPlacement {
+      #if os(iOS)
+      .topBarLeading
+      #else
+      .navigation
+      #endif
+    }
+
     var body: some View {
         NavigationStack {
             configuredMainView
@@ -120,7 +130,7 @@ struct PostComposerView: View {
             #endif
             .toolbar {
                 // User profile button for account switching
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: composerLeadingPlacement) {
                     Button(action: {
                         showingAccountSwitcher = true
                     }) {
@@ -567,7 +577,7 @@ struct PostComposerView: View {
                 },
                 onTextChanged: nil,
                 onAttributedTextChanged: { attributed in
-                    if #available(iOS 26.0, macOS 15.0, *) {
+                    if #available(iOS 26.0, macOS 26.0, *) {
                         viewModel.updateFromAttributedString(attributed)
                     } else {
                         viewModel.updateFromAttributedText(NSAttributedString(attributed))
@@ -927,7 +937,7 @@ struct PostComposerView: View {
                 }
                 
                 // Modern rich text formatting (iOS 26+)
-                if #available(iOS 26.0, macOS 15.0, *) {
+                if #available(iOS 26.0, macOS 26.0, *) {
                     richTextFormattingButtons
                 }
                 
@@ -1011,7 +1021,7 @@ struct PostComposerView: View {
         .id("postComposerToolbar") // Stable identity to prevent SwiftUI from recreating
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private var richTextFormattingButtons: some View {
         HStack(spacing: 12) {
             // Link button (links-only policy)
@@ -1028,50 +1038,21 @@ struct PostComposerView: View {
     
     // MARK: - iOS 26+ Text Formatting Methods
     
-    @Environment(\.fontResolutionContext) private var fontResolutionContext
-    
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private var isBoldSelected: Bool {
-        guard let attributedTextSelection = attributedTextSelection else { return false }
-        let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
-        
-        switch indices {
-        case .insertionPoint:
-            // Could use typingAttributes(in:) for insertion point; default to false for now
-            return false
-        case .ranges(let rangeSet):
-            if let firstRange = rangeSet.ranges.first, !firstRange.isEmpty {
-                let attributes = viewModel.attributedPostText[firstRange]
-                if let font = attributes.font {
-                    let resolved = font.resolve(in: fontResolutionContext)
-                    return resolved.isBold
-                }
-            }
-            return false
-        }
+        // Cannot reliably detect bold state without Font.resolve(in:) which requires
+        // fontResolutionContext unavailable outside iOS 26-gated structs.
+        return false
     }
-    
-    @available(iOS 26.0, macOS 15.0, *)
+
+    @available(iOS 26.0, macOS 26.0, *)
     private var isItalicSelected: Bool {
-        guard let attributedTextSelection = attributedTextSelection else { return false }
-        let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
-        
-        switch indices {
-        case .insertionPoint:
-            return false
-        case .ranges(let rangeSet):
-            if let firstRange = rangeSet.ranges.first, !firstRange.isEmpty {
-                let attributes = viewModel.attributedPostText[firstRange]
-                if let font = attributes.font {
-                    let resolved = font.resolve(in: fontResolutionContext)
-                    return resolved.isItalic
-                }
-            }
-            return false
-        }
+        // Cannot reliably detect italic state without Font.resolve(in:) which requires
+        // fontResolutionContext unavailable outside iOS 26-gated structs.
+        return false
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private var isUnderlineSelected: Bool {
         guard let attributedTextSelection = attributedTextSelection else { return false }
         let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
@@ -1088,29 +1069,27 @@ struct PostComposerView: View {
         }
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func toggleBold() {
         guard var selection = attributedTextSelection else { return }
         viewModel.attributedPostText.transformAttributes(in: &selection) { container in
             let currentFont = container.font ?? .body
-            let resolved = currentFont.resolve(in: fontResolutionContext)
-            container.font = currentFont.bold(!resolved.isBold)
+            container.font = currentFont.bold()
         }
         attributedTextSelectionStorage = selection
     }
-    
-    @available(iOS 26.0, macOS 15.0, *)
+
+    @available(iOS 26.0, macOS 26.0, *)
     private func toggleItalic() {
         guard var selection = attributedTextSelection else { return }
         viewModel.attributedPostText.transformAttributes(in: &selection) { container in
             let currentFont = container.font ?? .body
-            let resolved = currentFont.resolve(in: fontResolutionContext)
-            container.font = currentFont.italic(!resolved.isItalic)
+            container.font = currentFont.italic()
         }
         attributedTextSelectionStorage = selection
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func toggleUnderline() {
         guard var selection = attributedTextSelection else { return }
         viewModel.attributedPostText.transformAttributes(in: &selection) { container in
@@ -1120,7 +1099,7 @@ struct PostComposerView: View {
         attributedTextSelectionStorage = selection
     }
     
-    @available(iOS 26.0, macOS 15.0, *)
+    @available(iOS 26.0, macOS 26.0, *)
     private func requestLinkCreation() {
         guard let attributedTextSelection = attributedTextSelection else { return }
         let indices = attributedTextSelection.indices(in: viewModel.attributedPostText)
@@ -1153,7 +1132,7 @@ struct PostComposerView: View {
     
     /// Unified link creation handler that works across iOS versions
     private func handleLinkCreation() {
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             requestLinkCreation()
         } else {
             // For legacy versions, trigger link creation at current cursor position
@@ -1231,7 +1210,7 @@ struct PostComposerView: View {
         logger.debug("Composer.addLinkFacet url=\(url.absoluteString) range=\(range.debugDescription)")
         
         // Use modern approach for iOS 26+ and legacy approach for older versions
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             // Convert NSRange to AttributedString range
             let start = viewModel.attributedPostText.index(
                 viewModel.attributedPostText.startIndex,
@@ -1274,7 +1253,7 @@ struct PostComposerView: View {
     
     private func updateFacetsInPost() {
         // Modern flow uses Petrel's AttributedString.toFacets(); legacy can use utility fallback
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             // Facets are computed inside updateFromAttributedString/updatePostContent
             return
         } else {
@@ -1533,6 +1512,7 @@ struct SheetsModifier: ViewModifier {
             }) {
                 // Pass current draft when switching accounts from composer
                 AccountSwitcherView(draftToTransfer: viewModel.saveDraftState())
+                    .environment(AppStateManager.shared)
             }
     }
 }

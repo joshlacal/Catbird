@@ -1,3 +1,4 @@
+#if os(iOS)
 import SensitiveContentAnalysis
 import UIKit
 
@@ -17,10 +18,8 @@ actor ImageContentAnalyzer {
   }
 
   /// Analyze an image for sensitive content.
-  /// Returns `.notAvailable` if the framework is disabled.
+  /// Always runs analysis regardless of system setting; the app controls intervention behavior.
   func analyze(_ image: CGImage) async -> ImageAnalysisResult {
-    guard isAvailable else { return .notAvailable }
-
     do {
       let analysis = try await analyzer.analyzeImage(image)
       if analysis.isSensitive {
@@ -39,3 +38,5 @@ enum ImageAnalysisResult: Sendable {
   case sensitive(policy: SCSensitivityAnalysisPolicy)
   case notAvailable
 }
+
+#endif

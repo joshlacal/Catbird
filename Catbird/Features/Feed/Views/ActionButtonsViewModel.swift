@@ -55,7 +55,7 @@ import SwiftUI
     @MainActor
     func share(post: AppBskyFeedDefs.PostView) async {
         // Build a Bluesky URL that can be opened in any Bluesky client
-        let username = post.author.handle  // Fixed from did to handle
+        let username = post.author.handle.description == "handle.invalid" ? post.author.did.didString() : post.author.handle.description
         let recordKey = post.uri.recordKey ?? ""
         let shareURL = URL(string: "https://bsky.app/profile/\(username)/post/\(recordKey)")
         

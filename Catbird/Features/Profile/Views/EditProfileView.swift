@@ -82,11 +82,11 @@ struct EditProfileView: View {
                 .padding(8)
                 .background(
                   RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(.systemGray6))
+                    .fill(Color.systemGray6)
                 )
                 .overlay(
                   RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(.systemGray4), lineWidth: 0.5)
+                    .stroke(Color.systemGray4, lineWidth: 0.5)
                 )
                 .scrollContentBackground(.hidden)
 
@@ -201,7 +201,7 @@ struct EditProfileView: View {
         }
         .overlay(
           Circle()
-            .stroke(Color(.systemBackground), lineWidth: 3)
+            .stroke(Color.systemBackground, lineWidth: 3)
         )
       }
       .buttonStyle(.plain)
@@ -228,11 +228,11 @@ struct EditProfileView: View {
         if let image = state.image {
           image.resizable().aspectRatio(contentMode: .fill)
         } else {
-          Rectangle().fill(Color(.systemGray5))
+          Rectangle().fill(Color.systemGray5)
         }
       }
     } else {
-      Rectangle().fill(Color(.systemGray5))
+      Rectangle().fill(Color.systemGray5)
     }
   }
 
@@ -254,11 +254,11 @@ struct EditProfileView: View {
         if let image = state.image {
           image.resizable().aspectRatio(contentMode: .fill)
         } else {
-          Circle().fill(Color(.systemGray4))
+          Circle().fill(Color.systemGray4)
         }
       }
     } else {
-      Circle().fill(Color(.systemGray4))
+      Circle().fill(Color.systemGray4)
         .overlay(
           Image(systemName: "person.fill")
             .font(.title)
@@ -284,11 +284,11 @@ struct EditProfileView: View {
         .padding(12)
         .background(
           RoundedRectangle(cornerRadius: 10)
-            .fill(Color(.systemGray6))
+            .fill(Color.systemGray6)
         )
         .overlay(
           RoundedRectangle(cornerRadius: 10)
-            .stroke(Color(.systemGray4), lineWidth: 0.5)
+            .stroke(Color.systemGray4, lineWidth: 0.5)
         )
     }
   }

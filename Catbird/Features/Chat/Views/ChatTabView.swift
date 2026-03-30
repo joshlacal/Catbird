@@ -97,7 +97,9 @@ struct ChatTabView: View {
     }
     .navigationSplitViewStyle(.automatic)
     // Hide tab bar when viewing a conversation on iPhone
+    #if !targetEnvironment(macCatalyst)
     .toolbar(selectedConvoId != nil && !shouldUseSplitView ? .hidden : .visible, for: .tabBar)
+    #endif
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
@@ -402,6 +404,13 @@ struct ChatTabView: View {
     if shouldShowPagination {
       paginationView
     }
+
+    // Spacer so the FAB doesn't cover the last row
+    Spacer()
+      .frame(height: 80)
+      .listRowSeparator(.hidden)
+      .listRowInsets(EdgeInsets())
+      .listRowBackground(Color.clear)
   }
   
   @ViewBuilder
@@ -644,9 +653,11 @@ private struct ConditionalSwipeActions: ViewModifier {
 
 #endif
 
+#if os(iOS)
 #Preview("ChatTabView") {
   @Previewable @State var selectedTab = 3
   @Previewable @State var lastTappedTab: Int? = nil
   ChatTabView(selectedTab: $selectedTab, lastTappedTab: $lastTappedTab)
     .previewWithAuthenticatedState()
 }
+#endif

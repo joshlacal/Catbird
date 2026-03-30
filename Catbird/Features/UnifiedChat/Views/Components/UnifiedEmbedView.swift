@@ -8,6 +8,7 @@ import SwiftUI
 /// Renders different embed types in chat messages
 struct UnifiedEmbedView: View {
   let embed: UnifiedEmbed
+  var isOwnMessage: Bool = false
   @Binding var navigationPath: NavigationPath
 
   @Environment(AppState.self) private var appState
@@ -42,6 +43,9 @@ struct UnifiedEmbedView: View {
 
     case .image(let imageData):
       imageEmbed(imageData)
+
+    case .audio(let audioData):
+      audioEmbed(audioData)
     }
   }
 
@@ -49,6 +53,7 @@ struct UnifiedEmbedView: View {
 
   @ViewBuilder
   private func imageEmbed(_ imageData: ImageEmbedData) -> some View {
+    #if os(iOS)
     let embed = MLSImageEmbed(
       blobId: imageData.blobId,
       key: imageData.key,
@@ -62,6 +67,31 @@ struct UnifiedEmbedView: View {
       blurhash: imageData.blurhash
     )
     MLSImageView(imageEmbed: embed)
+    #else
+    Text("Image embed")
+      .foregroundStyle(.secondary)
+    #endif
+  }
+
+  // MARK: - Audio Embed
+
+  @ViewBuilder
+  private func audioEmbed(_ audioData: AudioEmbedData) -> some View {
+    #if os(iOS)
+    VoiceMessagePlayerView(
+      audioData: audioData,
+      isOwnMessage: isOwnMessage
+    )
+    #else
+    HStack(spacing: 8) {
+      Image(systemName: "waveform")
+        .foregroundStyle(.secondary)
+      Text("Voice message (\(audioData.durationMs / 1000)s)")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .padding(8)
+    #endif
   }
 
   // MARK: - Link Embed

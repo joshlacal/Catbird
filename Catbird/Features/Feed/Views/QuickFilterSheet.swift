@@ -41,7 +41,7 @@ struct QuickFilterSheet: View {
         .padding()
       }
       .navigationTitle("Quick Filters")
-      .navigationBarTitleDisplayMode(.inline)
+      .modifier(NavigationTitleDisplayModeModifier())
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Clear") {
@@ -92,7 +92,7 @@ struct QuickFilterSheet: View {
       .padding(.vertical, 14)
       .background {
         RoundedRectangle(cornerRadius: 12)
-          .fill(isEnabled ? Color.accentColor : Color(.systemGray6))
+          .fill(isEnabled ? Color.accentColor : Color.systemGray6)
       }
     }
     .buttonStyle(.plain)
@@ -141,7 +141,7 @@ struct QuickFilterSheet: View {
       .padding(.vertical, 14)
       .background {
         RoundedRectangle(cornerRadius: 12)
-          .fill(isEnabled ? Color.accentColor : Color(.systemGray6))
+          .fill(isEnabled ? Color.accentColor : Color.systemGray6)
       }
     }
     .buttonStyle(.plain)

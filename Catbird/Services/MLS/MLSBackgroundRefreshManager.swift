@@ -5,6 +5,7 @@
 //  Created by Claude Code
 //
 
+#if os(iOS)
 import BackgroundTasks
 import CatbirdMLSCore
 import Foundation
@@ -183,3 +184,5 @@ extension MLSBackgroundRefreshManager {
     }
   }
 }
+
+#endif

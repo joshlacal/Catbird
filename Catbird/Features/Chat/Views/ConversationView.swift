@@ -124,6 +124,7 @@ struct ConversationView: View {
         }
       )
       .ignoresSafeArea(.container)
+      .ignoresSafeArea(.keyboard)
       .onChange(of: selectedEmoji) { _, newEmoji in
         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
         dataSource.addReaction(messageID: messageID, emoji: newEmoji)
@@ -234,104 +235,6 @@ struct ConversationView: View {
     return convo.members.first?.displayName ?? "Chat"
   }
 }
-
-#else
-
-// macOS version using unified chat
-struct ConversationView: View {
-  @Environment(AppState.self) private var appState
-  let convoId: String
-  @State private var unifiedDataSource: BlueskyConversationDataSource?
-
-  @State private var showingEmojiPicker = false
-  @State private var emojiPickerMessageID: String?
-
-  private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
-  }
-
-  private var chatManager: ChatManager {
-    appState.chatManager
-  }
-
-  @MainActor
-  private func ensureUnifiedDataSource() {
-    guard unifiedDataSource == nil else { return }
-    unifiedDataSource = BlueskyConversationDataSource(
-      chatManager: chatManager,
-      convoID: convoId,
-      currentUserDID: appState.userDID
-    )
-  }
-
-  var body: some View {
-    Group {
-      if let dataSource = unifiedDataSource {
-        // ChatListView already includes the input bar
-        ChatListView(
-          dataSource: dataSource,
-          navigationPath: chatNavigationPath,
-          onRequestEmojiPicker: { messageID in
-            emojiPickerMessageID = messageID
-            showingEmojiPicker = true
-            },
-            isOtherMemberDeleted: isOtherMemberDeleted
-        )
-        .task {
-          await dataSource.loadMessages()
-        }
-        .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
-          guard let messageID = emojiPickerMessageID else { return }
-          dataSource.addReaction(messageID: messageID, emoji: emoji)
-          emojiPickerMessageID = nil
-        }
-        .onChange(of: showingEmojiPicker) { _, isPresented in
-          if !isPresented {
-            emojiPickerMessageID = nil
-          }
-        }
-      } else {
-        ProgressView()
-      }
-    }
-    .navigationTitle(conversationTitle)
-    .onAppear {
-      ensureUnifiedDataSource()
-      chatManager.startMessagePolling(for: convoId)
-    }
-    .onDisappear {
-      chatManager.stopMessagePolling(for: convoId)
-    }
-  }
-
-    // Check if the other member's account has been deleted
-    private var isOtherMemberDeleted: Bool {
-      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-        return false
-      }
-      let clientDid = appState.userDID
-      if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
-        return otherMember.handle.description == "missing.invalid"
-      }
-      return false
-    }
-
-  private var conversationTitle: String {
-    guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-      return "Chat"
-    }
-    let clientDid = appState.userDID
-    if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
-        // Show "Deleted Account" for deleted users
-        if otherMember.handle.description == "missing.invalid" {
-          return "Deleted Account"
-        }
-      return otherMember.displayName ?? "@\(otherMember.handle.description)"
-    }
-    return convo.members.first?.displayName ?? "Chat"
-  }
-}
-
 
 #Preview("ConversationView") {
   NavigationStack {

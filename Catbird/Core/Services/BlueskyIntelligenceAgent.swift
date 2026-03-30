@@ -34,7 +34,7 @@ enum BlueskyAgentError: LocalizedError {
 #if canImport(FoundationModels)
 import FoundationModels
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 actor BlueskyIntelligenceAgent {
     private let logger = Logger(subsystem: "blue.catbird", category: "BlueskyIntelligenceAgent")
 
@@ -135,39 +135,36 @@ actor BlueskyIntelligenceAgent {
                     
                     if !parents.isEmpty {
                         logger.debug("Summarizing \(parents.count) parent posts")
-                        let batchSummary = try await summarizeBatchStreaming(
+                        let batchSummary = try await summarizeBatch(
                             posts: parents,
                             context: nil,
                             phase: "context",
-                            session: session,
-                            continuation: continuation
+                            session: session
                         )
                         cumulativeSummary = batchSummary
                     }
-                    
+
                     if let mainPost {
                         logger.debug("Summarizing main post")
-                        let batchSummary = try await summarizeBatchStreaming(
+                        let batchSummary = try await summarizeBatch(
                             posts: [mainPost],
                             context: cumulativeSummary.isEmpty ? nil : cumulativeSummary,
                             phase: "main post",
-                            session: session,
-                            continuation: continuation
+                            session: session
                         )
                         cumulativeSummary = batchSummary
                     }
-                    
+
                     if !replies.isEmpty {
                         logger.debug("Summarizing \(replies.count) replies in batches")
                         let batchSize = 10
                         for (index, batch) in replies.chunked(into: batchSize).enumerated() {
                             logger.debug("Processing reply batch \(index + 1), size: \(batch.count)")
-                            let batchSummary = try await summarizeBatchStreaming(
+                            let batchSummary = try await summarizeBatch(
                                 posts: batch,
                                 context: cumulativeSummary,
                                 phase: "replies",
-                                session: session,
-                                continuation: continuation
+                                session: session
                             )
                             cumulativeSummary = batchSummary
                         }
@@ -629,7 +626,7 @@ actor BlueskyIntelligenceAgent {
 
 // MARK: - Tool infrastructure
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct FormattedThreadPost {
     let text: String
     let depth: Int
@@ -637,13 +634,13 @@ private struct FormattedThreadPost {
     let isMain: Bool
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct ToolContext: @unchecked Sendable {
     let client: ATProtoClient
     let logger: Logger
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private enum ToolFormatter {
     static func summarize(
         post: AppBskyFeedDefs.PostView,
@@ -799,7 +796,7 @@ private enum ToolFormatter {
 
 // MARK: - Tools
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct ThreadFetchTool: Tool {
     typealias Output = String
 
@@ -811,6 +808,7 @@ private struct ThreadFetchTool: Tool {
         self.context = context
     }
 
+    @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
         @Guide(description: "The at:// URI of the post to inspect.")
@@ -948,7 +946,7 @@ private struct ThreadFetchTool: Tool {
     }
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct PostSearchTool: Tool {
     typealias Output = String
 
@@ -958,6 +956,7 @@ private struct PostSearchTool: Tool {
 
     init(context: ToolContext) { self.context = context }
 
+    @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
         @Guide(description: "Free text query to search for.")
@@ -984,7 +983,7 @@ private struct PostSearchTool: Tool {
     }
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct FeedSearchTool: Tool {
     typealias Output = String
 
@@ -994,6 +993,7 @@ private struct FeedSearchTool: Tool {
 
     init(context: ToolContext) { self.context = context }
 
+    @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
         @Guide(description: "Keyword to match feed titles or descriptions.")
@@ -1016,7 +1016,7 @@ private struct FeedSearchTool: Tool {
     }
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct ProfileSearchTool: Tool {
     typealias Output = String
 
@@ -1026,6 +1026,7 @@ private struct ProfileSearchTool: Tool {
 
     init(context: ToolContext) { self.context = context }
 
+    @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
         @Guide(description: "Search term or handle to look up.")
@@ -1050,7 +1051,7 @@ private struct ProfileSearchTool: Tool {
 
 // MARK: - Array Extension for Chunking
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private extension Array {
     func chunked(into size: Int) -> [[Element]] {
         stride(from: 0, to: count, by: size).map {

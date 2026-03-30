@@ -143,6 +143,7 @@ struct PrivacySecuritySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            #if os(iOS)
             Section("MLS Encrypted Chat") {
                 NavigationLink {
                     MLSChatSettingsView()
@@ -205,6 +206,7 @@ struct PrivacySecuritySettingsView: View {
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
+            #endif
 
             Section("Social Graph Management") {
                 NavigationLink {

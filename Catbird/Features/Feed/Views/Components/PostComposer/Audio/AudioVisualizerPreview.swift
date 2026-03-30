@@ -47,7 +47,9 @@ struct AudioVisualizerPreview: View {
         }
       }
       .navigationTitle("Audio Visualizer")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel", systemImage: "xmark") {

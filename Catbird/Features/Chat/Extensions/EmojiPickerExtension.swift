@@ -92,8 +92,12 @@ private struct EmojiKitPickerSheet: View {
         }
       }
       .navigationTitle(title)
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
       .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+      #else
+      .searchable(text: $query)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { dismiss() }

@@ -36,7 +36,7 @@ struct RichEditorContainer: View {
   #if os(iOS)
   var onTextViewCreated: ((UITextView) -> Void)? = nil
   #else
-  var onTextViewCreated: (() -> Void)? = nil
+  var onTextViewCreated: ((Any) -> Void)? = nil
   #endif
   @State private var editorHeight: CGFloat = 140
 
@@ -63,11 +63,7 @@ struct RichEditorContainer: View {
       onLinkAction: onLinkAction,
       allowTenor: allowTenor,
       onTextViewCreated: { tv in
-        #if os(iOS)
         onTextViewCreated?(tv)
-        #else
-        _ = onTextViewCreated?()
-        #endif
       },
       onHeightChange: { newHeight in
         // Allow height to grow dynamically, with a reasonable minimum

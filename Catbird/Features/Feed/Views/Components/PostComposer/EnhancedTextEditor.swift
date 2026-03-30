@@ -21,7 +21,7 @@ import AppKit
 
 // MARK: - iOS 26+ Native SwiftUI Implementation
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 struct ModernTextEditor: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
@@ -114,7 +114,7 @@ struct ModernTextEditor: View {
             }
             
             // Link editing overlay for tap-to-edit functionality
-            if #available(iOS 26.0, macOS 15.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
                 LinkEditingOverlay(
                     attributedText: attributedText,
                     textSelection: textSelection,
@@ -884,7 +884,7 @@ struct ModernTextEditor: View {
 
 // MARK: - Links-only Formatting Definition (iOS 26+/macOS 15+)
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct LinksOnlyFormatting: AttributedTextFormattingDefinition {
     // Scope that exposes only the link attribute
     struct Scope: AttributeScope {
@@ -952,7 +952,7 @@ struct ModernEnhancedRichTextEditor: View {
     
     var body: some View {
         Group {
-            if #available(iOS 26.0, macOS 15.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
                 ModernTextEditorWrapper(
                     attributedText: Binding(
                         get: { AttributedString(attributedText) },
@@ -993,7 +993,7 @@ struct ModernEnhancedRichTextEditor: View {
     }
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private extension ModernEnhancedRichTextEditor {
     var modernSelectionBinding: Binding<AttributedTextSelection> {
         Binding(
@@ -1003,7 +1003,7 @@ private extension ModernEnhancedRichTextEditor {
     }
 }
 
-@available(iOS 26.0, macOS 15.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct ModernTextEditorWrapper: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
@@ -1028,7 +1028,7 @@ private struct ModernTextEditorWrapper: View {
 }
 
 // MARK: - Main EnhancedTextEditor Type for External Reference
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 struct EnhancedTextEditor: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
@@ -1040,7 +1040,7 @@ struct EnhancedTextEditor: View {
     var onLinkCreationRequested: ((String, NSRange) -> Void)?
     
     var body: some View {
-        if #available(iOS 26.0, macOS 15.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             ModernTextEditor(
                 attributedText: $attributedText,
                 textSelection: $textSelection,

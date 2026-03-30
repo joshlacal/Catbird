@@ -26,16 +26,18 @@ struct RepositoryDetailView: View {
                 }
             }
             .navigationTitle(repository?.userHandle ?? "Repository")
+            #if os(iOS)
             .toolbarTitleDisplayMode(.large)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") {
                         dismiss()
                     }
                 }
 
                 if repository != nil {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                    ToolbarItem(placement: .automatic) {
                         Menu {
                             Button("Refresh Data", systemImage: "arrow.clockwise") {
                                 loadRepository()
@@ -81,7 +83,7 @@ struct RepositoryDetailView: View {
         VStack(spacing: 0) {
             // Header banner
             RepositoryDetailHeader(repository: repository)
-                .background(Color(UIColor.systemGroupedBackground))
+                .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
 
             // Tab picker
             Picker("View", selection: $selectedTab) {
@@ -91,7 +93,7 @@ struct RepositoryDetailView: View {
             }
             .pickerStyle(SegmentedPickerStyle())
             .padding()
-            .background(Color(UIColor.systemGroupedBackground))
+            .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
 
             // Tab content
             TabView(selection: $selectedTab) {
@@ -100,7 +102,9 @@ struct RepositoryDetailView: View {
                         .tag(tab)
                 }
             }
+            #if os(iOS)
             .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+            #endif
         }
     }
 
@@ -310,7 +314,7 @@ private struct RepositoryOverviewView: View {
                             }
                         }
                         .padding()
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
@@ -327,7 +331,7 @@ private struct RepositoryOverviewView: View {
                                 .padding()
                         }
                         .frame(maxHeight: 100)
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
@@ -447,7 +451,7 @@ private struct InfoItem: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

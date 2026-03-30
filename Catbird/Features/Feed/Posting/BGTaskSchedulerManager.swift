@@ -1,8 +1,8 @@
 import Foundation
-import BackgroundTasks
 import os
 
 #if os(iOS)
+import BackgroundTasks
 import UIKit
 
 @available(iOS 13.0, *)
