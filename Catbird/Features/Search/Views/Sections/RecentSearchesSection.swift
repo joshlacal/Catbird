@@ -174,47 +174,6 @@ extension View {
   }
 }
 
-/// Extension to handle recent searches persistence
-extension RecentSearchesSection {
-  /// Get recently used search terms from UserDefaults
-  static func getRecentSearches() -> [String] {
-    if let searches = UserDefaults(suiteName: "group.blue.catbird.shared")?.array(forKey: "recentSearches")
-      as? [String]
-    {
-      return searches
-    }
-    return []
-  }
-
-  /// Save a recent search term to UserDefaults
-  static func saveRecentSearch(_ search: String) {
-    let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
-
-    var searches = getRecentSearches()
-
-    // Remove if already exists (to avoid duplicates)
-    if let index = searches.firstIndex(of: trimmed) {
-      searches.remove(at: index)
-    }
-
-    // Add to the beginning
-    searches.insert(trimmed, at: 0)
-
-    // Limit to max 20 recent searches
-    if searches.count > 20 {
-      searches = Array(searches.prefix(20))
-    }
-
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(searches, forKey: "recentSearches")
-  }
-
-  /// Clear all recent searches
-  static func clearRecentSearches() {
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.removeObject(forKey: "recentSearches")
-  }
-}
-
 #Preview {
   AsyncPreviewContent { appState in
     RecentSearchesSection(
