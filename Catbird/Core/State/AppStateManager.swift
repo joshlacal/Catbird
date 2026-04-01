@@ -483,6 +483,12 @@ final class AppStateManager {
       }
     }
 
+    // Configure widget data provider with active account DID
+    FeedWidgetDataProvider.shared.configure(accountDID: userDID)
+
+    // Write account list to App Group for widget extension
+    writeAccountsToAppGroup()
+
     logger.info("✅ Transitioned to authenticated state")
   }
 
@@ -497,6 +503,9 @@ final class AppStateManager {
 
     // Transition to unauthenticated
     lifecycle = .unauthenticated
+
+    // Update widget account list after logout
+    writeAccountsToAppGroup()
 
     logger.info("✅ Logged out successfully")
   }
@@ -629,6 +638,9 @@ final class AppStateManager {
 
     authenticatedStates.removeValue(forKey: userDID)
     accessOrder.removeAll { $0 == userDID }
+
+    // Update widget account list after removal
+    writeAccountsToAppGroup()
   }
 
   /// Get AppState for a specific account without switching to it
@@ -797,6 +809,39 @@ final class AppStateManager {
     } catch {
       logger.error("[E2E-RELOGIN] Re-login failed: \(error)")
       return false
+    }
+  }
+
+  // MARK: - Widget Data
+
+  /// Write current account list to App Group for widget extension
+  private func writeAccountsToAppGroup() {
+    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
+
+    struct WidgetAccountDTO: Codable {
+      let did: String
+      let handle: String
+      let displayName: String
+      let avatarURL: String?
+    }
+
+    let accounts = authManager.availableAccounts.map { info in
+      WidgetAccountDTO(
+        did: info.did,
+        handle: info.cachedHandle ?? info.handle ?? info.did,
+        displayName: info.cachedDisplayName ?? info.cachedHandle ?? info.handle ?? info.did,
+        avatarURL: info.cachedAvatarURL?.absoluteString
+      )
+    }
+
+    if let data = try? JSONEncoder().encode(accounts) {
+      defaults?.set(data, forKey: "widgetAccounts")
+    }
+
+    if let activeDID = lifecycle.userDID {
+      defaults?.set(activeDID, forKey: "activeAccountDID")
+    } else {
+      defaults?.removeObject(forKey: "activeAccountDID")
     }
   }
 

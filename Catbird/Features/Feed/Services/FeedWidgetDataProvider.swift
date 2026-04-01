@@ -17,7 +17,17 @@ final class FeedWidgetDataProvider {
 
   static let shared = FeedWidgetDataProvider()
 
+  /// The DID of the currently active account, used to scope widget data keys
+  private var accountDID: String = ""
+
   private init() {}
+
+  /// Configure the provider with the active account DID for key scoping
+  func configure(accountDID: String) {
+    self.accountDID = accountDID
+    // Write active DID so widget knows which account is current
+    sharedDefaults?.set(accountDID, forKey: "activeAccountDID")
+  }
 
   /// Updates widget data from a feed's posts
   func updateWidgetData(from posts: [CachedFeedViewPost], feedType: FetchType) {
@@ -146,17 +156,19 @@ final class FeedWidgetDataProvider {
     do {
       let encoder = JSONEncoder()
 
-      // Store pinned feeds
+      let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
+
+      // Store pinned feeds (DID-scoped)
       let pinnedData = try encoder.encode(pinnedFeeds)
-      sharedDefaults.set(pinnedData, forKey: "pinnedFeeds")
+      sharedDefaults.set(pinnedData, forKey: "pinnedFeeds\(didSuffix)")
 
-      // Store saved feeds
+      // Store saved feeds (DID-scoped)
       let savedData = try encoder.encode(savedFeeds)
-      sharedDefaults.set(savedData, forKey: "savedFeeds")
+      sharedDefaults.set(savedData, forKey: "savedFeeds\(didSuffix)")
 
-      // Store feed generator info (URI -> display name mapping)
+      // Store feed generator info (URI -> display name mapping, DID-scoped)
       let generatorData = try encoder.encode(feedGenerators)
-      sharedDefaults.set(generatorData, forKey: "feedGenerators")
+      sharedDefaults.set(generatorData, forKey: "feedGenerators\(didSuffix)")
 
       logger.info(
         "Updated shared feed preferences: \(pinnedFeeds.count) pinned, \(savedFeeds.count) saved")
@@ -173,22 +185,23 @@ final class FeedWidgetDataProvider {
     }
 
     let decoder = JSONDecoder()
+    let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
 
-    // Load pinned feeds
+    // Load pinned feeds (DID-scoped)
     let pinnedFeeds: [String] = {
-      guard let data = sharedDefaults.data(forKey: "pinnedFeeds") else { return [] }
+      guard let data = sharedDefaults.data(forKey: "pinnedFeeds\(didSuffix)") else { return [] }
       return (try? decoder.decode([String].self, from: data)) ?? []
     }()
 
-    // Load saved feeds
+    // Load saved feeds (DID-scoped)
     let savedFeeds: [String] = {
-      guard let data = sharedDefaults.data(forKey: "savedFeeds") else { return [] }
+      guard let data = sharedDefaults.data(forKey: "savedFeeds\(didSuffix)") else { return [] }
       return (try? decoder.decode([String].self, from: data)) ?? []
     }()
 
-    // Load feed generators
+    // Load feed generators (DID-scoped)
     let feedGenerators: [String: String] = {
-      guard let data = sharedDefaults.data(forKey: "feedGenerators") else { return [:] }
+      guard let data = sharedDefaults.data(forKey: "feedGenerators\(didSuffix)") else { return [:] }
       return (try? decoder.decode([String: String].self, from: data)) ?? [:]
     }()
 
@@ -225,12 +238,13 @@ final class FeedWidgetDataProvider {
       encoder.dateEncodingStrategy = .iso8601
       let data = try encoder.encode(feedWidgetData)
 
-      // Save to general key for fallback
-      sharedDefaults.set(data, forKey: FeedWidgetConstants.feedDataKey)
+      // Save to general key for fallback (DID-scoped)
+      let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
+      sharedDefaults.set(data, forKey: "\(FeedWidgetConstants.feedDataKey)\(didSuffix)")
 
-      // Save to configuration-specific key for targeted widgets
+      // Save to configuration-specific key for targeted widgets (DID-scoped)
       let configKey = createConfigurationKey(feedType: feedType, profileHandle: profileHandle)
-      sharedDefaults.set(data, forKey: configKey)
+      sharedDefaults.set(data, forKey: "\(configKey)\(didSuffix)")
 
       logger.info(
         "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName) (keys: general + \(configKey))"
@@ -348,7 +362,8 @@ final class FeedWidgetDataProvider {
       return
     }
 
-    sharedDefaults.removeObject(forKey: FeedWidgetConstants.feedDataKey)
+    let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
+    sharedDefaults.removeObject(forKey: "\(FeedWidgetConstants.feedDataKey)\(didSuffix)")
     WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
 
     logger.info("Cleared widget data")
