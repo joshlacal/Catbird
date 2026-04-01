@@ -13,8 +13,8 @@ final class AppSettingsModel {
         "app_settings_\(accountDID)"
     }
 
-    // Unique identifier — per-account when created via init(accountDID:)
-    @Attribute(.unique) var id: String = "app_settings"
+    // Unique identifier — per-account, set via init(accountDID:)
+    @Attribute(.unique) var id: String = ""
     
     // MARK: - Stored Properties
     
