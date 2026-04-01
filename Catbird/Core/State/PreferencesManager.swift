@@ -41,6 +41,9 @@ final class PreferencesManager {
 
   private(set) var state: PreferencesState = .initializing
 
+  // Per-account scoping
+  private(set) var accountDID: String = ""
+
   // Core dependencies
   private weak var client: ATProtoClient?
   private var modelContext: ModelContext?
@@ -71,6 +74,14 @@ final class PreferencesManager {
     logger.debug("ModelContext set for PreferencesManager")
   }
 
+  /// Configure the manager for a specific account
+  func configure(accountDID: String) {
+    self.accountDID = accountDID
+    // Clear cache so next fetch loads the correct account's data
+    cachedServerPreferences = nil
+    logger.debug("PreferencesManager configured for account: \(accountDID)")
+  }
+
   // MARK: - Clear Preferences
 
   /// Clears all user preferences when logging out
@@ -90,11 +101,14 @@ final class PreferencesManager {
     }
 
     do {
-      // Fetch all preferences
-      let descriptor = FetchDescriptor<Preferences>()
+      // Fetch preferences for the current account only
+      let did = self.accountDID
+      let descriptor = FetchDescriptor<Preferences>(
+        predicate: #Predicate<Preferences> { $0.accountDID == did }
+      )
       let preferences = try modelContext.fetch(descriptor)
 
-      // Delete all existing preferences
+      // Delete current account's preferences
       for pref in preferences {
         modelContext.delete(pref)
       }
@@ -348,7 +362,7 @@ final class PreferencesManager {
     }
   }
 
-  /// Loads preferences from SwiftData
+  /// Loads preferences from SwiftData for the current account
   @MainActor
   func loadPreferences() async throws -> Preferences? {
     guard let modelContext = modelContext else {
@@ -356,7 +370,10 @@ final class PreferencesManager {
       throw PreferencesManagerError.modelContextNotInitialized
     }
 
-    let descriptor = FetchDescriptor<Preferences>()
+    let did = self.accountDID
+    let descriptor = FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { $0.accountDID == did }
+    )
     let preferences = try modelContext.fetch(descriptor)
     return preferences.first
   }
@@ -373,8 +390,11 @@ final class PreferencesManager {
       logger.error("ModelContext not available for synchronous preferences load")
       throw PreferencesManagerError.modelContextNotInitialized
     }
-    
-    let descriptor = FetchDescriptor<Preferences>()
+
+    let did = self.accountDID
+    let descriptor = FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { $0.accountDID == did }
+    )
     let preferences = try modelContext.fetch(descriptor)
     return preferences.first
   }
@@ -406,8 +426,8 @@ final class PreferencesManager {
     }
 
     // Last resort: create default preferences
-    logger.debug("Creating default preferences")
-    let newPreferences = Preferences()
+    logger.debug("Creating default preferences for account: \(self.accountDID)")
+    let newPreferences = Preferences(accountDID: self.accountDID)
     modelContext.insert(newPreferences)
     try modelContext.save()
     return newPreferences
@@ -1266,7 +1286,10 @@ final class PreferencesManager {
     }
 
     // Use SwiftData's persistence mechanism
-    let descriptor = FetchDescriptor<Preferences>()
+    let did = self.accountDID
+    let descriptor = FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { $0.accountDID == did }
+    )
     let preferences = try modelContext.fetch(descriptor)
 
     guard let prefs = preferences.first else {

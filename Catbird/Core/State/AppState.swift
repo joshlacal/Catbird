@@ -1920,6 +1920,7 @@ final class AppState {
   /// Initializes the preferences manager with a model context
   @MainActor
   func initializePreferencesManager(with modelContext: ModelContext) {
+    preferencesManager.configure(accountDID: userDID)
     preferencesManager.setModelContext(modelContext)
     appSettings.initialize(with: modelContext, accountDID: userDID)
     logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")

@@ -22,6 +22,9 @@ enum SystemFeedTypes {
 
 @Model
 final class Preferences {
+  // Per-account scoping — used for local DB filtering only, not sent to server
+  var accountDID: String = ""
+
   // Store arrays as JSON strings
   private var pinnedFeedsData: String
   private var savedFeedsData: String
@@ -190,6 +193,7 @@ final class Preferences {
 
   // Initialize with all the preferences
   init(
+    accountDID: String = "",
     savedFeeds: [String] = [],
     pinnedFeeds: [String] = [],
     contentLabelPrefs: [ContentLabelPreference] = [],
@@ -207,6 +211,9 @@ final class Preferences {
     primaryLanguage: String = "en",
     contentLanguages: [String] = ["en"]
   ) {
+    // Set account scoping
+    self.accountDID = accountDID
+
     // Initialize with empty JSON data
     self.savedFeedsData = "[]"
     self.pinnedFeedsData = "[]"
