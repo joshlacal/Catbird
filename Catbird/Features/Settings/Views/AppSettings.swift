@@ -10,6 +10,7 @@ import OSLog
     private let logger = Logger(subsystem: "blue.catbird", category: "AppSettings")
     private var modelContext: ModelContext?
     private var settingsModel: AppSettingsModel?
+    private var accountDID: String?
     
     // Default values used until SwiftData is initialized
     private var defaults = AppSettingsModel()
@@ -26,10 +27,15 @@ import OSLog
     init() {
         // Use default values until we can load from SwiftData
     }
+
+    func configure(accountDID: String) {
+        self.accountDID = accountDID
+    }
     
     // Initialize with ModelContext scoped to a specific account
     func initialize(with modelContext: ModelContext, accountDID: String) {
         self.modelContext = modelContext
+        self.accountDID = accountDID
 
         let targetId = AppSettingsModel.settingsId(for: accountDID)
 
@@ -47,20 +53,18 @@ import OSLog
                 self.settingsModel = settings
                 logger.debug("Loaded existing app settings for account \(accountDID)")
             } else {
-                // No per-account row yet — check for legacy singleton to migrate from
                 let newSettings = AppSettingsModel(accountDID: accountDID)
 
-                let legacyId = AppSettingsModel.legacySharedId
-                let legacyDescriptor = FetchDescriptor<AppSettingsModel>(
-                    predicate: #Predicate { $0.id == legacyId }
-                )
-                if let legacy = try modelContext.fetch(legacyDescriptor).first {
-                    // Copy all values from the legacy singleton
-                    Self.copySettings(from: legacy, to: newSettings)
-                    logger.debug("Migrated legacy app settings to account \(accountDID)")
+                if let legacy = try AppSettingsModel.legacySettingsForMigration(in: modelContext) {
+                    AppSettingsModel.copySettings(from: legacy, to: newSettings)
+                    modelContext.delete(legacy)
+                    logger.debug("Migrated legacy app settings to account \(accountDID) and deleted legacy singleton")
                 } else {
-                    // No legacy row either — migrate from UserDefaults
-                    newSettings.migrateFromUserDefaults()
+                    let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: modelContext)
+                    newSettings.migrateFromUserDefaults(
+                        accountDID: accountDID,
+                        includeLegacyFallback: allowLegacyFallback
+                    )
                 }
 
                 modelContext.insert(newSettings)
@@ -70,6 +74,8 @@ import OSLog
                 try modelContext.save()
                 logger.debug("Created new app settings for account \(accountDID)")
             }
+
+            saveThemeSettingsToUserDefaults()
         } catch {
             logger.error("Error initializing app settings: \(error.localizedDescription)")
             // Continue with defaults if SwiftData fails - don't block the app
@@ -81,96 +87,19 @@ import OSLog
         logger.debug("AppSettings initialization complete, isInitializing set to false")
     }
 
-    // MARK: - Migration Helpers
-
-    /// Copy all stored properties from one AppSettingsModel to another
-    private static func copySettings(from source: AppSettingsModel, to target: AppSettingsModel) {
-        // Appearance
-        target.theme = source.theme
-        target.darkThemeMode = source.darkThemeMode
-        target.accentColor = source.accentColor
-
-        // Typography
-        target.fontStyle = source.fontStyle
-        target.fontSize = source.fontSize
-        target.lineSpacing = source.lineSpacing
-        target.letterSpacing = source.letterSpacing
-        target.dynamicTypeEnabled = source.dynamicTypeEnabled
-        target.maxDynamicTypeSize = source.maxDynamicTypeSize
-
-        // Accessibility
-        target.requireAltText = source.requireAltText
-        target.largerAltTextBadges = source.largerAltTextBadges
-        target.disableHaptics = source.disableHaptics
-
-        // Motion
-        target.reduceMotion = source.reduceMotion
-        target.prefersCrossfade = source.prefersCrossfade
-
-        // Display
-        target.increaseContrast = source.increaseContrast
-        target.boldText = source.boldText
-        target.displayScale = source.displayScale
-
-        // Reading
-        target.showReadingTimeEstimates = source.showReadingTimeEstimates
-        target.highlightLinks = source.highlightLinks
-        target.linkStyle = source.linkStyle
-
-        // Interaction
-        target.confirmBeforeActions = source.confirmBeforeActions
-        target.longPressDuration = source.longPressDuration
-        target.shakeToUndo = source.shakeToUndo
-
-        // Attribution
-        target.enableViaAttribution = source.enableViaAttribution
-
-        // Content and Media
-        target.sensitiveContentScanningEnabled = source.sensitiveContentScanningEnabled
-        target.autoplayVideos = source.autoplayVideos
-        target.useInAppBrowser = source.useInAppBrowser
-        target.showTrendingTopics = source.showTrendingTopics
-        target.showTrendingVideos = source.showTrendingVideos
-
-        // Thread Preferences
-        target.threadSortOrder = source.threadSortOrder
-        target.prioritizeFollowedUsers = source.prioritizeFollowedUsers
-        target.threadedReplies = source.threadedReplies
-        target.showHiddenPosts = source.showHiddenPosts
-
-        // Feed Preferences
-        target.showSavedFeedSamples = source.showSavedFeedSamples
-
-        // External Media
-        target.allowYouTube = source.allowYouTube
-        target.allowYouTubeShorts = source.allowYouTubeShorts
-        target.allowVimeo = source.allowVimeo
-        target.allowTwitch = source.allowTwitch
-        target.allowGiphy = source.allowGiphy
-        target.allowTenor = source.allowTenor
-        target.allowSpotify = source.allowSpotify
-        target.allowAppleMusic = source.allowAppleMusic
-        target.allowSoundCloud = source.allowSoundCloud
-        target.allowFlickr = source.allowFlickr
-
-        // WebView Embeds
-        target.useWebViewEmbeds = source.useWebViewEmbeds
-
-        // Languages
-        target.appLanguage = source.appLanguage
-        target.primaryLanguage = source.primaryLanguage
-        target.contentLanguages = source.contentLanguages
-        target.hideNonPreferredLanguages = source.hideNonPreferredLanguages
-        target.showLanguageIndicators = source.showLanguageIndicators
-
-        // Privacy
-        target.loggedOutVisibility = source.loggedOutVisibility
-
-        // MLS Chat
-        target.mlsMessageRetentionDays = source.mlsMessageRetentionDays
-    }
-    
     // MARK: - Helper Methods
+
+    private var standardDefaults: UserDefaults {
+        .standard
+    }
+
+    private var accountScopedDefaultsDID: String? {
+        accountDID
+    }
+
+    private var shouldUseRuntimeLegacyFallback: Bool {
+        AppSettingsModel.shouldUseLegacyFallback(for: accountScopedDefaultsDID, defaults: standardDefaults)
+    }
     
     private func saveChanges() {
         // Skip notifications during initialization to prevent loops
@@ -214,7 +143,8 @@ import OSLog
     
     /// Save critical settings to UserDefaults as backup
     private func saveThemeSettingsToUserDefaults() {
-        let defaults = UserDefaults.standard
+        let defaults = standardDefaults
+        AppSettingsModel.markActiveSettingsAccount(accountScopedDefaultsDID, defaults: defaults)
         
         // Save theme settings
         defaults.set(theme, forKey: "theme")
@@ -241,35 +171,80 @@ import OSLog
         defaults.set(allowAppleMusic, forKey: "allowAppleMusic")
         defaults.set(allowSoundCloud, forKey: "allowSoundCloud")
         defaults.set(allowFlickr, forKey: "allowFlickr")
+
+        if let accountDID = accountScopedDefaultsDID {
+            let accountScopedThemeKeys = [
+                ("theme", theme),
+                ("darkThemeMode", darkThemeMode),
+                ("accentColor", accentColor),
+                ("fontStyle", fontStyle),
+                ("fontSize", fontSize),
+                ("lineSpacing", lineSpacing),
+                ("letterSpacing", letterSpacing),
+                ("maxDynamicTypeSize", maxDynamicTypeSize),
+            ]
+
+            for (key, value) in accountScopedThemeKeys {
+                defaults.set(value, forKey: AppSettingsModel.scopedKey(key, accountDID: accountDID))
+            }
+
+            let accountScopedBoolKeys: [(String, Bool)] = [
+                ("dynamicTypeEnabled", dynamicTypeEnabled),
+                ("useWebViewEmbeds", useWebViewEmbeds),
+                ("allowYouTube", allowYouTube),
+                ("allowYouTubeShorts", allowYouTubeShorts),
+                ("allowVimeo", allowVimeo),
+                ("allowTwitch", allowTwitch),
+                ("allowGiphy", allowGiphy),
+                ("allowTenor", allowTenor),
+                ("allowSpotify", allowSpotify),
+                ("allowAppleMusic", allowAppleMusic),
+                ("allowSoundCloud", allowSoundCloud),
+                ("allowFlickr", allowFlickr),
+            ]
+
+            for (key, value) in accountScopedBoolKeys {
+                defaults.set(value, forKey: AppSettingsModel.scopedKey(key, accountDID: accountDID))
+            }
+        }
         
         // Also save to app group for widgets
-        let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-        groupDefaults?.set(theme, forKey: "theme")
-        groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
+        let groupDefaults = AppSettingsModel.sharedDefaults()
+        groupDefaults.set(theme, forKey: "theme")
+        groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
         
         logger.debug("Settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), webViewEmbeds=\(self.useWebViewEmbeds), allowYouTube=\(self.allowYouTube)")
     }
     
     /// Load theme settings from UserDefaults if SwiftData is not available
     private func loadThemeSettingsFromUserDefaults() -> (theme: String, darkThemeMode: String) {
-        let defaults = UserDefaults.standard
-        
-        let savedTheme = defaults.string(forKey: "theme") ?? "system"
-        let savedDarkMode = defaults.string(forKey: "darkThemeMode") ?? "dim"
+        let defaults = standardDefaults
+        let savedTheme = AppSettingsModel.stringValue(
+            for: "theme",
+            accountDID: accountScopedDefaultsDID,
+            defaults: defaults,
+            includeLegacyFallback: shouldUseRuntimeLegacyFallback
+        ) ?? "system"
+        let savedDarkMode = AppSettingsModel.stringValue(
+            for: "darkThemeMode",
+            accountDID: accountScopedDefaultsDID,
+            defaults: defaults,
+            includeLegacyFallback: shouldUseRuntimeLegacyFallback
+        ) ?? "dim"
         
         return (theme: savedTheme, darkThemeMode: savedDarkMode)
     }
     
     /// Load font settings from UserDefaults if SwiftData is not available
     private func loadFontSettingsFromUserDefaults() -> (fontStyle: String, fontSize: String, lineSpacing: String, letterSpacing: String, dynamicTypeEnabled: Bool, maxDynamicTypeSize: String) {
-        let defaults = UserDefaults.standard
+        let defaults = standardDefaults
         
-        let savedFontStyle = defaults.string(forKey: "fontStyle") ?? "system"
-        let savedFontSize = defaults.string(forKey: "fontSize") ?? "default"
-        let savedLineSpacing = defaults.string(forKey: "lineSpacing") ?? "normal"
-        let savedLetterSpacing = defaults.string(forKey: "letterSpacing") ?? "normal"
-        let savedDynamicTypeEnabled = defaults.object(forKey: "dynamicTypeEnabled") != nil ? defaults.bool(forKey: "dynamicTypeEnabled") : true
-        let savedMaxDynamicTypeSize = defaults.string(forKey: "maxDynamicTypeSize") ?? "accessibility1"
+        let savedFontStyle = AppSettingsModel.stringValue(for: "fontStyle", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? "system"
+        let savedFontSize = AppSettingsModel.stringValue(for: "fontSize", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? "default"
+        let savedLineSpacing = AppSettingsModel.stringValue(for: "lineSpacing", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? "normal"
+        let savedLetterSpacing = AppSettingsModel.stringValue(for: "letterSpacing", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? "normal"
+        let savedDynamicTypeEnabled = AppSettingsModel.boolValue(for: "dynamicTypeEnabled", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedMaxDynamicTypeSize = AppSettingsModel.stringValue(for: "maxDynamicTypeSize", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? "accessibility1"
         
         return (
             fontStyle: savedFontStyle,
@@ -283,19 +258,19 @@ import OSLog
     
     /// Load webview settings from UserDefaults if SwiftData is not available
     private func loadWebViewSettingsFromUserDefaults() -> (useWebViewEmbeds: Bool, allowYouTube: Bool, allowYouTubeShorts: Bool, allowVimeo: Bool, allowTwitch: Bool, allowGiphy: Bool, allowTenor: Bool, allowSpotify: Bool, allowAppleMusic: Bool, allowSoundCloud: Bool, allowFlickr: Bool) {
-        let defaults = UserDefaults.standard
+        let defaults = standardDefaults
         
-        let savedUseWebViewEmbeds = defaults.object(forKey: "useWebViewEmbeds") != nil ? defaults.bool(forKey: "useWebViewEmbeds") : true
-        let savedAllowYouTube = defaults.object(forKey: "allowYouTube") != nil ? defaults.bool(forKey: "allowYouTube") : true
-        let savedAllowYouTubeShorts = defaults.object(forKey: "allowYouTubeShorts") != nil ? defaults.bool(forKey: "allowYouTubeShorts") : true
-        let savedAllowVimeo = defaults.object(forKey: "allowVimeo") != nil ? defaults.bool(forKey: "allowVimeo") : true
-        let savedAllowTwitch = defaults.object(forKey: "allowTwitch") != nil ? defaults.bool(forKey: "allowTwitch") : true
-        let savedAllowGiphy = defaults.object(forKey: "allowGiphy") != nil ? defaults.bool(forKey: "allowGiphy") : true
-        let savedAllowTenor = defaults.object(forKey: "allowTenor") != nil ? defaults.bool(forKey: "allowTenor") : true
-        let savedAllowSpotify = defaults.object(forKey: "allowSpotify") != nil ? defaults.bool(forKey: "allowSpotify") : true
-        let savedAllowAppleMusic = defaults.object(forKey: "allowAppleMusic") != nil ? defaults.bool(forKey: "allowAppleMusic") : true
-        let savedAllowSoundCloud = defaults.object(forKey: "allowSoundCloud") != nil ? defaults.bool(forKey: "allowSoundCloud") : true
-        let savedAllowFlickr = defaults.object(forKey: "allowFlickr") != nil ? defaults.bool(forKey: "allowFlickr") : true
+        let savedUseWebViewEmbeds = AppSettingsModel.boolValue(for: "useWebViewEmbeds", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowYouTube = AppSettingsModel.boolValue(for: "allowYouTube", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowYouTubeShorts = AppSettingsModel.boolValue(for: "allowYouTubeShorts", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowVimeo = AppSettingsModel.boolValue(for: "allowVimeo", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowTwitch = AppSettingsModel.boolValue(for: "allowTwitch", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowGiphy = AppSettingsModel.boolValue(for: "allowGiphy", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowTenor = AppSettingsModel.boolValue(for: "allowTenor", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowSpotify = AppSettingsModel.boolValue(for: "allowSpotify", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowAppleMusic = AppSettingsModel.boolValue(for: "allowAppleMusic", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowSoundCloud = AppSettingsModel.boolValue(for: "allowSoundCloud", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
+        let savedAllowFlickr = AppSettingsModel.boolValue(for: "allowFlickr", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
         
         return (
             useWebViewEmbeds: savedUseWebViewEmbeds,
@@ -348,7 +323,12 @@ import OSLog
             if let settingsModel = settingsModel {
                 return settingsModel.accentColor
             }
-            return UserDefaults.standard.string(forKey: "accentColor") ?? "default"
+            return AppSettingsModel.stringValue(
+                for: "accentColor",
+                accountDID: accountScopedDefaultsDID,
+                defaults: standardDefaults,
+                includeLegacyFallback: shouldUseRuntimeLegacyFallback
+            ) ?? "default"
         }
         set {
             settingsModel?.accentColor = newValue
@@ -883,12 +863,20 @@ import OSLog
         
         logger.info("Applying initial theme settings from UserDefaults: theme=\(themeSettings.theme), darkMode=\(themeSettings.darkThemeMode)")
         
-        let savedAccentColor = UserDefaults.standard.string(forKey: "accentColor") ?? "default"
+        let savedAccentColor = AppSettingsModel.stringValue(
+            for: "accentColor",
+            accountDID: accountScopedDefaultsDID,
+            defaults: standardDefaults
+        ) ?? "default"
         themeManager.applyTheme(
             theme: themeSettings.theme,
             darkThemeMode: themeSettings.darkThemeMode,
             accentColor: savedAccentColor
         )
+
+        // Keep the legacy global backup aligned with the active account so early launch
+        // reads (such as navigation font bootstrap) use the most recently active profile.
+        saveThemeSettingsToUserDefaults()
     }
     
     /// Apply initial font settings immediately from UserDefaults if SwiftData is not available
@@ -904,7 +892,10 @@ import OSLog
         
         // Load settings from UserDefaults if SwiftData isn't available yet
         if settingsModel == nil {
-            currentSettings.migrateFromUserDefaults()
+            currentSettings.migrateFromUserDefaults(
+                accountDID: accountScopedDefaultsDID,
+                includeLegacyFallback: shouldUseRuntimeLegacyFallback
+            )
         } else {
             // Copy from existing settings model
             if let model = settingsModel {

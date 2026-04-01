@@ -160,7 +160,7 @@ final class AppState {
   /// Chat mode preference, scoped per-account
   var chatMode: String {
     didSet {
-      UserDefaults.standard.set(chatMode, forKey: "chatMode.\(userDID)")
+      UserDefaults.standard.set(chatMode, forKey: scopedStandardDefaultsKey("chatMode"))
     }
   }
 
@@ -214,8 +214,9 @@ final class AppState {
     @ObservationIgnored private var blueskyAgentStorage: Any?
   #endif
 
-  /// Type-erased backing storage for AppModelStore (iOS 26+ only, actual type is AppModelStore)
-  @ObservationIgnored nonisolated(unsafe) var _appModelStoreInstance: (any Sendable)?
+  /// Backing storage for AppModelStore (iOS 26+ only, stored type-erased to avoid
+  /// leaking availability requirements into AppState's deployment target surface).
+  @ObservationIgnored var _appModelStoreInstance: (any Sendable)?
 
   /// Theme manager for handling app-wide theme changes - observes via themeDidChange
   @ObservationIgnored private let _themeManager: ThemeManager
@@ -383,8 +384,17 @@ final class AppState {
     self.userDID = userDID
     self.client = client
     logger.info("AppState initializing for account: \(userDID)")
+    appSettings.configure(accountDID: userDID)
 
-    self.chatMode = UserDefaults.standard.string(forKey: "chatMode.\(userDID)") ?? "Bluesky DMs"
+    let chatModeKey = AppSettingsModel.scopedKey("chatMode", accountDID: userDID)
+    if let storedChatMode = UserDefaults.standard.string(forKey: chatModeKey) {
+      self.chatMode = storedChatMode
+    } else if let legacyChatMode = UserDefaults.standard.string(forKey: "chatMode") {
+      self.chatMode = legacyChatMode
+      UserDefaults.standard.set(legacyChatMode, forKey: chatModeKey)
+    } else {
+      self.chatMode = "Bluesky DMs"
+    }
 
     self.urlHandler = URLHandler()
 
@@ -417,10 +427,11 @@ final class AppState {
     #endif
 
     // Load user settings
-    if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(
-      forKey: "isAdultContentEnabled.\(userDID)")
-      as? Bool
-    {
+    if let storedContentSetting = AppSettingsModel.boolValue(
+      for: "isAdultContentEnabled",
+      accountDID: userDID,
+      defaults: sharedDefaults
+    ) {
       self.isAdultContentEnabled = storedContentSetting
     }
 
@@ -1113,8 +1124,7 @@ final class AppState {
   /// Toggles adult content setting
   func toggleAdultContent() {
     isAdultContentEnabled.toggle()
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(
-      isAdultContentEnabled, forKey: "isAdultContentEnabled.\(userDID)")
+    sharedDefaults.set(isAdultContentEnabled, forKey: scopedSharedDefaultsKey("isAdultContentEnabled"))
   }
 
   // MARK: - Feed Methods
@@ -2949,5 +2959,19 @@ actor PrefetchedFeedCache {
 
   func clear() {
     cache.removeAll()
+  }
+}
+
+private extension AppState {
+  var sharedDefaults: UserDefaults {
+    AppSettingsModel.sharedDefaults()
+  }
+
+  func scopedSharedDefaultsKey(_ baseKey: String) -> String {
+    AppSettingsModel.scopedKey(baseKey, accountDID: userDID)
+  }
+
+  func scopedStandardDefaultsKey(_ baseKey: String) -> String {
+    AppSettingsModel.scopedKey(baseKey, accountDID: userDID)
   }
 }

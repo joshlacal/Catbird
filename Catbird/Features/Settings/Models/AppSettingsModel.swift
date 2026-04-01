@@ -8,9 +8,239 @@ final class AppSettingsModel {
     // Legacy singleton ID (used for migration from shared row)
     static let legacySharedId = "app_settings"
 
+    private static let appGroupSuiteName = "group.blue.catbird.shared"
+    private static let activeSettingsAccountDIDKey = "lastActiveSettingsAccountDID"
+
     /// Per-account settings ID
     static func settingsId(for accountDID: String) -> String {
         "app_settings_\(accountDID)"
+    }
+
+    static func sharedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: appGroupSuiteName) ?? .standard
+    }
+
+    static func scopedKey(_ baseKey: String, accountDID: String?) -> String {
+        guard let accountDID, !accountDID.isEmpty else { return baseKey }
+        return "\(baseKey).\(accountDID)"
+    }
+
+    static func stringValue(
+        for baseKey: String,
+        accountDID: String?,
+        defaults: UserDefaults = .standard,
+        includeLegacyFallback: Bool = true
+    )
+        -> String?
+    {
+        if let accountDID, !accountDID.isEmpty,
+            let value = defaults.string(forKey: scopedKey(baseKey, accountDID: accountDID))
+        {
+            return value
+        }
+
+        guard includeLegacyFallback else { return nil }
+        return defaults.string(forKey: baseKey)
+    }
+
+    static func stringArrayValue(
+        for baseKey: String,
+        accountDID: String?,
+        defaults: UserDefaults = .standard,
+        includeLegacyFallback: Bool = true
+    ) -> [String]? {
+        if let accountDID, !accountDID.isEmpty,
+            let value = defaults.stringArray(forKey: scopedKey(baseKey, accountDID: accountDID))
+        {
+            return value
+        }
+
+        guard includeLegacyFallback else { return nil }
+        return defaults.stringArray(forKey: baseKey)
+    }
+
+    static func boolValue(
+        for baseKey: String,
+        accountDID: String?,
+        defaults: UserDefaults = .standard,
+        includeLegacyFallback: Bool = true
+    )
+        -> Bool?
+    {
+        if let accountDID, !accountDID.isEmpty {
+            let scopedKey = scopedKey(baseKey, accountDID: accountDID)
+            if defaults.object(forKey: scopedKey) != nil {
+                return defaults.bool(forKey: scopedKey)
+            }
+        }
+
+        guard includeLegacyFallback else { return nil }
+        guard defaults.object(forKey: baseKey) != nil else { return nil }
+        return defaults.bool(forKey: baseKey)
+    }
+
+    static func doubleValue(
+        for baseKey: String,
+        accountDID: String?,
+        defaults: UserDefaults = .standard,
+        includeLegacyFallback: Bool = true
+    ) -> Double? {
+        if let accountDID, !accountDID.isEmpty {
+            let scopedKey = scopedKey(baseKey, accountDID: accountDID)
+            if defaults.object(forKey: scopedKey) != nil {
+                return defaults.double(forKey: scopedKey)
+            }
+        }
+
+        guard includeLegacyFallback else { return nil }
+        guard defaults.object(forKey: baseKey) != nil else { return nil }
+        return defaults.double(forKey: baseKey)
+    }
+
+    static func intValue(
+        for baseKey: String,
+        accountDID: String?,
+        defaults: UserDefaults = .standard,
+        includeLegacyFallback: Bool = true
+    )
+        -> Int?
+    {
+        if let accountDID, !accountDID.isEmpty {
+            let scopedKey = scopedKey(baseKey, accountDID: accountDID)
+            if defaults.object(forKey: scopedKey) != nil {
+                return defaults.integer(forKey: scopedKey)
+            }
+        }
+
+        guard includeLegacyFallback else { return nil }
+        guard defaults.object(forKey: baseKey) != nil else { return nil }
+        return defaults.integer(forKey: baseKey)
+    }
+
+    static func hasPerAccountSettings(in modelContext: ModelContext) throws -> Bool {
+        let legacyId = legacySharedId
+        let descriptor = FetchDescriptor<AppSettingsModel>(
+            predicate: #Predicate { $0.id != legacyId }
+        )
+        return try !modelContext.fetch(descriptor).isEmpty
+    }
+
+    static func shouldUseLegacyFallback(for accountDID: String?, defaults: UserDefaults = .standard) -> Bool {
+        guard let accountDID, !accountDID.isEmpty else { return true }
+        guard let activeAccountDID = defaults.string(forKey: activeSettingsAccountDIDKey) else {
+            return true
+        }
+        return activeAccountDID == accountDID
+    }
+
+    static func markActiveSettingsAccount(_ accountDID: String?, defaults: UserDefaults = .standard) {
+        guard let accountDID, !accountDID.isEmpty else {
+            defaults.removeObject(forKey: activeSettingsAccountDIDKey)
+            return
+        }
+        defaults.set(accountDID, forKey: activeSettingsAccountDIDKey)
+    }
+
+    static func legacySettingsForMigration(in modelContext: ModelContext) throws -> AppSettingsModel? {
+        let legacyId = legacySharedId
+        let legacyDescriptor = FetchDescriptor<AppSettingsModel>(
+            predicate: #Predicate { $0.id == legacyId }
+        )
+        guard let legacy = try modelContext.fetch(legacyDescriptor).first else {
+            return nil
+        }
+
+        let perAccountDescriptor = FetchDescriptor<AppSettingsModel>(
+            predicate: #Predicate { $0.id != legacyId }
+        )
+        let existingPerAccountSettings = try modelContext.fetch(perAccountDescriptor)
+        return existingPerAccountSettings.isEmpty ? legacy : nil
+    }
+
+    static func copySettings(from source: AppSettingsModel, to target: AppSettingsModel) {
+        // Appearance
+        target.theme = source.theme
+        target.darkThemeMode = source.darkThemeMode
+        target.accentColor = source.accentColor
+
+        // Typography
+        target.fontStyle = source.fontStyle
+        target.fontSize = source.fontSize
+        target.lineSpacing = source.lineSpacing
+        target.letterSpacing = source.letterSpacing
+        target.dynamicTypeEnabled = source.dynamicTypeEnabled
+        target.maxDynamicTypeSize = source.maxDynamicTypeSize
+
+        // Accessibility
+        target.requireAltText = source.requireAltText
+        target.largerAltTextBadges = source.largerAltTextBadges
+        target.disableHaptics = source.disableHaptics
+
+        // Motion
+        target.reduceMotion = source.reduceMotion
+        target.prefersCrossfade = source.prefersCrossfade
+
+        // Display
+        target.increaseContrast = source.increaseContrast
+        target.boldText = source.boldText
+        target.displayScale = source.displayScale
+
+        // Reading
+        target.showReadingTimeEstimates = source.showReadingTimeEstimates
+        target.highlightLinks = source.highlightLinks
+        target.linkStyle = source.linkStyle
+
+        // Interaction
+        target.confirmBeforeActions = source.confirmBeforeActions
+        target.longPressDuration = source.longPressDuration
+        target.shakeToUndo = source.shakeToUndo
+
+        // Attribution
+        target.enableViaAttribution = source.enableViaAttribution
+
+        // Content and Media
+        target.sensitiveContentScanningEnabled = source.sensitiveContentScanningEnabled
+        target.autoplayVideos = source.autoplayVideos
+        target.useInAppBrowser = source.useInAppBrowser
+        target.showTrendingTopics = source.showTrendingTopics
+        target.showTrendingVideos = source.showTrendingVideos
+
+        // Thread Preferences
+        target.threadSortOrder = source.threadSortOrder
+        target.prioritizeFollowedUsers = source.prioritizeFollowedUsers
+        target.threadedReplies = source.threadedReplies
+        target.showHiddenPosts = source.showHiddenPosts
+
+        // Feed Preferences
+        target.showSavedFeedSamples = source.showSavedFeedSamples
+
+        // External Media
+        target.allowYouTube = source.allowYouTube
+        target.allowYouTubeShorts = source.allowYouTubeShorts
+        target.allowVimeo = source.allowVimeo
+        target.allowTwitch = source.allowTwitch
+        target.allowGiphy = source.allowGiphy
+        target.allowTenor = source.allowTenor
+        target.allowSpotify = source.allowSpotify
+        target.allowAppleMusic = source.allowAppleMusic
+        target.allowSoundCloud = source.allowSoundCloud
+        target.allowFlickr = source.allowFlickr
+
+        // WebView Embeds
+        target.useWebViewEmbeds = source.useWebViewEmbeds
+
+        // Languages
+        target.appLanguage = source.appLanguage
+        target.primaryLanguage = source.primaryLanguage
+        target.contentLanguages = source.contentLanguages
+        target.hideNonPreferredLanguages = source.hideNonPreferredLanguages
+        target.showLanguageIndicators = source.showLanguageIndicators
+
+        // Privacy
+        target.loggedOutVisibility = source.loggedOutVisibility
+
+        // MLS Chat
+        target.mlsMessageRetentionDays = source.mlsMessageRetentionDays
     }
 
     // Unique identifier — per-account, set via init(accountDID:)
@@ -127,122 +357,101 @@ final class AppSettingsModel {
     }
     
     /// Migrate from existing UserDefaults settings
-    func migrateFromUserDefaults() {
+    func migrateFromUserDefaults(accountDID: String? = nil, includeLegacyFallback: Bool = true) {
         let defaults = UserDefaults.standard
         
         // Appearance
-        if let value = defaults.string(forKey: "theme") { theme = value }
-        if let value = defaults.string(forKey: "darkThemeMode") { darkThemeMode = value }
-        if let value = defaults.string(forKey: "accentColor") { accentColor = value }
+        if let value = Self.stringValue(for: "theme", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { theme = value }
+        if let value = Self.stringValue(for: "darkThemeMode", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { darkThemeMode = value }
+        if let value = Self.stringValue(for: "accentColor", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { accentColor = value }
         
         // Ensure theme settings are also saved to app group for widgets
-        let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-        groupDefaults?.set(theme, forKey: "theme")
-        groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
-        if let value = defaults.string(forKey: "fontStyle") { fontStyle = value }
-        if let value = defaults.string(forKey: "fontSize") { fontSize = value }
-        if let value = defaults.string(forKey: "lineSpacing") { lineSpacing = value }
-        dynamicTypeEnabled = defaults.bool(forKey: "dynamicTypeEnabled")
-        if dynamicTypeEnabled == false && defaults.object(forKey: "dynamicTypeEnabled") == nil {
-            dynamicTypeEnabled = true // Default to true if not set
+        let groupDefaults = Self.sharedDefaults()
+        groupDefaults.set(theme, forKey: "theme")
+        groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
+        if let value = Self.stringValue(for: "fontStyle", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { fontStyle = value }
+        if let value = Self.stringValue(for: "fontSize", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { fontSize = value }
+        if let value = Self.stringValue(for: "lineSpacing", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { lineSpacing = value }
+        if let value = Self.boolValue(for: "dynamicTypeEnabled", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) {
+            dynamicTypeEnabled = value
         }
-        if let value = defaults.string(forKey: "maxDynamicTypeSize") { maxDynamicTypeSize = value }
+        if let value = Self.stringValue(for: "maxDynamicTypeSize", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { maxDynamicTypeSize = value }
         
         // Accessibility
-        requireAltText = defaults.bool(forKey: "requireAltText")
-        largerAltTextBadges = defaults.bool(forKey: "largerAltTextBadges")
-        disableHaptics = defaults.bool(forKey: "disableHaptics")
+        if let value = Self.boolValue(for: "requireAltText", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { requireAltText = value }
+        if let value = Self.boolValue(for: "largerAltTextBadges", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { largerAltTextBadges = value }
+        if let value = Self.boolValue(for: "disableHaptics", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { disableHaptics = value }
         
         // Motion Settings
-        reduceMotion = defaults.bool(forKey: "reduceMotion")
-        prefersCrossfade = defaults.bool(forKey: "prefersCrossfade")
+        if let value = Self.boolValue(for: "reduceMotion", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { reduceMotion = value }
+        if let value = Self.boolValue(for: "prefersCrossfade", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { prefersCrossfade = value }
         
         // Display Settings
-        increaseContrast = defaults.bool(forKey: "increaseContrast")
-        boldText = defaults.bool(forKey: "boldText")
-        displayScale = defaults.double(forKey: "displayScale")
-        if displayScale == 0 { displayScale = 1.0 }
+        if let value = Self.boolValue(for: "increaseContrast", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { increaseContrast = value }
+        if let value = Self.boolValue(for: "boldText", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { boldText = value }
+        if let value = Self.doubleValue(for: "displayScale", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { displayScale = value }
         
         // Reading Settings
-        showReadingTimeEstimates = defaults.bool(forKey: "showReadingTimeEstimates")
-        highlightLinks = defaults.bool(forKey: "highlightLinks")
-        if let value = defaults.string(forKey: "linkStyle") { linkStyle = value }
+        if let value = Self.boolValue(for: "showReadingTimeEstimates", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showReadingTimeEstimates = value }
+        if let value = Self.boolValue(for: "highlightLinks", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { highlightLinks = value }
+        if let value = Self.stringValue(for: "linkStyle", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { linkStyle = value }
         
         // Interaction Settings
-        confirmBeforeActions = defaults.bool(forKey: "confirmBeforeActions")
-        longPressDuration = defaults.double(forKey: "longPressDuration")
-        if longPressDuration == 0 { longPressDuration = 0.5 }
-        shakeToUndo = defaults.bool(forKey: "shakeToUndo")
+        if let value = Self.boolValue(for: "confirmBeforeActions", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { confirmBeforeActions = value }
+        if let value = Self.doubleValue(for: "longPressDuration", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { longPressDuration = value }
+        if let value = Self.boolValue(for: "shakeToUndo", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { shakeToUndo = value }
         
         // Attribution Settings
-        enableViaAttribution = defaults.bool(forKey: "enableViaAttribution")
-        if enableViaAttribution == false && defaults.object(forKey: "enableViaAttribution") == nil {
-            enableViaAttribution = true // Default to true if not set
-        }
+        if let value = Self.boolValue(for: "enableViaAttribution", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { enableViaAttribution = value }
         
         // Content and Media
-        if defaults.object(forKey: "autoplayVideos") != nil {
-            autoplayVideos = defaults.bool(forKey: "autoplayVideos")
-        }
-        if defaults.object(forKey: "useInAppBrowser") != nil {
-            useInAppBrowser = defaults.bool(forKey: "useInAppBrowser")
-        }
-        if defaults.object(forKey: "showTrendingTopics") != nil {
-            showTrendingTopics = defaults.bool(forKey: "showTrendingTopics")
-        }
-        if defaults.object(forKey: "showTrendingVideos") != nil {
-            showTrendingVideos = defaults.bool(forKey: "showTrendingVideos")
-        }
+        if let value = Self.boolValue(for: "autoplayVideos", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { autoplayVideos = value }
+        if let value = Self.boolValue(for: "useInAppBrowser", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { useInAppBrowser = value }
+        if let value = Self.boolValue(for: "showTrendingTopics", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showTrendingTopics = value }
+        if let value = Self.boolValue(for: "showTrendingVideos", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showTrendingVideos = value }
         
         // Thread Preferences
-        if let value = defaults.string(forKey: "threadSortOrder") { threadSortOrder = value }
-        prioritizeFollowedUsers = defaults.bool(forKey: "prioritizeFollowedUsers")
-        threadedReplies = defaults.bool(forKey: "threadedReplies")
-        showHiddenPosts = defaults.bool(forKey: "showHiddenPosts")
+        if let value = Self.stringValue(for: "threadSortOrder", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { threadSortOrder = value }
+        if let value = Self.boolValue(for: "prioritizeFollowedUsers", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { prioritizeFollowedUsers = value }
+        if let value = Self.boolValue(for: "threadedReplies", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { threadedReplies = value }
+        if let value = Self.boolValue(for: "showHiddenPosts", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showHiddenPosts = value }
         
         // Feed Preferences
-        showSavedFeedSamples = defaults.bool(forKey: "showSavedFeedSamples")
+        if let value = Self.boolValue(for: "showSavedFeedSamples", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showSavedFeedSamples = value }
         
         // External Media
-        allowYouTube = defaults.object(forKey: "allowYouTube") != nil ? defaults.bool(forKey: "allowYouTube") : true
-        allowYouTubeShorts = defaults.object(forKey: "allowYouTubeShorts") != nil ? defaults.bool(forKey: "allowYouTubeShorts") : true
-        allowVimeo = defaults.object(forKey: "allowVimeo") != nil ? defaults.bool(forKey: "allowVimeo") : true
-        allowTwitch = defaults.object(forKey: "allowTwitch") != nil ? defaults.bool(forKey: "allowTwitch") : true
-        allowGiphy = defaults.object(forKey: "allowGiphy") != nil ? defaults.bool(forKey: "allowGiphy") : true
-        allowTenor = defaults.object(forKey: "allowTenor") != nil ? defaults.bool(forKey: "allowTenor") : true
-        allowSpotify = defaults.object(forKey: "allowSpotify") != nil ? defaults.bool(forKey: "allowSpotify") : true
-        allowAppleMusic = defaults.object(forKey: "allowAppleMusic") != nil ? defaults.bool(forKey: "allowAppleMusic") : true
-        allowSoundCloud = defaults.object(forKey: "allowSoundCloud") != nil ? defaults.bool(forKey: "allowSoundCloud") : true
-        allowFlickr = defaults.object(forKey: "allowFlickr") != nil ? defaults.bool(forKey: "allowFlickr") : true
+        if let value = Self.boolValue(for: "allowYouTube", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowYouTube = value }
+        if let value = Self.boolValue(for: "allowYouTubeShorts", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowYouTubeShorts = value }
+        if let value = Self.boolValue(for: "allowVimeo", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowVimeo = value }
+        if let value = Self.boolValue(for: "allowTwitch", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowTwitch = value }
+        if let value = Self.boolValue(for: "allowGiphy", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowGiphy = value }
+        if let value = Self.boolValue(for: "allowTenor", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowTenor = value }
+        if let value = Self.boolValue(for: "allowSpotify", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowSpotify = value }
+        if let value = Self.boolValue(for: "allowAppleMusic", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowAppleMusic = value }
+        if let value = Self.boolValue(for: "allowSoundCloud", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowSoundCloud = value }
+        if let value = Self.boolValue(for: "allowFlickr", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowFlickr = value }
         
         // WebView Embeds
-        useWebViewEmbeds = defaults.bool(forKey: "useWebViewEmbeds")
-        if useWebViewEmbeds == false && defaults.object(forKey: "useWebViewEmbeds") == nil {
-            useWebViewEmbeds = true // Default to true if not set
-        }
+        if let value = Self.boolValue(for: "useWebViewEmbeds", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { useWebViewEmbeds = value }
         
         // Languages
         if let value = defaults.string(forKey: "appLanguage") { appLanguage = value }
-        if let value = defaults.string(forKey: "primaryLanguage") { primaryLanguage = value }
-        if let value = defaults.stringArray(forKey: "contentLanguages") {
+        if let value = Self.stringValue(for: "primaryLanguage", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { primaryLanguage = value }
+        if let value = Self.stringArrayValue(for: "contentLanguages", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) {
             contentLanguages = value
         }
         
         // Language Filtering Options
-        hideNonPreferredLanguages = defaults.bool(forKey: "hideNonPreferredLanguages")
-        showLanguageIndicators = defaults.bool(forKey: "showLanguageIndicators")
-        if showLanguageIndicators == false && defaults.object(forKey: "showLanguageIndicators") == nil {
-            showLanguageIndicators = true // Default to true if not set
-        }
+        if let value = Self.boolValue(for: "hideNonPreferredLanguages", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { hideNonPreferredLanguages = value }
+        if let value = Self.boolValue(for: "showLanguageIndicators", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showLanguageIndicators = value }
         
         // Privacy
-        loggedOutVisibility = defaults.bool(forKey: "loggedOutVisibility")
+        if let value = Self.boolValue(for: "loggedOutVisibility", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { loggedOutVisibility = value }
 
         // MLS Chat Settings
-        if defaults.object(forKey: "mlsMessageRetentionDays") != nil {
-            mlsMessageRetentionDays = defaults.integer(forKey: "mlsMessageRetentionDays")
+        if let value = Self.intValue(for: "mlsMessageRetentionDays", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) {
+            mlsMessageRetentionDays = value
         }
-        if mlsMessageRetentionDays == 0 { mlsMessageRetentionDays = 30 }  // Ensure valid default
 
         // Developer Settings
         
@@ -261,9 +470,9 @@ final class AppSettingsModel {
         defaults.set(darkThemeMode, forKey: "darkThemeMode")
         
         // Also update app group
-        let groupDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-        groupDefaults?.set(theme, forKey: "theme")
-        groupDefaults?.set(darkThemeMode, forKey: "darkThemeMode")
+        let groupDefaults = Self.sharedDefaults()
+        groupDefaults.set(theme, forKey: "theme")
+        groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
         fontStyle = "system"
         fontSize = "default"
         lineSpacing = "normal"

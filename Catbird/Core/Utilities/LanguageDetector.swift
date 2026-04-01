@@ -105,8 +105,9 @@ class ContentLanguageFilter {
     var contentLanguages: [String] = []
     
     private let detector = LanguageDetector.shared
+    private let defaults = AppSettingsModel.sharedDefaults()
     
-    nonisolated(unsafe) private var notificationTask: Task<Void, Never>?
+    private nonisolated(unsafe) var notificationTask: Task<Void, Never>?
 
     init() {
         loadPreferences()
@@ -116,7 +117,9 @@ class ContentLanguageFilter {
             let notifications = NotificationCenter.default.notifications(named: NSNotification.Name("LanguagePreferencesChanged"))
             for await _ in notifications {
                 guard !Task.isCancelled else { break }
-                await self?.loadPreferences()
+                await MainActor.run {
+                    self?.loadPreferences()
+                }
             }
         }
     }
@@ -126,9 +129,12 @@ class ContentLanguageFilter {
     }
 
     private func loadPreferences() {
-        let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-        contentLanguages = defaults?.stringArray(forKey: "contentLanguages") ?? ["en"]
-        isEnabled = defaults?.bool(forKey: "enableLanguageFilter") ?? true
+        contentLanguages = AppSettingsModel.stringArrayValue(
+            for: "contentLanguages",
+            accountDID: nil,
+            defaults: defaults
+        ) ?? ["en"]
+        isEnabled = defaults.bool(forKey: "enableLanguageFilter")
     }
     
     /// Check if a post should be shown based on language filters

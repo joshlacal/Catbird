@@ -18,7 +18,13 @@ actor AppModelStore {
       return s
     }
     let s = AppSettingsModel(accountDID: accountDID)
-    s.migrateFromUserDefaults()
+    if let legacy = try AppSettingsModel.legacySettingsForMigration(in: modelContext) {
+      AppSettingsModel.copySettings(from: legacy, to: s)
+      modelContext.delete(legacy)
+    } else {
+      let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: modelContext)
+      s.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback)
+    }
     modelContext.insert(s)
     try modelContext.save()
     log.debug("Created default AppSettingsModel for account \(accountDID)")
