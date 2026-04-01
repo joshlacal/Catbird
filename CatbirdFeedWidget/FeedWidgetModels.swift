@@ -65,6 +65,14 @@ struct FeedWidgetDataEnhanced: Codable {
   }
 }
 
+/// Account info shared with widget extension via App Group
+struct WidgetAccount: Codable {
+  let did: String
+  let handle: String
+  let displayName: String
+  let avatarURL: String?
+}
+
 // Shared constants
 struct FeedWidgetConstants {
   static let sharedSuiteName = "group.blue.catbird.shared"

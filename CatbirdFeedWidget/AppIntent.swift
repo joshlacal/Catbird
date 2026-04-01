@@ -11,7 +11,7 @@ import AppIntents
 
 // MARK: - Feed Type Options
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public enum FeedTypeOption: String, CaseIterable, AppEnum {
     case timeline = "timeline"
     case pinnedFeed = "pinned"
@@ -36,7 +36,7 @@ public enum FeedTypeOption: String, CaseIterable, AppEnum {
 
 // MARK: - Layout Style Options
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public enum LayoutStyleOption: String, CaseIterable, AppEnum {
     case compact = "compact"
     case comfortable = "comfortable"
@@ -57,10 +57,13 @@ public enum LayoutStyleOption: String, CaseIterable, AppEnum {
 
 // MARK: - Widget Configuration Intent
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct ConfigurationAppIntent: WidgetConfigurationIntent {
     public static var title: LocalizedStringResource { "Widget Configuration" }
     public static var description: IntentDescription { "Configure your Catbird feed widget to show the content you want to see." }
+
+    @Parameter(title: "Account", description: "Which account to show")
+    public var account: AccountEntity?
 
     @Parameter(title: "Feed Type", description: "Choose what type of content to display", default: .timeline)
     public var feedType: FeedTypeOption
@@ -93,6 +96,7 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
     public var showTimestamps: Bool
 
     public init() {
+        account = nil
         feedType = .timeline
         selectedFeed = nil
         customFeedURL = ""
@@ -106,6 +110,7 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
     }
 
     public init(
+        account: AccountEntity? = nil,
         feedType: FeedTypeOption = .timeline,
         selectedFeed: SavedFeedEntity? = nil,
         customFeedURL: String = "",
@@ -117,6 +122,7 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
         showEngagementStats: Bool = true,
         showTimestamps: Bool = true
     ) {
+        self.account = account
         self.feedType = feedType
         self.selectedFeed = selectedFeed
         self.customFeedURL = customFeedURL
@@ -127,6 +133,14 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
         self.showImages = showImages
         self.showEngagementStats = showEngagementStats
         self.showTimestamps = showTimestamps
+    }
+
+    /// Resolved account DID — uses selected account or falls back to active account
+    public var resolvedAccountDID: String {
+        if let account {
+            return account.id
+        }
+        return WidgetDataReader.activeAccountDID() ?? ""
     }
 
     // MARK: - Convenience Properties with Defaults
@@ -174,7 +188,7 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
 
 // MARK: - Dynamic Feed Entities
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SavedFeedEntity: AppEntity {
     public static var typeDisplayRepresentation: TypeDisplayRepresentation {
         TypeDisplayRepresentation(name: "Saved Feed")
@@ -197,7 +211,7 @@ public struct SavedFeedEntity: AppEntity {
     }
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct SavedFeedQuery: EntityQuery {
     public init() {}
     
@@ -255,7 +269,7 @@ public struct SavedFeedQuery: EntityQuery {
 
 // MARK: - App Intent for Opening Specific Feed
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct OpenFeedAppIntent: AppIntent {
     public static var title: LocalizedStringResource { "Open Feed" }
     public static var description: IntentDescription { "Open a specific feed in Catbird." }
@@ -313,7 +327,7 @@ public struct OpenFeedAppIntent: AppIntent {
 
 // MARK: - App Intent for Opening Specific Post
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 public struct OpenPostAppIntent: AppIntent {
     public static var title: LocalizedStringResource { "Open Post" }
     public static var description: IntentDescription { "Open a specific post in Catbird." }
