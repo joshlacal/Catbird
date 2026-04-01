@@ -157,6 +157,13 @@ final class AppState {
   // User preference settings
   var isAdultContentEnabled: Bool = false
 
+  /// Chat mode preference, scoped per-account
+  var chatMode: String {
+    didSet {
+      UserDefaults.standard.set(chatMode, forKey: "chatMode.\(userDID)")
+    }
+  }
+
   // Used to track which tab was tapped twice to trigger scroll to top
   // NOTE: This needs to be observable so UIKit controllers can react to it
   var tabTappedAgain: Int?
@@ -207,6 +214,9 @@ final class AppState {
     @ObservationIgnored private var blueskyAgentStorage: Any?
   #endif
 
+  /// Type-erased backing storage for AppModelStore (iOS 26+ only, actual type is AppModelStore)
+  @ObservationIgnored nonisolated(unsafe) var _appModelStoreInstance: (any Sendable)?
+
   /// Theme manager for handling app-wide theme changes - observes via themeDidChange
   @ObservationIgnored private let _themeManager: ThemeManager
 
@@ -234,7 +244,7 @@ final class AppState {
   @ObservationIgnored var pendingReauthenticationRequest: ReauthenticationRequest?
 
   /// Feed filter settings manager
-  @ObservationIgnored let feedFilterSettings = FeedFilterSettings()
+  @ObservationIgnored let feedFilterSettings: FeedFilterSettings
 
   /// Notification manager for handling push notifications
   @ObservationIgnored let notificationManager = NotificationManager()
@@ -374,10 +384,12 @@ final class AppState {
     self.client = client
     logger.info("AppState initializing for account: \(userDID)")
 
+    self.chatMode = UserDefaults.standard.string(forKey: "chatMode.\(userDID)") ?? "Bluesky DMs"
 
     self.urlHandler = URLHandler()
 
     // Create per-account manager instances
+    self.feedFilterSettings = FeedFilterSettings(accountDID: userDID)
     self.postShadowManager = PostShadowManager()
     self.bookmarksManager = BookmarksManager()
 
@@ -406,7 +418,7 @@ final class AppState {
 
     // Load user settings
     if let storedContentSetting = UserDefaults(suiteName: "group.blue.catbird.shared")?.object(
-      forKey: "isAdultContentEnabled")
+      forKey: "isAdultContentEnabled.\(userDID)")
       as? Bool
     {
       self.isAdultContentEnabled = storedContentSetting
@@ -1102,7 +1114,7 @@ final class AppState {
   func toggleAdultContent() {
     isAdultContentEnabled.toggle()
     UserDefaults(suiteName: "group.blue.catbird.shared")?.set(
-      isAdultContentEnabled, forKey: "isAdultContentEnabled")
+      isAdultContentEnabled, forKey: "isAdultContentEnabled.\(userDID)")
   }
 
   // MARK: - Feed Methods

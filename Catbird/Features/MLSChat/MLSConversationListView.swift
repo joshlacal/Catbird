@@ -17,7 +17,7 @@ struct MLSConversationListView: View {
 
     @Binding var selectedTab: Int
     
-    @AppStorage("chatMode") private var chatModeRaw: String = ChatTabView.ChatMode.bluesky.rawValue
+    // chatMode is now stored per-account via appState.chatMode
 
     @State private var searchText = ""
     @State private var selectedConvoId: String?
@@ -880,7 +880,7 @@ struct MLSConversationListView: View {
     
     @ViewBuilder
     private var chatModePicker: some View {
-        Picker("Chat Mode", selection: $chatModeRaw) {
+        Picker("Chat Mode", selection: Bindable(appState).chatMode) {
             ForEach(ChatTabView.ChatMode.allCases, id: \.self) { mode in
                 Label(mode.rawValue, systemImage: mode.icon)
                     .tag(mode.rawValue)

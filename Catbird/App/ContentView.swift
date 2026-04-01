@@ -205,11 +205,7 @@ struct MainContentView: View {
   @State private var composerInitialDraft: PostComposerDraft?
   // Namespace for iOS 26 matched transitions
   @Namespace private var composeTransitionNamespace
-  #if os(iOS)
-  @AppStorage("chatMode") private var chatModeRaw: String = ChatTabView.ChatMode.bluesky.rawValue
-  #else
-  @AppStorage("chatMode") private var chatModeRaw: String = "bluesky"
-  #endif
+  // chatMode is now stored per-account in appState.chatMode
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
@@ -682,7 +678,7 @@ struct MainContentView: View {
         )
       }
       .sheet(isPresented: $showingNewMessageSheet) {
-        if chatModeRaw == ChatTabView.ChatMode.mls.rawValue {
+        if appState.chatMode == ChatTabView.ChatMode.mls.rawValue {
           MLSNewConversationView(
             onConversationCreated: {},
             onNavigateToConversation: { convoId in

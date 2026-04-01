@@ -28,26 +28,25 @@ struct ChatTabView: View {
   @State private var mlsSettingsRefreshTrigger = false  // Triggers view refresh when MLS settings change
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
-  @AppStorage("chatMode") private var chatModeRaw: String = ChatMode.bluesky.rawValue
-  
   /// Per-account MLS chat enabled state - computed from ExperimentalSettings
   private var mlsChatEnabledForCurrentAccount: Bool {
     // Access refresh trigger to make SwiftUI track this dependency
     _ = mlsSettingsRefreshTrigger
     return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
-  
+
   private var chatMode: ChatMode {
-    get { ChatMode(rawValue: chatModeRaw) ?? .bluesky }
-    nonmutating set { chatModeRaw = newValue.rawValue }
+    get { ChatMode(rawValue: appState.chatMode) ?? .bluesky }
+    nonmutating set { appState.chatMode = newValue.rawValue }
   }
-  
+
   private var animatedChatModeRaw: Binding<String> {
-    Binding(
-      get: { chatModeRaw },
+    @Bindable var appState = appState
+    return Binding(
+      get: { appState.chatMode },
       set: { newValue in
         withAnimation(.easeInOut(duration: 0.2)) {
-          chatModeRaw = newValue
+          appState.chatMode = newValue
         }
       }
     )
@@ -84,7 +83,7 @@ struct ChatTabView: View {
           .transition(.opacity)
       }
     }
-    .animation(.easeInOut(duration: 0.2), value: chatModeRaw)
+    .animation(.easeInOut(duration: 0.2), value: appState.chatMode)
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 

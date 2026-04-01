@@ -1405,7 +1405,7 @@ final class PreferencesManager {
 
     // Adult content setting
     appState.isAdultContentEnabled = preferences.adultContentEnabled
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(preferences.adultContentEnabled, forKey: "isAdultContentEnabled")
+    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(preferences.adultContentEnabled, forKey: "isAdultContentEnabled.\(accountDID)")
 
     // Thread view preferences
     if let threadViewPref = preferences.threadViewPref {
@@ -1425,7 +1425,7 @@ final class PreferencesManager {
     preferences.adultContentEnabled = enabled
 
     // Also update the app state's copy for consistency
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(enabled, forKey: "isAdultContentEnabled")
+    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(enabled, forKey: "isAdultContentEnabled.\(accountDID)")
 
     try await saveAndSyncPreferences(preferences)
   }

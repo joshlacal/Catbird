@@ -56,7 +56,7 @@ extension CatbirdApp {
     }
 
     // Restore adult content setting
-    if let adultContentEnabled = defaults.object(forKey: "isAdultContentEnabled") as? Bool {
+    if let adultContentEnabled = defaults.object(forKey: "isAdultContentEnabled.\(appState.userDID)") as? Bool {
       appState.isAdultContentEnabled = adultContentEnabled
       logger.debug("Restored adult content setting: \(adultContentEnabled)")
     }
@@ -88,7 +88,7 @@ extension CatbirdApp {
     defaults.set(AppStateManager.shared.authentication.biometricAuthEnabled, forKey: "biometric_auth_enabled")
     
     // Save adult content setting
-    defaults.set(appState.isAdultContentEnabled, forKey: "isAdultContentEnabled")
+    defaults.set(appState.isAdultContentEnabled, forKey: "isAdultContentEnabled.\(appState.userDID)")
     
     logger.debug("Application state saved")
   }
