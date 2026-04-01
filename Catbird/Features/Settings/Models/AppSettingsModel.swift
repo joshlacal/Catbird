@@ -5,10 +5,15 @@ import Observation
 /// SwiftData model for app settings that aren't synced with the Bluesky server
 @Model
 final class AppSettingsModel {
-    // Shared ID constant for singleton instance
-    static let sharedId = "app_settings"
-    
-    // Unique identifier for single instance
+    // Legacy singleton ID (used for migration from shared row)
+    static let legacySharedId = "app_settings"
+
+    /// Per-account settings ID
+    static func settingsId(for accountDID: String) -> String {
+        "app_settings_\(accountDID)"
+    }
+
+    // Unique identifier — per-account when created via init(accountDID:)
     @Attribute(.unique) var id: String = "app_settings"
     
     // MARK: - Stored Properties
@@ -113,8 +118,13 @@ final class AppSettingsModel {
     
     
     // MARK: - Initializers
-    
+
     init() {}
+
+    /// Create settings scoped to a specific account DID
+    init(accountDID: String) {
+        self.id = Self.settingsId(for: accountDID)
+    }
     
     /// Migrate from existing UserDefaults settings
     func migrateFromUserDefaults() {

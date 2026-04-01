@@ -473,29 +473,29 @@ actor DatabaseModelActor {
     
     // MARK: - App Settings Operations
     
-    /// Load app settings
-    func loadAppSettings() throws -> AppSettingsModel {
-        let sharedId = AppSettingsModel.sharedId
+    /// Load app settings for a specific account
+    func loadAppSettings(accountDID: String) throws -> AppSettingsModel {
+        let targetId = AppSettingsModel.settingsId(for: accountDID)
         let descriptor = FetchDescriptor<AppSettingsModel>(
-            predicate: #Predicate { $0.id == sharedId }
+            predicate: #Predicate { $0.id == targetId }
         )
-        
+
         if let settings = try modelContext.fetch(descriptor).first {
             return settings
         }
-        
-        // Create default settings
-        let settings = AppSettingsModel()
+
+        // Create default per-account settings
+        let settings = AppSettingsModel(accountDID: accountDID)
         settings.migrateFromUserDefaults()
         modelContext.insert(settings)
         try modelContext.save()
-        logger.debug("Created default AppSettingsModel")
+        logger.debug("Created default AppSettingsModel for account \(accountDID)")
         return settings
     }
-    
-    /// Update app settings
-    func updateAppSettings(_ apply: (AppSettingsModel) -> Void) throws {
-        let settings = try loadAppSettings()
+
+    /// Update app settings for a specific account
+    func updateAppSettings(accountDID: String, _ apply: (AppSettingsModel) -> Void) throws {
+        let settings = try loadAppSettings(accountDID: accountDID)
         apply(settings)
         try modelContext.save()
     }

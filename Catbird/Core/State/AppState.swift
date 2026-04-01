@@ -1921,7 +1921,7 @@ final class AppState {
   @MainActor
   func initializePreferencesManager(with modelContext: ModelContext) {
     preferencesManager.setModelContext(modelContext)
-    appSettings.initialize(with: modelContext)
+    appSettings.initialize(with: modelContext, accountDID: userDID)
     logger.debug("Initialized PreferencesManager and AppSettings with ModelContext")
 
     // Apply theme settings (now that SwiftData is available, this will use the persisted values)

@@ -27,46 +27,147 @@ import OSLog
         // Use default values until we can load from SwiftData
     }
     
-    // Initialize with ModelContext
-    func initialize(with modelContext: ModelContext) {
+    // Initialize with ModelContext scoped to a specific account
+    func initialize(with modelContext: ModelContext, accountDID: String) {
         self.modelContext = modelContext
-        
-        // Try to fetch existing settings with timeout protection
+
+        let targetId = AppSettingsModel.settingsId(for: accountDID)
+
+        // Try to fetch existing per-account settings with timeout protection
         do {
             let descriptor = FetchDescriptor<AppSettingsModel>(
-                predicate: #Predicate { $0.id == "app_settings" }
+                predicate: #Predicate { $0.id == targetId }
             )
-            
+
             // Fetch with error handling
             let existingSettings = try modelContext.fetch(descriptor)
-            
+
             if let settings = existingSettings.first {
-                // Found existing settings
+                // Found existing per-account settings
                 self.settingsModel = settings
-                logger.debug("Loaded existing app settings from SwiftData")
+                logger.debug("Loaded existing app settings for account \(accountDID)")
             } else {
-                // Create new settings with defaults
-                let newSettings = AppSettingsModel()
-                
-                // Migrate from UserDefaults
-                newSettings.migrateFromUserDefaults()
-                
+                // No per-account row yet — check for legacy singleton to migrate from
+                let newSettings = AppSettingsModel(accountDID: accountDID)
+
+                let legacyId = AppSettingsModel.legacySharedId
+                let legacyDescriptor = FetchDescriptor<AppSettingsModel>(
+                    predicate: #Predicate { $0.id == legacyId }
+                )
+                if let legacy = try modelContext.fetch(legacyDescriptor).first {
+                    // Copy all values from the legacy singleton
+                    Self.copySettings(from: legacy, to: newSettings)
+                    logger.debug("Migrated legacy app settings to account \(accountDID)")
+                } else {
+                    // No legacy row either — migrate from UserDefaults
+                    newSettings.migrateFromUserDefaults()
+                }
+
                 modelContext.insert(newSettings)
                 self.settingsModel = newSettings
-                
+
                 // Save the context with error handling
                 try modelContext.save()
-                logger.debug("Created new app settings in SwiftData")
+                logger.debug("Created new app settings for account \(accountDID)")
             }
         } catch {
             logger.error("Error initializing app settings: \(error.localizedDescription)")
             // Continue with defaults if SwiftData fails - don't block the app
             logger.info("Continuing with UserDefaults fallback for app settings")
         }
-        
+
         // IMPORTANT: Set isInitializing to false after initialization completes
         isInitializing = false
         logger.debug("AppSettings initialization complete, isInitializing set to false")
+    }
+
+    // MARK: - Migration Helpers
+
+    /// Copy all stored properties from one AppSettingsModel to another
+    private static func copySettings(from source: AppSettingsModel, to target: AppSettingsModel) {
+        // Appearance
+        target.theme = source.theme
+        target.darkThemeMode = source.darkThemeMode
+        target.accentColor = source.accentColor
+
+        // Typography
+        target.fontStyle = source.fontStyle
+        target.fontSize = source.fontSize
+        target.lineSpacing = source.lineSpacing
+        target.letterSpacing = source.letterSpacing
+        target.dynamicTypeEnabled = source.dynamicTypeEnabled
+        target.maxDynamicTypeSize = source.maxDynamicTypeSize
+
+        // Accessibility
+        target.requireAltText = source.requireAltText
+        target.largerAltTextBadges = source.largerAltTextBadges
+        target.disableHaptics = source.disableHaptics
+
+        // Motion
+        target.reduceMotion = source.reduceMotion
+        target.prefersCrossfade = source.prefersCrossfade
+
+        // Display
+        target.increaseContrast = source.increaseContrast
+        target.boldText = source.boldText
+        target.displayScale = source.displayScale
+
+        // Reading
+        target.showReadingTimeEstimates = source.showReadingTimeEstimates
+        target.highlightLinks = source.highlightLinks
+        target.linkStyle = source.linkStyle
+
+        // Interaction
+        target.confirmBeforeActions = source.confirmBeforeActions
+        target.longPressDuration = source.longPressDuration
+        target.shakeToUndo = source.shakeToUndo
+
+        // Attribution
+        target.enableViaAttribution = source.enableViaAttribution
+
+        // Content and Media
+        target.sensitiveContentScanningEnabled = source.sensitiveContentScanningEnabled
+        target.autoplayVideos = source.autoplayVideos
+        target.useInAppBrowser = source.useInAppBrowser
+        target.showTrendingTopics = source.showTrendingTopics
+        target.showTrendingVideos = source.showTrendingVideos
+
+        // Thread Preferences
+        target.threadSortOrder = source.threadSortOrder
+        target.prioritizeFollowedUsers = source.prioritizeFollowedUsers
+        target.threadedReplies = source.threadedReplies
+        target.showHiddenPosts = source.showHiddenPosts
+
+        // Feed Preferences
+        target.showSavedFeedSamples = source.showSavedFeedSamples
+
+        // External Media
+        target.allowYouTube = source.allowYouTube
+        target.allowYouTubeShorts = source.allowYouTubeShorts
+        target.allowVimeo = source.allowVimeo
+        target.allowTwitch = source.allowTwitch
+        target.allowGiphy = source.allowGiphy
+        target.allowTenor = source.allowTenor
+        target.allowSpotify = source.allowSpotify
+        target.allowAppleMusic = source.allowAppleMusic
+        target.allowSoundCloud = source.allowSoundCloud
+        target.allowFlickr = source.allowFlickr
+
+        // WebView Embeds
+        target.useWebViewEmbeds = source.useWebViewEmbeds
+
+        // Languages
+        target.appLanguage = source.appLanguage
+        target.primaryLanguage = source.primaryLanguage
+        target.contentLanguages = source.contentLanguages
+        target.hideNonPreferredLanguages = source.hideNonPreferredLanguages
+        target.showLanguageIndicators = source.showLanguageIndicators
+
+        // Privacy
+        target.loggedOutVisibility = source.loggedOutVisibility
+
+        // MLS Chat
+        target.mlsMessageRetentionDays = source.mlsMessageRetentionDays
     }
     
     // MARK: - Helper Methods
