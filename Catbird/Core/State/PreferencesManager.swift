@@ -1470,19 +1470,19 @@ final class PreferencesManager {
     
     // Save app language (local only)
     if let appLang = appLanguage {
-      defaults?.set(appLang, forKey: "appLanguage")
+      defaults?.set(appLang, forKey: "appLanguage")  // App language is intentionally global (device-level setting)
     } else {
       defaults?.removeObject(forKey: "appLanguage")
     }
     
-    // Save primary language
-    defaults?.set(primaryLanguage, forKey: "primaryLanguage")
-    
-    // Save content languages
-    defaults?.set(contentLanguages, forKey: "contentLanguages")
-    
-    // Also save preferred languages for post composer
-    defaults?.set(contentLanguages, forKey: "userPreferredLanguages")
+    // Save primary language (per-account)
+    defaults?.set(primaryLanguage, forKey: "primaryLanguage.\(accountDID)")
+
+    // Save content languages (per-account)
+    defaults?.set(contentLanguages, forKey: "contentLanguages.\(accountDID)")
+
+    // Also save preferred languages for post composer (per-account)
+    defaults?.set(contentLanguages, forKey: "userPreferredLanguages.\(accountDID)")
     
     // Sync language preferences with server if client is available
     if let client = client {

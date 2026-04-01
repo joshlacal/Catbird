@@ -3662,8 +3662,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     await MainActor.run {
       // Switch the chat mode to MLS so the correct view is shown
-      // Using raw value directly: "Catbird Groups" is ChatTabView.ChatMode.mls.rawValue
-      UserDefaults.standard.set("Catbird Groups", forKey: "chatMode")
+      currentAppState.chatMode = "Catbird Groups"
 
       // CRITICAL FIX: Set targetMLSConversationId BEFORE switching tabs
       // This ensures the conversation list view can pick up the target even while still loading
@@ -3706,8 +3705,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     await MainActor.run {
       // Switch the chat mode to Bluesky DMs so the correct view is shown
-      // Using raw value directly: "Bluesky DMs" is ChatTabView.ChatMode.bluesky.rawValue
-      UserDefaults.standard.set("Bluesky DMs", forKey: "chatMode")
+      currentAppState.chatMode = "Bluesky DMs"
 
       // Switch to chat tab using the tab selection callback (this actually changes the tab)
       if let tabSelection = currentAppState.navigationManager.tabSelection {
