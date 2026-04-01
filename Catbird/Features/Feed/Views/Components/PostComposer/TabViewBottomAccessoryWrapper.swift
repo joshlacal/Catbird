@@ -19,8 +19,8 @@ struct TabViewBottomAccessoryWrapper: View {
   @State private var showingFullComposer = false
   // Capture the draft at sheet presentation time to avoid rebuilds from autosave mutations
   @State private var composerInitialDraft: PostComposerDraft?
-  @AppStorage("postComposerDraft") private var draftText = ""
-  @AppStorage("postComposerDraftContext") private var draftContext = ""
+  @State private var draftText = ""
+  @State private var draftContext = ""
   
   var body: some View {
     Group {

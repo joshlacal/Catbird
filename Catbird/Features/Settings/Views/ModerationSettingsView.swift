@@ -465,8 +465,8 @@ struct ModerationSettingsView: View {
                 // Update both local app state and app settings
                 appState.isAdultContentEnabled = adultContentEnabled
                 
-                // Store in UserDefaults for consistency with AppSettings
-                UserDefaults(suiteName: "group.blue.catbird.shared")?.set(adultContentEnabled, forKey: "isAdultContentEnabled")
+                // Store in UserDefaults for consistency with AppSettings (per-account key)
+                UserDefaults(suiteName: "group.blue.catbird.shared")?.set(adultContentEnabled, forKey: "isAdultContentEnabled.\(appState.userDID)")
                 
                 // Update preferences on server
                 try await appState.preferencesManager.updateAdultContentEnabled(adultContentEnabled)

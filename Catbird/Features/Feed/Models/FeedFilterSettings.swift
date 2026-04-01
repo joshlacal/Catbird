@@ -46,7 +46,41 @@ struct FeedFilter: Identifiable, Hashable {
   private var muteWordProcessor: MuteWordProcessor?
   private var languageProcessor: LanguageFilterProcessor?
 
-  init() {
+  private let accountDID: String
+  private let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
+
+  private func key(_ base: String) -> String {
+    AppSettingsModel.scopedKey(base, accountDID: accountDID)
+  }
+
+  private func legacyString(for base: String) -> String? {
+    defaults.string(forKey: base)
+  }
+
+  private func legacyStringArray(for base: String) -> [String]? {
+    defaults.stringArray(forKey: base)
+  }
+
+  private func migrateStringIfNeeded(for base: String) -> String? {
+    if let scopedValue = defaults.string(forKey: key(base)) {
+      return scopedValue
+    }
+    guard let legacyValue = legacyString(for: base) else { return nil }
+    defaults.set(legacyValue, forKey: key(base))
+    return legacyValue
+  }
+
+  private func migrateStringArrayIfNeeded(for base: String) -> [String]? {
+    if let scopedValue = defaults.stringArray(forKey: key(base)) {
+      return scopedValue
+    }
+    guard let legacyValue = legacyStringArray(for: base) else { return nil }
+    defaults.set(legacyValue, forKey: key(base))
+    return legacyValue
+  }
+
+  init(accountDID: String = "") {
+    self.accountDID = accountDID
     // Initialize with standard filters but disabled by default
     setupDefaultFilters()
     loadSavedSettings()
@@ -319,9 +353,7 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   private func loadSavedSettings() {
-    // Load filter preferences from UserDefaults
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-    if let savedFilters = defaults?.object(forKey: "FeedFilterActiveFilters") as? [String] {
+    if let savedFilters = migrateStringArrayIfNeeded(for: "FeedFilterActiveFilters") {
       activeFilterIds = Set(savedFilters)
 
       // Update filters based on saved settings
@@ -339,14 +371,13 @@ struct FeedFilter: Identifiable, Hashable {
       }
     }
     // Load additional settings
-    if let raw = defaults?.string(forKey: "FeedSortMode"), let mode = FeedSortMode(rawValue: raw) {
+    if let raw = migrateStringIfNeeded(for: "FeedSortMode"), let mode = FeedSortMode(rawValue: raw) {
       sortMode = mode
     }
   }
 
   private func loadMuteWords() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-    let muteWordsString = defaults?.string(forKey: "muteWords") ?? ""
+    let muteWordsString = migrateStringIfNeeded(for: "muteWords") ?? ""
     let muteWords = muteWordsString.split(separator: ",").map {
       String($0).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -358,8 +389,7 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   private func loadLanguageFilter() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-    let contentLanguages = defaults?.stringArray(forKey: "contentLanguages") ?? ["en"]
+    let contentLanguages = migrateStringArrayIfNeeded(for: "contentLanguages") ?? ["en"]
     let isLanguageFilterEnabled =
       filters.first { $0.name == "Filter by Language" }?.isEnabled ?? false
 
@@ -382,11 +412,8 @@ struct FeedFilter: Identifiable, Hashable {
   }
 
   private func saveSettings() {
-    // Save filter preferences to UserDefaults
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-
-    defaults?.set(Array(activeFilterIds), forKey: "FeedFilterActiveFilters")
-    defaults?.set(sortMode.rawValue, forKey: "FeedSortMode")
+    defaults.set(Array(activeFilterIds), forKey: key("FeedFilterActiveFilters"))
+    defaults.set(sortMode.rawValue, forKey: key("FeedSortMode"))
   }
 
   // Update the mute word processor
@@ -430,8 +457,7 @@ struct FeedFilter: Identifiable, Hashable {
 
   // Load persisted sort mode
   func loadSortMode() {
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-    if let raw = defaults?.string(forKey: "FeedSortMode"),
+    if let raw = migrateStringIfNeeded(for: "FeedSortMode"),
       let mode = FeedSortMode(rawValue: raw)
     {
       sortMode = mode

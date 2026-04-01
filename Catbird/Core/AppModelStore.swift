@@ -11,22 +11,28 @@ actor AppModelStore {
 
   // MARK: - Settings (AppSettingsModel)
 
-  func loadAppSettings() throws -> AppSettingsModel {
-    // Capture the static sharedId into a local value so #Predicate treats it as a value, not a key path
-    let sharedId = AppSettingsModel.sharedId
-    if let s = try modelContext.fetch(FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == sharedId })).first {
+  func loadAppSettings(accountDID: String) throws -> AppSettingsModel {
+    // Capture the computed id into a local value so #Predicate treats it as a value, not a key path
+    let targetId = AppSettingsModel.settingsId(for: accountDID)
+    if let s = try modelContext.fetch(FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == targetId })).first {
       return s
     }
-    let s = AppSettingsModel()
-    s.migrateFromUserDefaults()
+    let s = AppSettingsModel(accountDID: accountDID)
+    if let legacy = try AppSettingsModel.legacySettingsForMigration(in: modelContext) {
+      AppSettingsModel.copySettings(from: legacy, to: s)
+      modelContext.delete(legacy)
+    } else {
+      let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: modelContext)
+      s.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback)
+    }
     modelContext.insert(s)
     try modelContext.save()
-    log.debug("Created default AppSettingsModel")
+    log.debug("Created default AppSettingsModel for account \(accountDID)")
     return s
   }
 
-  func updateAppSettings(_ apply: (AppSettingsModel) -> Void) throws {
-    let s = try loadAppSettings()
+  func updateAppSettings(accountDID: String, _ apply: (AppSettingsModel) -> Void) throws {
+    let s = try loadAppSettings(accountDID: accountDID)
     apply(s)
     try modelContext.save()
   }

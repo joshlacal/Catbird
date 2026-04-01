@@ -11,6 +11,7 @@ final class PreferencesManager {
   // MARK: - Properties
 
   private let logger = Logger(subsystem: "blue.catbird", category: "PreferencesManager")
+  private let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
 
   // Add cache for server preferences to maintain consistency
   private var cachedServerPreferences: Preferences?
@@ -40,6 +41,9 @@ final class PreferencesManager {
   }
 
   private(set) var state: PreferencesState = .initializing
+
+  // Per-account scoping
+  private(set) var accountDID: String = ""
 
   // Core dependencies
   private weak var client: ATProtoClient?
@@ -71,12 +75,61 @@ final class PreferencesManager {
     logger.debug("ModelContext set for PreferencesManager")
   }
 
+  /// Configure the manager for a specific account
+  func configure(accountDID: String) {
+    self.accountDID = accountDID
+    // Clear cache so next fetch loads the correct account's data
+    cachedServerPreferences = nil
+    logger.debug("PreferencesManager configured for account: \(accountDID)")
+  }
+
+  private func scopedKey(_ baseKey: String) -> String {
+    AppSettingsModel.scopedKey(baseKey, accountDID: accountDID)
+  }
+
+  private func scopedPreferencesFetchDescriptor() -> FetchDescriptor<Preferences> {
+    let did = self.accountDID
+    return FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { $0.accountDID == did }
+    )
+  }
+
+  private func migrateLegacyPreferencesIfNeeded(in modelContext: ModelContext) throws -> Preferences? {
+    guard !accountDID.isEmpty else { return nil }
+
+    if let scoped = try modelContext.fetch(scopedPreferencesFetchDescriptor()).first {
+      return scoped
+    }
+
+    let legacyDescriptor = FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { $0.accountDID.isEmpty }
+    )
+    guard let legacy = try modelContext.fetch(legacyDescriptor).first else {
+      return nil
+    }
+
+    let accountRowDescriptor = FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { !$0.accountDID.isEmpty }
+    )
+    let existingAccountRows = try modelContext.fetch(accountRowDescriptor)
+
+    guard existingAccountRows.isEmpty else {
+      logger.debug("Leaving legacy preferences row in place because per-account preferences already exist")
+      return nil
+    }
+
+    legacy.accountDID = accountDID
+    try modelContext.save()
+    logger.debug("Migrated legacy preferences row to account \(self.accountDID)")
+    return legacy
+  }
+
   // MARK: - Clear Preferences
 
-  /// Clears all user preferences when logging out
+  /// Clears local preferences for the current account when logging out
   @MainActor
   func clearAllPreferences() async {
-    logger.info("Clearing all preferences data due to logout")
+    logger.info("Clearing preferences for current account due to logout")
 
     // Clear cached server preferences
     cachedServerPreferences = nil
@@ -90,11 +143,9 @@ final class PreferencesManager {
     }
 
     do {
-      // Fetch all preferences
-      let descriptor = FetchDescriptor<Preferences>()
-      let preferences = try modelContext.fetch(descriptor)
+      let preferences = try modelContext.fetch(scopedPreferencesFetchDescriptor())
 
-      // Delete all existing preferences
+      // Delete current account's preferences
       for pref in preferences {
         modelContext.delete(pref)
       }
@@ -102,7 +153,7 @@ final class PreferencesManager {
       // Save changes
       try modelContext.save()
 
-      logger.info("All preferences data successfully cleared")
+      logger.info("Preferences for current account successfully cleared")
       state = .ready
       // Also clear accept-labelers header since there are no preferences
       if let client = client {
@@ -348,7 +399,7 @@ final class PreferencesManager {
     }
   }
 
-  /// Loads preferences from SwiftData
+  /// Loads preferences from SwiftData for the current account
   @MainActor
   func loadPreferences() async throws -> Preferences? {
     guard let modelContext = modelContext else {
@@ -356,8 +407,11 @@ final class PreferencesManager {
       throw PreferencesManagerError.modelContextNotInitialized
     }
 
-    let descriptor = FetchDescriptor<Preferences>()
-    let preferences = try modelContext.fetch(descriptor)
+    if let migrated = try migrateLegacyPreferencesIfNeeded(in: modelContext) {
+      return migrated
+    }
+
+    let preferences = try modelContext.fetch(scopedPreferencesFetchDescriptor())
     return preferences.first
   }
 
@@ -373,9 +427,12 @@ final class PreferencesManager {
       logger.error("ModelContext not available for synchronous preferences load")
       throw PreferencesManagerError.modelContextNotInitialized
     }
-    
-    let descriptor = FetchDescriptor<Preferences>()
-    let preferences = try modelContext.fetch(descriptor)
+
+    if let migrated = try migrateLegacyPreferencesIfNeeded(in: modelContext) {
+      return migrated
+    }
+
+    let preferences = try modelContext.fetch(scopedPreferencesFetchDescriptor())
     return preferences.first
   }
 
@@ -406,8 +463,8 @@ final class PreferencesManager {
     }
 
     // Last resort: create default preferences
-    logger.debug("Creating default preferences")
-    let newPreferences = Preferences()
+    logger.debug("Creating default preferences for account: \(self.accountDID)")
+    let newPreferences = Preferences(accountDID: self.accountDID)
     modelContext.insert(newPreferences)
     try modelContext.save()
     return newPreferences
@@ -438,6 +495,7 @@ final class PreferencesManager {
       existingPreferences.nuxStates = preferences.nuxStates
       existingPreferences.interests = preferences.interests
     } else {
+      preferences.accountDID = accountDID
       modelContext.insert(preferences)
     }
     try modelContext.save()
@@ -1266,7 +1324,10 @@ final class PreferencesManager {
     }
 
     // Use SwiftData's persistence mechanism
-    let descriptor = FetchDescriptor<Preferences>()
+    let did = self.accountDID
+    let descriptor = FetchDescriptor<Preferences>(
+      predicate: #Predicate<Preferences> { $0.accountDID == did }
+    )
     let preferences = try modelContext.fetch(descriptor)
 
     guard let prefs = preferences.first else {
@@ -1382,7 +1443,7 @@ final class PreferencesManager {
 
     // Adult content setting
     appState.isAdultContentEnabled = preferences.adultContentEnabled
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(preferences.adultContentEnabled, forKey: "isAdultContentEnabled")
+    sharedDefaults.set(preferences.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
 
     // Thread view preferences
     if let threadViewPref = preferences.threadViewPref {
@@ -1402,7 +1463,7 @@ final class PreferencesManager {
     preferences.adultContentEnabled = enabled
 
     // Also update the app state's copy for consistency
-    UserDefaults(suiteName: "group.blue.catbird.shared")?.set(enabled, forKey: "isAdultContentEnabled")
+    sharedDefaults.set(enabled, forKey: scopedKey("isAdultContentEnabled"))
 
     try await saveAndSyncPreferences(preferences)
   }
@@ -1443,23 +1504,21 @@ final class PreferencesManager {
   @MainActor
   func updateLanguagePreferences(appLanguage: String?, primaryLanguage: String, contentLanguages: [String]) async throws {
     // Store in UserDefaults for immediate persistence
-    let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-    
     // Save app language (local only)
     if let appLang = appLanguage {
-      defaults?.set(appLang, forKey: "appLanguage")
+      sharedDefaults.set(appLang, forKey: "appLanguage")  // App language is intentionally global (device-level setting)
     } else {
-      defaults?.removeObject(forKey: "appLanguage")
+      sharedDefaults.removeObject(forKey: "appLanguage")
     }
     
-    // Save primary language
-    defaults?.set(primaryLanguage, forKey: "primaryLanguage")
-    
-    // Save content languages
-    defaults?.set(contentLanguages, forKey: "contentLanguages")
-    
-    // Also save preferred languages for post composer
-    defaults?.set(contentLanguages, forKey: "userPreferredLanguages")
+    // Save primary language (per-account)
+    sharedDefaults.set(primaryLanguage, forKey: scopedKey("primaryLanguage"))
+
+    // Save content languages (per-account)
+    sharedDefaults.set(contentLanguages, forKey: scopedKey("contentLanguages"))
+
+    // Also save preferred languages for post composer (per-account)
+    sharedDefaults.set(contentLanguages, forKey: scopedKey("userPreferredLanguages"))
     
     // Sync language preferences with server if client is available
     if let client = client {
