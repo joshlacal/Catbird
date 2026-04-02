@@ -25,7 +25,6 @@ struct MLSAdminDashboardView: View {
     // MARK: - State
 
     @State private var viewModel: MLSAdminDashboardViewModel?
-    @State private var showingReportsView = false
     @State private var showingError = false
     @State private var errorMessage: String?
     @State private var isAuthorized = false
@@ -77,14 +76,6 @@ struct MLSAdminDashboardView: View {
         }
         .refreshable {
             await viewModel?.refresh()
-        }
-        .sheet(isPresented: $showingReportsView) {
-            NavigationStack {
-                MLSReportsView(
-                    conversationId: conversationId,
-                    conversationManager: conversationManager
-                )
-            }
         }
         .alert("Error", isPresented: $showingError) {
             Button("OK", role: .cancel) {}
@@ -141,9 +132,6 @@ struct MLSAdminDashboardView: View {
                     keyPackageSection(stats: keyStats, viewModel: viewModel)
                 }
 
-                // Reports section
-                reportsSection(viewModel: viewModel)
-
                 // Member activity
                 if let stats = viewModel.adminStats {
                     memberActivitySection(stats: stats, viewModel: viewModel)
@@ -172,10 +160,6 @@ struct MLSAdminDashboardView: View {
                         .font(.caption)
                 }
 
-                if viewModel.hasPendingReports {
-                    Label("\(viewModel.pendingReportsCount) pending report\(viewModel.pendingReportsCount == 1 ? "" : "s")", systemImage: "doc.text")
-                        .font(.caption)
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -260,54 +244,6 @@ struct MLSAdminDashboardView: View {
             }
             .padding(.horizontal)
         }
-    }
-
-    // MARK: - Reports Section
-
-    @ViewBuilder
-    private func reportsSection(viewModel: MLSAdminDashboardViewModel) -> some View {
-        Button {
-            showingReportsView = true
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "doc.text.fill")
-                            .font(.title2)
-                            .foregroundStyle(.orange)
-
-                        Text("Reports")
-                            .font(.headline)
-                    }
-
-                    if viewModel.hasPendingReports {
-                        HStack {
-                            Image(systemName: "exclamationmark.circle.fill")
-                            Text("\(viewModel.pendingReportsCount) pending")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    } else {
-                        Text("No pending reports")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(viewModel.hasPendingReports ? Color.orange.opacity(0.1) : Color.clear)
-            .glassEffect(viewModel.hasPendingReports ? .regular.tint(.orange).interactive() : .regular.interactive())
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal)
     }
 
     // MARK: - Member Activity Section

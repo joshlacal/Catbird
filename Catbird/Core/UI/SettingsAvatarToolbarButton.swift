@@ -12,37 +12,66 @@ struct SettingsAvatarToolbarButton: View {
 
     if accounts.count > 1 {
       Menu {
-        ForEach(accounts) { account in
-          Button {
-            guard !account.isActive else { return }
-            Task {
-              await appStateManager.switchAccount(to: account.did)
-            }
-          } label: {
-            let displayName = account.cachedDisplayName ?? account.cachedHandle ?? account.handle ?? account.did
-            let handle = account.cachedHandle ?? account.handle
-            Label {
-              Text(displayName)
+        Section("Accounts") {
+          ForEach(accounts) { account in
+            Button {
+              guard !account.isActive else { return }
+              Task {
+                await appStateManager.switchAccount(to: account.did)
+              }
+            } label: {
+              let displayName = account.cachedDisplayName ?? account.cachedHandle ?? account.handle ?? account.did
+              let handle = account.cachedHandle ?? account.handle
+//            Label {
+//              Text(displayName)
+//              if let handle, handle != displayName {
+//                Text("@\(handle)")
+//              }
+//            } icon: {
+//              if let image = avatarImages[account.did] {
+//                #if os(iOS)
+//                  Image(uiImage: image)
+//                    .resizable()
+//                #elseif os(macOS)
+//                  Image(nsImage: image)
+//                    .resizable()
+//                #endif
+//              } else if account.isActive {
+//                Image(systemName: "checkmark.circle.fill")
+//              } else {
+//                Image(systemName: "person.circle")
+//              }
+//            }
+              
+              Label {
+                Text(displayName)
+                  .appBody()
+                  .foregroundStyle(.primary)
+                  .lineLimit(1)
+              } icon: {
+                if let image = avatarImages[account.did] {
+                  #if os(iOS)
+                    Image(uiImage: image)
+                      .resizable()
+                  #elseif os(macOS)
+                    Image(nsImage: image)
+                      .resizable()
+                  #endif
+                } else if account.isActive {
+                  Image(systemName: "checkmark.circle.fill")
+                } else {
+                  Image(systemName: "person.circle")
+                }
+              }
               if let handle, handle != displayName {
                 Text("@\(handle)")
-              }
-            } icon: {
-              if let image = avatarImages[account.did] {
-                #if os(iOS)
-                  Image(uiImage: image)
-                    .resizable()
-                #elseif os(macOS)
-                  Image(nsImage: image)
-                    .resizable()
-                #endif
-              } else if account.isActive {
-                Image(systemName: "checkmark.circle.fill")
-              } else {
-                Image(systemName: "person.circle")
+                  .appCaption()
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
               }
             }
+            .disabled(account.isActive)
           }
-          .disabled(account.isActive)
         }
       } label: {
         avatarLabel

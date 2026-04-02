@@ -25,6 +25,7 @@ struct MLSMemberActionsSheet: View {
     let isCurrentUserAdmin: Bool
     let isCurrentUserCreator: Bool
     let conversationManager: MLSConversationManager
+    var apiClient: MLSAPIClient?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -35,6 +36,7 @@ struct MLSMemberActionsSheet: View {
     @State private var confirmationAction: MemberAction?
     @State private var showingError = false
     @State private var errorMessage: String?
+    @State private var showingReportSpamSheet = false
 
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSMemberActions")
 
@@ -165,6 +167,18 @@ struct MLSMemberActionsSheet: View {
                     .padding(.vertical, 8)
                 }
 
+                // Report as Spam (available for any non-self member)
+                if !isSelf && apiClient != nil {
+                    Section {
+                        Button {
+                            showingReportSpamSheet = true
+                        } label: {
+                            Label("Report as Spam", systemImage: "exclamationmark.bubble")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+
                 // Admin actions (conditionally visible)
                 if isCurrentUserAdmin && (canRemove || canPromote || canDemote || canPromoteModerator || canDemoteModerator) {
                     Section("Admin Actions") {
@@ -257,6 +271,16 @@ struct MLSMemberActionsSheet: View {
             } message: {
                 if let errorMessage = errorMessage {
                     Text(errorMessage)
+                }
+            }
+            .sheet(isPresented: $showingReportSpamSheet) {
+                if let apiClient = apiClient {
+                    MLSReportSpamSheet(
+                        conversationId: conversationId,
+                        reportedDid: member.did.description,
+                        reportedDisplayName: memberDisplayName,
+                        apiClient: apiClient
+                    )
                 }
             }
         }

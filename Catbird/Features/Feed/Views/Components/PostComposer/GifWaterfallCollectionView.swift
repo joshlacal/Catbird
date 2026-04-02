@@ -275,8 +275,7 @@ final class GifCollectionViewCell: UICollectionViewCell {
         currentGifId = gif.id
         
         let gifView = GifVideoView(gif: gif, onTap: {})
-            .disabled(true) // Disable tap since we handle it at cell level
-            .opacity(1.0) // Explicit opacity to prevent fade issues
+            .allowsHitTesting(false) // Disable tap since we handle it at cell level
             .id(gif.id) // Force SwiftUI to recreate view when GIF changes
 
         hostingController.rootView = AnyView(gifView)

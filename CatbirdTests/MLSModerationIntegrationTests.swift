@@ -191,104 +191,6 @@ struct MLSModerationIntegrationTests {
     #expect(adminDids.contains(adminDid))
   }
 
-  // MARK: - Report Member Integration Tests
-
-  @Test("User reports member - admin retrieves and resolves")
-  func testReportMemberFullWorkflow() async throws {
-    // Phase 1: Reporter submits report
-    let (reporterManager, reporterAPI) = try await createMockConversationManager(userDid: reporterDid)
-    let convoId = "test-convo-report"
-
-    let conversation = createMockConversation(
-      id: convoId,
-      members: [adminDid, reporterDid, violatorDid],
-      admins: [adminDid]
-    )
-    reporterManager.conversations[convoId] = conversation
-
-    let reportId = "report-12345"
-    let reportOutput = BlueCatbirdMlsChatReport.Output(
-      reportId: reportId,
-      submittedAt: ATProtocolDate(date: Date())
-    )
-    reporterAPI.mockReportMemberResponse = (200, reportOutput)
-
-    // Submit report
-    let submittedReportId = try await reporterManager.reportMember(
-      in: convoId,
-      memberDid: violatorDid,
-      reason: "harassment",
-      details: "Repeated offensive messages"
-    )
-
-    #expect(submittedReportId == reportId)
-
-    // Phase 2: Admin retrieves reports
-    let (adminManager, adminAPI) = try await createMockConversationManager(userDid: adminDid)
-    adminManager.conversations[convoId] = conversation
-
-    let mockReport = BlueCatbirdMlsChatReport.ReportView(
-      reportId: reportId,
-      convoId: convoId,
-      reporterDid: try DID(didString: reporterDid),
-      reportedDid: try DID(didString: violatorDid),
-      category: "harassment",
-      status: "pending",
-      submittedAt: ATProtocolDate(date: Date()),
-      resolvedAt: nil,
-      resolvedBy: nil
-    )
-    let reportsOutput = BlueCatbirdMlsChatReport.Output(reports: [mockReport])
-    adminAPI.mockGetReportsResponse = (200, reportsOutput)
-
-    // Get reports (admin only)
-    let reports = try await adminManager.getReports(for: convoId, status: "pending")
-    #expect(reports.count == 1)
-    #expect(reports.first?.id == reportId)
-
-    // Phase 3: Admin resolves report
-    let resolveOutput = BlueCatbirdMlsChatReport.Output(success: true)
-    adminAPI.mockResolveReportResponse = (200, resolveOutput)
-
-    try await adminManager.resolveReport(
-      reportId,
-      action: "removed_member",
-      notes: "Removed violator from conversation"
-    )
-
-    // Verify resolution was processed
-    // (In real implementation, this would update report status in database)
-  }
-
-  @Test("Cannot report self")
-  func testCannotReportSelf() async throws {
-    let (manager, mockAPI) = try await createMockConversationManager(userDid: reporterDid)
-    let convoId = "test-convo-self-report"
-
-    let conversation = createMockConversation(
-      id: convoId,
-      members: [adminDid, reporterDid],
-      admins: [adminDid]
-    )
-    manager.conversations[convoId] = conversation
-
-    mockAPI.mockReportMemberResponse = (400, nil)
-
-    // Attempt to report self
-    do {
-      _ = try await manager.reportMember(
-        in: convoId,
-        memberDid: reporterDid, // Same as reporter
-        reason: "spam",
-        details: nil
-      )
-      Issue.record("Expected error when reporting self")
-    } catch {
-      // Expected error
-      #expect(error is MLSConversationError)
-    }
-  }
-
   // MARK: - Block Status Integration Tests
 
   @Test("Check blocks before adding members")
@@ -420,9 +322,6 @@ final class MockMLSAPIClient: MLSAPIClient {
   var mockRemoveMemberResponse: (Int, BlueCatbirdMlsChatCommitGroupChange.Output?)?
   var mockPromoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
   var mockDemoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
-  var mockReportMemberResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
-  var mockGetReportsResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
-  var mockResolveReportResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
   var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
   var mockGetKeyPackageStatsResponse: (Int, BlueCatbirdMlsChatPublishKeyPackages.Output?)?
   var mockGetAdminStatsResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
@@ -431,7 +330,6 @@ final class MockMLSAPIClient: MLSAPIClient {
   var onRemoveMember: ((BlueCatbirdMlsChatCommitGroupChange.Input) -> Void)?
   var onPromoteAdmin: ((BlueCatbirdMlsChatUpdateConvo.Input) -> Void)?
   var onDemoteAdmin: ((BlueCatbirdMlsChatUpdateConvo.Input) -> Void)?
-  var onReportMember: ((BlueCatbirdMlsChatReport.Input) -> Void)?
   var onSendMessage: ((String, Data) -> Void)?
 
   override init() {

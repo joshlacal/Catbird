@@ -7,7 +7,14 @@ enum PetrelSentryBridge {
         PetrelAuthEvents.addObserver { event in
             let extras = authEventToExtras(event)
             let (level, message) = authEventToSentry(event)
-            SentryService.captureMessage(message, level: level, category: "Petrel.Authentication", extras: extras)
+
+            if level == "info" {
+                // Info-level auth events are informational — record as breadcrumbs
+                // to avoid creating Sentry issues for routine state changes.
+                SentryService.addBreadcrumb(level: level, category: "Petrel.Authentication", message: message)
+            } else {
+                SentryService.captureMessage(message, level: level, category: "Petrel.Authentication", extras: extras)
+            }
         }
 
         // Keep legacy log observer for non-auth breadcrumbs (network, general)

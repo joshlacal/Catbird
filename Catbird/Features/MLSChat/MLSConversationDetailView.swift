@@ -122,15 +122,12 @@ struct MLSConversationDetailView: View {
   @State private var showingLeaveConfirmation = false
   @State private var showingGroupDetail = false
   @State private var showingAdminDashboard = false
-  @State private var showingReportsView = false
-  @State private var pendingReportsCount = 0
   @State private var isCurrentUserAdmin = false
   @State private var recoveryState: RecoveryState = .none
   @State private var showingRecoveryError = false
-  @State private var showingReportSheet = false
-  @State private var reportMessageId: String?
-  @State private var reportMemberDID: String?
-  @State private var reportMemberName: String?
+  @State private var showingReportSpamSheet = false
+  @State private var reportSpamDID: String?
+  @State private var reportSpamDisplayName: String?
   @State private var isViewActive = false
   @State private var unifiedDataSource: MLSConversationDataSource?
   @State private var showingEmojiPicker = false
@@ -163,10 +160,10 @@ struct MLSConversationDetailView: View {
 
   // Voice DM support
   @State private var voiceSender: MLSVoiceSender?
-  @State private var isRecordingVoice = false
+  @State private var voiceComposerMode: ComposerMode = .compose
+  @State private var voicePreview: MLSVoiceSender.VoicePreview?
 
-  // Delete/Report state
-  @State private var messageToReport: Message?
+  // Delete state
   @State private var messageToDelete: Message?
   @State private var showingDeleteAlert = false
 
@@ -234,23 +231,46 @@ struct MLSConversationDetailView: View {
               Task { await sendMLSMessage(text: text, embed: embed) }
             },
             onAttachTapped: { },
-            onVoiceTapped: {
-              Task { await toggleVoiceRecording() }
-            },
             onPhotoPicker: {
-                showingPhotoPicker = true
-            }, onGifPicker: {
-                showingGifPicker = true
-            }, onPostPicker: {
-                showingPostPicker = true
-            }, isRecording: isRecordingVoice, onVoiceCancelled: {
-                Task { await cancelVoiceRecording() }
+              showingPhotoPicker = true
+            },
+            onGifPicker: {
+              showingGifPicker = true
+            },
+            onPostPicker: {
+              showingPostPicker = true
             },
             embedPreviewImage: embedPreviewUIImage,
             hasEmbed: unifiedDataSource?.attachedEmbed != nil,
             onEmbedRemoved: {
               unifiedDataSource?.attachedEmbed = nil
               embedPreviewUIImage = nil
+            },
+            voiceMode: voiceComposerMode,
+            voicePreviewURL: voicePreview?.localURL,
+            voiceRecordingDuration: {
+              if case .recording(let duration) = voiceSender?.state {
+                return duration
+              }
+              return 0
+            }(),
+            onVoiceRecordingStarted: {
+              Task { await startVoiceRecording() }
+            },
+            onVoiceRecordingLocked: {
+              lockVoiceRecording()
+            },
+            onVoiceRecordingStopped: {
+              Task { await stopAndPreview() }
+            },
+            onVoiceRecordingCancelled: {
+              cancelVoiceRecording()
+            },
+            onVoicePreviewSend: {
+              Task { await sendVoicePreview() }
+            },
+            onVoicePreviewDiscard: {
+              discardVoicePreview()
             }
           )
         )
@@ -447,26 +467,7 @@ struct MLSConversationDetailView: View {
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
-  // MARK: - Composer Configuration (passed to UIKit inputAccessoryView)
-
-  @MainActor
-  private func toggleVoiceRecording() async {
-    if isRecordingVoice {
-      await finishVoiceRecording()
-    } else {
-      await startVoiceRecording()
-    }
-  }
-
-  @MainActor
-  private func cancelVoiceRecording() async {
-    guard isRecordingVoice else { return }
-    withAnimation(.easeInOut(duration: 0.2)) {
-      isRecordingVoice = false
-    }
-    voiceSender?.cancelRecording()
-    logger.debug("Voice recording cancelled by slide-up gesture")
-  }
+  // MARK: - Voice Recording
 
   @MainActor
   private func startVoiceRecording() async {
@@ -476,32 +477,61 @@ struct MLSConversationDetailView: View {
     }
     do {
       try await voiceSender?.startRecording()
-      withAnimation(.easeInOut(duration: 0.2)) {
-        isRecordingVoice = true
-      }
+      voiceComposerMode = .recording(locked: false)
     } catch {
       logger.error("Failed to start voice recording: \(error.localizedDescription)")
     }
   }
 
   @MainActor
-  private func finishVoiceRecording() async {
+  private func lockVoiceRecording() {
+    voiceComposerMode = .recording(locked: true)
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+  }
+
+  @MainActor
+  private func stopAndPreview() async {
     guard let sender = voiceSender else { return }
-    withAnimation(.easeInOut(duration: 0.2)) {
-      isRecordingVoice = false
+    do {
+      let preview = try await sender.finishRecording()
+      voicePreview = preview
+      voiceComposerMode = .preview(
+        duration: TimeInterval(preview.durationMs) / 1000.0,
+        waveform: preview.waveform
+      )
+    } catch {
+      logger.error("Failed to prepare voice preview: \(error.localizedDescription)")
+      voiceComposerMode = .compose
     }
+  }
+
+  @MainActor
+  private func sendVoicePreview() async {
+    guard let preview = voicePreview, let sender = voiceSender else { return }
+    voiceComposerMode = .compose
+    voicePreview = nil
     do {
       guard let manager = await appState.getMLSConversationManager() else {
         logger.error("Failed to get MLS manager for voice send")
         return
       }
-      try await sender.finishAndSend(
-        convoId: conversationId,
-        manager: manager
-      )
+      try await sender.send(preview: preview, convoId: conversationId, manager: manager)
     } catch {
       logger.error("Failed to send voice message: \(error.localizedDescription)")
     }
+  }
+
+  @MainActor
+  private func discardVoicePreview() {
+    voiceSender?.discardPreview()
+    voicePreview = nil
+    voiceComposerMode = .compose
+  }
+
+  @MainActor
+  private func cancelVoiceRecording() {
+    voiceSender?.cancelRecording()
+    voiceComposerMode = .compose
   }
 
   // MARK: - Message Long Press Handler
@@ -510,10 +540,9 @@ struct MLSConversationDetailView: View {
     let generator = UIImpactFeedbackGenerator(style: .soft)
     generator.impactOccurred()
 
-    // Store for potential report action
-    reportMessageId = message.id
-    reportMemberDID = message.senderID
-    reportMemberName = message.senderDisplayName
+    // Store for potential report spam action
+    reportSpamDID = message.senderID
+    reportSpamDisplayName = message.senderDisplayName
   }
 
   // MARK: - Native MLS Message List
@@ -823,11 +852,8 @@ struct MLSConversationDetailView: View {
       .sheet(isPresented: $showingAdminDashboard) {
         adminDashboardSheet
       }
-      .sheet(isPresented: $showingReportsView) {
-        reportsSheet
-      }
-      .sheet(isPresented: $showingReportSheet) {
-        reportMemberSheet
+      .sheet(isPresented: $showingReportSpamSheet) {
+        reportSpamSheet
       }
       .alert("Send Failed", isPresented: $showingSendError) {
         Button("OK", role: .cancel) {}
@@ -873,32 +899,16 @@ struct MLSConversationDetailView: View {
   }
 
   @ViewBuilder
-  private var reportsSheet: some View {
-    if #available(iOS 26.0, *),
-      let conversationManager = viewModel?.conversationManager
+  private var reportSpamSheet: some View {
+    if let did = reportSpamDID,
+      let apiClient = viewModel?.apiClient
     {
-      NavigationStack {
-        MLSReportsView(
-          conversationId: conversationId,
-          conversationManager: conversationManager
-        )
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var reportMemberSheet: some View {
-    if let memberDID = reportMemberDID,
-      let conversationManager = viewModel?.conversationManager
-    {
-      NavigationStack {
-        MLSReportMemberSheet(
-          conversationId: conversationId,
-          memberDid: memberDID,
-          memberDisplayName: reportMemberName ?? memberDID,
-          conversationManager: conversationManager
-        )
-      }
+      MLSReportSpamSheet(
+        conversationId: conversationId,
+        reportedDid: did,
+        reportedDisplayName: reportSpamDisplayName ?? did,
+        apiClient: apiClient
+      )
     }
   }
 
@@ -1015,7 +1025,6 @@ struct MLSConversationDetailView: View {
     }
 
     await checkAdminStatus()
-    await loadPendingReportsCount()
 
     // Mark all messages in this conversation as read
     await markMessagesAsRead()
@@ -1144,26 +1153,6 @@ struct MLSConversationDetailView: View {
     //         }
     //     }
     //
-    //     ToolbarItem(placement: .primaryAction) {
-    //         Button {
-    //             showingReportsView = true
-    //         } label: {
-    //             Image(systemName: "doc.text.fill")
-    //                 .overlay(alignment: .topTrailing) {
-    //                     if pendingReportsCount > 0 {
-    //                         Circle()
-    //                             .fill(Color.red)
-    //                             .frame(width: 8, height: 8)
-    //                             .offset(x: 4, y: -4)
-    //                     }
-    //                 }
-    //                 .accessibilityLabel(
-    //                     pendingReportsCount > 0 ?
-    //                         "\(pendingReportsCount) pending reports" :
-    //                         "Reports"
-    //                 )
-    //         }
-    //     }
     // }
 
     ToolbarItem(placement: .primaryAction) {
@@ -1176,7 +1165,7 @@ struct MLSConversationDetailView: View {
     }
   }
 
-  // MARK: - Admin Status and Reports
+  // MARK: - Admin Status
 
   @MainActor
   private func checkAdminStatus() async {
@@ -1197,28 +1186,6 @@ struct MLSConversationDetailView: View {
     logger.debug("Admin status checked: \(self.isCurrentUserAdmin)")
   }
 
-  @MainActor
-  private func loadPendingReportsCount() async {
-    guard isCurrentUserAdmin,
-      let conversationManager = viewModel?.conversationManager
-    else {
-      pendingReportsCount = 0
-      return
-    }
-
-    do {
-      let (reports, _) = try await conversationManager.loadReports(
-        for: conversationId,
-        limit: 50,
-        cursor: nil as String?
-      )
-      pendingReportsCount = reports.filter { $0.status == "pending" }.count
-      logger.debug("Loaded pending reports count: \(self.pendingReportsCount)")
-    } catch {
-      logger.error("Failed to load pending reports count: \(error.localizedDescription)")
-      pendingReportsCount = 0
-    }
-  }
 
   // MARK: - Other User (1:1)
 
@@ -1239,7 +1206,7 @@ struct MLSConversationDetailView: View {
 
   @ViewBuilder
   private var encryptionStatusHeader: some View {
-    let avatarSize: CGFloat = 44
+    let avatarSize: CGFloat = 60
 
     ZStack(alignment: .bottom) {
       Group {
@@ -1277,7 +1244,7 @@ struct MLSConversationDetailView: View {
             .background(.ultraThinMaterial, in: Capsule())
         }
       }
-      .offset(y: 10)
+      .offset(y: 5)
     }
     .padding(.bottom, 10)
     .onTapGesture {

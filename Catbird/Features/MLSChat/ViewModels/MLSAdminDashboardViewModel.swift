@@ -22,13 +22,9 @@ final class MLSAdminDashboardViewModel {
     /// Key package statistics
     private(set) var keyPackageStats: BlueCatbirdMlsChatPublishKeyPackages.Output?
 
-    /// Pending reports count
-    private(set) var pendingReportsCount = 0
-
     /// Loading states
     private(set) var isLoadingStats = false
     private(set) var isLoadingKeyPackages = false
-    private(set) var isLoadingReports = false
 
     /// Error state
     private(set) var error: Error?
@@ -70,11 +66,9 @@ final class MLSAdminDashboardViewModel {
         // Load all data in parallel
         async let statsTask = loadAdminStats()
         async let keyPackagesTask = loadKeyPackageStats()
-        async let reportsTask = loadPendingReportsCount()
 
         await statsTask
         await keyPackagesTask
-        await reportsTask
 
         lastRefreshDate = Date()
     }
@@ -113,31 +107,6 @@ final class MLSAdminDashboardViewModel {
         }
     }
 
-    /// Load pending reports count
-    @MainActor
-    private func loadPendingReportsCount() async {
-        guard !isLoadingReports else { return }
-
-        isLoadingReports = true
-        defer { isLoadingReports = false }
-
-        do {
-            // Load first page of reports to get count
-            let (reports, _) = try await conversationManager.loadReports(
-                for: conversationId,
-                limit: 50,
-                cursor: nil as String?
-            )
-
-            pendingReportsCount = reports.filter { $0.status == "pending" }.count
-            logger.debug("Loaded \(self.pendingReportsCount) pending reports")
-        } catch {
-            pendingReportsCount = 0
-            self.error = error
-            logger.error("Failed to load reports: \(error.localizedDescription)")
-        }
-    }
-
     /// Refresh all data
     @MainActor
     func refresh() async {
@@ -154,7 +123,7 @@ final class MLSAdminDashboardViewModel {
 
     /// Whether any loading is in progress
     var isLoading: Bool {
-        isLoadingStats || isLoadingKeyPackages || isLoadingReports
+        isLoadingStats || isLoadingKeyPackages
     }
 
     /// Key package health status
@@ -173,14 +142,9 @@ final class MLSAdminDashboardViewModel {
         }
     }
 
-    /// Whether there are any pending reports
-    var hasPendingReports: Bool {
-        pendingReportsCount > 0
-    }
-
     /// Whether there are any issues requiring attention
     var hasIssues: Bool {
-        keyPackageHealth != .healthy || hasPendingReports
+        keyPackageHealth != .healthy
     }
 
     // MARK: - Health Status

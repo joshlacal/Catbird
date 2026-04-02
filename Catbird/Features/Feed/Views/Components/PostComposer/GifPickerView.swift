@@ -528,7 +528,7 @@ struct AnimatedCategoryGifView: View {
             if hasError {
                 // Fallback to SimpleGifView if video fails
                 SimpleGifView(gif: gif, onTap: {})
-                    .disabled(true) // Disable tap for category preview
+                    .allowsHitTesting(false) // Disable tap for category preview
             } else if let player = player {
                 // Use video player for smooth animation like other GIF views
                 PlayerLayerView(

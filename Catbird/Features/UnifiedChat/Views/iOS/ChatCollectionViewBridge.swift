@@ -9,15 +9,23 @@ struct InlineComposerConfig {
   var onSend: (String) -> Void
   var onAttachTapped: () -> Void
   var onTypingChanged: ((Bool) -> Void)?
-  var onVoiceTapped: (() -> Void)?
   var onPhotoPicker: (() -> Void)?
   var onGifPicker: (() -> Void)?
   var onPostPicker: (() -> Void)?
-  var isRecording: Bool = false
-  var onVoiceCancelled: (() -> Void)?
   var embedPreviewImage: UIImage? = nil
   var hasEmbed: Bool = false
   var onEmbedRemoved: (() -> Void)?
+
+  // Voice recording
+  var voiceMode: ComposerMode = .compose
+  var voicePreviewURL: URL? = nil
+  var voiceRecordingDuration: TimeInterval = 0
+  var onVoiceRecordingStarted: (() -> Void)?
+  var onVoiceRecordingLocked: (() -> Void)?
+  var onVoiceRecordingStopped: (() -> Void)?
+  var onVoiceRecordingCancelled: (() -> Void)?
+  var onVoicePreviewSend: (() -> Void)?
+  var onVoicePreviewDiscard: (() -> Void)?
 }
 
 @available(iOS 16.0, *)
@@ -55,6 +63,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     if let config = composerConfig {
       controller.updateComposerCallbacks(config: config)
       controller.updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)
+      controller.updateComposerVoiceMode(config: config)
     }
   }
 }

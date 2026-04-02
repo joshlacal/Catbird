@@ -816,26 +816,26 @@ struct KeyboardToolbarView: View {
 
   var body: some View {
     if #available(iOS 26.0, *) {
-      GlassEffectContainer(spacing: 6) {
-        HStack(spacing: 6) {
+      GlassEffectContainer(spacing: 4) {
+        HStack(spacing: 4) {
           // Left side: Individual media buttons
-          HStack(spacing: 6) {
+          HStack(spacing: 4) {
             Button(action: { onPhotos?() }) {
               Image(systemName: "photo")
-                .font(.system(size: 18))
-                .frame(width: 36, height: 36)
+                .font(.system(size: 16))
+                .frame(width: 30, height: 30)
             }
-            .padding(6)
+            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
             .catalystPlainButtons()
-              
+
             Button(action: { onVideo?() }) {
               Image(systemName: "video")
-                .font(.system(size: 18))
-                .frame(width: 36, height: 36)
+                .font(.system(size: 16))
+                .frame(width: 30, height: 30)
             }
-            .padding(6)
+            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
             .catalystPlainButtons()
@@ -843,14 +843,14 @@ struct KeyboardToolbarView: View {
             if allowTenor {
               Button(action: { onGif?() }) {
                 Text("GIF")
-                  .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                  .frame(width: 36, height: 20)
+                  .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                  .frame(width: 30, height: 18)
                   .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.accentColor, lineWidth: 1.0)
                   )
               }
-              .padding(6)
+              .padding(4)
               .glassEffect(.regular.interactive())
               .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
               .catalystPlainButtons()
@@ -859,21 +859,21 @@ struct KeyboardToolbarView: View {
 
             Button(action: { onAudio?() }) {
               Image(systemName: "mic")
-                .font(.system(size: 18))
-                .frame(width: 36, height: 36)
+                .font(.system(size: 16))
+                .frame(width: 30, height: 30)
             }
-            .padding(6)
+            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
             .catalystPlainButtons()
 
           }
-          .padding(6)
+          .padding(4)
 
           Spacer()
 
           // Right side: Settings menu, Thread, and Link
-          HStack(spacing: 12) {
+          HStack(spacing: 4) {
             Menu {
               Button(action: { onLabels?() }) {
                 Label("Labels", systemImage: "tag")
@@ -888,84 +888,83 @@ struct KeyboardToolbarView: View {
               }
             } label: {
               Image(systemName: "ellipsis")
-                .font(.system(size: 18))
-                .frame(width: 36, height: 36)
+                .font(.system(size: 16))
+                .frame(width: 30, height: 30)
             }
-            .padding(6)
+            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
 
             Button(action: { onThread?() }) {
               Image(systemName: "plus")
-                .font(.system(size: 18))
-                .frame(width: 36, height: 36)
+                .font(.system(size: 16))
+                .frame(width: 30, height: 30)
             }
-            .padding(6)
+            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
             .catalystPlainButtons()
 
-
             Button(action: { onLink?() }) {
               Image(systemName: "link")
-                .font(.system(size: 18))
-                .frame(width: 36, height: 36)
+                .font(.system(size: 16))
+                .frame(width: 30, height: 30)
             }
-            .padding(6)
+            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
             .catalystPlainButtons()
 
           }
-          .padding(6)
+          .padding(4)
 
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
         .padding(.vertical, 6)
       }
     } else {
-      HStack(spacing: 8) {
+      HStack(spacing: 4) {
         // Left side: Individual media buttons (legacy)
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
           Button(action: { onPhotos?() }) {
             Image(systemName: "photo")
-              .font(.system(size: 18))
+              .font(.system(size: 16))
               .foregroundStyle(Color.accentColor)
-              .frame(width: 36, height: 36)
+              .frame(width: 30, height: 30)
           }
 
           Button(action: { onVideo?() }) {
             Image(systemName: "video")
-              .font(.system(size: 18))
+              .font(.system(size: 16))
               .foregroundStyle(Color.accentColor)
-              .frame(width: 36, height: 36)
+              .frame(width: 30, height: 30)
           }
 
-              if allowTenor {
-                Button(action: { onGif?() }) {
-                  Text("GIF")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                      RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.primary.opacity(0.2), lineWidth: 0.5)
-                    )
-                }
-              }
+          if allowTenor {
+            Button(action: { onGif?() }) {
+              Text("GIF")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+                .overlay(
+                  RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.primary.opacity(0.2), lineWidth: 0.5)
+                )
+            }
+          }
 
           Button(action: { onAudio?() }) {
             Image(systemName: "mic")
-              .font(.system(size: 18))
+              .font(.system(size: 16))
               .foregroundStyle(Color.accentColor)
-              .frame(width: 36, height: 36)
+              .frame(width: 30, height: 30)
           }
         }
 
         Spacer()
 
         // Right side: Settings menu, Thread, and Link (legacy)
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
           Menu {
             Button(action: { onLabels?() }) {
               Label("Labels", systemImage: "tag")
@@ -980,23 +979,23 @@ struct KeyboardToolbarView: View {
             }
           } label: {
             Image(systemName: "ellipsis")
-              .font(.system(size: 18))
+              .font(.system(size: 16))
               .foregroundStyle(Color.accentColor)
-              .frame(width: 36, height: 36)
+              .frame(width: 30, height: 30)
           }
 
           Button(action: { onThread?() }) {
             Image(systemName: "plus")
-              .font(.system(size: 18))
+              .font(.system(size: 16))
               .foregroundStyle(Color.accentColor)
-              .frame(width: 36, height: 36)
+              .frame(width: 30, height: 30)
           }
 
           Button(action: { onLink?() }) {
             Image(systemName: "link")
-              .font(.system(size: 18))
+              .font(.system(size: 16))
               .foregroundStyle(Color.accentColor)
-              .frame(width: 36, height: 36)
+              .frame(width: 30, height: 30)
           }
         }
       }

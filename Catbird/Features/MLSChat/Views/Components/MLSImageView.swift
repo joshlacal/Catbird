@@ -32,17 +32,17 @@ struct MLSImageView: View {
     return w / h
   }
 
-  /// Pre-calculated image size based on the known max bubble width (280 - 8 padding).
-  /// Using an explicit frame instead of `.aspectRatio(contentMode: .fit)` prevents
-  /// multi-pass layout oscillation in self-sizing UIHostingConfiguration cells.
-  private var calculatedImageSize: CGSize {
-    let maxWidth: CGFloat = 272
-    let maxHeight: CGFloat = 400
-    let fitHeight = maxWidth / aspectRatio
-    if fitHeight <= maxHeight {
-      return CGSize(width: maxWidth, height: fitHeight)
+  /// Maximum image dimensions within the bubble (280 - 8 padding).
+  private let maxImageWidth: CGFloat = 272
+  private let maxImageHeight: CGFloat = 400
+
+  /// Pre-calculated image height based on aspect ratio, clamped to max dimensions.
+  private var calculatedImageHeight: CGFloat {
+    let fitHeight = maxImageWidth / aspectRatio
+    if fitHeight <= maxImageHeight {
+      return fitHeight
     }
-    return CGSize(width: maxHeight * aspectRatio, height: maxHeight)
+    return maxImageHeight
   }
 
   enum LoadState {
@@ -85,7 +85,8 @@ struct MLSImageView: View {
   private var placeholder: some View {
     RoundedRectangle(cornerRadius: 12)
       .fill(.quaternary)
-      .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
+      .frame(maxWidth: maxImageWidth)
+      .frame(height: calculatedImageHeight)
   }
 
   // MARK: - Loaded Image
@@ -102,9 +103,8 @@ struct MLSImageView: View {
     default:
       Image(uiImage: uiImage)
         .resizable()
-        .scaledToFill()
-        .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
-        .clipped()
+        .aspectRatio(aspectRatio, contentMode: .fit)
+        .frame(maxWidth: maxImageWidth, maxHeight: maxImageHeight)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .matchedTransitionSource(id: imageEmbed.blobId, in: imageTransition) { source in
@@ -125,9 +125,8 @@ struct MLSImageView: View {
     ZStack {
       Image(uiImage: uiImage)
         .resizable()
-        .scaledToFill()
-        .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
-        .clipped()
+        .aspectRatio(aspectRatio, contentMode: .fit)
+        .frame(maxWidth: maxImageWidth, maxHeight: maxImageHeight)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .blur(radius: isRevealed ? 0 : 30)
 
@@ -179,7 +178,8 @@ struct MLSImageView: View {
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
-      .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
+      .frame(maxWidth: maxImageWidth)
+      .frame(height: calculatedImageHeight)
       .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
     .sheet(isPresented: $showSensitiveModal) {
@@ -209,7 +209,8 @@ struct MLSImageView: View {
           .foregroundStyle(.tertiary)
       }
     }
-    .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
+    .frame(maxWidth: maxImageWidth)
+    .frame(height: calculatedImageHeight)
     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
   }
 
@@ -225,7 +226,8 @@ struct MLSImageView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
-    .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
+    .frame(maxWidth: maxImageWidth)
+    .frame(height: calculatedImageHeight)
     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
   }
 

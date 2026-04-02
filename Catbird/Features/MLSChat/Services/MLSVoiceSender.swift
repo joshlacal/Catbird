@@ -80,11 +80,9 @@ final class MLSVoiceSender {
     state = .idle
   }
 
-  /// Stop recording, encode via Rust FFI, upload blob, and send as audio embed.
-  func finishAndSend(
-    convoId: String,
-    manager: MLSConversationManager
-  ) async throws {
+  /// Stop recording and encode to Opus. Returns a preview for local playback.
+  /// Does NOT upload or send.
+  func finishRecording() async throws -> VoicePreview {
     stopDisplayLink()
     audioRecorder?.stop()
     audioRecorder = nil
@@ -95,16 +93,44 @@ final class MLSVoiceSender {
       throw VoiceSendError.noRecording
     }
 
-    defer { cleanupRecording() }
-
     do {
-      // 1. Encode PCM → Opus + encrypt via free Rust FFI function
       let prepared = try ffiPrepareVoiceMessage(
         pcmPath: url.path,
         sampleRate: 48000
       )
 
-      // 2. Upload encrypted blob via MLS blob service
+      let preview = VoicePreview(
+        localURL: url,
+        preparedData: prepared,
+        durationMs: prepared.durationMs,
+        waveform: prepared.waveform
+      )
+
+      state = .previewing
+      return preview
+    } catch {
+      state = .error(error.localizedDescription)
+      cleanupRecording()
+      throw error
+    }
+  }
+
+  /// Upload and send a previously prepared voice preview.
+  func send(
+    preview: VoicePreview,
+    convoId: String,
+    manager: MLSConversationManager
+  ) async throws {
+    state = .sending
+
+    defer {
+      try? FileManager.default.removeItem(at: preview.localURL)
+      recordingURL = nil
+    }
+
+    do {
+      let prepared = preview.preparedData
+
       let (responseCode, output) = try await client.blue.catbird.mlschat.uploadBlob(
         data: prepared.encryptedBlob,
         mimeType: "application/octet-stream",
@@ -122,7 +148,6 @@ final class MLSVoiceSender {
 
       mlsVoiceSenderLogger.info("Uploaded voice blob \(blobId), \(prepared.size) bytes, \(prepared.durationMs)ms")
 
-      // 3. Construct audio embed and send via MLS manager
       let audioEmbed = MLSAudioEmbed(
         blobId: blobId,
         key: prepared.key,
@@ -148,6 +173,12 @@ final class MLSVoiceSender {
       state = .error(error.localizedDescription)
       throw error
     }
+  }
+
+  /// Discard a prepared preview and clean up temp files.
+  func discardPreview() {
+    cleanupRecording()
+    state = .idle
   }
 
   // MARK: - Display Link for Duration Updates

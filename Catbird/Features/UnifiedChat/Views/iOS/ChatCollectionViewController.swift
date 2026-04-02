@@ -99,12 +99,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var onComposerSend: ((String) -> Void)?
   private var onComposerAttach: (() -> Void)?
   private var onComposerTypingChanged: ((Bool) -> Void)?
-  private var onComposerVoice: (() -> Void)?
   private var onComposerPhoto: (() -> Void)?
   private var onComposerGif: (() -> Void)?
   private var onComposerSharePost: (() -> Void)?
   private var onComposerEmbedRemoved: (() -> Void)?
+  private var onComposerVoiceStarted: (() -> Void)?
+  private var onComposerVoiceLocked: (() -> Void)?
+  private var onComposerVoiceStopped: (() -> Void)?
   private var onComposerVoiceCancelled: (() -> Void)?
+  private var onComposerVoicePreviewSend: (() -> Void)?
+  private var onComposerVoicePreviewDiscard: (() -> Void)?
 
   private var reactionOverlayControl: UIControl?
   private var reactionOverlayHost: UIHostingController<UnifiedQuickReactionBar>?
@@ -564,13 +568,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerSend = config.onSend
     onComposerAttach = config.onAttachTapped
     onComposerTypingChanged = config.onTypingChanged
-    onComposerVoice = config.onVoiceTapped
-    onComposerVoiceCancelled = config.onVoiceCancelled
     onComposerPhoto = config.onPhotoPicker
     onComposerGif = config.onGifPicker
     onComposerSharePost = config.onPostPicker
     onComposerEmbedRemoved = config.onEmbedRemoved
-    composerView?.isRecording = config.isRecording
+    onComposerVoiceStarted = config.onVoiceRecordingStarted
+    onComposerVoiceLocked = config.onVoiceRecordingLocked
+    onComposerVoiceStopped = config.onVoiceRecordingStopped
+    onComposerVoiceCancelled = config.onVoiceRecordingCancelled
+    onComposerVoicePreviewSend = config.onVoicePreviewSend
+    onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
     composerView?.hasEmbed = config.hasEmbed
     composerView?.embedPreviewImage = config.embedPreviewImage
     composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
@@ -600,17 +607,30 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerSend = config.onSend
     onComposerAttach = config.onAttachTapped
     onComposerTypingChanged = config.onTypingChanged
-    onComposerVoice = config.onVoiceTapped
-    onComposerVoiceCancelled = config.onVoiceCancelled
     onComposerPhoto = config.onPhotoPicker
     onComposerGif = config.onGifPicker
     onComposerSharePost = config.onPostPicker
     onComposerEmbedRemoved = config.onEmbedRemoved
-    composerView?.isRecording = config.isRecording
+    onComposerVoiceStarted = config.onVoiceRecordingStarted
+    onComposerVoiceLocked = config.onVoiceRecordingLocked
+    onComposerVoiceStopped = config.onVoiceRecordingStopped
+    onComposerVoiceCancelled = config.onVoiceRecordingCancelled
+    onComposerVoicePreviewSend = config.onVoicePreviewSend
+    onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
     composerView?.placeholderText = config.placeholderText
     composerView?.hasEmbed = config.hasEmbed
     composerView?.embedPreviewImage = config.embedPreviewImage
     composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
+  }
+
+  func updateComposerVoiceMode(config: InlineComposerConfig) {
+    composerView?.setMode(config.voiceMode)
+    if case .recording = config.voiceMode {
+      composerView?.updateRecordingDuration(config.voiceRecordingDuration)
+    }
+    if let url = config.voicePreviewURL, case .preview = config.voiceMode {
+      composerView?.loadPreviewAudio(url: url)
+    }
   }
 
   func updateComposerEmbedState(hasEmbed: Bool, previewImage: UIImage?) {
@@ -968,12 +988,28 @@ extension ChatCollectionViewController: UIKitMLSComposerDelegate {
     onComposerTypingChanged?(isTyping)
   }
 
-  func composerDidTapVoice(_ composer: UIKitMLSComposerView) {
-    onComposerVoice?()
+  func composerDidStartVoiceRecording(_ composer: UIKitMLSComposerView) {
+    onComposerVoiceStarted?()
+  }
+
+  func composerDidLockVoiceRecording(_ composer: UIKitMLSComposerView) {
+    onComposerVoiceLocked?()
+  }
+
+  func composerDidStopVoiceRecording(_ composer: UIKitMLSComposerView) {
+    onComposerVoiceStopped?()
   }
 
   func composerDidCancelVoiceRecording(_ composer: UIKitMLSComposerView) {
     onComposerVoiceCancelled?()
+  }
+
+  func composerDidTapSendVoice(_ composer: UIKitMLSComposerView) {
+    onComposerVoicePreviewSend?()
+  }
+
+  func composerDidTapDiscardVoice(_ composer: UIKitMLSComposerView) {
+    onComposerVoicePreviewDiscard?()
   }
 
   func composerDidTapPhoto(_ composer: UIKitMLSComposerView) {

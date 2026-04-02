@@ -21,7 +21,6 @@ struct MLSModerationAPITests {
   let testConvoId = "test-convo-123"
   let testDid = "did:plc:test123"
   let testTargetDid = "did:plc:target456"
-  let testReportId = "report-789"
 
   func createMockATProtoClient() -> MockATProtoClient {
     MockATProtoClient()
@@ -162,144 +161,6 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 403)
-    #expect(output == nil)
-  }
-
-  // MARK: - Report Member Tests
-
-  @Test("reportMember - success case")
-  func testReportMemberSuccess() async throws {
-    let mockClient = createMockATProtoClient()
-    let apiClient = MLSAPIClient(atProtoClient: mockClient)
-
-    let submittedAt = ATProtocolDate(date: Date())
-    let expectedOutput = BlueCatbirdMlsChatReport.Output(
-      reportId: testReportId,
-      submittedAt: submittedAt
-    )
-    mockClient.mockReportMemberResponse = (200, expectedOutput)
-
-    let encryptedContent = Data("encrypted report content".utf8)
-
-    let (responseCode, output) = try await apiClient.reportMember(
-      convoId: testConvoId,
-      reportedDid: testTargetDid,
-      category: "harassment",
-      encryptedContent: encryptedContent,
-      messageIds: ["msg1", "msg2"]
-    )
-
-    #expect(responseCode == 200)
-    #expect(output?.reportId == testReportId)
-    #expect(output?.submittedAt == submittedAt)
-  }
-
-  @Test("reportMember - cannot report self")
-  func testReportMemberCannotReportSelf() async throws {
-    let mockClient = createMockATProtoClient()
-    let apiClient = MLSAPIClient(atProtoClient: mockClient)
-
-    mockClient.mockReportMemberResponse = (400, nil)
-
-    let encryptedContent = Data("test".utf8)
-
-    let (responseCode, output) = try await apiClient.reportMember(
-      convoId: testConvoId,
-      reportedDid: testDid, // Same as caller
-      category: "spam",
-      encryptedContent: encryptedContent,
-      messageIds: nil
-    )
-
-    #expect(responseCode == 400)
-    #expect(output == nil)
-  }
-
-  // MARK: - Get Reports Tests
-
-  @Test("getReports - success case with multiple reports")
-  func testGetReportsSuccess() async throws {
-    let mockClient = createMockATProtoClient()
-    let apiClient = MLSAPIClient(atProtoClient: mockClient)
-
-    let report1 = BlueCatbirdMlsChatReport.ReportView(
-      reportId: "report-1",
-      convoId: testConvoId,
-      reporterDid: try DID(didString: testDid),
-      reportedDid: try DID(didString: testTargetDid),
-      category: "harassment",
-      status: "pending",
-      submittedAt: ATProtocolDate(date: Date()),
-      resolvedAt: nil,
-      resolvedBy: nil
-    )
-
-    let expectedOutput = BlueCatbirdMlsChatReport.Output(reports: [report1])
-    mockClient.mockGetReportsResponse = (200, expectedOutput)
-
-    let (responseCode, output) = try await apiClient.getReports(
-      convoId: testConvoId,
-      status: "pending",
-      limit: 50
-    )
-
-    #expect(responseCode == 200)
-    #expect(output?.reports?.count == 1)
-    #expect(output?.reports?.first?.reportId == "report-1")
-    #expect(output?.reports?.first?.status == "pending")
-  }
-
-  @Test("getReports - not admin error")
-  func testGetReportsNotAdmin() async throws {
-    let mockClient = createMockATProtoClient()
-    let apiClient = MLSAPIClient(atProtoClient: mockClient)
-
-    mockClient.mockGetReportsResponse = (403, nil)
-
-    let (responseCode, output) = try await apiClient.getReports(
-      convoId: testConvoId,
-      status: nil,
-      limit: nil
-    )
-
-    #expect(responseCode == 403)
-    #expect(output == nil)
-  }
-
-  // MARK: - Resolve Report Tests
-
-  @Test("resolveReport - success case")
-  func testResolveReportSuccess() async throws {
-    let mockClient = createMockATProtoClient()
-    let apiClient = MLSAPIClient(atProtoClient: mockClient)
-
-    let expectedOutput = BlueCatbirdMlsChatReport.Output(success: true)
-    mockClient.mockResolveReportResponse = (200, expectedOutput)
-
-    let (responseCode, output) = try await apiClient.resolveReport(
-      reportId: testReportId,
-      action: "removed_member",
-      notes: "Removed for policy violation"
-    )
-
-    #expect(responseCode == 200)
-    #expect(output?.success == true)
-  }
-
-  @Test("resolveReport - report not found")
-  func testResolveReportNotFound() async throws {
-    let mockClient = createMockATProtoClient()
-    let apiClient = MLSAPIClient(atProtoClient: mockClient)
-
-    mockClient.mockResolveReportResponse = (404, nil)
-
-    let (responseCode, output) = try await apiClient.resolveReport(
-      reportId: "nonexistent-report",
-      action: "dismissed",
-      notes: nil
-    )
-
-    #expect(responseCode == 404)
     #expect(output == nil)
   }
 
@@ -476,9 +337,6 @@ final class MockATProtoClient: ATProtoClient {
   var mockRemoveMemberResponse: (Int, BlueCatbirdMlsChatCommitGroupChange.Output?)?
   var mockPromoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
   var mockDemoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
-  var mockReportMemberResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
-  var mockGetReportsResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
-  var mockResolveReportResponse: (Int, BlueCatbirdMlsChatReport.Output?)?
   var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
   var mockGetBlockStatusResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
   var mockHandleBlockChangeResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
@@ -489,8 +347,6 @@ final class MockATProtoClient: ATProtoClient {
   var onRemoveMember: ((BlueCatbirdMlsChatCommitGroupChange.Input) -> Void)?
   var onPromoteAdmin: ((BlueCatbirdMlsChatUpdateConvo.Input) -> Void)?
   var onDemoteAdmin: ((BlueCatbirdMlsChatUpdateConvo.Input) -> Void)?
-  var onReportMember: ((BlueCatbirdMlsChatReport.Input) -> Void)?
-
   // Override ATProtoClient initializer
   init() {
     // Minimal initialization for testing

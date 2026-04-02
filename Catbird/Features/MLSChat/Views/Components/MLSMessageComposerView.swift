@@ -306,7 +306,7 @@ import SwiftUI
       } else if let onVoice = onVoiceTapped {
         Button(action: onVoice) {
           Image(systemName: isRecording ? "stop.circle.fill" : "mic.fill")
-            .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 16, weight: .medium))
             .foregroundStyle(Color.white)
             .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
             .background(isRecording ? Color.red : Color.accentColor)
