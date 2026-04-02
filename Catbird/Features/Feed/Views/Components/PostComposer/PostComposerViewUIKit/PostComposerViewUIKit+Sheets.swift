@@ -176,11 +176,11 @@ extension PostComposerViewUIKit {
           )
         }
       }
-      .sheet(isPresented: Binding(
+      #if os(iOS)
+      .fullScreenCover(isPresented: Binding(
         get: { vm.isPhotoEditorPresented },
         set: { vm.isPhotoEditorPresented = $0 }
       )) {
-        #if os(iOS)
         if let index = vm.currentEditingImageIndex,
            vm.mediaItems.indices.contains(index),
            let rawData = vm.mediaItems[index].rawData,
@@ -190,7 +190,12 @@ extension PostComposerViewUIKit {
             vm.updateEditedImage(editedImage, at: index)
           }
         }
-        #elseif os(macOS)
+      }
+      #elseif os(macOS)
+      .sheet(isPresented: Binding(
+        get: { vm.isPhotoEditorPresented },
+        set: { vm.isPhotoEditorPresented = $0 }
+      )) {
         if let index = vm.currentEditingImageIndex,
            vm.mediaItems.indices.contains(index),
            let rawData = vm.mediaItems[index].rawData,
@@ -200,8 +205,8 @@ extension PostComposerViewUIKit {
             vm.updateEditedImage(editedImage, at: index)
           }
         }
-        #endif
       }
+      #endif
 
     linkSheetContent
       .alert("Discard Draft?", isPresented: $showingDismissAlert) {

@@ -178,6 +178,13 @@ private struct UnifiedGIFView: View {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedGIFView")
 
+  /// Pre-calculated height for deterministic sizing in self-sizing cells.
+  private var calculatedHeight: CGFloat {
+    let ratio = calculateAspectRatio()
+    let availableWidth: CGFloat = 272
+    return min(max(availableWidth / ratio, minBubbleHeight), 400)
+  }
+
   var body: some View {
     Group {
       if let player = loopingPlayer?.player {
@@ -235,9 +242,8 @@ private struct UnifiedGIFView: View {
         onLayerReady: nil
       )
     }
-    .aspectRatio(calculateAspectRatio(), contentMode: .fit)
     .frame(maxWidth: .infinity)
-    .frame(minHeight: minBubbleHeight, maxHeight: 400)
+    .frame(height: calculatedHeight)
     .clipped()
     .clipShape(RoundedRectangle(cornerRadius: 12))
   }
@@ -265,9 +271,8 @@ private struct UnifiedGIFView: View {
       ProgressView()
         .scaleEffect(1.2)
     }
-    .aspectRatio(calculateAspectRatio(), contentMode: .fit)
     .frame(maxWidth: .infinity)
-    .frame(minHeight: minBubbleHeight, maxHeight: 400)
+    .frame(height: calculatedHeight)
     .clipped()
     .clipShape(RoundedRectangle(cornerRadius: 12))
   }
@@ -297,9 +302,8 @@ private struct UnifiedGIFView: View {
       }
       .padding()
     }
-    .aspectRatio(calculateAspectRatio(), contentMode: .fit)
     .frame(maxWidth: .infinity)
-    .frame(minHeight: minBubbleHeight, maxHeight: 400)
+    .frame(height: calculatedHeight)
     .clipped()
     .clipShape(RoundedRectangle(cornerRadius: 12))
   }

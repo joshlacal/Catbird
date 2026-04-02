@@ -15,7 +15,16 @@ final class MLSVoiceSender {
     case idle
     case recording(duration: TimeInterval)
     case processing
+    case previewing
+    case sending
     case error(String)
+  }
+
+  struct VoicePreview {
+    let localURL: URL
+    let preparedData: FfiVoicePrepareResult
+    let durationMs: UInt64
+    let waveform: [Float]
   }
 
   var state: RecordingState = .idle

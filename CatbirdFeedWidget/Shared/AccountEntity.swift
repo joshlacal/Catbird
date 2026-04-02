@@ -8,16 +8,16 @@ import AppIntents
 import Foundation
 
 @available(iOS 17.0, *)
-struct AccountEntity: AppEntity {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Account")
-  static var defaultQuery = AccountEntityQuery()
+public struct AccountEntity: AppEntity {
+  public static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Account")
+    public static var defaultQuery = AccountEntityQuery()
 
-  let id: String  // DID
+    public let id: String  // DID
   let handle: String
   let displayName: String
   let avatarURL: URL?
 
-  var displayRepresentation: DisplayRepresentation {
+    public var displayRepresentation: DisplayRepresentation {
     DisplayRepresentation(
       title: "\(displayName)",
       subtitle: "@\(handle)"
@@ -26,16 +26,18 @@ struct AccountEntity: AppEntity {
 }
 
 @available(iOS 17.0, *)
-struct AccountEntityQuery: EntityQuery {
-  func entities(for identifiers: [String]) async throws -> [AccountEntity] {
+public struct AccountEntityQuery: EntityQuery {
+    public init() {}
+    
+    public  func entities(for identifiers: [String]) async throws -> [AccountEntity] {
     allAccounts().filter { identifiers.contains($0.id) }
   }
 
-  func suggestedEntities() async throws -> [AccountEntity] {
+    public func suggestedEntities() async throws -> [AccountEntity] {
     allAccounts()
   }
 
-  func defaultResult() async -> AccountEntity? {
+    public func defaultResult() async -> AccountEntity? {
     let defaults = UserDefaults(suiteName: "group.blue.catbird.shared")
     let activeDID = defaults?.string(forKey: "activeAccountDID")
     let accounts = allAccounts()

@@ -32,6 +32,7 @@ import AppKit
   private var _feeds: [AppBskyFeedDefs.GeneratorView] = []
   private var _knownFollowers: [AppBskyActorDefs.ProfileView] = []
   private var _isLoadingMorePosts = false
+  private var _isLoadingLikes = false
   private var _isLoadingKnownFollowers = false
   
   // Labeler-specific properties
@@ -48,6 +49,7 @@ import AppKit
   var feeds: [AppBskyFeedDefs.GeneratorView] { _feeds }
   var knownFollowers: [AppBskyActorDefs.ProfileView] { _knownFollowers }
   var isLoadingMorePosts: Bool { _isLoadingMorePosts }
+  var isLoadingLikes: Bool { _isLoadingLikes }
   var isLoadingKnownFollowers: Bool { _isLoadingKnownFollowers }
   
   /// Check if this profile is a labeler
@@ -258,7 +260,119 @@ import AppKit
 
   /// Loads user's liked posts
   func loadLikes() async {
-    await loadFeed(type: .likes, resetCursor: likesCursor == nil)
+    guard let client = client, let profile = profile, !_isLoadingLikes else { return }
+    _isLoadingLikes = true
+
+    do {
+      if userDID == currentUserDID {
+        let params = AppBskyFeedGetActorLikes.Parameters(
+          actor: try ATIdentifier(string: profile.did.didString()),
+          limit: 20,
+          cursor: likesCursor
+        )
+
+        let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
+
+        if responseCode == 200, let feed = output?.feed {
+          await MainActor.run {
+            if self.likesCursor == nil {
+              self._likes = feed
+            } else {
+              self._likes.append(contentsOf: feed)
+            }
+            self.likesCursor = output?.cursor
+          }
+        } else if responseCode == 400 {
+          logger.warning("PDS returned 400 for getActorLikes, likes may not be available")
+        }
+      } else {
+        // Fetch other user's likes directly from their PDS
+        let pdsURL = try await client.resolveDIDToPDSURL(did: profile.did.didString())
+        let endpoint = "com.atproto.repo.listRecords"
+        var url = pdsURL.appendingPathComponent("xrpc").appendingPathComponent(endpoint)
+
+        // Create parameters including cursor for pagination
+        var queryItems = [
+          URLQueryItem(name: "repo", value: userDID),
+          URLQueryItem(name: "collection", value: "app.bsky.feed.like"),
+          URLQueryItem(name: "limit", value: "25"),
+        ]
+
+        // Add cursor if we're paginating
+        if let cursor = likesCursor {
+          queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+
+        // Add query parameters to URL
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
+        components?.queryItems = queryItems
+        url = components?.url ?? url
+
+        // Create and send request
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "GET"
+        urlRequest.allHTTPHeaderFields = ["Accept": "application/json"]
+
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
+        // Decode response
+        let decoder = JSONDecoder()
+        guard let decodedData = try? decoder.decode(ComAtprotoRepoListRecords.Output.self, from: data),
+              let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200
+        else {
+          throw NetworkError.connectionFailed
+        }
+
+        // Extract post URIs from like records
+        var postURIs: [ATProtocolURI] = []
+        for record in decodedData.records {
+          if case let .knownType(likeRecord) = record.value,
+             let like = likeRecord as? AppBskyFeedLike
+          {
+            postURIs.append(like.subject.uri)
+          }
+        }
+
+        if !postURIs.isEmpty {
+          let maxURIsPerRequest = 25
+          let chunks = stride(from: 0, to: postURIs.count, by: maxURIsPerRequest).map {
+            Array(postURIs[$0..<min($0 + maxURIsPerRequest, postURIs.count)])
+          }
+
+          var fetchedPosts: [AppBskyFeedDefs.PostView] = []
+
+          // Process each chunk
+          for chunk in chunks {
+            let (_, postsOutput) = try await client.app.bsky.feed.getPosts(
+              input: AppBskyFeedGetPosts.Parameters(uris: chunk)
+            )
+
+            if let posts = postsOutput?.posts {
+              fetchedPosts.append(contentsOf: posts)
+            }
+          }
+
+          // Update UI on main thread
+          let likedPosts = fetchedPosts
+          await MainActor.run {
+            if self.likesCursor == nil {
+              self._otherUserLikes = likedPosts
+            } else {
+              self._otherUserLikes.append(contentsOf: likedPosts)
+            }
+
+            // Store cursor for next pagination
+            self.likesCursor = decodedData.cursor
+          }
+        }
+      }
+
+      await MainActor.run { self._isLoadingLikes = false }
+    } catch {
+      logger.error("Error loading likes: \(error.localizedDescription)")
+      await MainActor.run { self._isLoadingLikes = false }
+    }
   }
 
   /// Loads known followers - people who follow this profile and are also followed by the current user
@@ -510,108 +624,6 @@ import AppKit
           }
         }
 
-      case .likes:
-          if userDID == currentUserDID {
-              // Current implementation for the user's own likes
-              let params = AppBskyFeedGetActorLikes.Parameters(
-                  actor: try ATIdentifier(string: profile.did.didString()),
-                  limit: 20,
-                  cursor: resetCursor ? nil : likesCursor
-              )
-              
-              let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
-              
-              if responseCode == 200, let feed = output?.feed {
-                  await MainActor.run {
-                      if resetCursor {
-                          self._likes = feed
-                      } else {
-                          self._likes.append(contentsOf: feed)
-                      }
-                      self.likesCursor = output?.cursor
-                  }
-              }
-              
-          } else {
-              // Fetch other user's likes directly from their PDS
-              let pdsURL = try await client.resolveDIDToPDSURL(did: profile.did.didString())
-              let endpoint = "com.atproto.repo.listRecords"
-              var url = pdsURL.appendingPathComponent("xrpc").appendingPathComponent(endpoint)
-              
-              // Create parameters including cursor for pagination
-              var queryItems = [
-                  URLQueryItem(name: "repo", value: userDID),
-                  URLQueryItem(name: "collection", value: "app.bsky.feed.like"),
-                  URLQueryItem(name: "limit", value: "25")
-              ]
-              
-              // Add cursor if we're paginating
-              if !resetCursor, let cursor = likesCursor {
-                  queryItems.append(URLQueryItem(name: "cursor", value: cursor))
-              }
-              
-              // Add query parameters to URL
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
-              components?.queryItems = queryItems
-              url = components?.url ?? url
-              
-              // Create and send request
-              var urlRequest = URLRequest(url: url)
-              urlRequest.httpMethod = "GET"
-              urlRequest.allHTTPHeaderFields = ["Accept": "application/json"]
-              
-              let (data, response) = try await URLSession.shared.data(for: urlRequest)
-              
-              // Decode response
-              let decoder = JSONDecoder()
-              guard let decodedData = try? decoder.decode(ComAtprotoRepoListRecords.Output.self, from: data),
-                    let httpResponse = response as? HTTPURLResponse,
-                    httpResponse.statusCode == 200 else {
-                  throw NetworkError.connectionFailed
-              }
-              
-              // Extract post URIs from like records
-              var postURIs: [ATProtocolURI] = []
-              for record in decodedData.records {
-                  if case let .knownType(likeRecord) = record.value,
-                     let like = likeRecord as? AppBskyFeedLike {
-                      postURIs.append(like.subject.uri)
-                  }
-              }
-              
-              if !postURIs.isEmpty {
-                  let maxURIsPerRequest = 25
-                  let chunks = stride(from: 0, to: postURIs.count, by: maxURIsPerRequest).map {
-                      Array(postURIs[$0..<min($0 + maxURIsPerRequest, postURIs.count)])
-                  }
-                  
-                  var fetchedPosts: [AppBskyFeedDefs.PostView] = []
-                  
-                  // Process each chunk
-                  for chunk in chunks {
-                      let (_, postsOutput) = try await client.app.bsky.feed.getPosts(
-                          input: AppBskyFeedGetPosts.Parameters(uris: chunk)
-                      )
-                      
-                      if let posts = postsOutput?.posts {
-                          fetchedPosts.append(contentsOf: posts)
-                      }
-                  }
-                  
-                  // Update UI on main thread
-                  let likedPosts = fetchedPosts
-                  await MainActor.run {
-                      if resetCursor {
-                          self._otherUserLikes = likedPosts
-                      } else {
-                          self._otherUserLikes.append(contentsOf: likedPosts)
-                      }
-                      
-                      // Store cursor for next pagination
-                      self.likesCursor = decodedData.cursor
-                  }
-              }
-          }
       }
 
       await MainActor.run {
@@ -630,7 +642,7 @@ import AppKit
   // MARK: - Helper Types
 
   private enum FeedType {
-    case posts, replies, media, likes
+    case posts, replies, media
   }
 
   // MARK: - SwiftData Caching for Profile Tabs
@@ -665,9 +677,6 @@ import AppKit
     case .media:
       tab = .media
       source = postsWithMedia
-    case .likes:
-      tab = .likes
-      source = _likes
     }
 
     let key = profileFeedKey(for: tab)

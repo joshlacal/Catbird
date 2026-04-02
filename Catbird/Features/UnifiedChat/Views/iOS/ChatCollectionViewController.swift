@@ -103,6 +103,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var onComposerPhoto: (() -> Void)?
   private var onComposerGif: (() -> Void)?
   private var onComposerSharePost: (() -> Void)?
+  private var onComposerEmbedRemoved: (() -> Void)?
+  private var onComposerVoiceCancelled: (() -> Void)?
 
   private var reactionOverlayControl: UIControl?
   private var reactionOverlayHost: UIHostingController<UnifiedQuickReactionBar>?
@@ -514,15 +516,15 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       lastMessageCount = currentMessageCount
     } else if didPrependOlderMessages {
       // Apply without animation, then restore scroll position so viewport stays stable.
-      diffableDataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
-        guard let self else { return }
-        self.collectionView.layoutIfNeeded()
-        let newContentHeight = self.collectionView.contentSize.height
+      UIView.performWithoutAnimation {
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+        collectionView.layoutIfNeeded()
+        let newContentHeight = collectionView.contentSize.height
         let deltaHeight = newContentHeight - previousContentHeight
-        self.collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
-        self.lastOldestMessageID = currentOldestMessageID
-        self.lastMessageCount = currentMessageCount
+        collectionView.contentOffset.y = previousContentOffsetY + deltaHeight
       }
+      lastOldestMessageID = currentOldestMessageID
+      lastMessageCount = currentMessageCount
     } else {
       // Apply silently for all other updates. If we're bottom-locked or this was a
       // true append/explicit bottom request, snap to the bottom in the same layout
@@ -563,10 +565,15 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerAttach = config.onAttachTapped
     onComposerTypingChanged = config.onTypingChanged
     onComposerVoice = config.onVoiceTapped
+    onComposerVoiceCancelled = config.onVoiceCancelled
     onComposerPhoto = config.onPhotoPicker
     onComposerGif = config.onGifPicker
     onComposerSharePost = config.onPostPicker
+    onComposerEmbedRemoved = config.onEmbedRemoved
     composerView?.isRecording = config.isRecording
+    composerView?.hasEmbed = config.hasEmbed
+    composerView?.embedPreviewImage = config.embedPreviewImage
+    composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
 
     view.addSubview(composer)
 
@@ -594,11 +601,21 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerAttach = config.onAttachTapped
     onComposerTypingChanged = config.onTypingChanged
     onComposerVoice = config.onVoiceTapped
+    onComposerVoiceCancelled = config.onVoiceCancelled
     onComposerPhoto = config.onPhotoPicker
     onComposerGif = config.onGifPicker
     onComposerSharePost = config.onPostPicker
+    onComposerEmbedRemoved = config.onEmbedRemoved
     composerView?.isRecording = config.isRecording
     composerView?.placeholderText = config.placeholderText
+    composerView?.hasEmbed = config.hasEmbed
+    composerView?.embedPreviewImage = config.embedPreviewImage
+    composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
+  }
+
+  func updateComposerEmbedState(hasEmbed: Bool, previewImage: UIImage?) {
+    composerView?.hasEmbed = hasEmbed
+    composerView?.embedPreviewImage = previewImage
   }
 
   private func updateComposerInset() {
@@ -953,6 +970,10 @@ extension ChatCollectionViewController: UIKitMLSComposerDelegate {
 
   func composerDidTapVoice(_ composer: UIKitMLSComposerView) {
     onComposerVoice?()
+  }
+
+  func composerDidCancelVoiceRecording(_ composer: UIKitMLSComposerView) {
+    onComposerVoiceCancelled?()
   }
 
   func composerDidTapPhoto(_ composer: UIKitMLSComposerView) {

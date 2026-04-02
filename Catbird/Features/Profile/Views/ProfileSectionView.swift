@@ -113,7 +113,7 @@ struct ProfileSectionView: View {
   private var likesList: some View {
       if viewModel.isCurrentUser {
           
-          if viewModel.isLoading && viewModel.likes.isEmpty {
+          if viewModel.isLoadingLikes && viewModel.likes.isEmpty {
               ProgressView("Loading liked posts...")
                   .frame(maxWidth: .infinity, minHeight: 100)
                   .padding()
@@ -124,7 +124,7 @@ struct ProfileSectionView: View {
                   FeedPost(post: post, path: $path)
                   
                   // Load more when reaching the end
-                  if post == viewModel.likes.last && !viewModel.isLoadingMorePosts {
+                  if post == viewModel.likes.last && !viewModel.isLoadingLikes {
                       Color.clear.frame(height: 20)
                           .onAppear {
                               Task { await viewModel.loadLikes() }
@@ -133,15 +133,15 @@ struct ProfileSectionView: View {
               }
               
               // Loading indicator for pagination
-              if viewModel.isLoadingMorePosts {
+              if viewModel.isLoadingLikes {
                   ProgressView()
                       .padding()
                       .frame(maxWidth: .infinity)
               }
           }
       } else {
-          
-          if viewModel.isLoading && viewModel.otherUserLikes.isEmpty {
+
+          if viewModel.isLoadingLikes && viewModel.otherUserLikes.isEmpty {
               ProgressView("Loading liked posts...")
                   .frame(maxWidth: .infinity, minHeight: 100)
                   .padding()
@@ -160,7 +160,7 @@ struct ProfileSectionView: View {
                     }
 
                   // Load more when reaching the end
-                  if post == viewModel.otherUserLikes.last && !viewModel.isLoadingMorePosts {
+                  if post == viewModel.otherUserLikes.last && !viewModel.isLoadingLikes {
                       Color.clear.frame(height: 20)
                           .onAppear {
                               Task { await viewModel.loadLikes() }
@@ -169,13 +169,13 @@ struct ProfileSectionView: View {
               }
               
               // Loading indicator for pagination
-              if viewModel.isLoadingMorePosts {
+              if viewModel.isLoadingLikes {
                   ProgressView()
                       .padding()
                       .frame(maxWidth: .infinity)
               }
           }
-          
+
       }
   }
 

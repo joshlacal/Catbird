@@ -9,6 +9,7 @@ protocol UIKitMLSComposerDelegate: AnyObject {
   func composerDidTapAttach(_ composer: UIKitMLSComposerView)
   func composerDidChangeTypingState(_ composer: UIKitMLSComposerView, isTyping: Bool)
   func composerDidTapVoice(_ composer: UIKitMLSComposerView)
+  func composerDidCancelVoiceRecording(_ composer: UIKitMLSComposerView)
   func composerDidTapPhoto(_ composer: UIKitMLSComposerView)
   func composerDidTapGif(_ composer: UIKitMLSComposerView)
   func composerDidTapSharePost(_ composer: UIKitMLSComposerView)
@@ -42,6 +43,19 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   var isRecording: Bool = false {
     didSet { updateRightButton() }
   }
+
+  var embedPreviewImage: UIImage? {
+    didSet { updateEmbedPreview() }
+  }
+
+  var hasEmbed: Bool = false {
+    didSet {
+      updateEmbedPreview()
+      updateSendButtonState()
+    }
+  }
+
+  var onEmbedRemoved: (() -> Void)?
 
   // MARK: - Layout Constants
 
@@ -163,8 +177,69 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     return button
   }()
 
+  private let embedPreviewContainer: UIStackView = {
+    let stack = UIStackView()
+    stack.axis = .horizontal
+    stack.alignment = .center
+    stack.spacing = 8
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    stack.isHidden = true
+    stack.backgroundColor = .secondarySystemBackground
+    stack.layer.cornerRadius = 8
+    stack.layer.cornerCurve = .continuous
+    stack.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    stack.isLayoutMarginsRelativeArrangement = true
+    return stack
+  }()
+
+  private let embedPreviewImageView: UIImageView = {
+    let iv = UIImageView()
+    iv.translatesAutoresizingMaskIntoConstraints = false
+    iv.contentMode = .scaleAspectFill
+    iv.clipsToBounds = true
+    iv.layer.cornerRadius = 6
+    iv.layer.cornerCurve = .continuous
+    NSLayoutConstraint.activate([
+      iv.widthAnchor.constraint(equalToConstant: 32),
+      iv.heightAnchor.constraint(equalToConstant: 32),
+    ])
+    return iv
+  }()
+
+  private let embedPreviewTitleLabel: UILabel = {
+    let label = UILabel()
+    label.font = .systemFont(ofSize: 14, weight: UIFont.Weight.medium)
+    label.textColor = .secondaryLabel
+    label.text = "Photo attached"
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return label
+  }()
+
+  private lazy var embedPreviewDismissButton: UIButton = {
+    var config = UIButton.Configuration.plain()
+    config.image = UIImage(
+      systemName: "xmark.circle.fill",
+      withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+    )
+    config.baseForegroundColor = .tertiaryLabel
+    config.contentInsets = .zero
+    let button = UIButton(configuration: config)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.accessibilityLabel = "Remove attachment"
+    button.addTarget(self, action: #selector(embedDismissTapped), for: .touchUpInside)
+    NSLayoutConstraint.activate([
+      button.widthAnchor.constraint(equalToConstant: 24),
+      button.heightAnchor.constraint(equalToConstant: 24),
+    ])
+    return button
+  }()
+
   private var textViewHeightConstraint: NSLayoutConstraint!
+  private var contentStackTopWithoutEmbed: NSLayoutConstraint!
+  private var contentStackTopWithEmbed: NSLayoutConstraint!
   private var wasTyping = false
+  private var voiceLongPressStartY: CGFloat = 0
 
   // MARK: - Initialization
 
@@ -189,6 +264,8 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     addSubview(backgroundEffectView)
 
     // The content goes into the glass view's contentView
+    setupEmbedPreview()
+    backgroundEffectView.contentView.addSubview(embedPreviewContainer)
     backgroundEffectView.contentView.addSubview(contentStack)
 
     // Attach button wrapper to center it vertically against the bottom line
@@ -261,17 +338,33 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
       backgroundEffectView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -outerMargin),
       backgroundEffectView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -outerMargin / 2),
 
+      // Embed preview container above content stack
+      embedPreviewContainer.topAnchor.constraint(equalTo: backgroundEffectView.contentView.topAnchor, constant: verticalPadding),
+      embedPreviewContainer.leadingAnchor.constraint(equalTo: backgroundEffectView.contentView.leadingAnchor, constant: horizontalPadding),
+      embedPreviewContainer.trailingAnchor.constraint(equalTo: backgroundEffectView.contentView.trailingAnchor, constant: -horizontalPadding),
+
       // Content stack inside the effect view
-      contentStack.topAnchor.constraint(equalTo: backgroundEffectView.contentView.topAnchor, constant: verticalPadding),
       contentStack.leadingAnchor.constraint(equalTo: backgroundEffectView.contentView.leadingAnchor, constant: horizontalPadding),
       contentStack.trailingAnchor.constraint(equalTo: backgroundEffectView.contentView.trailingAnchor, constant: -horizontalPadding),
       contentStack.bottomAnchor.constraint(equalTo: backgroundEffectView.contentView.bottomAnchor, constant: -verticalPadding),
     ])
+
+    // Dynamic top constraint for content stack (toggles based on embed visibility)
+    contentStackTopWithoutEmbed = contentStack.topAnchor.constraint(
+      equalTo: backgroundEffectView.contentView.topAnchor, constant: verticalPadding)
+    contentStackTopWithEmbed = contentStack.topAnchor.constraint(
+      equalTo: embedPreviewContainer.bottomAnchor, constant: verticalPadding)
+    contentStackTopWithoutEmbed.isActive = true
+    contentStackTopWithEmbed.isActive = false
   }
 
   private func setupActions() {
     sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
     voiceButton.addTarget(self, action: #selector(voiceTapped), for: .touchUpInside)
+
+    let longPress = UILongPressGestureRecognizer(target: self, action: #selector(voiceLongPressed(_:)))
+    longPress.minimumPressDuration = 0.3
+    voiceButton.addGestureRecognizer(longPress)
   }
 
   // MARK: - Actions
@@ -280,11 +373,43 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     delegate?.composerDidTapVoice(self)
   }
 
+  @objc private func voiceLongPressed(_ gesture: UILongPressGestureRecognizer) {
+    switch gesture.state {
+    case .began:
+      voiceLongPressStartY = gesture.location(in: self).y
+      delegate?.composerDidTapVoice(self)
+    case .changed:
+      let currentY = gesture.location(in: self).y
+      let delta = voiceLongPressStartY - currentY
+      if delta > 60 {
+        // Visual feedback for cancel state could be added here
+      }
+    case .ended, .cancelled:
+      let currentY = gesture.location(in: self).y
+      let delta = voiceLongPressStartY - currentY
+      if delta > 60 {
+        delegate?.composerDidCancelVoiceRecording(self)
+      } else {
+        delegate?.composerDidTapVoice(self)
+      }
+    default:
+      break
+    }
+  }
+
+  @objc private func embedDismissTapped() {
+    hasEmbed = false
+    embedPreviewImage = nil
+    onEmbedRemoved?()
+  }
+
   @objc private func sendTapped() {
     let trimmed = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
+    guard !trimmed.isEmpty || hasEmbed else { return }
     let message = textView.text ?? ""
     textView.text = ""
+    hasEmbed = false
+    embedPreviewImage = nil
     updatePlaceholderVisibility()
     updateSendButtonState()
     recalculateTextViewHeight()
@@ -307,6 +432,41 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     }
   }
 
+  // MARK: - Embed Preview
+
+  private func setupEmbedPreview() {
+    let spacer = UIView()
+    spacer.translatesAutoresizingMaskIntoConstraints = false
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    embedPreviewContainer.addArrangedSubview(embedPreviewImageView)
+    embedPreviewContainer.addArrangedSubview(embedPreviewTitleLabel)
+    embedPreviewContainer.addArrangedSubview(spacer)
+    embedPreviewContainer.addArrangedSubview(embedPreviewDismissButton)
+  }
+
+  private func updateEmbedPreview() {
+    let showEmbed = hasEmbed
+    embedPreviewContainer.isHidden = !showEmbed
+
+    contentStackTopWithoutEmbed.isActive = !showEmbed
+    contentStackTopWithEmbed.isActive = showEmbed
+
+    if let image = embedPreviewImage {
+      embedPreviewImageView.image = image
+    } else {
+      embedPreviewImageView.image = UIImage(systemName: "photo")
+      embedPreviewImageView.tintColor = .secondaryLabel
+    }
+
+    UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseInOut) {
+      self.layoutIfNeeded()
+      self.superview?.layoutIfNeeded()
+    } completion: { _ in
+      self.notifyHeightChange()
+    }
+  }
+
   // MARK: - Private Helpers
 
   private func updatePlaceholderVisibility() {
@@ -314,7 +474,8 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   }
 
   private func updateSendButtonState() {
-    let canSend = !(textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasText = !(textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let canSend = hasText || hasEmbed
     sendButton.isEnabled = canSend
     sendButton.alpha = canSend ? 1.0 : 0.5
 
@@ -327,9 +488,10 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
 
   private func updateRightButton() {
     let hasText = !(textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    // Show send button when there's text, voice button when empty
-    sendButton.isHidden = !hasText
-    voiceButton.isHidden = hasText
+    let showSend = hasText || hasEmbed
+    // Show send button when there's text or embed, voice button when empty
+    sendButton.isHidden = !showSend
+    voiceButton.isHidden = showSend
 
     // Update voice button appearance for recording state
     var voiceConfig = voiceButton.configuration

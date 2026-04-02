@@ -298,26 +298,44 @@ struct VoiceWaveformView: View {
   let accentColor: Color
   let trackColor: Color
 
+  private let barSpacing: CGFloat = 2
+  private let minBarWidth: CGFloat = 2
+
   var body: some View {
     GeometryReader { geo in
-      HStack(spacing: 2) {
-        ForEach(Array(waveform.enumerated()), id: \.offset) { index, sample in
-          let barProgress = Double(index) / Double(max(waveform.count - 1, 1))
+      let maxBars = max(1, Int(geo.size.width / (minBarWidth + barSpacing)))
+      let displaySamples = downsample(waveform, to: min(waveform.count, maxBars))
+
+      HStack(spacing: barSpacing) {
+        ForEach(Array(displaySamples.enumerated()), id: \.offset) { index, sample in
+          let barProgress = Double(index) / Double(max(displaySamples.count - 1, 1))
           let isActive = barProgress <= progress
 
           RoundedRectangle(cornerRadius: 1)
             .fill(isActive ? accentColor : trackColor)
             .frame(
               width: max(
-                2,
-                (geo.size.width - CGFloat(waveform.count - 1) * 2)
-                  / CGFloat(waveform.count)
+                minBarWidth,
+                (geo.size.width - CGFloat(displaySamples.count - 1) * barSpacing)
+                  / CGFloat(displaySamples.count)
               ),
               height: max(3, CGFloat(sample) * geo.size.height)
             )
         }
       }
       .frame(maxHeight: .infinity, alignment: .center)
+    }
+    .clipped()
+  }
+
+  private func downsample(_ samples: [Float], to count: Int) -> [Float] {
+    guard samples.count > count, count > 0 else { return samples }
+    let chunkSize = Double(samples.count) / Double(count)
+    return (0..<count).map { i in
+      let start = Int(Double(i) * chunkSize)
+      let end = min(Int(Double(i + 1) * chunkSize), samples.count)
+      guard start < end else { return 0 }
+      return samples[start..<end].max() ?? 0
     }
   }
 }

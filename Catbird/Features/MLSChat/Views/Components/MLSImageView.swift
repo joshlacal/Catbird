@@ -32,6 +32,19 @@ struct MLSImageView: View {
     return w / h
   }
 
+  /// Pre-calculated image size based on the known max bubble width (280 - 8 padding).
+  /// Using an explicit frame instead of `.aspectRatio(contentMode: .fit)` prevents
+  /// multi-pass layout oscillation in self-sizing UIHostingConfiguration cells.
+  private var calculatedImageSize: CGSize {
+    let maxWidth: CGFloat = 272
+    let maxHeight: CGFloat = 400
+    let fitHeight = maxWidth / aspectRatio
+    if fitHeight <= maxHeight {
+      return CGSize(width: maxWidth, height: fitHeight)
+    }
+    return CGSize(width: maxHeight * aspectRatio, height: maxHeight)
+  }
+
   enum LoadState {
     case idle
     case loading
@@ -72,7 +85,7 @@ struct MLSImageView: View {
   private var placeholder: some View {
     RoundedRectangle(cornerRadius: 12)
       .fill(.quaternary)
-      .aspectRatio(aspectRatio, contentMode: .fit)
+      .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
   }
 
   // MARK: - Loaded Image
@@ -89,7 +102,9 @@ struct MLSImageView: View {
     default:
       Image(uiImage: uiImage)
         .resizable()
-        .aspectRatio(aspectRatio, contentMode: .fit)
+        .scaledToFill()
+        .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .matchedTransitionSource(id: imageEmbed.blobId, in: imageTransition) { source in
@@ -110,7 +125,9 @@ struct MLSImageView: View {
     ZStack {
       Image(uiImage: uiImage)
         .resizable()
-        .aspectRatio(aspectRatio, contentMode: .fit)
+        .scaledToFill()
+        .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .blur(radius: isRevealed ? 0 : 30)
 
@@ -162,7 +179,7 @@ struct MLSImageView: View {
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
-      .aspectRatio(aspectRatio, contentMode: .fit)
+      .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
       .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
     .sheet(isPresented: $showSensitiveModal) {
@@ -192,7 +209,7 @@ struct MLSImageView: View {
           .foregroundStyle(.tertiary)
       }
     }
-    .aspectRatio(aspectRatio, contentMode: .fit)
+    .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
   }
 
@@ -208,7 +225,7 @@ struct MLSImageView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
-    .aspectRatio(aspectRatio, contentMode: .fit)
+    .frame(width: calculatedImageSize.width, height: calculatedImageSize.height)
     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
   }
 

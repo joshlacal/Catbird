@@ -14,6 +14,10 @@ struct InlineComposerConfig {
   var onGifPicker: (() -> Void)?
   var onPostPicker: (() -> Void)?
   var isRecording: Bool = false
+  var onVoiceCancelled: (() -> Void)?
+  var embedPreviewImage: UIImage? = nil
+  var hasEmbed: Bool = false
+  var onEmbedRemoved: (() -> Void)?
 }
 
 @available(iOS 16.0, *)
@@ -50,6 +54,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     if let config = composerConfig {
       controller.updateComposerCallbacks(config: config)
+      controller.updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)
     }
   }
 }

@@ -28,6 +28,7 @@ import SwiftUI
     @State private var showingImageUploadError = false
     @State private var isDetectingLink = false
     @State private var detectedLinkEmbed: MLSLinkEmbed?
+    @State private var imagePreviewUIImage: UIImage?
 
     var imageSender: MLSImageSender?
     var onVoiceTapped: (() -> Void)?
@@ -92,6 +93,15 @@ import SwiftUI
           guard let sender = imageSender else { return }
           if let embed = await sender.processImage(from: newItem, convoId: conversationId) {
             attachedEmbed = .image(embed)
+            // Load thumbnail for preview
+            if let data = try? await newItem.loadTransferable(type: Data.self),
+               let image = UIImage(data: data) {
+              let size = CGSize(width: 64, height: 64)
+              let renderer = UIGraphicsImageRenderer(size: size)
+              imagePreviewUIImage = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+              }
+            }
           } else if let error = sender.uploadError {
             imageUploadError = error
             showingImageUploadError = true
@@ -118,6 +128,7 @@ import SwiftUI
           Button {
             attachedEmbed = nil
             detectedLinkEmbed = nil
+            imagePreviewUIImage = nil
           } label: {
             Image(systemName: "xmark.circle.fill")
               .foregroundColor(.secondary)
@@ -398,9 +409,17 @@ import SwiftUI
 
       case .image(let imageEmbed):
         HStack(spacing: DesignTokens.Spacing.sm) {
-          Image(systemName: "photo.fill")
-            .font(.system(size: 32))
-            .foregroundColor(.secondary)
+          if let preview = imagePreviewUIImage {
+            Image(uiImage: preview)
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: 40, height: 40)
+              .clipShape(RoundedRectangle(cornerRadius: 6))
+          } else {
+            Image(systemName: "photo.fill")
+              .font(.system(size: 32))
+              .foregroundColor(.secondary)
+          }
 
           VStack(alignment: .leading, spacing: 2) {
             Text("Image")
@@ -539,6 +558,7 @@ import SwiftUI
       text = ""
       attachedEmbed = nil
       detectedLinkEmbed = nil
+      imagePreviewUIImage = nil
       onTypingChanged?(false)
       if dismissKeyboardOnSend {
         isTextFieldFocused = false

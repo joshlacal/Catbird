@@ -155,6 +155,7 @@ struct MLSConversationDetailView: View {
   @State private var imageSender: MLSImageSender?
   @State private var showingPhotoPicker = false
   @State private var selectedPhotoItem: PhotosPickerItem?
+  @State private var embedPreviewUIImage: UIImage?
 
   // GIF & Post pickers
   @State private var showingGifPicker = false
@@ -227,22 +228,30 @@ struct MLSConversationDetailView: View {
           },
           composerConfig: isPendingRequest ? nil : InlineComposerConfig(
             onSend: { text in
-              Task { await sendMLSMessage(text: text, embed: nil) }
+              let embed = unifiedDataSource?.attachedEmbed
+              unifiedDataSource?.attachedEmbed = nil
+              embedPreviewUIImage = nil
+              Task { await sendMLSMessage(text: text, embed: embed) }
             },
             onAttachTapped: { },
             onVoiceTapped: {
               Task { await toggleVoiceRecording() }
             },
             onPhotoPicker: {
-              showingPhotoPicker = true
+                showingPhotoPicker = true
+            }, onGifPicker: {
+                showingGifPicker = true
+            }, onPostPicker: {
+                showingPostPicker = true
+            }, isRecording: isRecordingVoice, onVoiceCancelled: {
+                Task { await cancelVoiceRecording() }
             },
-            onGifPicker: {
-              showingGifPicker = true
-            },
-            onPostPicker: {
-              showingPostPicker = true
-            },
-            isRecording: isRecordingVoice
+            embedPreviewImage: embedPreviewUIImage,
+            hasEmbed: unifiedDataSource?.attachedEmbed != nil,
+            onEmbedRemoved: {
+              unifiedDataSource?.attachedEmbed = nil
+              embedPreviewUIImage = nil
+            }
           )
         )
         .ignoresSafeArea(.container)
@@ -388,6 +397,15 @@ struct MLSConversationDetailView: View {
         guard let sender = imageSender else { return }
         if let embed = await sender.processImage(from: newItem, convoId: conversationId) {
           unifiedDataSource?.attachedEmbed = .image(embed)
+          // Load thumbnail for embed preview
+          if let data = try? await newItem.loadTransferable(type: Data.self),
+             let image = UIImage(data: data) {
+            let size = CGSize(width: 64, height: 64)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            embedPreviewUIImage = renderer.image { _ in
+              image.draw(in: CGRect(origin: .zero, size: size))
+            }
+          }
         }
       }
     }
@@ -438,6 +456,16 @@ struct MLSConversationDetailView: View {
     } else {
       await startVoiceRecording()
     }
+  }
+
+  @MainActor
+  private func cancelVoiceRecording() async {
+    guard isRecordingVoice else { return }
+    withAnimation(.easeInOut(duration: 0.2)) {
+      isRecordingVoice = false
+    }
+    voiceSender?.cancelRecording()
+    logger.debug("Voice recording cancelled by slide-up gesture")
   }
 
   @MainActor
@@ -1192,58 +1220,70 @@ struct MLSConversationDetailView: View {
     }
   }
 
-  // MARK: - Encryption Status Header
+  // MARK: - Other User (1:1)
+
+  private var otherParticipant: (did: String, profile: MLSProfileEnricher.ProfileData?)? {
+    let currentUserDID = appState.userDID
+    let others = members.filter { $0.did.lowercased() != currentUserDID.lowercased() && $0.isActive }
+    guard others.count == 1, let other = others.first else { return nil }
+    let canonical = MLSProfileEnricher.canonicalDID(other.did)
+    let profile = participantProfiles[other.did] ?? participantProfiles[canonical]
+    return (other.did, profile)
+  }
+
+  private var isOneOnOne: Bool {
+    otherParticipant != nil
+  }
+
+  // MARK: - Conversation Header (Toolbar Principal)
 
   @ViewBuilder
   private var encryptionStatusHeader: some View {
-    HStack(spacing: DesignTokens.Spacing.xs) {
-      if let avatarData = conversationModel?.avatarImageData,
-        let uiImage = UIImage(data: avatarData)
-      {
-        Image(uiImage: uiImage)
-          .resizable()
-          .scaledToFill()
-          .frame(width: 28, height: 28)
-          .clipShape(Circle())
-      }
+    let avatarSize: CGFloat = 44
 
-      VStack(spacing: 2) {
-        Text(navigationTitle)
-          .designCallout()
-          .lineLimit(1)
-
-        HStack(spacing: DesignTokens.Spacing.xs) {
-          Image(systemName: "lock.shield.fill")
-            .font(.system(size: 10))
-            .foregroundColor(.green)
-
-          Text("End-to-End Encrypted")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(.secondary)
-        }
-
-        // Show partial history note when user joined via External Commit at epoch > 1
-        if let model = conversationModel,
-          model.joinMethod == .externalCommit,
-          model.joinEpoch > 1
-        {
-          HStack(spacing: 4) {
-            Image(systemName: "clock.arrow.circlepath")
-              .font(.system(size: 9))
-              .foregroundColor(.secondary)
-
-            Text("Partial History")
-              .font(.system(size: 9, weight: .medium))
-              .foregroundColor(.secondary)
-          }
-          .help("Messages before epoch \(model.joinEpoch) are unavailable due to device recovery.")
+    ZStack(alignment: .bottom) {
+      Group {
+        if isOneOnOne, let other = otherParticipant {
+          AsyncProfileImage(
+            url: other.profile?.avatarURL,
+            size: avatarSize
+          )
+        } else {
+          MLSGroupAvatarView(
+            participants: participantViewModels,
+            size: avatarSize,
+            groupAvatarData: conversationModel?.avatarImageData,
+            currentUserDID: appState.userDID
+          )
         }
       }
+      .frame(width: avatarSize, height: avatarSize)
+      .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 3)
+
+      Group {
+        if #available(iOS 26.0, *) {
+          Text(navigationTitle)
+            .font(.system(size: 11, weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
+            .glassEffect(in: .capsule)
+        } else {
+          Text(navigationTitle)
+            .font(.system(size: 11, weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+      }
+      .offset(y: 10)
     }
+    .padding(.bottom, 10)
     .onTapGesture {
       showingGroupDetail = true
     }
-    .accessibilityLabel("End-to-end encrypted conversation")
+    .accessibilityLabel("\(navigationTitle) conversation")
     .accessibilityHint("Tap to view conversation details")
   }
 

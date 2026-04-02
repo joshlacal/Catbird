@@ -12,7 +12,8 @@ struct MoreView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Binding var path: NavigationPath
-    
+    @State private var isNavigating = false
+
     // Tabs to show in the More menu
     private let moreTabs = [ProfileTab.likes, ProfileTab.lists, ProfileTab.starterPacks, ProfileTab.feeds]
     
@@ -20,7 +21,8 @@ struct MoreView: View {
         LazyVStack(spacing: 0) {
             ForEach(moreTabs, id: \.self) { tab in
                 Button {
-                    // Push the new view onto the navigation stack
+                    guard !isNavigating else { return }
+                    isNavigating = true
                     path.append(ProfileNavigationDestination.section(tab))
                 } label: {
                     HStack(spacing: 16) {
@@ -70,6 +72,7 @@ struct MoreView: View {
         )
         .padding(.horizontal, 16)
         .padding(.top, 16)
+        .onAppear { isNavigating = false }
 
         Spacer(minLength: 100)
     }
