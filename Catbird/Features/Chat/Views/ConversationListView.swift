@@ -33,6 +33,12 @@ struct ConversationListView: View {
     .overlay {
       loadingOverlay
     }
+    .onAppear {
+      appState.chatHeartbeatManager.viewAppeared()
+    }
+    .onDisappear {
+      appState.chatHeartbeatManager.viewDisappeared()
+    }
   }
   
   // MARK: - View Components
