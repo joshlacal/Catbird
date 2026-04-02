@@ -4,6 +4,9 @@ import OSLog
 import Petrel
 import SwiftUI
 
+// DEPRECATED: Use unified ChatTabView instead. This view is kept for reference
+// but is no longer used as the primary MLS conversation list on iOS.
+
 #if os(iOS)
 
 // MARK: - MLS Conversation List View

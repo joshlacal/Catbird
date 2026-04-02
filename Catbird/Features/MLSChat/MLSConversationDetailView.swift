@@ -1226,7 +1226,7 @@ struct MLSConversationDetailView: View {
       }
       .frame(width: avatarSize, height: avatarSize)
       .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 3)
-
+      .offset(y: 15)
       Group {
         if #available(iOS 26.0, *) {
           Text(navigationTitle)
@@ -1244,7 +1244,7 @@ struct MLSConversationDetailView: View {
             .background(.ultraThinMaterial, in: Capsule())
         }
       }
-      .offset(y: 5)
+      .offset(y: 15)
     }
     .padding(.bottom, 10)
     .onTapGesture {
