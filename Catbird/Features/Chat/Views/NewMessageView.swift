@@ -103,8 +103,7 @@ struct NewMessageView: View {
     )
     .environment(appState)
     .applyAppStateEnvironment(appState)
-    .overlay(alignment: .top) {
-      // Mode picker overlaid so user can switch back
+    .safeAreaInset(edge: .top) {
       Picker("Type", selection: $mode) {
         ForEach(NewConversationMode.allCases, id: \.self) { m in
           Text(m.rawValue).tag(m)
@@ -112,12 +111,8 @@ struct NewMessageView: View {
       }
       .pickerStyle(.segmented)
       .padding(.horizontal)
-      .padding(.top, 8)
+      .padding(.vertical, 8)
       .background(.bar)
-    }
-    .safeAreaInset(edge: .top) {
-      // Push content down to make room for the picker overlay
-      Color.clear.frame(height: 44)
     }
   }
 
