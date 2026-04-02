@@ -1404,6 +1404,12 @@ final class ChatManager: StateInvalidationSubscriber {
       if let profile = response {
         // Cache the profile
         profileCache[did] = profile
+        await ProfileCacheDatabase.shared.write(
+          did: did,
+          handle: profile.handle.description,
+          displayName: profile.displayName,
+          avatarURL: profile.avatar?.uriString()
+        )
       }
 
       return response
@@ -1451,7 +1457,16 @@ final class ChatManager: StateInvalidationSubscriber {
           for profile in response.profiles {
             self.profileCache[profile.did.didString()] = profile
           }
-          
+
+          for profile in response.profiles {
+            await ProfileCacheDatabase.shared.write(
+              did: profile.did.didString(),
+              handle: profile.handle.description,
+              displayName: profile.displayName,
+              avatarURL: profile.avatar?.uriString()
+            )
+          }
+
           logger.debug("Cached \(response.profiles.count) profiles from batch")
         }
       }
