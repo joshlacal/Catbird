@@ -1229,19 +1229,29 @@ struct MLSConversationDetailView: View {
       .offset(y: 15)
       Group {
         if #available(iOS 26.0, *) {
-          Text(navigationTitle)
-            .font(.system(size: 11, weight: .semibold))
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
-            .glassEffect(in: .capsule)
+          HStack(spacing: 4) {
+            Text(navigationTitle)
+              .font(.system(size: 11, weight: .semibold))
+              .lineLimit(1)
+            Image(systemName: "lock.shield.fill")
+              .font(.system(size: 9))
+              .foregroundStyle(.green)
+          }
+          .padding(.horizontal, 10)
+          .padding(.vertical, 3)
+          .glassEffect(in: .capsule)
         } else {
-          Text(navigationTitle)
-            .font(.system(size: 11, weight: .semibold))
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
-            .background(.ultraThinMaterial, in: Capsule())
+          HStack(spacing: 4) {
+            Text(navigationTitle)
+              .font(.system(size: 11, weight: .semibold))
+              .lineLimit(1)
+            Image(systemName: "lock.shield.fill")
+              .font(.system(size: 9))
+              .foregroundStyle(.green)
+          }
+          .padding(.horizontal, 10)
+          .padding(.vertical, 3)
+          .background(.ultraThinMaterial, in: Capsule())
         }
       }
       .offset(y: 15)

@@ -66,23 +66,58 @@ struct NewMessageView: View {
   private let searchDebounceInterval: Duration = .milliseconds(300)
 
   var body: some View {
-    NavigationStack {
-      contentView
-        .navigationTitle("New Message")
-        .modifier(PlatformToolbarModifier())
-        .toolbar {
-          ToolbarItem(placement: .cancellationAction) {
-            cancelButton
+    // MLSNewConversationView has its own NavigationStack + .searchable,
+    // so it must replace the outer NavigationStack entirely to avoid nesting.
+    if mode == .catbirdGroup && ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) {
+      mlsNewConversationContent
+    } else {
+      NavigationStack {
+        contentView
+          .navigationTitle("New Message")
+          .modifier(PlatformToolbarModifier())
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              cancelButton
+            }
           }
+          .onChange(of: searchText) { _, newValue in
+            handleSearchTextChange(newValue)
+          }
+          .disabled(isStartingConversation)
+          .task {
+            loadFollowing()
+            isSearchFieldFocused = true
+          }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var mlsNewConversationContent: some View {
+    MLSNewConversationView(
+      onConversationCreated: { /* refresh handled by coordinator polling */ },
+      onNavigateToConversation: { convoId in
+        dismiss()
+        appState.navigationManager.targetMLSConversationId = convoId
+      }
+    )
+    .environment(appState)
+    .applyAppStateEnvironment(appState)
+    .overlay(alignment: .top) {
+      // Mode picker overlaid so user can switch back
+      Picker("Type", selection: $mode) {
+        ForEach(NewConversationMode.allCases, id: \.self) { m in
+          Text(m.rawValue).tag(m)
         }
-        .onChange(of: searchText) { _, newValue in
-          handleSearchTextChange(newValue)
-        }
-        .disabled(isStartingConversation)
-        .task {
-          loadFollowing()
-          isSearchFieldFocused = true
-        }
+      }
+      .pickerStyle(.segmented)
+      .padding(.horizontal)
+      .padding(.top, 8)
+      .background(.bar)
+    }
+    .safeAreaInset(edge: .top) {
+      // Push content down to make room for the picker overlay
+      Color.clear.frame(height: 44)
     }
   }
 
@@ -365,19 +400,10 @@ struct NewMessageView: View {
 
   @ViewBuilder
   private var catbirdGroupContent: some View {
-    if ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) {
-      MLSNewConversationView(
-        onConversationCreated: { /* refresh handled by coordinator polling */ },
-        onNavigateToConversation: { convoId in
-          dismiss()
-          appState.navigationManager.targetMLSConversationId = convoId
-        }
-      )
-      .environment(appState)
-      .applyAppStateEnvironment(appState)
-    } else {
-      mlsOptInGate
-    }
+    // MLS-enabled path is handled at the body level (replaces NavigationStack
+    // entirely to avoid nested NavigationStacks breaking .searchable).
+    // This only shows the opt-in gate when MLS is NOT enabled.
+    mlsOptInGate
   }
 
   @ViewBuilder

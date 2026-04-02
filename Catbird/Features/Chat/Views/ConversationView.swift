@@ -68,6 +68,16 @@ struct ConversationView: View {
     .toolbarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)
     .toolbar {
+      ToolbarItem(placement: .principal) {
+        HStack(spacing: 4) {
+          Text(conversationTitle)
+            .font(.headline)
+            .lineLimit(1)
+          Image(systemName: "bubble.left.and.bubble.right")
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+        }
+      }
       ToolbarItem(placement: .primaryAction) {
         ConversationToolbarMenu(conversation: chatManager.conversations.first { $0.id == convoId })
       }

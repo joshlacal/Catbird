@@ -51,7 +51,7 @@ struct MLSConversationRowView: View {
           // E2EE indicator
           Image(systemName: "lock.shield.fill")
             .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.green)
             .accessibilityLabel("End-to-end encrypted")
 
           Spacer()
