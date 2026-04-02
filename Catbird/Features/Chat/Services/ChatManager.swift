@@ -685,21 +685,9 @@ final class ChatManager: StateInvalidationSubscriber {
     let endpoint = "blue.catbird.bskychat.updateMuteStatus"
     await client.setServiceDID(Self.nestServiceDID, for: endpoint)
 
-    struct MuteStatusInput: Encodable {
-      let convoId: String
-      let muted: Bool
-
-      enum CodingKeys: String, CodingKey {
-        case convoId = "convo_id"
-        case muted
-      }
-    }
-
     do {
-      let (responseCode, _) = try await client.performCustomXRPCProcedure(
-        endpoint: endpoint,
-        input: MuteStatusInput(convoId: convoId, muted: muted)
-      )
+      let input = BlueCatbirdBskychatUpdateMuteStatus.Input(convoId: convoId, muted: muted)
+      let (responseCode, _) = try await client.blue.catbird.bskychat.updateMuteStatus(input: input)
 
       if (200 ... 299).contains(responseCode) {
         logger.debug("Synced mute status to server: convoId=\(convoId), muted=\(muted)")

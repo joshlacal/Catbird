@@ -92,9 +92,8 @@ final class ChatHeartbeatManager {
       // Ensure the endpoint routes through Nest
       await client.setServiceDID(Self.nestServiceDID, for: Self.heartbeatEndpoint)
 
-      let (responseCode, _) = try await client.performCustomXRPCProcedure(
-        endpoint: Self.heartbeatEndpoint
-      )
+      let input = BlueCatbirdBskychatPushHeartbeat.Input(platform: "ios")
+      let (responseCode, _) = try await client.blue.catbird.bskychat.pushHeartbeat(input: input)
 
       if (200 ... 299).contains(responseCode) {
         logger.debug("Heartbeat sent successfully")
