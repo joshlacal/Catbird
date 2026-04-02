@@ -1206,7 +1206,7 @@ struct MLSConversationDetailView: View {
 
   @ViewBuilder
   private var encryptionStatusHeader: some View {
-    let avatarSize: CGFloat = 60
+    let avatarSize: CGFloat = 50
 
     ZStack(alignment: .bottom) {
       Group {
@@ -1225,8 +1225,8 @@ struct MLSConversationDetailView: View {
         }
       }
       .frame(width: avatarSize, height: avatarSize)
-      .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 3)
-      .offset(y: 15)
+      .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+      .offset(y: 12)
       Group {
         if #available(iOS 26.0, *) {
           HStack(spacing: 4) {
@@ -1254,7 +1254,7 @@ struct MLSConversationDetailView: View {
           .background(.ultraThinMaterial, in: Capsule())
         }
       }
-      .offset(y: 15)
+      .offset(y: 25)
     }
     .padding(.bottom, 10)
     .onTapGesture {
