@@ -5,6 +5,7 @@
 //  Created by Claude on 5/10/25.
 //
 
+import CatbirdMLSCore
 import OSLog
 import Petrel
 import SwiftUI
@@ -52,6 +53,15 @@ struct NewMessageView: View {
   @State private var searchTask: Task<Void, Never>?
   @FocusState private var isSearchFieldFocused: Bool
 
+  // MARK: - Mode
+
+  enum NewConversationMode: String, CaseIterable {
+    case bluesky = "Bluesky DM"
+    case catbirdGroup = "Catbird Group"
+  }
+
+  @State private var mode: NewConversationMode = .bluesky
+
   private let logger = Logger(subsystem: "blue.catbird", category: "NewMessageView")
   private let searchDebounceInterval: Duration = .milliseconds(300)
 
@@ -79,10 +89,31 @@ struct NewMessageView: View {
   @ViewBuilder
   private var contentView: some View {
     VStack(spacing: 0) {
-      searchBar
-      Divider().padding(.top, 8)
-      resultsList
+      Picker("Type", selection: $mode) {
+        ForEach(NewConversationMode.allCases, id: \.self) { m in
+          Text(m.rawValue).tag(m)
+        }
+      }
+      .pickerStyle(.segmented)
+      .padding(.horizontal)
+      .padding(.top)
+
+      switch mode {
+      case .bluesky:
+        blueskyContent
+      case .catbirdGroup:
+        catbirdGroupContent
+      }
     }
+  }
+
+  // MARK: - Bluesky Content
+
+  @ViewBuilder
+  private var blueskyContent: some View {
+    searchBar
+    Divider().padding(.top, 8)
+    resultsList
   }
 
   @ViewBuilder
@@ -327,6 +358,90 @@ struct NewMessageView: View {
           searchError = "Failed to start conversation. Please try again."
         }
       }
+    }
+  }
+
+  // MARK: - Catbird Group Content
+
+  @ViewBuilder
+  private var catbirdGroupContent: some View {
+    if ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) {
+      MLSNewConversationView(
+        onConversationCreated: { /* refresh handled by coordinator polling */ },
+        onNavigateToConversation: { convoId in
+          dismiss()
+          appState.navigationManager.targetMLSConversationId = convoId
+        }
+      )
+      .environment(appState)
+      .applyAppStateEnvironment(appState)
+    } else {
+      mlsOptInGate
+    }
+  }
+
+  @ViewBuilder
+  private var mlsOptInGate: some View {
+    VStack(spacing: 24) {
+      Spacer()
+
+      Image(systemName: "lock.shield")
+        .font(.system(size: 48))
+        .foregroundStyle(.secondary)
+
+      Text("Catbird Groups")
+        .font(.title3)
+        .fontWeight(.semibold)
+
+      Text("End-to-end encrypted group chat using the MLS protocol.")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 32)
+
+      VStack(spacing: 8) {
+        Label("Highly Experimental", systemImage: "exclamationmark.triangle.fill")
+          .font(.headline)
+          .foregroundStyle(.orange)
+
+        Text("This feature is under active development. You may experience bugs or missing messages.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 32)
+      }
+
+      Toggle(isOn: Binding(
+        get: { ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) },
+        set: { newValue in
+          if newValue {
+            ExperimentalSettings.shared.enableMLSChat(for: appState.userDID)
+            Task { await optInToMLS() }
+          }
+        }
+      )) {
+        Text("Enable Catbird Groups")
+          .fontWeight(.medium)
+      }
+      .toggleStyle(.switch)
+      .padding(.horizontal, 48)
+
+      Spacer()
+    }
+  }
+
+  @MainActor
+  private func optInToMLS() async {
+    do {
+      try await appState.initializeMLS()
+      guard let apiClient = await appState.getMLSAPIClient() else { return }
+      _ = try await apiClient.optIn()
+      if let manager = await appState.getMLSConversationManager() {
+        try? await manager.ensureDeviceRecordPublished()
+      }
+      ExperimentalSettings.shared.enableMLSChat(for: appState.userDID)
+    } catch {
+      ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
     }
   }
 }
