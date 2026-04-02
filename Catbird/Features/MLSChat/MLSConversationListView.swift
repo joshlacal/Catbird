@@ -1508,8 +1508,8 @@ struct MLSConversationRowView: View {
 
                     // E2EE indicator
                     Image(systemName: "lock.shield.fill")
-                        .font(.system(size: DesignTokens.Size.iconSM))
-                        .foregroundColor(.green)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                         .accessibilityLabel("End-to-end encrypted")
 
                     Spacer()
