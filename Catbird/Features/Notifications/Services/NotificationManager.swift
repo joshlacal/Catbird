@@ -253,6 +253,112 @@ final class NotificationManager: NSObject {
     notificationLogger.info(
       "Chat notification preference updated for \(did): \(self.chatNotificationsEnabled ? "enabled" : "disabled")"
     )
+
+    // Sync chat push preference to Nest via putPreferencesV2
+    let chatEnabled = chatNotificationsEnabled
+    Task {
+      await syncChatPushPreferenceToServer(enabled: chatEnabled)
+    }
+  }
+
+  /// Syncs the chat push preference to Nest so the server can filter chat pushes.
+  /// Non-fatal: the server will pick up the change on the next background sync.
+  private func syncChatPushPreferenceToServer(enabled: Bool) async {
+    guard let client = client else { return }
+    guard status == .registered else { return }
+
+    do {
+      await configureNotificationServiceRouting(on: client)
+
+      guard let serverPreferences = await currentNotificationPreferencesSnapshot(using: client)
+      else {
+        notificationLogger.debug(
+          "Cannot sync chat push preference - server preferences unavailable")
+        return
+      }
+
+      // Build input with the updated chat push value, preserving all other preferences
+      let input = AppBskyNotificationPutPreferencesV2.Input(
+        chat: AppBskyNotificationDefs.ChatPreference(
+          include: serverPreferences.chat.include,
+          push: enabled
+        ),
+        follow: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.follow.include,
+          list: serverPreferences.follow.list,
+          push: serverPreferences.follow.push
+        ),
+        like: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.like.include,
+          list: serverPreferences.like.list,
+          push: serverPreferences.like.push
+        ),
+        likeViaRepost: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.likeViaRepost.include,
+          list: serverPreferences.likeViaRepost.list,
+          push: serverPreferences.likeViaRepost.push
+        ),
+        mention: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.mention.include,
+          list: serverPreferences.mention.list,
+          push: serverPreferences.mention.push
+        ),
+        quote: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.quote.include,
+          list: serverPreferences.quote.list,
+          push: serverPreferences.quote.push
+        ),
+        reply: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.reply.include,
+          list: serverPreferences.reply.list,
+          push: serverPreferences.reply.push
+        ),
+        repost: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.repost.include,
+          list: serverPreferences.repost.list,
+          push: serverPreferences.repost.push
+        ),
+        repostViaRepost: AppBskyNotificationDefs.FilterablePreference(
+          include: serverPreferences.repostViaRepost.include,
+          list: serverPreferences.repostViaRepost.list,
+          push: serverPreferences.repostViaRepost.push
+        ),
+        starterpackJoined: AppBskyNotificationDefs.Preference(
+          list: serverPreferences.starterpackJoined.list,
+          push: serverPreferences.starterpackJoined.push
+        ),
+        subscribedPost: AppBskyNotificationDefs.Preference(
+          list: serverPreferences.subscribedPost.list,
+          push: serverPreferences.subscribedPost.push
+        ),
+        unverified: AppBskyNotificationDefs.Preference(
+          list: serverPreferences.unverified.list,
+          push: serverPreferences.unverified.push
+        ),
+        verified: AppBskyNotificationDefs.Preference(
+          list: serverPreferences.verified.list,
+          push: serverPreferences.verified.push
+        )
+      )
+
+      let (responseCode, output) = try await client.app.bsky.notification.putPreferencesV2(
+        input: input
+      )
+
+      if (200 ... 299).contains(responseCode) {
+        if let updatedPreferences = output?.preferences {
+          applyNotificationPreferencesSnapshot(updatedPreferences)
+        }
+        notificationLogger.info(
+          "Synced chat push preference to server: \(enabled ? "enabled" : "disabled")")
+      } else {
+        notificationLogger.warning(
+          "Chat push preference sync returned HTTP \(responseCode)")
+      }
+    } catch {
+      notificationLogger.warning(
+        "Chat push preference sync failed: \(error.localizedDescription)")
+    }
   }
 
   /// Load chat notification preference for the current account

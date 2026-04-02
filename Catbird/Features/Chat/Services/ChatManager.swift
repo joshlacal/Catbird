@@ -631,6 +631,9 @@ final class ChatManager: StateInvalidationSubscriber {
         logger.debug("Conversation \(convoId) muted successfully.")
       }
 
+      // Sync mute status to Nest (non-fatal)
+      await syncMuteStatusToServer(convoId: convoId, muted: true)
+
     } catch {
       logger.error("Error muting conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
@@ -660,9 +663,51 @@ final class ChatManager: StateInvalidationSubscriber {
         logger.debug("Conversation \(convoId) unmuted successfully.")
       }
 
+      // Sync mute status to Nest (non-fatal)
+      await syncMuteStatusToServer(convoId: convoId, muted: false)
+
     } catch {
       logger.error("Error unmuting conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
+    }
+  }
+
+  // MARK: - Mute Status Server Sync
+
+  /// Service DID for routing custom Catbird endpoints through Nest.
+  private static let nestServiceDID = "did:web:api.catbird.blue"
+
+  /// Syncs the mute status of a conversation to Nest for server-side push filtering.
+  /// This is non-fatal: the 15-minute background sync catches any missed updates.
+  private func syncMuteStatusToServer(convoId: String, muted: Bool) async {
+    guard let client = client else { return }
+
+    let endpoint = "blue.catbird.bskychat.updateMuteStatus"
+    await client.setServiceDID(Self.nestServiceDID, for: endpoint)
+
+    struct MuteStatusInput: Encodable {
+      let convoId: String
+      let muted: Bool
+
+      enum CodingKeys: String, CodingKey {
+        case convoId = "convo_id"
+        case muted
+      }
+    }
+
+    do {
+      let (responseCode, _) = try await client.performCustomXRPCProcedure(
+        endpoint: endpoint,
+        input: MuteStatusInput(convoId: convoId, muted: muted)
+      )
+
+      if (200 ... 299).contains(responseCode) {
+        logger.debug("Synced mute status to server: convoId=\(convoId), muted=\(muted)")
+      } else {
+        logger.warning("Mute status sync returned HTTP \(responseCode) for convoId=\(convoId)")
+      }
+    } catch {
+      logger.warning("Mute status sync failed for convoId=\(convoId): \(error.localizedDescription)")
     }
   }
 
