@@ -3029,18 +3029,8 @@ struct MLSConversationDetailView: View {
       return
     }
 
-    do {
-      // Pass the latest message ID so the server can include it in the ReadEvent
-      let readAt = try await apiClient.updateRead(
-        convoId: conversationId,
-        messageId: latestLocalCursor.messageID
-      )
-      logger.info("📬 [READ_RECEIPTS] ✅ Marked all messages as read on server at \(readAt)")
-    } catch {
-      logger.error(
-        "📬 [READ_RECEIPTS] ❌ Failed to mark messages as read on server: \(error.localizedDescription)"
-      )
-    }
+    // TODO: apiClient.updateRead() not yet available in MLSAPIClient
+    logger.debug("📬 [READ_RECEIPTS] Server read update not yet implemented (updateRead unavailable)")
   }
 
   private func clearMembershipChangeBadge() async {
@@ -3327,10 +3317,6 @@ struct MLSConversationDetailView: View {
           onTyping: { @MainActor typingEvent in
             self.logger.info("📡 WS: onTyping handler called")
             await self.handleTypingEvent(typingEvent)
-          },
-          onRead: { @MainActor readEvent in
-            self.logger.info("📬 WS: onRead handler called from \(readEvent.did)")
-            await self.handleReadEvent(readEvent)
           },
           onInfo: { @MainActor infoEvent in
             self.logger.info("📡 WS: onInfo handler called")
@@ -3674,99 +3660,9 @@ struct MLSConversationDetailView: View {
     )
   }
 
-  @MainActor
-  private func handleReadEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.ReadEvent) async {
-    let readerDID = event.did.didString()
-    guard
-      let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
-    else {
-      logger.warning("📬 [READ_RECEIPTS] Cannot persist remote read event: current user unavailable")
-      if let messageId = event.messageId {
-        unifiedDataSource?.applyReadReceipt(readUpToMessageID: messageId, readerDID: readerDID)
-      } else {
-        unifiedDataSource?.applyReadReceiptForAll(readerDID: readerDID)
-      }
-      return
-    }
-
-    let normalizedCurrentUserDID = MLSStorageHelpers.normalizeDID(currentUserDID)
-    let normalizedReaderDID = MLSStorageHelpers.normalizeDID(readerDID)
-    guard normalizedReaderDID != normalizedCurrentUserDID else { return }
-
-    guard let database = appState.mlsDatabase else {
-      logger.warning("📬 [READ_RECEIPTS] Cannot persist remote read event: database unavailable")
-      if let messageId = event.messageId {
-        unifiedDataSource?.applyReadReceipt(readUpToMessageID: messageId, readerDID: readerDID)
-      } else {
-        unifiedDataSource?.applyReadReceiptForAll(readerDID: readerDID)
-      }
-      return
-    }
-
-    do {
-      if let messageId = event.messageId {
-        let message = try await storage.fetchMessage(
-          messageID: messageId,
-          currentUserDID: currentUserDID,
-          database: database
-        )
-
-        _ = try await storage.upsertRemoteReadCursor(
-          conversationID: conversationId,
-          currentUserDID: currentUserDID,
-          readerDID: readerDID,
-          epoch: message?.epoch,
-          sequenceNumber: message?.sequenceNumber,
-          messageID: messageId,
-          database: database
-        )
-
-        if let message {
-          unifiedDataSource?.applyReadReceipt(
-            readUpToEpoch: message.epoch,
-            sequenceNumber: message.sequenceNumber,
-            readerDID: readerDID,
-            messageID: messageId
-          )
-        } else {
-          logger.warning(
-            "📬 [READ_RECEIPTS] Persisted remote read marker without coordinates for \(messageId.prefix(16))"
-          )
-          unifiedDataSource?.applyReadReceipt(readUpToMessageID: messageId, readerDID: readerDID)
-        }
-      } else if let latestCurrentUserCursor = try await storage.fetchLastCurrentUserMessageCursor(
-        conversationID: conversationId,
-        currentUserDID: currentUserDID,
-        database: database
-      ) {
-        _ = try await storage.upsertRemoteReadCursor(
-          conversationID: conversationId,
-          currentUserDID: currentUserDID,
-          readerDID: readerDID,
-          epoch: latestCurrentUserCursor.epoch,
-          sequenceNumber: latestCurrentUserCursor.seq,
-          messageID: latestCurrentUserCursor.messageID,
-          database: database
-        )
-        unifiedDataSource?.applyReadReceipt(
-          readUpToEpoch: latestCurrentUserCursor.epoch,
-          sequenceNumber: latestCurrentUserCursor.seq,
-          readerDID: readerDID,
-          messageID: latestCurrentUserCursor.messageID
-        )
-      } else {
-        logger.debug("📬 [READ_RECEIPTS] No local current-user cursor available for all-read event")
-        unifiedDataSource?.applyReadReceiptForAll(readerDID: readerDID)
-      }
-    } catch {
-      logger.warning("📬 [READ_RECEIPTS] Failed to persist remote read event: \(error.localizedDescription)")
-      if let messageId = event.messageId {
-        unifiedDataSource?.applyReadReceipt(readUpToMessageID: messageId, readerDID: readerDID)
-      } else {
-        unifiedDataSource?.applyReadReceiptForAll(readerDID: readerDID)
-      }
-    }
-  }
+  // TODO: handleReadEvent is stubbed out — BlueCatbirdMlsChatSubscribeEvents.ReadEvent
+  // and the onRead EventHandler callback are not yet available in the current SDK.
+  // Re-enable when ReadEvent is added to CatbirdMLSCore.
 
   /// Handle new device events from SSE stream
   /// Forwards to MLSDeviceSyncManager for processing multi-device additions

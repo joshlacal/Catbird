@@ -1393,20 +1393,24 @@ struct MLSConversationListView: View {
             do {
                 if currentUnread > 0 {
                     // Mark all messages as read using smart routing
-                    let (markedCount, latestCursor) = try await MLSGRDBManager.shared.write(for: appState.userDID) { db in
+                    struct ReadResult: Sendable {
+                        let markedCount: Int
+                        let latestMessageID: String?
+                    }
+                    let result = try await MLSGRDBManager.shared.write(for: appState.userDID) { db -> ReadResult in
                         let latestMessage = try MLSMessageModel
                             .filter(MLSMessageModel.Columns.conversationID == convoID)
                             .filter(MLSMessageModel.Columns.currentUserDID == appState.userDID)
                             .order(MLSMessageModel.Columns.epoch.desc, MLSMessageModel.Columns.sequenceNumber.desc)
                             .limit(1)
                             .fetchOne(db)
-                        
+
                         let markedCount = try MLSStorageHelpers.markAllMessagesAsReadSync(
                             in: db,
                             conversationID: convoID,
                             currentUserDID: appState.userDID
                         )
-                        
+
                         if let latestMessage {
                             _ = try MLSStorageHelpers.upsertReadFrontierSync(
                                 in: db,
@@ -1417,26 +1421,22 @@ struct MLSConversationListView: View {
                                 messageID: latestMessage.messageID
                             )
                         }
-                        
-                        return (
-                            markedCount,
-                            latestMessage.map { (epoch: $0.epoch, sequenceNumber: $0.sequenceNumber, messageID: $0.messageID) }
-                        )
+
+                        return ReadResult(markedCount: markedCount, latestMessageID: latestMessage?.messageID)
                     }
+                    let markedCount = result.markedCount
                     logger.info("Marked \(markedCount) messages as read in conversation \(convoID)")
-                    
+
                     await MainActor.run {
                         conversationUnreadCounts[convoID] = 0
                         cacheCurrentSnapshot()
                     }
-                    
+
                     // Update AppState's MLS unread count
                     await appState.updateMLSUnreadCount()
-                    
-                    // Notify server
-                    if let apiClient = await appState.getMLSAPIClient() {
-                        try? await apiClient.updateRead(convoId: convoID, messageId: nil)
-                    }
+
+                    // TODO: apiClient.updateRead() not yet available in MLSAPIClient
+                    logger.debug("Server read update not yet implemented (updateRead unavailable)")
                 }
             } catch {
                 logger.error("Failed to toggle read status: \(error.localizedDescription)")
