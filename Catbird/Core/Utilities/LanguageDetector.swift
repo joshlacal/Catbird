@@ -103,38 +103,18 @@ class LanguageDetector {
 class ContentLanguageFilter {
     var isEnabled: Bool = true
     var contentLanguages: [String] = []
-    
+
     private let detector = LanguageDetector.shared
-    private let defaults = AppSettingsModel.sharedDefaults()
-    
-    private nonisolated(unsafe) var notificationTask: Task<Void, Never>?
 
-    init() {
-        loadPreferences()
-
-        // Listen for language preference changes
-        notificationTask = Task { [weak self] in
-            let notifications = NotificationCenter.default.notifications(named: NSNotification.Name("LanguagePreferencesChanged"))
-            for await _ in notifications {
-                guard !Task.isCancelled else { break }
-                await MainActor.run {
-                    self?.loadPreferences()
-                }
-            }
-        }
+    init(contentLanguages: [String] = ["en"], isEnabled: Bool = true) {
+        self.contentLanguages = contentLanguages
+        self.isEnabled = isEnabled
     }
 
-    deinit {
-        notificationTask?.cancel()
-    }
-
-    private func loadPreferences() {
-        contentLanguages = AppSettingsModel.stringArrayValue(
-            for: "contentLanguages",
-            accountDID: nil,
-            defaults: defaults
-        ) ?? ["en"]
-        isEnabled = defaults.bool(forKey: "enableLanguageFilter")
+    /// Update the filter with new language preferences from the active account.
+    func update(contentLanguages: [String], isEnabled: Bool) {
+        self.contentLanguages = contentLanguages
+        self.isEnabled = isEnabled
     }
     
     /// Check if a post should be shown based on language filters
