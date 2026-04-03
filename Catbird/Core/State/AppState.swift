@@ -295,6 +295,9 @@ final class AppState {
     /// Chat manager for handling Bluesky chat operations
     @ObservationIgnored let chatManager: ChatManager
 
+    /// Heartbeat manager for chat push notification liveness
+    @ObservationIgnored let chatHeartbeatManager = ChatHeartbeatManager()
+
     /// MLS API client for encrypted messaging
     @ObservationIgnored
     private var mlsAPIClientStorage: MLSAPIClient?
@@ -498,6 +501,7 @@ final class AppState {
               if !isFaultOrderingMode {
                 self.chatManager.updateAppState(self) // Wire AppState reference to ChatManager
                 await self.chatManager.updateClient(client) // Update ChatManager client
+                self.chatHeartbeatManager.client = client
                 self.urlHandler.configure(with: self)
               }
               #else

@@ -88,9 +88,11 @@ struct ConversationView: View {
         await chatManager.markConversationAsRead(convoId: convoId)
       }
       chatManager.startMessagePolling(for: convoId)
+      appState.chatHeartbeatManager.viewAppeared()
     }
     .onDisappear {
       chatManager.stopMessagePolling(for: convoId)
+      appState.chatHeartbeatManager.viewDisappeared()
     }
     .alert("Delete Message", isPresented: $showingDeleteAlert) {
       Button("Cancel", role: .cancel) { }

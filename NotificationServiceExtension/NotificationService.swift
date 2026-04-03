@@ -116,10 +116,25 @@ class NotificationService: UNNotificationServiceExtension {
     let keys = userInfo.keys.compactMap { $0 as? String }
     logger.info("📋 [NSE] Payload keys: \(keys.joined(separator: ", "))")
 
+    // Check push type
+    let pushType = userInfo["type"] as? String
+
+    // Handle Bluesky chat_message push (plain text — no decryption needed)
+    if pushType == "chat_message" {
+      logger.info("💬 [NSE] chat_message detected, enriching notification")
+      Task {
+        await self.handleChatMessagePush(
+          content: bestAttemptContent,
+          userInfo: userInfo,
+          contentHandler: contentHandler
+        )
+      }
+      return
+    }
+
     // Check if this is an MLS message
-    guard let type = userInfo["type"] as? String, type == "mls_message" else {
-      let receivedType = userInfo["type"] as? String ?? "nil"
-      logger.info("ℹ️ [NSE] Not an MLS message (type=\(receivedType)), delivering as-is")
+    guard pushType == "mls_message" else {
+      logger.info("ℹ️ [NSE] Not an MLS message (type=\(pushType ?? "nil")), delivering as-is")
       contentHandler(bestAttemptContent)
       return
     }
@@ -1626,6 +1641,115 @@ class NotificationService: UNNotificationServiceExtension {
       "✅ [NSE] Rich notification configured - title: \(content.title), body length: \(content.body.count)"
     )
     return true  // Show notification
+  }
+
+  // MARK: - Bluesky Chat Message Push Handling
+
+  /// Handles a `chat_message` push notification by enriching it with profile data.
+  /// No decryption needed — the message text is in the push payload.
+  private func handleChatMessagePush(
+    content: UNMutableNotificationContent,
+    userInfo: [AnyHashable: Any],
+    contentHandler: @escaping (UNNotificationContent) -> Void
+  ) async {
+    let senderDid = userInfo["senderDid"] as? String
+    let convoId = userInfo["convoId"] as? String
+    let messageText = userInfo["messageText"] as? String
+
+    logger.info(
+      "💬 [NSE] chat_message fields: sender=\(senderDid?.prefix(24) ?? "nil"), convo=\(convoId?.prefix(16) ?? "nil")"
+    )
+
+    // Resolve sender profile for display name and avatar
+    var senderName: String?
+    var senderAvatarURL: String?
+
+    if let senderDid {
+      // Try shared profile cache first (written by main app ChatManager)
+      if let cached = await ProfileCacheDatabase.shared.read(did: senderDid) {
+        senderName = cached.displayName ?? cached.handle
+        senderAvatarURL = cached.avatarURL
+        logger.info("👤 [NSE] Resolved sender from profile cache: \(senderName ?? "unknown")")
+      }
+
+      // Fallback: fetch from Bluesky API via standalone client
+      if senderName == nil {
+        // Resolve the recipient DID for client creation
+        let recipientDid = resolveAnyLocalAccountDID()
+        if let recipientDid,
+          let profile = await fetchProfileViaClient(
+            senderDid: senderDid, recipientDid: recipientDid)
+        {
+          senderName = profile.displayName ?? profile.handle
+          senderAvatarURL = profile.avatarURL
+          logger.info("👤 [NSE] Resolved sender via API: \(senderName ?? "unknown")")
+        }
+      }
+    }
+
+    // Enrich notification title
+    if let sender = senderName {
+      content.title = sender
+    } else if let senderDid, let shortDid = formatShortDID(senderDid) {
+      content.title = shortDid
+    } else {
+      content.title = "New Message"
+    }
+
+    // Enrich notification body
+    if let messageText, !messageText.isEmpty {
+      content.body = messageText
+    } else {
+      content.body = "Sent you a message"
+    }
+
+    // Thread grouping by conversation
+    if let convoId {
+      content.threadIdentifier = "chat:\(convoId)"
+    }
+
+    // Tap navigation info
+    var updatedUserInfo = content.userInfo
+    updatedUserInfo["type"] = "chat_message"
+    if let convoId { updatedUserInfo["convoId"] = convoId }
+    if let senderDid { updatedUserInfo["senderDid"] = senderDid }
+    content.userInfo = updatedUserInfo
+
+    content.categoryIdentifier = "CHAT_MESSAGE"
+
+    // Attach avatar if available
+    if let avatarURLString = senderAvatarURL,
+      let avatarURL = URL(string: avatarURLString)
+    {
+      await attachProfilePhoto(to: content, from: avatarURL)
+    }
+
+    logger.info(
+      "✅ [NSE] chat_message notification enriched - title: \(content.title), body length: \(content.body.count)"
+    )
+    contentHandler(content)
+  }
+
+  /// Resolves any locally stored account DID for creating a standalone client.
+  /// Used when the push payload doesn't include the recipient DID.
+  private func resolveAnyLocalAccountDID() -> String? {
+    guard let defaults = UserDefaults(suiteName: Self.appGroupSuite) else { return nil }
+
+    // Try to find any stored account DID from the shared defaults
+    // The main app stores account hashes; we need the actual DID.
+    // Fall back to the active recipient if set during this NSE session.
+    if let activeDid = activeRecipientDID {
+      return activeDid
+    }
+
+    // Check for stored DIDs in shared defaults
+    if let storedDids = defaults.stringArray(forKey: "knownAccountDIDs"),
+      let firstDid = storedDids.first
+    {
+      return firstDid
+    }
+
+    return nil
   }
 
   /// Gets the sender DID from the stored message (after decryption)
