@@ -678,24 +678,10 @@ struct MainContentView: View {
         )
       }
       .sheet(isPresented: $showingNewMessageSheet) {
-        if appState.chatMode == ChatTabView.ChatMode.mls.rawValue {
-          MLSNewConversationView(
-            onConversationCreated: {},
-            onNavigateToConversation: { convoId in
-              appState.navigationManager.targetMLSConversationId = convoId
-            }
-          )
-          .environment(appState)
+        NewConversationView()
           .applyAppStateEnvironment(appState)
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
-        } else {
-          NewMessageView()
-            .applyAppStateEnvironment(appState)
-            .presentationDetents([PresentationDetent.medium, PresentationDetent.large])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(.thinMaterial)
-        }
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()

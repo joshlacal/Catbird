@@ -54,6 +54,11 @@ struct ConversationRow: View {
             .lineLimit(1)
             .accessibilityAddTraits(.isHeader)
 
+          Image(systemName: "bubble.left.and.bubble.right")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+
           Spacer()
 
           // Unread message count badge

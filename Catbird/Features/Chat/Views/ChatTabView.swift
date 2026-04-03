@@ -1,7 +1,8 @@
-import SwiftUI
+import CatbirdMLSCore
+import GRDB
 import OSLog
 import Petrel
-import CatbirdMLSCore
+import SwiftUI
 
 #if os(iOS)
 
@@ -25,33 +26,18 @@ struct ChatTabView: View {
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
   @State private var showingNewMessageSheet = false
   @State private var showingSettings = false
-  @State private var mlsSettingsRefreshTrigger = false  // Triggers view refresh when MLS settings change
+  @State private var coordinator = UnifiedChatCoordinator()
+  @State private var mlsPollingTask: Task<Void, Never>?
+  @State private var mlsPollCycleCount: Int = 0
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
-  /// Per-account MLS chat enabled state - computed from ExperimentalSettings
+  /// Per-account MLS chat enabled state
   private var mlsChatEnabledForCurrentAccount: Bool {
-    // Access refresh trigger to make SwiftUI track this dependency
-    _ = mlsSettingsRefreshTrigger
-    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
 
-  private var chatMode: ChatMode {
-    get { ChatMode(rawValue: appState.chatMode) ?? .bluesky }
-    nonmutating set { appState.chatMode = newValue.rawValue }
-  }
-
-  private var animatedChatModeRaw: Binding<String> {
-    @Bindable var appState = appState
-    return Binding(
-      get: { appState.chatMode },
-      set: { newValue in
-        withAnimation(.easeInOut(duration: 0.2)) {
-          appState.chatMode = newValue
-        }
-      }
-    )
-  }
-
+  /// Retained for external compatibility (ContentView, MLSConversationListView reference it).
+  /// No longer drives view switching — the unified list shows both types together.
   enum ChatMode: String, CaseIterable {
     case bluesky = "Bluesky DMs"
     case mls = "Catbird Groups"
@@ -67,35 +53,20 @@ struct ChatTabView: View {
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
-  
+
   private var shouldUseSplitView: Bool {
     DeviceInfo.isIPad || horizontalSizeClass == .regular
   }
 
-  var body: some View {
-    ZStack {
-      switch chatMode {
-      case .bluesky:
-        blueskyContent
-          .transition(.opacity)
-      case .mls:
-        mlsContent
-          .transition(.opacity)
-      }
-    }
-    .animation(.easeInOut(duration: 0.2), value: appState.chatMode)
-    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-  }
+  // MARK: - Body
 
-  @ViewBuilder
-  private var blueskyContent: some View {
+  var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
-      chatSidebarContent
+      unifiedSidebarContent
     } detail: {
-      chatDetailContent
+      unifiedDetailContent
     }
     .navigationSplitViewStyle(.automatic)
-    // Hide tab bar when viewing a conversation on iPhone
     #if !targetEnvironment(macCatalyst)
     .toolbar(selectedConvoId != nil && !shouldUseSplitView ? .hidden : .visible, for: .tabBar)
     #endif
@@ -104,23 +75,23 @@ struct ChatTabView: View {
     .onDisappear(perform: handleOnDisappear)
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
-
-      // On iPhone, manage column visibility based on selection
       if !shouldUseSplitView {
-        if newValue != nil {
-          columnVisibility = .detailOnly
-        } else {
-            columnVisibility = .doubleColumn
-        }
+        columnVisibility = newValue != nil ? .detailOnly : .doubleColumn
       }
     }
-    .onChange(of: appState.navigationManager.targetConversationId) { oldValue, newValue in
-      // Handle deep-link navigation to a specific conversation
+    .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
+      coordinator.blueskyConversations = newValue
+    }
+    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
       if let convoId = newValue, convoId != selectedConvoId {
-        logger.info("Deep-link navigation to conversation: \(convoId)")
         selectedConvoId = convoId
-        // Clear the target after setting to avoid repeated navigation
         appState.navigationManager.targetConversationId = nil
+      }
+    }
+    .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
+      if let convoId = newValue, convoId != selectedConvoId {
+        selectedConvoId = convoId
+        appState.navigationManager.targetMLSConversationId = nil
       }
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
@@ -128,11 +99,15 @@ struct ChatTabView: View {
     }
     .alert(isPresented: $isShowingErrorAlert, content: createErrorAlert)
     .sheet(isPresented: $showingNewMessageSheet) {
-      NewMessageView()
+      NewConversationView()
         .composerZoomTransition(namespace: composerNamespace)
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(.thinMaterial)
+    }
+    .sheet(isPresented: $showingSettings) {
+      SettingsView()
+        .applyAppStateEnvironment(appState)
+        .environment(appState)
     }
     #if !targetEnvironment(macCatalyst)
     .overlay(alignment: .bottomTrailing) {
@@ -147,192 +122,27 @@ struct ChatTabView: View {
     #endif
   }
 
-  @ViewBuilder
-  private var mlsContent: some View {
-    // Use computed property to check per-account setting directly
-    if mlsChatEnabledForCurrentAccount {
-      MLSConversationListView(selectedTab: $selectedTab)
-    } else {
-      mlsExperimentalGate
-    }
-  }
-  
-  @ViewBuilder
-  private var mlsExperimentalGate: some View {
-    NavigationStack {
-      VStack(spacing: 0) {
-        // Chat mode picker at top (matching NotificationsView pattern)
-        chatModePicker
-          .padding(.vertical, 8)
-        
-        VStack(spacing: 24) {
-          Spacer()
-          
-          Image(systemName: "lock.shield")
-            .font(.system(size: 64))
-            .foregroundStyle(.secondary)
-          
-          Text("Catbird Groups")
-            .font(.title2)
-            .fontWeight(.semibold)
-          
-          Text("End-to-end encrypted group chat using the MLS protocol.")
-            .font(.body)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 32)
-          
-          VStack(alignment: .leading, spacing: 12) {
-            Label("Messages are encrypted on your device", systemImage: "checkmark.circle.fill")
-            Label("Only group members can read messages", systemImage: "checkmark.circle.fill")
-            Label("Server cannot access message content", systemImage: "checkmark.circle.fill")
-          }
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .padding(.vertical)
-          
-          Divider()
-            .padding(.horizontal, 48)
-          
-          VStack(spacing: 8) {
-            Label("Highly Experimental", systemImage: "exclamationmark.triangle.fill")
-              .font(.headline)
-              .foregroundStyle(.orange)
-            
-            Text("This feature is under active development. You may experience bugs, missing messages, or other issues. Use at your own risk.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .multilineTextAlignment(.center)
-              .padding(.horizontal, 32)
-              .lineLimit(nil)
-          }
-          .padding(.vertical)
-          
-          Toggle(isOn: Binding(
-            get: { mlsChatEnabledForCurrentAccount },
-            set: { newValue in
-              if newValue {
-                // Optimistically enable locally so the toggle reflects immediately
-                ExperimentalSettings.shared.enableMLSChat(for: appState.userDID)
-                mlsSettingsRefreshTrigger.toggle()
+  // MARK: - Unified Sidebar
 
-                Task {
-                  // Perform server opt-in; if it fails, revert the local setting
-                  await optInToMLS()
-                  // After attempting opt-in, verify the effective state; if still not enabled, revert
-                  if !ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID) {
-                    ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
-                    mlsSettingsRefreshTrigger.toggle()
-                  }
-                }
-              } else {
-                // Immediately reflect off state locally, then inform server
-                ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
-                mlsSettingsRefreshTrigger.toggle()
-                Task {
-                  await optOutFromMLS()
-                }
-              }
-            }
-          )) {
-            Text("Enable Catbird Groups")
-              .fontWeight(.medium)
-          }
-          .toggleStyle(.switch)
-          .padding(.horizontal, 48)
-          .padding(.vertical, 8)
-          
-          Spacer()
-        }
-        .frame(maxWidth: .infinity)
-      }
-      .navigationTitle("Messages")
-      #if os(iOS)
-      .toolbarTitleDisplayMode(.large)
-      #endif
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-    }
-  }
-  
-  /// Opt in to MLS on the server and initialize device/key packages
-  /// CRITICAL: Must initialize MLS before optIn to ensure key packages are uploaded
-  @MainActor
-  private func optInToMLS() async {
-    let userDID = appState.userDID
-    
-    do {
-      // Initialize MLS first (device registration + key packages)
-      try await appState.initializeMLS()
-      
-      // Then call optIn to mark user as available
-      guard let apiClient = await appState.getMLSAPIClient() else {
-        logger.warning("Cannot opt in: MLS API client not available")
-        return
-      }
-      _ = try await apiClient.optIn()
-
-      if let conversationManager = await appState.getMLSConversationManager() {
-        do {
-          try await conversationManager.ensureDeviceRecordPublished()
-        } catch {
-          logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
-        }
-      }
-
-      // Save local setting only after successful server opt-in
-      ExperimentalSettings.shared.enableMLSChat(for: userDID)
-      logger.info("Successfully opted in to MLS chat")
-    } catch {
-      logger.error("Failed to opt in to MLS: \(error.localizedDescription)")
-      // Failed to opt in - don't save local setting, user will need to try again
-    }
-  }
-  
-  /// Opt out from MLS on the server when user disables the feature
-  @MainActor
-  private func optOutFromMLS() async {
-    guard let apiClient = await appState.getMLSAPIClient() else {
-      logger.warning("Cannot opt out: MLS API client not available")
-      return
-    }
-    
-    do {
-      let success = try await apiClient.optOut()
-      if success {
-        if let conversationManager = await appState.getMLSConversationManager() {
-          try? await conversationManager.removeCurrentDeviceRecord()
-        }
-        logger.info("Successfully opted out from MLS on server")
-      } else {
-        logger.warning("Opt-out returned false (user may not have been opted in)")
-      }
-    } catch {
-      logger.error("Failed to opt out from MLS: \(error.localizedDescription)")
-      // Don't show error to user - the local toggle is already off
-    }
-  }
-
-  // MARK: - Sidebar Content
-  
   @ViewBuilder
-  private var chatSidebarContent: some View {
-    ZStack(alignment: .bottom) {
-      conversationList
-      // FAB moved to a global overlay; nothing else needed here
-    }
-  }
-  
-  @ViewBuilder
-  private var conversationList: some View {
+  private var unifiedSidebarContent: some View {
     List(selection: $selectedConvoId) {
-      // Chat mode picker as first list item (like NotificationsView)
-      chatModePicker
-        .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-      
       if !searchText.isEmpty {
         searchResultsContent
       } else {
-        mainConversationListContent
+        ForEach(coordinator.conversations) { item in
+          unifiedRow(for: item)
+        }
+
+        if shouldShowPagination {
+          paginationView
+        }
+
+        Spacer()
+          .frame(height: 80)
+          .listRowSeparator(.hidden)
+          .listRowInsets(EdgeInsets())
+          .listRowBackground(Color.clear)
       }
     }
     .listStyle(.plain)
@@ -342,10 +152,19 @@ struct ChatTabView: View {
       appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.userDID)
     }
     .refreshable {
-      await appState.chatManager.loadConversations(refresh: true)
+      async let bsky: Void = appState.chatManager.loadConversations(refresh: true)
+      async let mls: Void = loadMLSConversations()
+      _ = await (bsky, mls)
     }
     .overlay {
-      conversationListOverlay
+      if coordinator.conversations.isEmpty && !appState.chatManager.loadingConversations {
+        ContentUnavailableView {
+          Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
+        } description: {
+          Text("You haven't started any chats yet.")
+            .enhancedAppBody()
+        }
+      }
     }
     .navigationTitle("Messages")
     #if os(iOS)
@@ -368,94 +187,66 @@ struct ChatTabView: View {
       }
     }
     #endif
-    .sheet(isPresented: $showingSettings) {
-      SettingsView()
-        .applyAppStateEnvironment(appState)
-        .environment(appState)
+  }
+
+  // MARK: - Row Routing
+
+  @ViewBuilder
+  private func unifiedRow(for item: UnifiedConversation) -> some View {
+    switch item {
+    case .bluesky(let convo):
+      ConversationRow(convo: convo, currentUserDID: appState.userDID)
+        .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        .modifier(ConditionalSwipeActions(conversation: convo, enabled: true))
+        .contextMenu {
+          ConversationContextMenu(conversation: convo)
+        }
+        .tag(item.id)
+
+    case .mls(let convo, let participants, let unreadCount, let lastMessage, let memberChange, _):
+      MLSConversationRowView(
+        conversation: convo,
+        participants: participants,
+        recentMemberChange: memberChange,
+        unreadCount: unreadCount,
+        lastMessage: lastMessage
+      )
+      .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+      .tag(item.id)
+      .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+        Button(role: .destructive) {
+          leaveMLSConversation(convo)
+        } label: {
+          Label("Leave", systemImage: "trash")
+        }
+        Button {
+          toggleMLSMute(convo)
+        } label: {
+          Label(convo.isMuted ? "Unmute" : "Mute",
+                systemImage: convo.isMuted ? "bell" : "bell.slash")
+        }
+        .tint(convo.isMuted ? .blue : .orange)
+      }
     }
   }
 
-  @ViewBuilder
-  private var searchResultsContent: some View {
-    if !appState.chatManager.filteredProfiles.isEmpty {
-      Section("Contacts") {
-        ForEach(appState.chatManager.filteredProfiles, id: \.did) { profileBasic in
-          contactRow(for: profileBasic)
-        }
-      }
-    }
-    
-    if !appState.chatManager.filteredConversations.isEmpty {
-      Section("Conversations") {
-        ForEach(appState.chatManager.filteredConversations) { convo in
-          conversationRow(for: convo, withSwipeActions: true)
-        }
-      }
-    }
-  }
-  
-  @ViewBuilder
-  private var mainConversationListContent: some View {
-    ForEach(appState.chatManager.acceptedConversations) { convo in
-      conversationRow(for: convo, withSwipeActions: true)
-    }
-    
-    if shouldShowPagination {
-      paginationView
-    }
+  // MARK: - Unified Detail
 
-    // Spacer so the FAB doesn't cover the last row
-    Spacer()
-      .frame(height: 80)
-      .listRowSeparator(.hidden)
-      .listRowInsets(EdgeInsets())
-      .listRowBackground(Color.clear)
-  }
-  
   @ViewBuilder
-  private var conversationListOverlay: some View {
-    if appState.chatManager.loadingConversations && appState.chatManager.acceptedConversations.isEmpty {
-      ProgressView("Loading Chats...")
-    } else if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
-      emptyConversationsView
-    }
-  }
-  
-  @ViewBuilder
-  private var emptyConversationsView: some View {
-    ContentUnavailableView {
-      Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
-    } description: {
-      VStack(spacing: DesignTokens.Spacing.sm) {
-        Text("You haven't started any chats yet.")
-          .enhancedAppBody()
-        if appState.chatManager.messageRequestsCount > 0 {
-          Text("Check your message requests above to see if anyone wants to chat with you.")
-            .enhancedAppCaption()
-            .foregroundColor(.secondary)
-        }
-      }
-    }
-  }
-  
-  @ViewBuilder
-  private var paginationView: some View {
-    ProgressView("Loading more...")
-      .frame(maxWidth: .infinity)
-      .padding()
-      .onAppear {
-        Task {
-          await appState.chatManager.loadConversations(refresh: false)
-        }
-      }
-  }
-  
-  // MARK: - Detail Content
-  
-  @ViewBuilder
-  private var chatDetailContent: some View {
+  private var unifiedDetailContent: some View {
     NavigationStack(path: chatNavigationPath) {
-      if let convoId = selectedConvoId {
+      if let convoId = selectedConvoId,
+         let item = coordinator.conversations.first(where: { $0.id == convoId }) {
+        switch item {
+        case .bluesky:
+          ConversationView(convoId: convoId)
+            .id(convoId)
+        case .mls:
+          MLSConversationDetailView(conversationId: convoId)
+            .id(convoId)
+        }
+      } else if let convoId = selectedConvoId {
+        // Conversation selected but not yet in coordinator (e.g. deep-link before data loads)
         ConversationView(convoId: convoId)
           .id(convoId)
       } else {
@@ -471,9 +262,34 @@ struct ChatTabView: View {
       )
     }
   }
-  
-  // MARK: - Row Components
-  
+
+  // MARK: - Search Results
+
+  @ViewBuilder
+  private var searchResultsContent: some View {
+    if !appState.chatManager.filteredProfiles.isEmpty {
+      Section("Contacts") {
+        ForEach(appState.chatManager.filteredProfiles, id: \.did) { profileBasic in
+          contactRow(for: profileBasic)
+        }
+      }
+    }
+
+    if !appState.chatManager.filteredConversations.isEmpty {
+      Section("Conversations") {
+        ForEach(appState.chatManager.filteredConversations) { convo in
+          ConversationRow(convo: convo, currentUserDID: appState.userDID)
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+            .modifier(ConditionalSwipeActions(conversation: convo, enabled: true))
+            .contextMenu {
+              ConversationContextMenu(conversation: convo)
+            }
+            .tag(convo.id)
+        }
+      }
+    }
+  }
+
   @ViewBuilder
   private func contactRow(for profileBasic: ChatBskyActorDefs.ProfileViewBasic) -> some View {
     Button {
@@ -496,86 +312,67 @@ struct ChatTabView: View {
     .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
     .listRowInsets(EdgeInsets())
   }
-  
-  @ViewBuilder
-  private func conversationRow(for convo: ChatBskyConvoDefs.ConvoView, withSwipeActions: Bool) -> some View {
-    ConversationRow(
-      convo: convo,
-      currentUserDID: appState.userDID
-    )
-    .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-    .modifier(ConditionalSwipeActions(conversation: convo, enabled: withSwipeActions))
-    .contextMenu {
-      ConversationContextMenu(conversation: convo)
-    }
-    .tag(convo.id)
-  }
-  
-  // MARK: - Chat Mode Picker
-  
-  @ViewBuilder
-  private var chatModePicker: some View {
-    Picker("Chat Mode", selection: animatedChatModeRaw) {
-      ForEach(ChatMode.allCases, id: \.self) { mode in
-        Label(mode.rawValue, systemImage: mode.icon)
-          .tag(mode.rawValue)
-      }
-    }
-    .pickerStyle(.segmented)
-    .frame(height: 36)
-    .frame(maxWidth: contentMaxWidth)
-    .frame(maxWidth: .infinity, alignment: .center)
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
-    .listRowInsets(EdgeInsets())
-    .listRowSeparator(.hidden)
-  }
 
   // MARK: - Helper Properties
-  
+
   private var shouldShowChatFAB: Bool {
-    // Only show when we're on the chat tab (selectedTab == 4)
     guard selectedTab == 4 else { return false }
 
     if DeviceInfo.isIPad {
-      // Always show on iPad (split view) when on chat tab
       return true
     } else {
-      // On iPhone: show only when the list is visible (no conversation selected and stack is at root)
       return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
     }
   }
-  
+
   private var shouldShowPagination: Bool {
     !appState.chatManager.acceptedConversations.isEmpty &&
     appState.chatManager.conversationsCursor != nil &&
     !appState.chatManager.loadingConversations
   }
-  
+
+  @ViewBuilder
+  private var paginationView: some View {
+    ProgressView("Loading more...")
+      .frame(maxWidth: .infinity)
+      .padding()
+      .onAppear {
+        Task {
+          await appState.chatManager.loadConversations(refresh: false)
+        }
+      }
+  }
+
   // MARK: - Event Handlers
-  
+
   private func handleOnAppear() {
+    // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
-        logger.debug("ChatTabView appeared, loading conversations.")
         await appState.chatManager.loadConversations(refresh: true)
-      } else {
-        logger.debug("ChatTabView appeared, conversations already loaded or loading.")
       }
     }
     appState.chatManager.startConversationsPolling()
+    coordinator.blueskyConversations = appState.chatManager.acceptedConversations
+
+    // MLS
+    coordinator.mlsEnabled = mlsChatEnabledForCurrentAccount
+    if mlsChatEnabledForCurrentAccount {
+      Task { await loadMLSConversations() }
+      startMLSPolling()
+    }
   }
-  
+
   private func handleOnDisappear() {
-    // Keep polling active so unread counts/notifications stay fresh even when leaving the chat tab.
+    stopMLSPolling()
   }
-  
+
   private func handleConversationChange(oldValue: String?, newValue: String?) {
     if oldValue != newValue && newValue != nil {
       chatNavigationPath.wrappedValue = NavigationPath()
     }
   }
-  
+
   private func handleErrorStateChange(oldError: ChatManager.ChatError?, newError: ChatManager.ChatError?) {
     if let error = newError, !isShowingErrorAlert {
       let errorMessage = error.localizedDescription
@@ -588,7 +385,7 @@ struct ChatTabView: View {
       lastErrorMessage = nil
     }
   }
-  
+
   private func createErrorAlert() -> Alert {
     Alert(
       title: Text("Chat Error"),
@@ -614,6 +411,232 @@ struct ChatTabView: View {
       }
     }
   }
+
+  // MARK: - MLS Data Loading
+
+  @MainActor
+  private func loadMLSConversations() async {
+    guard mlsChatEnabledForCurrentAccount else {
+      coordinator.mlsEnabled = false
+      return
+    }
+    coordinator.mlsEnabled = true
+
+    let userDID = appState.userDID
+
+    do {
+      let (loadedConversations, membersByConvoID) = try await MLSStorage.shared
+        .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID)
+
+      let acceptedConversations = loadedConversations.filter { $0.requestState != .pendingInbound }
+
+      let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+        try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(from: db, currentUserDID: userDID)
+      }
+
+      let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: MLSLastMessagePreview], [String: Date]) in
+        var previews: [String: MLSLastMessagePreview] = [:]
+        var latestActivity: [String: Date] = [:]
+        for conversation in acceptedConversations {
+          let convoID = conversation.conversationID
+          let recentMessages = try MLSMessageModel
+            .filter(MLSMessageModel.Columns.conversationID == convoID)
+            .filter(MLSMessageModel.Columns.currentUserDID == userDID)
+            .order(MLSMessageModel.Columns.timestamp.desc)
+            .limit(20)
+            .fetchAll(db)
+
+          if let newest = recentMessages.first {
+            latestActivity[convoID] = newest.timestamp
+          }
+
+          for message in recentMessages {
+            if message.processingError != nil {
+              let text = message.parsedPayload?.text ?? ""
+              if text.isEmpty || text.contains("Message unavailable")
+                || text.contains("Decryption Failed") || text.contains("Self-sent message") {
+                continue
+              }
+            }
+            if let payload = message.parsedPayload {
+              switch payload.messageType {
+              case .text, .system, nil:
+                if let plaintext = payload.text, !plaintext.isEmpty {
+                  previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
+                } else if case .some(.image(_)) = payload.embed {
+                  previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
+                } else {
+                  continue
+                }
+              case .reaction:
+                previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
+              case .readReceipt, .typing, .adminRoster, .adminAction:
+                continue
+              }
+            } else {
+              continue
+            }
+            break
+          }
+        }
+        return (previews, latestActivity)
+      }
+
+      let sortedConversations = acceptedConversations.sorted { lhs, rhs in
+        let lhsDate = latestActivityByConvo[lhs.conversationID] ?? lhs.createdAt
+        let rhsDate = latestActivityByConvo[rhs.conversationID] ?? rhs.createdAt
+        return lhsDate > rhsDate
+      }
+
+      // Build participants from DB-cached profiles
+      var participants: [String: [MLSParticipantViewModel]] = [:]
+      var dbProfiles: [MLSProfileEnricher.ProfileData] = []
+      for members in membersByConvoID.values {
+        for member in members where member.handle != nil || member.displayName != nil {
+          dbProfiles.append(MLSProfileEnricher.ProfileData(
+            did: member.did, handle: member.handle ?? "",
+            displayName: member.displayName, avatarURL: nil
+          ))
+        }
+      }
+      await appState.mlsProfileEnricher.seedFromDatabase(dbProfiles)
+
+      let dbProfilesByDID = Dictionary(
+        dbProfiles.map { (MLSProfileEnricher.canonicalDID($0.did), $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
+      for (convoID, members) in membersByConvoID {
+        participants[convoID] = members.map { member in
+          let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
+          let profile = dbProfilesByDID[canonicalDID]
+          return MLSParticipantViewModel(
+            id: member.did,
+            handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
+            displayName: profile?.displayName ?? member.displayName,
+            avatarURL: profile?.avatarURL
+          )
+        }
+      }
+
+      // Single state assignment to avoid flicker
+      var newState = MLSConversationListState()
+      newState.conversations = sortedConversations
+      newState.participants = participants
+      newState.unreadCounts = unreadCounts
+      newState.lastMessages = lastMessages
+      newState.latestActivity = latestActivityByConvo
+      newState.isLoading = false
+      coordinator.mlsState = newState
+
+      // Background: enrich with network profiles
+      Task {
+        await enrichMLSParticipantsFromNetwork(membersByConvoID: membersByConvoID, userDID: userDID)
+      }
+    } catch {
+      logger.error("Failed to load MLS conversations: \(error)")
+    }
+  }
+
+  private func enrichMLSParticipantsFromNetwork(membersByConvoID: [String: [MLSMemberModel]], userDID: String) async {
+    var allDIDs = Set<String>()
+    for (_, members) in membersByConvoID {
+      for member in members { allDIDs.insert(member.did) }
+    }
+
+    guard let client = appState.atProtoClient else { return }
+    let profilesByDID = await appState.mlsProfileEnricher.ensureProfiles(
+      for: Array(allDIDs), using: client, currentUserDID: userDID
+    )
+    guard !profilesByDID.isEmpty else { return }
+
+    var enrichedParticipants: [String: [MLSParticipantViewModel]] = [:]
+    for (convoID, members) in membersByConvoID {
+      enrichedParticipants[convoID] = members.map { member in
+        let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
+        let profile = profilesByDID[canonicalDID] ?? profilesByDID[member.did]
+        return MLSParticipantViewModel(
+          id: member.did,
+          handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
+          displayName: profile?.displayName ?? member.displayName,
+          avatarURL: profile?.avatarURL
+        )
+      }
+    }
+
+    let existingParticipants = coordinator.mlsState.participants
+    let changed = enrichedParticipants.contains { key, val in
+      guard let existing = existingParticipants[key] else { return true }
+      return existing != val
+    }
+    if changed {
+      var updatedState = coordinator.mlsState
+      updatedState.participants = enrichedParticipants
+      coordinator.mlsState = updatedState
+    }
+  }
+
+  // MARK: - MLS Polling & Actions
+
+  private func startMLSPolling() {
+    mlsPollingTask?.cancel()
+    mlsPollingTask = Task {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(15))
+        guard !Task.isCancelled else { break }
+        await loadMLSConversations()
+        mlsPollCycleCount += 1
+        if mlsPollCycleCount % 10 == 0 {
+          let userDID = appState.userDID
+          Task.detached(priority: .utility) {
+            try? await MLSGRDBManager.shared.checkpointDatabase(for: userDID)
+          }
+        }
+      }
+    }
+  }
+
+  private func stopMLSPolling() {
+    mlsPollingTask?.cancel()
+    mlsPollingTask = nil
+  }
+
+  private func leaveMLSConversation(_ conversation: MLSConversationModel) {
+    let convoID = conversation.conversationID
+    Task {
+      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
+      do {
+        try await manager.leaveConversation(convoId: convoID)
+        var updatedState = coordinator.mlsState
+        updatedState.conversations.removeAll { $0.conversationID == convoID }
+        updatedState.participants.removeValue(forKey: convoID)
+        updatedState.unreadCounts.removeValue(forKey: convoID)
+        updatedState.lastMessages.removeValue(forKey: convoID)
+        updatedState.memberChanges.removeValue(forKey: convoID)
+        coordinator.mlsState = updatedState
+        if selectedConvoId == convoID { selectedConvoId = nil }
+        await appState.updateMLSUnreadCount()
+      } catch {
+        logger.error("Failed to leave MLS conversation: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  private func toggleMLSMute(_ conversation: MLSConversationModel) {
+    let convoID = conversation.conversationID
+    let newMutedUntil: Date? = conversation.isMuted ? nil : .distantFuture
+    Task {
+      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
+      do {
+        try await manager.storage.setMutedUntil(
+          conversationID: convoID, currentUserDID: appState.userDID,
+          mutedUntil: newMutedUntil, database: manager.database
+        )
+        await loadMLSConversations()
+      } catch {
+        logger.error("Failed to toggle MLS mute: \(error.localizedDescription)")
+      }
+    }
+  }
 }
 
 // MARK: - Supporting Views
@@ -622,7 +645,7 @@ private struct ConditionalSwipeActions: ViewModifier {
   let conversation: ChatBskyConvoDefs.ConvoView
   let enabled: Bool
   @Environment(AppState.self) private var appState
-  
+
   func body(content: Content) -> some View {
     if enabled {
       content
@@ -632,7 +655,7 @@ private struct ConditionalSwipeActions: ViewModifier {
           } label: {
             Label("Delete", systemImage: "trash")
           }
-          
+
           Button {
             if conversation.muted {
               Task { await appState.chatManager.unmuteConversation(convoId: conversation.id) }
