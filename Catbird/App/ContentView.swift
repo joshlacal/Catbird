@@ -678,11 +678,10 @@ struct MainContentView: View {
         )
       }
       .sheet(isPresented: $showingNewMessageSheet) {
-        NewMessageView()
+        NewConversationView()
           .applyAppStateEnvironment(appState)
-          .presentationDetents([.medium, .large])
+          .presentationDetents([.large])
           .presentationDragIndicator(.visible)
-          .presentationBackground(.thinMaterial)
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()

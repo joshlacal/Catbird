@@ -99,11 +99,10 @@ struct ChatTabView: View {
     }
     .alert(isPresented: $isShowingErrorAlert, content: createErrorAlert)
     .sheet(isPresented: $showingNewMessageSheet) {
-      NewMessageView()
+      NewConversationView()
         .composerZoomTransition(namespace: composerNamespace)
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(.thinMaterial)
     }
     .sheet(isPresented: $showingSettings) {
       SettingsView()
