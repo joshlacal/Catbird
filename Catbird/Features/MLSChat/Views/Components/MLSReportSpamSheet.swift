@@ -10,8 +10,6 @@ import SwiftUI
 import Petrel
 import OSLog
 
-#if os(iOS)
-
 @Observable
 final class MLSReportSpamViewModel {
   // MARK: - Properties
@@ -164,7 +162,9 @@ struct MLSReportSpamSheet: View {
         }
       }
       .navigationTitle("Report as Spam")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
@@ -245,5 +245,3 @@ struct MLSReportSpamSheet: View {
     await viewModel?.submitReport(reason: reason)
   }
 }
-
-#endif

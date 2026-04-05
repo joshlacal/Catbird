@@ -1,7 +1,5 @@
 import SwiftUI
 
-#if os(iOS)
-
 // MARK: - Mute Duration
 
 /// Available mute durations for conversations
@@ -83,7 +81,9 @@ struct MLSMuteOptionsView: View {
         }
       }
       .navigationTitle("Notifications")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
@@ -94,5 +94,3 @@ struct MLSMuteOptionsView: View {
     }
   }
 }
-
-#endif

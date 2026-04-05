@@ -61,7 +61,7 @@ private extension ContentView {
       .environment(appStateManager)
       .onAppear {
         // Finish extended launch measurement when main content appears
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
           MetricKitManager.shared.finishExtendedLaunchMeasurement()
         }
       }
@@ -260,6 +260,7 @@ struct MainContentView: View {
       )
       .id(appState.userDID)
     }
+    .badge(appState.totalMessagesUnreadCount)
   }
   #endif
   

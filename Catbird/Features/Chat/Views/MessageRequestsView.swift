@@ -2,7 +2,6 @@ import OSLog
 import SwiftUI
 import Petrel
 
-#if os(iOS)
 /// View for managing message requests (conversations with status "request")
 struct MessageRequestsView: View {
   @Environment(AppState.self) private var appState
@@ -605,6 +604,3 @@ struct MessageRequestPreviewView: View {
         .environment(AppStateManager.shared)
   }
 }
-
-
-#endif

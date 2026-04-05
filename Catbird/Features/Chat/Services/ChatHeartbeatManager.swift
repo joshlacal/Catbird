@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import OSLog
 import Petrel
@@ -92,7 +91,12 @@ final class ChatHeartbeatManager {
       // Ensure the endpoint routes through Nest
       await client.setServiceDID(Self.nestServiceDID, for: Self.heartbeatEndpoint)
 
-      let input = BlueCatbirdBskychatPushHeartbeat.Input(platform: "ios")
+      #if os(iOS)
+      let platform = "ios"
+      #elseif os(macOS)
+      let platform = "macos"
+      #endif
+      let input = BlueCatbirdBskychatPushHeartbeat.Input(platform: platform)
       let (responseCode, _) = try await client.blue.catbird.bskychat.pushHeartbeat(input: input)
 
       if (200 ... 299).contains(responseCode) {
@@ -105,4 +109,3 @@ final class ChatHeartbeatManager {
     }
   }
 }
-#endif

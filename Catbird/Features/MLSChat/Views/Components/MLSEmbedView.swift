@@ -2,8 +2,6 @@ import SwiftUI
 import Petrel
 import CatbirdMLSCore
 
-#if os(iOS)
-
 /// Unified view for rendering MLS message embeds (post, link, GIF, or image)
 struct MLSEmbedView: View {
   let embed: MLSEmbedData
@@ -115,5 +113,3 @@ struct MLSEmbedView: View {
   .padding()
   .environment(AppStateManager.shared)
 }
-
-#endif

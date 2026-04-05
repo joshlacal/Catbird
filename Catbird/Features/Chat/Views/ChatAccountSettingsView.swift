@@ -3,6 +3,7 @@ import OSLog
 
 #if os(iOS)
 import UIKit
+#endif
 
 struct ChatAccountSettingsView: View {
   @Environment(AppState.self) private var appState
@@ -106,11 +107,13 @@ struct ChatAccountSettingsView: View {
       } message: {
         Text(errorMessage ?? "An unknown error occurred")
       }
+      #if os(iOS)
       .sheet(isPresented: $showingShareSheet) {
         if let data = exportedData {
           ChatShareSheet(items: [data])
         }
       }
+      #endif
     }
   }
   
@@ -263,9 +266,10 @@ struct ChatLogEntry: Identifiable {
   let timestamp: Date
 }
 
+#if os(iOS)
 struct ChatShareSheet: UIViewControllerRepresentable {
   let items: [Any]
-  
+
   func makeUIViewController(context: Context) -> UIActivityViewController {
     let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
     // Configure iPad popover anchor to prevent presentation crash
@@ -279,17 +283,14 @@ struct ChatShareSheet: UIViewControllerRepresentable {
     }
     return controller
   }
-  
+
   func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
-
 #endif
 
-#if os(iOS)
 #Preview("ChatAccountSettingsView") {
   NavigationStack {
     ChatAccountSettingsView()
   }
   .previewWithAuthenticatedState()
 }
-#endif

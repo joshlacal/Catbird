@@ -9,8 +9,6 @@ import CatbirdMLSCore
 import Foundation
 import Petrel
 
-#if os(iOS)
-
 /// Type of system message for MLS conversation events
 enum SystemMessageType: String, Codable, Sendable {
   case memberJoined = "member_joined"
@@ -193,5 +191,3 @@ extension MLSSystemMessage {
     }
   }
 }
-
-#endif

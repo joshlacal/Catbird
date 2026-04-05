@@ -3,23 +3,29 @@ import SwiftUI
 #if os(iOS)
 import VisionKit
 import UIKit
+#endif
 
 /// Fullscreen image viewer for MLS chat images.
 /// Reuses ZoomableImageViewController from ViewImageGridView for consistent zoom behavior.
 struct MLSFullscreenImageView: View {
-  let image: UIImage
+  let image: PlatformImage
   let altText: String?
 
   @Environment(\.dismiss) private var dismiss
   @State private var showControls = true
   @State private var isAltTextExpanded = false
   @State private var liveTextEnabled = false
+  #if os(iOS)
   @State private var liveTextSupported = ImageAnalyzer.isSupported
+  #else
+  @State private var liveTextSupported = false
+  #endif
 
   var body: some View {
     ZStack {
       Color.black.ignoresSafeArea()
 
+      #if os(iOS)
       ZoomableUIImageWrapper(
         uiImage: image,
         altText: altText,
@@ -30,12 +36,22 @@ struct MLSFullscreenImageView: View {
       .onTapGesture {
         withAnimation { showControls.toggle() }
       }
+      #else
+      Image(nsImage: image)
+        .resizable()
+        .aspectRatio(contentMode: .fit)
+        .onTapGesture {
+          withAnimation { showControls.toggle() }
+        }
+      #endif
 
       if showControls {
         controlsOverlay
       }
     }
+    #if os(iOS)
     .statusBarHidden(!showControls)
+    #endif
   }
 
   // MARK: - Controls
@@ -120,6 +136,7 @@ struct MLSFullscreenImageView: View {
   // MARK: - Share
 
   private func shareImage() {
+    #if os(iOS)
     guard let imageData = image.jpegData(compressionQuality: 0.9) else { return }
 
     let tempURL = FileManager.default.temporaryDirectory
@@ -154,7 +171,16 @@ struct MLSFullscreenImageView: View {
         try? FileManager.default.removeItem(at: tempURL)
       }
     } catch {}
+    #else
+    guard let imageData = image.jpegImageData(compressionQuality: 0.9) else { return }
+
+    let tempURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).jpg")
+
+    do {
+      try imageData.write(to: tempURL)
+      NSWorkspace.shared.activateFileViewerSelecting([tempURL])
+    } catch {}
+    #endif
   }
 }
-
-#endif

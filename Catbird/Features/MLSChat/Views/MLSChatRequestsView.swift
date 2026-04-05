@@ -3,8 +3,6 @@ import Petrel
 import SwiftUI
 import CatbirdMLSCore
 
-#if os(iOS)
-
 struct MLSChatRequestsButton: View {
   let pendingCount: Int
   let action: () -> Void
@@ -343,6 +341,3 @@ private struct MLSChatRequestRow: View {
   }
   .previewWithAuthenticatedState()
 }
-
-#endif
-

@@ -4,8 +4,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 // MARK: - Contact Search List
 
 /// Shared contact search component for both Bluesky DM and Catbird Group modes.
@@ -66,13 +64,23 @@ struct ContactSearchList: View {
       }
       .listStyle(.plain)
     }
+    #if os(iOS)
     .searchable(
       text: $searchText,
       placement: .navigationBarDrawer(displayMode: .always),
       prompt: "Search by name or handle"
     )
+    #else
+    .searchable(
+      text: $searchText,
+      placement: .sidebar,
+      prompt: "Search by name or handle"
+    )
+    #endif
     .autocorrectionDisabled()
+    #if os(iOS)
     .textInputAutocapitalization(.never)
+    #endif
     .onChange(of: searchText) { _, newValue in
       handleSearchTextChange(newValue)
     }
@@ -373,5 +381,3 @@ struct ContactSearchList: View {
     await checkMLSOptInBatch(dids: [did])
   }
 }
-
-#endif

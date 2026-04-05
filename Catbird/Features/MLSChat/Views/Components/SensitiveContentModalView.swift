@@ -1,9 +1,7 @@
 import SwiftUI
 
-#if os(iOS)
-
 struct SensitiveContentModalView: View {
-  let image: UIImage
+  let image: PlatformImage
   let canReveal: Bool
   let onReveal: () -> Void
   let onDismiss: () -> Void
@@ -46,9 +44,9 @@ struct SensitiveContentModalView: View {
         }
       }
       .padding(32)
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
     }
   }
 }
-
-#endif

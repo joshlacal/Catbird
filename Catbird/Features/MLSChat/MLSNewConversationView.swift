@@ -3,8 +3,6 @@ import Petrel
 import OSLog
 import CatbirdMLSCore
 
-#if os(iOS)
-
 // MARK: - MLS New Conversation View (Redesigned)
 
 /// Modern interface to create a new end-to-end encrypted group conversation
@@ -83,7 +81,9 @@ struct MLSNewConversationView: View {
                 }
             }
             .navigationTitle(currentStep.title)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -105,12 +105,20 @@ struct MLSNewConversationView: View {
             }
         }
         .autocorrectionDisabled()
+        #if os(iOS)
         .textInputAutocapitalization(.never)
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Search by name or handle"
         )
+        #else
+        .searchable(
+            text: $searchText,
+            placement: .sidebar,
+            prompt: "Search by name or handle"
+        )
+        #endif
     }
     
     // MARK: - Content Views
@@ -153,7 +161,11 @@ struct MLSNewConversationView: View {
                     searchResultsSection
                 }
             }
+            #if os(iOS)
             .listStyle(.insetGrouped)
+            #else
+            .listStyle(.inset)
+            #endif
             .onChange(of: searchText) { _, newValue in
                 searchTask?.cancel()
                 searchTask = Task {
@@ -246,10 +258,14 @@ struct MLSNewConversationView: View {
                         .designCaption()
                 }
             }
+            #if os(iOS)
             .listStyle(.insetGrouped)
+            #else
+            .listStyle(.inset)
+            #endif
         }
     }
-    
+
     @ViewBuilder
     private var selectionActionBar: some View {
         if currentStep == .selectParticipants {
@@ -766,7 +782,11 @@ struct ParticipantRow: View {
                             .foregroundColor(.green)
                             .background(
                                 Circle()
+                                    #if os(iOS)
                                     .fill(Color(.systemBackground))
+                                    #else
+                                    .fill(Color(nsColor: .windowBackgroundColor))
+                                    #endif
                                     .frame(width: 16, height: 16)
                             )
                             .offset(x: 2, y: 2)
@@ -908,5 +928,3 @@ struct EmptyStateRow: View {
   }
   .previewWithAuthenticatedState()
 }
-
-#endif

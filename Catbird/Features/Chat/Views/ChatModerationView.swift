@@ -2,8 +2,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 /// Moderation tools for chat administrators
 struct ChatModerationView: View {
   @Environment(AppState.self) private var appState
@@ -450,5 +448,3 @@ struct MessageContextRow: View {
       }
   }
 }
-
-#endif

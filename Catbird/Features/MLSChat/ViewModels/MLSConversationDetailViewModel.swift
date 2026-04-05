@@ -13,8 +13,6 @@ import OSLog
 import Combine
 import GRDB
 
-#if os(iOS)
-
 /// Conversation initialization state
 enum ConversationState: Sendable, Equatable {
     case loading
@@ -558,7 +556,5 @@ final class MLSConversationDetailViewModel {
     // compiler error since deinit is nonisolated and cannot access
     // @MainActor-isolated stored properties.
 }
-
-#endif
 
 // MARK: - Error Types

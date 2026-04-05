@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import OSLog
 import Petrel
@@ -100,4 +99,3 @@ extension ChatManager {
         }
     }
 }
-#endif

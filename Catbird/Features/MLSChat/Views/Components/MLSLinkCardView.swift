@@ -2,8 +2,6 @@ import CatbirdMLSCore
 import SwiftUI
 import NukeUI
 
-#if os(iOS)
-
 /// Renders link preview cards in MLS messages (similar to ExternalEmbedView link cards)
 struct MLSLinkCardView: View {
   let linkEmbed: MLSLinkEmbed
@@ -153,5 +151,3 @@ struct MLSLinkCardView: View {
   }
 }
 
-
-#endif

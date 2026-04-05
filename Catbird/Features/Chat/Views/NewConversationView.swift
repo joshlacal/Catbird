@@ -4,8 +4,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 /// Unified new conversation view with segmented picker for Bluesky DM and Catbird Group modes.
 struct NewConversationView: View {
   @Environment(AppState.self) private var appState
@@ -289,7 +287,11 @@ struct NewConversationView: View {
       ) {
         await MainActor.run {
           dismiss()
+          #if os(iOS)
           appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
+          #else
+          appState.navigationManager.targetConversationId = convoId
+          #endif
         }
       } else {
         await MainActor.run {
@@ -380,22 +382,3 @@ struct NewConversationView: View {
     isCreating = false
   }
 }
-
-// MARK: - macOS Stub
-
-#else
-
-struct NewConversationView: View {
-  var body: some View {
-    VStack {
-      Text("New Message")
-        .font(.title2)
-        .fontWeight(.semibold)
-      Text("Chat features require iOS")
-        .foregroundColor(.secondary)
-    }
-    .padding()
-  }
-}
-
-#endif

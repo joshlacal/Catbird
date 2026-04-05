@@ -61,9 +61,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   let senderProfile: MLSProfileData?
   private let reactionsList: [MLSMessageReaction]
   private let currentSendState: MessageSendState
-  #if os(iOS)
-    let originalMessage: DecryptedMLSMessage
-  #endif
+  let originalMessage: DecryptedMLSMessage
 
   init(
     messageView: BlueCatbirdMlsChatDefs.MessageView,
@@ -87,13 +85,11 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       processingAttempts: nil,
       validationFailureReason: nil
     )
-    #if os(iOS)
-      self.originalMessage = DecryptedMLSMessage(
-        messageView: messageView,
-        payload: payload,
-        senderDID: senderDID
-      )
-    #endif
+    self.originalMessage = DecryptedMLSMessage(
+      messageView: messageView,
+      payload: payload,
+      senderDID: senderDID
+    )
     self.metadata = metadata
     self.currentUserDID = currentUserDID
     self.senderProfile = senderProfile
@@ -101,82 +97,80 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     self.currentSendState = sendState
   }
 
-  #if os(iOS)
-    init(
-      message: DecryptedMLSMessage,
-      currentUserDID: String,
-      senderProfile: MLSProfileData? = nil,
-      reactions: [MLSMessageReaction] = [],
-      sendState: MessageSendState = .sent
-    ) {
-      self.originalMessage = message
-      self.metadata = MessageMetadata(
-        id: message.id,
-        convoID: message.convoId,
-        text: message.text ?? "",
-        senderDID: message.senderDID,
-        sentAt: message.createdAt,
-        embed: message.embed,
-        epoch: nil,
-        sequence: nil,
-        processingError: nil,
-        processingAttempts: nil,
-        validationFailureReason: nil
-      )
-      self.currentUserDID = currentUserDID
-      self.senderProfile = senderProfile
-      self.reactionsList = reactions
-      self.currentSendState = sendState
-    }
+  init(
+    message: DecryptedMLSMessage,
+    currentUserDID: String,
+    senderProfile: MLSProfileData? = nil,
+    reactions: [MLSMessageReaction] = [],
+    sendState: MessageSendState = .sent
+  ) {
+    self.originalMessage = message
+    self.metadata = MessageMetadata(
+      id: message.id,
+      convoID: message.convoId,
+      text: message.text ?? "",
+      senderDID: message.senderDID,
+      sentAt: message.createdAt,
+      embed: message.embed,
+      epoch: nil,
+      sequence: nil,
+      processingError: nil,
+      processingAttempts: nil,
+      validationFailureReason: nil
+    )
+    self.currentUserDID = currentUserDID
+    self.senderProfile = senderProfile
+    self.reactionsList = reactions
+    self.currentSendState = sendState
+  }
 
-    /// Simplified initializer for creating adapters from storage data
-    /// Used when we don't have a full DecryptedMLSMessage or MessageView
-    init(
-      id: String,
-      convoID: String = "",
-      text: String,
-      senderDID: String,
-      currentUserDID: String,
-      sentAt: Date,
-      senderProfile: MLSProfileData? = nil,
-      reactions: [MLSMessageReaction] = [],
-      embed: MLSEmbedData? = nil,
-      sendState: MessageSendState = .sent,
-      epoch: Int? = nil,
-      sequence: Int? = nil,
-      processingError: String? = nil,
-      processingAttempts: Int? = nil,
-      validationFailureReason: String? = nil
-    ) {
-      self.metadata = MessageMetadata(
-        id: id,
-        convoID: convoID,
-        text: text,
-        senderDID: senderDID,
-        sentAt: sentAt,
-        embed: embed,
-        epoch: epoch,
-        sequence: sequence,
-        processingError: processingError,
-        processingAttempts: processingAttempts,
-        validationFailureReason: validationFailureReason
-      )
-      self.currentUserDID = currentUserDID
-      self.senderProfile = senderProfile
-      self.reactionsList = reactions
-      self.currentSendState = sendState
-      // Create a minimal placeholder for originalMessage
-      // This is used when loading from storage where we don't have the full MessageView
-      self.originalMessage = DecryptedMLSMessage(
-        id: id,
-        convoId: "",
-        text: text,
-        senderDID: senderDID,
-        createdAt: sentAt,
-        embed: embed
-      )
-    }
-  #endif
+  /// Simplified initializer for creating adapters from storage data
+  /// Used when we don't have a full DecryptedMLSMessage or MessageView
+  init(
+    id: String,
+    convoID: String = "",
+    text: String,
+    senderDID: String,
+    currentUserDID: String,
+    sentAt: Date,
+    senderProfile: MLSProfileData? = nil,
+    reactions: [MLSMessageReaction] = [],
+    embed: MLSEmbedData? = nil,
+    sendState: MessageSendState = .sent,
+    epoch: Int? = nil,
+    sequence: Int? = nil,
+    processingError: String? = nil,
+    processingAttempts: Int? = nil,
+    validationFailureReason: String? = nil
+  ) {
+    self.metadata = MessageMetadata(
+      id: id,
+      convoID: convoID,
+      text: text,
+      senderDID: senderDID,
+      sentAt: sentAt,
+      embed: embed,
+      epoch: epoch,
+      sequence: sequence,
+      processingError: processingError,
+      processingAttempts: processingAttempts,
+      validationFailureReason: validationFailureReason
+    )
+    self.currentUserDID = currentUserDID
+    self.senderProfile = senderProfile
+    self.reactionsList = reactions
+    self.currentSendState = sendState
+    // Create a minimal placeholder for originalMessage
+    // This is used when loading from storage where we don't have the full MessageView
+    self.originalMessage = DecryptedMLSMessage(
+      id: id,
+      convoId: "",
+      text: text,
+      senderDID: senderDID,
+      createdAt: sentAt,
+      embed: embed
+    )
+  }
 
   /// Accessor for the MLS profile data
   var mlsProfile: MLSProfileData? {

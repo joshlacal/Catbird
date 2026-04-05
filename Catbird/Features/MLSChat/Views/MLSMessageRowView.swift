@@ -11,8 +11,6 @@ import SwiftUI
 
 //import MCEmojiPicker
 
-#if os(iOS)
-
   /// Message row component with lazy decryption for MLS messages
   /// Handles expired epoch keys gracefully with user-friendly error messages
   struct MLSMessageRowView: View {
@@ -288,6 +286,3 @@ import SwiftUI
         .padding()
   }
 }
-
-
-#endif

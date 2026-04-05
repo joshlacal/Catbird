@@ -4,8 +4,6 @@ import Petrel
 import NukeUI
 import OSLog
 
-#if os(iOS)
-
 /// Unified view for rendering Bluesky post embeds in chat messages.
 /// Handles both full post data (ready to display) and minimal references (needs API fetch).
 /// Uses the same rendering components as the Feed for consistency.
@@ -473,5 +471,3 @@ private extension View {
   .padding()
   .environment(AppStateManager.shared)
 }
-
-#endif

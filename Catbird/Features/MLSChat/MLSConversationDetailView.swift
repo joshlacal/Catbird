@@ -152,7 +152,7 @@ struct MLSConversationDetailView: View {
   @State private var imageSender: MLSImageSender?
   @State private var showingPhotoPicker = false
   @State private var selectedPhotoItem: PhotosPickerItem?
-  @State private var embedPreviewUIImage: UIImage?
+  @State private var embedPreviewUIImage: PlatformImage?
 
   // GIF & Post pickers
   @State private var showingGifPicker = false
@@ -419,10 +419,11 @@ struct MLSConversationDetailView: View {
           unifiedDataSource?.attachedEmbed = .image(embed)
           // Load thumbnail for embed preview
           if let data = try? await newItem.loadTransferable(type: Data.self),
-             let image = UIImage(data: data) {
+             let image = PlatformImage(data: data) {
             let size = CGSize(width: 64, height: 64)
-            let renderer = UIGraphicsImageRenderer(size: size)
-            embedPreviewUIImage = renderer.image { _ in
+            let renderer = CrossPlatformImageRenderer(size: size)
+            embedPreviewUIImage = renderer.image { context in
+              context.interpolationQuality = .high
               image.draw(in: CGRect(origin: .zero, size: size))
             }
           }

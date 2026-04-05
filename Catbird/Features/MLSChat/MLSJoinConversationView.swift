@@ -3,8 +3,6 @@ import Petrel
 import OSLog
 import CatbirdMLSCore
 
-#if os(iOS)
-
 struct MLSJoinConversationView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -24,7 +22,9 @@ struct MLSJoinConversationView: View {
                 Section {
                     TextField("Conversation ID", text: $convoId)
                         .autocorrectionDisabled()
+                        #if os(iOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                 } header: {
                     Text("Enter Conversation ID")
                 } footer: {
@@ -51,7 +51,9 @@ struct MLSJoinConversationView: View {
                 }
             }
             .navigationTitle("Join Conversation")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -120,5 +122,3 @@ struct MLSJoinConversationView: View {
     MLSJoinConversationView(onJoinSuccess: nil)
         .environment(AppStateManager.shared)
 }
-
-#endif

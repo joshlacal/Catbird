@@ -2,8 +2,6 @@ import SwiftUI
 import NukeUI
 import CatbirdMLSCore
 
-#if os(iOS)
-
 /// Displays a group avatar for MLS group chats.
 /// Shows a custom group avatar image (from encrypted metadata) when available,
 /// otherwise falls back to a diamond layout of participant avatars.
@@ -29,9 +27,9 @@ struct MLSGroupAvatarView: View {
   var body: some View {
     Group {
       if let avatarData = groupAvatarData,
-        let uiImage = UIImage(data: avatarData)
+        let platformImage = PlatformImage(data: avatarData)
       {
-        Image(uiImage: uiImage)
+        platformSwiftUIImage(platformImage)
           .resizable()
           .scaledToFill()
       } else if filteredParticipants.count <= 1 {
@@ -175,6 +173,16 @@ struct MLSGroupAvatarView: View {
     }
   }
 
+  // MARK: - Platform Image Helper
+
+  private func platformSwiftUIImage(_ img: PlatformImage) -> Image {
+    #if os(iOS)
+    Image(uiImage: img)
+    #else
+    Image(nsImage: img)
+    #endif
+  }
+
   // MARK: - Helpers
 
   private func initials(for participant: MLSParticipantViewModel?) -> String {
@@ -303,5 +311,3 @@ struct MLSGroupAvatarView: View {
   }
 }
 
-
-#endif

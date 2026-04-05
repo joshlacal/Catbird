@@ -3,8 +3,6 @@ import Petrel
 import OSLog
 import CatbirdMLSCore
 
-#if os(iOS)
-
 /// Picker view for selecting a Bluesky post to share in MLS chat
 struct MLSPostPickerView: View {
   let onSelect: (AppBskyFeedDefs.PostView) -> Void
@@ -32,7 +30,9 @@ struct MLSPostPickerView: View {
         }
       }
       .navigationTitle("Share a Post")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
@@ -229,5 +229,3 @@ private struct PostPickerRow: View {
   }
 }
 
-
-#endif

@@ -1,8 +1,6 @@
 import CatbirdMLSCore
 import SwiftUI
 
-#if os(iOS)
-
 /// Group configuration step for creating a Catbird Group.
 /// Shows group name field and participant summary.
 struct GroupConfigView: View {
@@ -59,7 +57,11 @@ struct GroupConfigView: View {
           .designCaption()
       }
     }
+    #if os(iOS)
     .listStyle(.insetGrouped)
+    #else
+    .listStyle(.inset)
+    #endif
   }
 
   @ViewBuilder
@@ -112,5 +114,3 @@ struct GroupConfigView: View {
     }
   }
 }
-
-#endif

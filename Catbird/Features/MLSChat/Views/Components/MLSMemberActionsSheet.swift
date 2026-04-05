@@ -14,8 +14,6 @@ import SwiftUI
 import Petrel
 import OSLog
 
-#if os(iOS)
-
 struct MLSMemberActionsSheet: View {
     // MARK: - Dependencies
 
@@ -237,7 +235,9 @@ struct MLSMemberActionsSheet: View {
                 }
             }
             .navigationTitle("Member Actions")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -372,5 +372,3 @@ private extension ATProtocolDate {
         return formatter.string(from: self.date)
     }
 }
-
-#endif

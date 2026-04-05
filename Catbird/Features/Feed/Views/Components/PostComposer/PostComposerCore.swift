@@ -557,7 +557,7 @@ extension PostComposerViewModel {
         defer { isPosting = false }
         
         // Start MetricKit tracking for post composition
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
           await MetricKitSignposts.beginPostComposition()
         }
         
@@ -661,12 +661,12 @@ extension PostComposerViewModel {
                 ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
                 appState.composerDraftManager.clearDraft()
                 logger.info("Post queued offline")
-                if #available(iOS 26, *) {
+                if #available(iOS 26, macOS 26, *) {
                   await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
                 }
                 return
             }
-            if #available(iOS 26, *) {
+            if #available(iOS 26, macOS 26, *) {
               await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
             }
             throw error
@@ -676,7 +676,7 @@ extension PostComposerViewModel {
         appState.composerDraftManager.clearDraft()
 
         // End MetricKit tracking for successful post
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
           await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
         }
         

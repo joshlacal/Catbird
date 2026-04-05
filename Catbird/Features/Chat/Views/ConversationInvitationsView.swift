@@ -2,7 +2,6 @@ import OSLog
 import SwiftUI
 import Petrel
 
-#if os(iOS)
 /// View for displaying and managing conversation invitations
 struct ConversationInvitationsView: View {
   @Environment(AppState.self) private var appState
@@ -215,6 +214,3 @@ struct ConversationInvitationRow: View {
       }
   }
 }
-
-
-#endif

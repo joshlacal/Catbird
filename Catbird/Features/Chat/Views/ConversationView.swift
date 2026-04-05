@@ -2,13 +2,12 @@ import SwiftUI
 import OSLog
 import Petrel
 import CatbirdMLSCore
-#if os(iOS)
 //import MCEmojiPicker
-#endif
+
+#if os(iOS)
 
 // MARK: - Conversation View (Using Unified Chat UI)
 
-#if os(iOS)
 struct ConversationView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme

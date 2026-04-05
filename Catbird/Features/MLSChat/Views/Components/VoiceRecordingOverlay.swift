@@ -1,7 +1,5 @@
 import SwiftUI
 
-#if os(iOS)
-
 struct VoiceRecordingOverlay: View {
   let duration: TimeInterval
   let onCancel: () -> Void
@@ -76,5 +74,3 @@ struct VoiceRecordingOverlay: View {
     .padding()
   }
 }
-
-#endif

@@ -5,8 +5,6 @@ import Petrel
 import PhotosUI
 import SwiftUI
 
-#if os(iOS)
-
   /// Custom message composer for MLS chat with support for GIFs, links, and quote posts
   struct MLSMessageComposerView: View {
     @Binding var text: String
@@ -28,7 +26,7 @@ import SwiftUI
     @State private var showingImageUploadError = false
     @State private var isDetectingLink = false
     @State private var detectedLinkEmbed: MLSLinkEmbed?
-    @State private var imagePreviewUIImage: UIImage?
+    @State private var imagePreviewUIImage: PlatformImage?
 
     var imageSender: MLSImageSender?
     var onVoiceTapped: (() -> Void)?
@@ -95,10 +93,11 @@ import SwiftUI
             attachedEmbed = .image(embed)
             // Load thumbnail for preview
             if let data = try? await newItem.loadTransferable(type: Data.self),
-               let image = UIImage(data: data) {
+               let image = PlatformImage(data: data) {
               let size = CGSize(width: 64, height: 64)
-              let renderer = UIGraphicsImageRenderer(size: size)
-              imagePreviewUIImage = renderer.image { _ in
+              let renderer = CrossPlatformImageRenderer(size: size)
+              imagePreviewUIImage = renderer.image { context in
+                context.interpolationQuality = .high
                 image.draw(in: CGRect(origin: .zero, size: size))
               }
             }
@@ -410,7 +409,7 @@ import SwiftUI
       case .image(let imageEmbed):
         HStack(spacing: DesignTokens.Spacing.sm) {
           if let preview = imagePreviewUIImage {
-            Image(uiImage: preview)
+            platformSwiftUIImage(preview)
               .resizable()
               .aspectRatio(contentMode: .fill)
               .frame(width: 40, height: 40)
@@ -638,6 +637,14 @@ import SwiftUI
 
     // MARK: - Helpers
 
+    private func platformSwiftUIImage(_ img: PlatformImage) -> Image {
+      #if os(iOS)
+      Image(uiImage: img)
+      #else
+      Image(nsImage: img)
+      #endif
+    }
+
     private var canSend: Bool {
       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedEmbed != nil
     }
@@ -665,9 +672,9 @@ import SwiftUI
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {
-      if #available(iOS 26.0, *) {
+      if #available(iOS 26.0, macOS 26.0, *) {
         content
-              
+
           .clipShape(ConcentricRectangle())
           .glassEffect(
             .regular.interactive().tint(tint),
@@ -766,8 +773,13 @@ import SwiftUI
 
     var body: some View {
       ZStack(alignment: .bottom) {
+        #if os(iOS)
         Color(.systemBackground)
           .ignoresSafeArea()
+        #else
+        Color(nsColor: .windowBackgroundColor)
+          .ignoresSafeArea()
+        #endif
 
           MLSMessageComposerView(
             text: $text,
@@ -794,5 +806,3 @@ import SwiftUI
         )
     )
 }
-
-#endif

@@ -1,8 +1,6 @@
 import SwiftUI
 import CatbirdMLSCore
 
-#if os(iOS)
-
 /// Custom message view for MLS encrypted messages with embed support
 struct MLSMessageView: View {
   let text: String
@@ -190,9 +188,15 @@ struct MLSMessageView: View {
           .padding(.vertical, DesignTokens.Spacing.sm)
         }
       }
+      #if os(iOS)
       .listStyle(.insetGrouped)
+      #else
+      .listStyle(.inset)
+      #endif
       .navigationTitle("Message Error")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
             Button {
@@ -479,5 +483,3 @@ private extension View {
     }
   }
 }
-
-#endif

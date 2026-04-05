@@ -51,6 +51,19 @@ struct UnifiedInputBar: View {
         .textFieldStyle(.plain)
         .lineLimit(1...5)
         .focused($isFocused)
+        #if os(macOS)
+        .onKeyPress(.return, phases: .down) { event in
+          if event.modifiers.contains(.shift) {
+            text.append("\n")
+            return .handled
+          }
+          if canSend {
+            sendMessage()
+            return .handled
+          }
+          return .ignored
+        }
+        #endif
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(

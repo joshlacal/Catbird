@@ -1,7 +1,6 @@
 import SwiftUI
 import NukeUI
 import Petrel
-#if os(iOS)
 
 
 // MARK: - Profile Avatar View (Using NukeUI LazyImage)
@@ -74,5 +73,3 @@ struct ChatProfileAvatarView: View {
   }
   .padding()
 }
-
-#endif

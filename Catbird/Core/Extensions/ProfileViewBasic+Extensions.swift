@@ -50,7 +50,6 @@ extension AppBskyActorDefs.ProfileViewDetailed {
 
 }
 
-#if os(iOS)
 extension ChatBskyActorDefs.ProfileViewBasic {
     func finalAvatarURL() -> URL? {
         guard let avatarURLString = self.avatar?.uriString(),
@@ -66,7 +65,6 @@ extension ChatBskyActorDefs.ProfileViewBasic {
     }
 
 }
-#endif
 
 extension AppBskyGraphDefs.ListView {
     func finalAvatarURL() -> URL? {

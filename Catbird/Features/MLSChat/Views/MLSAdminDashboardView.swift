@@ -10,9 +10,7 @@ import SwiftUI
 import Petrel
 import OSLog
 
-#if os(iOS)
-
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 struct MLSAdminDashboardView: View {
     // MARK: - Dependencies
 
@@ -47,7 +45,9 @@ struct MLSAdminDashboardView: View {
             }
         }
         .navigationTitle("Admin Dashboard")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button {
@@ -139,7 +139,7 @@ struct MLSAdminDashboardView: View {
             }
             .padding()
         }
-        .background(Color(UIColor.systemGroupedBackground))
+        .background(Color.systemGroupedBackground)
     }
 
     // MARK: - Alert Banner
@@ -281,7 +281,7 @@ struct MLSAdminDashboardView: View {
 
 // MARK: - Stat Card Component
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct StatCard: View {
     let title: String
     let value: String
@@ -319,7 +319,7 @@ private struct StatCard: View {
 
 // MARK: - Activity Row Component
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, macOS 26.0, *)
 private struct ActivityRow: View {
     let label: String
     let value: Int
@@ -348,5 +348,3 @@ private struct ActivityRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
-
-#endif

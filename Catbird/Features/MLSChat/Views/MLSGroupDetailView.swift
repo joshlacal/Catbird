@@ -4,8 +4,6 @@ import OSLog
 import PhotosUI
 import SwiftUI
 
-#if os(iOS)
-
 // MARK: - MLSGroupDetailView
 
 /// Dedicated info screen for an MLS conversation.
@@ -93,7 +91,9 @@ struct MLSGroupDetailView: View {
         leaveSection
       }
       .navigationTitle(isGroupChat ? "Group Info" : "Chat Info")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
@@ -531,24 +531,40 @@ struct MLSGroupDetailView: View {
         return
       }
 
-      guard let uiImage = UIImage(data: imageData) else {
+      guard let platformImage = PlatformImage(data: imageData) else {
         errorMessage = "Invalid image format."
         return
       }
 
-      guard var jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
+      #if os(iOS)
+      guard var jpegData = platformImage.jpegData(compressionQuality: 0.8) else {
         errorMessage = "Could not compress image."
         return
       }
 
       let maxSize = 1024 * 1024
       if jpegData.count > maxSize {
-        guard let smaller = uiImage.jpegData(compressionQuality: 0.5) else {
+        guard let smaller = platformImage.jpegData(compressionQuality: 0.5) else {
           errorMessage = "Image too large."
           return
         }
         jpegData = smaller
       }
+      #else
+      guard var jpegData = platformImage.jpegImageData(compressionQuality: 0.8) else {
+        errorMessage = "Could not compress image."
+        return
+      }
+
+      let maxSize = 1024 * 1024
+      if jpegData.count > maxSize {
+        guard let smaller = platformImage.jpegImageData(compressionQuality: 0.5) else {
+          errorMessage = "Image too large."
+          return
+        }
+        jpegData = smaller
+      }
+      #endif
 
       localAvatarData = jpegData
 
@@ -676,5 +692,3 @@ struct MLSGroupDetailView: View {
     isPerformingMemberAction = false
   }
 }
-
-#endif

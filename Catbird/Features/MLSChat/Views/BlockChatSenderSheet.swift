@@ -2,8 +2,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 /// Block reason options for chat sender blocking
 enum BlockChatReason: String, CaseIterable, Identifiable {
   case spam = "spam"
@@ -240,5 +238,3 @@ private struct BlockExplanationRow: View {
     requestId: "req-123"
   )
 }
-
-#endif

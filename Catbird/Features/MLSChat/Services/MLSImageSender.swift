@@ -5,9 +5,10 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
 import PhotosUI
+#if os(iOS)
 import UIKit
+#endif
 
   private let mlsImageSenderLogger = Logger(subsystem: "blue.catbird", category: "MLSImageSender")
   private let maxBlobBytes = 10 * 1024 * 1024
@@ -40,13 +41,13 @@ import UIKit
           return nil
         }
 
-        guard let uiImage = UIImage(data: imageData) else {
+        guard let platformImage = PlatformImage(data: imageData) else {
           uploadError = "Invalid image format"
           return nil
         }
 
-        let originalWidth = Int(uiImage.size.width * uiImage.scale)
-        let originalHeight = Int(uiImage.size.height * uiImage.scale)
+        let originalWidth = Int(platformImage.imageSize.width * platformImage.imageScale)
+        let originalHeight = Int(platformImage.imageSize.height * platformImage.imageScale)
         let detectedType = Self.detectMimeType(from: imageData)
 
         let finalData: Data
@@ -55,11 +56,11 @@ import UIKit
         var finalHeight = originalHeight
 
         if imageData.count <= maxBlobBytes {
-          // Original fits — ship as-is (preserves HEIC, GIF, exact PNG, etc.)
+          // Original fits -- ship as-is (preserves HEIC, GIF, exact PNG, etc.)
           finalData = imageData
           contentType = detectedType
         } else if detectedType == "image/png" {
-          guard let result = Self.fitPNG(uiImage, maxBytes: maxBlobBytes) else {
+          guard let result = Self.fitPNG(platformImage, maxBytes: maxBlobBytes) else {
             uploadError = "Image too large (max 10 MB)"
             return nil
           }
@@ -68,8 +69,8 @@ import UIKit
           finalHeight = result.height
           contentType = "image/png"
         } else {
-          // JPEG / HEIC / other — quality reduction then dimension reduction → JPEG
-          guard let result = Self.fitJPEG(uiImage, maxBytes: maxBlobBytes) else {
+          // JPEG / HEIC / other -- quality reduction then dimension reduction -> JPEG
+          guard let result = Self.fitJPEG(platformImage, maxBytes: maxBlobBytes) else {
             uploadError = "Image too large (max 10 MB)"
             return nil
           }
@@ -143,33 +144,45 @@ import UIKit
     }
 
     /// Progressively shrink a PNG until it fits.
-    private static func fitPNG(_ image: UIImage, maxBytes: Int) -> FitResult? {
-      let pw = image.size.width * image.scale
-      let ph = image.size.height * image.scale
+    private static func fitPNG(_ image: PlatformImage, maxBytes: Int) -> FitResult? {
+      let pw = image.imageSize.width * image.imageScale
+      let ph = image.imageSize.height * image.imageScale
       var scale: CGFloat = 0.75
       for _ in 0..<8 {
         let w = pw * scale
         let h = ph * scale
-        if let resized = resizeImage(image, to: CGSize(width: w, height: h)),
-          let data = resized.pngData(), data.count <= maxBytes
-        {
-          return FitResult(data: data, width: Int(w), height: Int(h))
+        if let resized = resizeImage(image, to: CGSize(width: w, height: h)) {
+          #if os(iOS)
+          if let data = resized.pngData(), data.count <= maxBytes {
+            return FitResult(data: data, width: Int(w), height: Int(h))
+          }
+          #else
+          if let data = resized.pngImageData(), data.count <= maxBytes {
+            return FitResult(data: data, width: Int(w), height: Int(h))
+          }
+          #endif
         }
         scale *= 0.75
       }
       return nil
     }
 
-    /// Try quality reduction at full res, then progressive dimension + quality reduction → JPEG.
-    private static func fitJPEG(_ image: UIImage, maxBytes: Int) -> FitResult? {
-      let pw = image.size.width * image.scale
-      let ph = image.size.height * image.scale
+    /// Try quality reduction at full res, then progressive dimension + quality reduction -> JPEG.
+    private static func fitJPEG(_ image: PlatformImage, maxBytes: Int) -> FitResult? {
+      let pw = image.imageSize.width * image.imageScale
+      let ph = image.imageSize.height * image.imageScale
 
       // Quality reduction at original resolution
       for q: CGFloat in [0.8, 0.6, 0.4] {
+        #if os(iOS)
         if let data = image.jpegData(compressionQuality: q), data.count <= maxBytes {
           return FitResult(data: data, width: Int(pw), height: Int(ph))
         }
+        #else
+        if let data = image.jpegImageData(compressionQuality: q), data.count <= maxBytes {
+          return FitResult(data: data, width: Int(pw), height: Int(ph))
+        }
+        #endif
       }
 
       // Dimension + quality reduction
@@ -179,9 +192,15 @@ import UIKit
         let h = ph * scale
         if let resized = resizeImage(image, to: CGSize(width: w, height: h)) {
           for q: CGFloat in [0.8, 0.5] {
+            #if os(iOS)
             if let data = resized.jpegData(compressionQuality: q), data.count <= maxBytes {
               return FitResult(data: data, width: Int(w), height: Int(h))
             }
+            #else
+            if let data = resized.jpegImageData(compressionQuality: q), data.count <= maxBytes {
+              return FitResult(data: data, width: Int(w), height: Int(h))
+            }
+            #endif
           }
         }
         scale *= 0.75
@@ -189,12 +208,7 @@ import UIKit
       return nil
     }
 
-    private static func resizeImage(_ image: UIImage, to size: CGSize) -> UIImage? {
-      let renderer = UIGraphicsImageRenderer(size: size)
-      return renderer.image { _ in
-        image.draw(in: CGRect(origin: .zero, size: size))
-      }
+    private static func resizeImage(_ image: PlatformImage, to size: CGSize) -> PlatformImage? {
+      image.resized(to: size)
     }
   }
-
-#endif

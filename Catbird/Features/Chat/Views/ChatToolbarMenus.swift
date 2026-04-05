@@ -1,6 +1,5 @@
 import SwiftUI
 import Petrel
-#if os(iOS)
 
 
 // MARK: - Toolbar and Context Menu Components
@@ -196,12 +195,16 @@ struct MessageRequestsButton: View {
   NavigationStack {
     Text("Chat")
       .toolbar {
+        #if os(iOS)
         ToolbarItem(placement: .topBarTrailing) {
           ChatToolbarMenu()
         }
+        #else
+        ToolbarItem(placement: .automatic) {
+          ChatToolbarMenu()
+        }
+        #endif
       }
   }
   .previewWithAuthenticatedState()
 }
-
-#endif

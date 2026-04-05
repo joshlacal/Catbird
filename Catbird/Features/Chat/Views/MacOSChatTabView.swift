@@ -1,164 +1,342 @@
 #if os(macOS)
+import CatbirdMLSCore
+import GRDB
 import OSLog
 import Petrel
 import SwiftUI
 
 // MARK: - macOS Chat Tab View
 
-/// Lightweight macOS chat tab that mirrors the iOS ChatTabView using
-/// cross-platform Bluesky DM APIs. Uses NavigationSplitView with a
-/// conversation sidebar and a detail pane.
+/// Full-featured macOS chat tab that merges Bluesky DMs and MLS encrypted
+/// conversations into a unified sidebar + detail NavigationSplitView.
 @available(macOS 13.0, *)
 struct MacOSChatTabView: View {
   @Environment(AppState.self) private var appState
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
-  @State private var conversations: [ChatBskyConvoDefs.ConvoView] = []
   @State private var selectedConvoId: String?
-  @State private var isLoading = false
-  @State private var cursor: String?
-  @State private var navigationPath = NavigationPath()
+  @State private var searchText = ""
+  @State private var coordinator = UnifiedChatCoordinator()
+  @State private var mlsPollingTask: Task<Void, Never>?
+  @State private var mlsPollCycleCount: Int = 0
+  @State private var showingNewMessageSheet = false
+  @State private var isShowingErrorAlert = false
+  @State private var lastErrorMessage: String?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSChatTab")
 
+  /// Per-account MLS chat enabled state
+  private var mlsChatEnabledForCurrentAccount: Bool {
+    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+  }
+
   var body: some View {
     NavigationSplitView {
-      sidebar
-        .navigationTitle("Messages")
+      MacOSChatSidebar(
+        coordinator: coordinator,
+        selectedConvoId: $selectedConvoId,
+        searchText: $searchText,
+        onNewConversation: { showingNewMessageSheet = true }
+      )
+      .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
     } detail: {
-      detail
+      MacOSChatDetailRouter(
+        coordinator: coordinator,
+        selectedConvoId: selectedConvoId,
+        selectedTab: $selectedTab
+      )
     }
-    .task {
-      await loadConversations()
-    }
+    .navigationSubtitle(selectedConversationSubtitle)
+    .onAppear(perform: handleOnAppear)
+    .onDisappear(perform: handleOnDisappear)
     .onChange(of: lastTappedTab) { _, newValue in
-      // Double-tap on Chat tab returns to conversation list
       if newValue == 4 {
         selectedConvoId = nil
       }
     }
-  }
-
-  // MARK: - Sidebar
-
-  @ViewBuilder
-  private var sidebar: some View {
-    Group {
-      if isLoading && conversations.isEmpty {
-        ProgressView("Loading conversations...")
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else if conversations.isEmpty {
-        VStack(spacing: 12) {
-          Image(systemName: "bubble.left.and.bubble.right")
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
-          Text("No Messages")
-            .font(.headline)
-          Text("Start a conversation to see it here.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else {
-        List(conversations, id: \.id, selection: $selectedConvoId) { convo in
-          MacOSConversationRow(convo: convo, currentUserDID: appState.userDID)
-        }
-        .listStyle(.sidebar)
+    .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
+      coordinator.blueskyConversations = newValue
+    }
+    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
+      if let convoId = newValue, convoId != selectedConvoId {
+        selectedConvoId = convoId
+        appState.navigationManager.targetConversationId = nil
       }
     }
-  }
-
-  // MARK: - Detail
-
-  @ViewBuilder
-  private var detail: some View {
-    if selectedConvoId != nil {
-      // Placeholder until BlueskyConversationDataSource is ported to macOS
-      Text("Select a conversation")
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else {
-      Text("Select a conversation")
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
+      if let convoId = newValue, convoId != selectedConvoId {
+        selectedConvoId = convoId
+        appState.navigationManager.targetMLSConversationId = nil
+      }
+    }
+    .onChange(of: appState.chatManager.errorState) { oldError, newError in
+      handleErrorStateChange(oldError: oldError, newError: newError)
+    }
+    .alert(isPresented: $isShowingErrorAlert) {
+      Alert(
+        title: Text("Chat Error"),
+        message: Text(lastErrorMessage ?? "An unknown error occurred."),
+        dismissButton: .default(Text("OK")) {
+          appState.chatManager.errorState = nil
+          lastErrorMessage = nil
+        }
+      )
+    }
+    .onKeyPress(.escape) {
+      if selectedConvoId != nil {
+        selectedConvoId = nil
+        return .handled
+      }
+      return .ignored
+    }
+    .sheet(isPresented: $showingNewMessageSheet) {
+      NewConversationView()
+        .frame(minWidth: 450, minHeight: 500)
     }
   }
 
-  // MARK: - Data Loading
+  // MARK: - Event Handlers
 
-  private func loadConversations() async {
-    guard !isLoading else { return }
-    isLoading = true
-    defer { isLoading = false }
+  private func handleOnAppear() {
+    // Bluesky DMs
+    Task {
+      if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
+        await appState.chatManager.loadConversations(refresh: true)
+      }
+    }
+    appState.chatManager.startConversationsPolling()
+    coordinator.blueskyConversations = appState.chatManager.acceptedConversations
+
+    // MLS
+    coordinator.mlsEnabled = mlsChatEnabledForCurrentAccount
+    if mlsChatEnabledForCurrentAccount {
+      Task { await loadMLSConversations() }
+      startMLSPolling()
+    }
+  }
+
+  private func handleOnDisappear() {
+    stopMLSPolling()
+  }
+
+  private func handleErrorStateChange(oldError: ChatManager.ChatError?, newError: ChatManager.ChatError?) {
+    if let error = newError, !isShowingErrorAlert {
+      let errorMessage = error.localizedDescription
+      if lastErrorMessage != errorMessage {
+        lastErrorMessage = errorMessage
+        isShowingErrorAlert = true
+      }
+    } else if newError == nil {
+      isShowingErrorAlert = false
+      lastErrorMessage = nil
+    }
+  }
+
+  // MARK: - MLS Data Loading
+
+  @MainActor
+  private func loadMLSConversations() async {
+    guard mlsChatEnabledForCurrentAccount else {
+      coordinator.mlsEnabled = false
+      return
+    }
+    coordinator.mlsEnabled = true
+
+    let userDID = appState.userDID
 
     do {
-      let (_, data) = try await appState.client.chat.bsky.convo
-        .listConvos(input: .init(limit: 50))
-      if let data {
-        conversations = data.convos
-        cursor = data.cursor
+      let (loadedConversations, membersByConvoID) = try await MLSStorage.shared
+        .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID)
+
+      let acceptedConversations = loadedConversations.filter { $0.requestState != .pendingInbound }
+
+      let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+        try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(from: db, currentUserDID: userDID)
       }
-    } catch {
-      logger.error("Failed to load conversations: \(error.localizedDescription)")
-    }
-  }
-}
 
-// MARK: - Conversation Row
+      let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: MLSLastMessagePreview], [String: Date]) in
+        var previews: [String: MLSLastMessagePreview] = [:]
+        var latestActivity: [String: Date] = [:]
+        for conversation in acceptedConversations {
+          let convoID = conversation.conversationID
+          let recentMessages = try MLSMessageModel
+            .filter(MLSMessageModel.Columns.conversationID == convoID)
+            .filter(MLSMessageModel.Columns.currentUserDID == userDID)
+            .order(MLSMessageModel.Columns.timestamp.desc)
+            .limit(20)
+            .fetchAll(db)
 
-@available(macOS 13.0, *)
-private struct MacOSConversationRow: View {
-  let convo: ChatBskyConvoDefs.ConvoView
-  let currentUserDID: String
+          if let newest = recentMessages.first {
+            latestActivity[convoID] = newest.timestamp
+          }
 
-  private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
-    convo.members.filter { $0.did.description != currentUserDID }
-  }
+          for message in recentMessages {
+            if message.processingError != nil {
+              let text = message.parsedPayload?.text ?? ""
+              if text.isEmpty || text.contains("Message unavailable")
+                || text.contains("Decryption Failed") || text.contains("Self-sent message") {
+                continue
+              }
+            }
+            if let payload = message.parsedPayload {
+              switch payload.messageType {
+              case .text, .system, nil:
+                if let plaintext = payload.text, !plaintext.isEmpty {
+                  previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
+                } else if case .some(.image(_)) = payload.embed {
+                  previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
+                } else {
+                  continue
+                }
+              case .reaction:
+                previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
+              case .readReceipt, .typing, .adminRoster, .adminAction:
+                continue
+              }
+            } else {
+              continue
+            }
+            break
+          }
+        }
+        return (previews, latestActivity)
+      }
 
-  private var displayName: String {
-    if let first = otherMembers.first {
-      return first.displayName ?? first.handle.description
-    }
-    return "Conversation"
-  }
+      let sortedConversations = acceptedConversations.sorted { lhs, rhs in
+        let lhsDate = latestActivityByConvo[lhs.conversationID] ?? lhs.createdAt
+        let rhsDate = latestActivityByConvo[rhs.conversationID] ?? rhs.createdAt
+        return lhsDate > rhsDate
+      }
 
-  private var lastMessageText: String {
-    guard let lastMessage = convo.lastMessage else { return "" }
-    switch lastMessage {
-    case .chatBskyConvoDefsMessageView(let msg):
-      return msg.text
-    case .chatBskyConvoDefsDeletedMessageView:
-      return "Message deleted"
-    case .unexpected:
-      return ""
-    }
-  }
+      // Build participants from DB-cached profiles
+      var participants: [String: [MLSParticipantViewModel]] = [:]
+      var dbProfiles: [MLSProfileEnricher.ProfileData] = []
+      for members in membersByConvoID.values {
+        for member in members where member.handle != nil || member.displayName != nil {
+          dbProfiles.append(MLSProfileEnricher.ProfileData(
+            did: member.did, handle: member.handle ?? "",
+            displayName: member.displayName, avatarURL: nil
+          ))
+        }
+      }
+      await appState.mlsProfileEnricher.seedFromDatabase(dbProfiles)
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack {
-        Text(displayName)
-          .fontWeight(convo.unreadCount > 0 ? .semibold : .regular)
-          .lineLimit(1)
-
-        Spacer()
-
-        if convo.unreadCount > 0 {
-          Circle()
-            .fill(.blue)
-            .frame(width: 8, height: 8)
+      let dbProfilesByDID = Dictionary(
+        dbProfiles.map { (MLSProfileEnricher.canonicalDID($0.did), $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
+      for (convoID, members) in membersByConvoID {
+        participants[convoID] = members.map { member in
+          let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
+          let profile = dbProfilesByDID[canonicalDID]
+          return MLSParticipantViewModel(
+            id: member.did,
+            handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
+            displayName: profile?.displayName ?? member.displayName,
+            avatarURL: profile?.avatarURL
+          )
         }
       }
 
-      if !lastMessageText.isEmpty {
-        Text(lastMessageText)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .lineLimit(2)
+      // Single state assignment to avoid flicker
+      var newState = MLSConversationListState()
+      newState.conversations = sortedConversations
+      newState.participants = participants
+      newState.unreadCounts = unreadCounts
+      newState.lastMessages = lastMessages
+      newState.latestActivity = latestActivityByConvo
+      newState.isLoading = false
+      coordinator.mlsState = newState
+
+      // Background: enrich with network profiles
+      Task {
+        await enrichMLSParticipantsFromNetwork(membersByConvoID: membersByConvoID, userDID: userDID)
+      }
+    } catch {
+      logger.error("Failed to load MLS conversations: \(error)")
+    }
+  }
+
+  private func enrichMLSParticipantsFromNetwork(membersByConvoID: [String: [MLSMemberModel]], userDID: String) async {
+    var allDIDs = Set<String>()
+    for (_, members) in membersByConvoID {
+      for member in members { allDIDs.insert(member.did) }
+    }
+
+    guard let client = appState.atProtoClient else { return }
+    let profilesByDID = await appState.mlsProfileEnricher.ensureProfiles(
+      for: Array(allDIDs), using: client, currentUserDID: userDID
+    )
+    guard !profilesByDID.isEmpty else { return }
+
+    var enrichedParticipants: [String: [MLSParticipantViewModel]] = [:]
+    for (convoID, members) in membersByConvoID {
+      enrichedParticipants[convoID] = members.map { member in
+        let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
+        let profile = profilesByDID[canonicalDID] ?? profilesByDID[member.did]
+        return MLSParticipantViewModel(
+          id: member.did,
+          handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
+          displayName: profile?.displayName ?? member.displayName,
+          avatarURL: profile?.avatarURL
+        )
       }
     }
-    .padding(.vertical, 4)
+
+    let existingParticipants = coordinator.mlsState.participants
+    let changed = enrichedParticipants.contains { key, val in
+      guard let existing = existingParticipants[key] else { return true }
+      return existing != val
+    }
+    if changed {
+      var updatedState = coordinator.mlsState
+      updatedState.participants = enrichedParticipants
+      coordinator.mlsState = updatedState
+    }
+  }
+
+  // MARK: - MLS Polling
+
+  private func startMLSPolling() {
+    mlsPollingTask?.cancel()
+    mlsPollingTask = Task {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(15))
+        guard !Task.isCancelled else { break }
+        await loadMLSConversations()
+        mlsPollCycleCount += 1
+        if mlsPollCycleCount % 10 == 0 {
+          let userDID = appState.userDID
+          Task.detached(priority: .utility) {
+            try? await MLSGRDBManager.shared.checkpointDatabase(for: userDID)
+          }
+        }
+      }
+    }
+  }
+
+  private func stopMLSPolling() {
+    mlsPollingTask?.cancel()
+    mlsPollingTask = nil
+  }
+
+  // MARK: - Window Subtitle
+
+  private var selectedConversationSubtitle: String {
+    guard let convoId = selectedConvoId,
+          let item = coordinator.conversations.first(where: { $0.id == convoId }) else {
+      return ""
+    }
+    switch item {
+    case .bluesky(let convo):
+      let otherMembers = convo.members.filter { $0.did.description != appState.userDID }
+      return otherMembers.first?.displayName ?? otherMembers.first?.handle.description ?? ""
+    case .mls(let convo, let participants, _, _, _, _):
+      if let title = convo.title, !title.isEmpty { return title }
+      let others = participants.filter { $0.id != appState.userDID }
+      return others.prefix(2).map { $0.displayName ?? $0.handle }.joined(separator: ", ")
+    }
   }
 }
 #endif

@@ -193,6 +193,32 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             in: dataSource.messages
           )
         )
+        .contextMenu {
+          Button("Copy") {
+            if let message = dataSource.message(for: id) {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(message.text, forType: .string)
+            }
+          }
+
+          Menu("React") {
+            ForEach(["👍", "❤️", "😂", "😮", "😢"], id: \.self) { emoji in
+              Button(emoji) {
+                dataSource.addReaction(messageID: id, emoji: emoji)
+              }
+            }
+            Divider()
+            Button("More...") {
+              onRequestEmojiPicker?(id)
+            }
+          }
+
+          Divider()
+
+          Button("Delete", role: .destructive) {
+            Task { await dataSource.deleteMessage(messageID: id) }
+          }
+        }
         .id(id)
         .padding(.horizontal, 12)
       }

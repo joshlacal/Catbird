@@ -3,8 +3,6 @@ import Petrel
 import OSLog
 import CatbirdMLSCore
 
-#if os(iOS)
-
 /// Service for enriching MLS conversation participants with Bluesky profile data
 actor MLSProfileEnricher {
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSProfileEnricher")
@@ -295,5 +293,3 @@ private extension Array {
     }
   }
 }
-
-#endif

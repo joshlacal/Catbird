@@ -9,8 +9,6 @@ import CatbirdMLSCore
 import OSLog
 import SwiftUI
 
-#if os(iOS)
-
   /// Sheet displaying reaction details grouped by emoji with reactor profiles
   struct MLSReactionDetailsSheet: View {
     let reactions: [MLSMessageReaction]
@@ -42,9 +40,15 @@ import SwiftUI
             }
           }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.inset)
+        #endif
         .navigationTitle("Reactions")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
           ToolbarItem(placement: .confirmationAction) {
               Button {
@@ -217,4 +221,3 @@ import SwiftUI
 //    let avatarURL: URL?
 //  }
 //
-#endif

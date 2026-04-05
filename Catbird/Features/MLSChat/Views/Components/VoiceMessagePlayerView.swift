@@ -5,8 +5,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 private let voicePlayerLogger = Logger(subsystem: "blue.catbird", category: "VoicePlayer")
 
 struct VoiceMessagePlayerView: View {
@@ -225,6 +223,7 @@ struct VoiceMessagePlayerView: View {
   }
 
   private func configureAudioSession() {
+    #if os(iOS)
     do {
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -232,6 +231,7 @@ struct VoiceMessagePlayerView: View {
     } catch {
       voicePlayerLogger.warning("[play] audio session config failed: \(error)")
     }
+    #endif
   }
 
   /// Build a WAV file in memory from raw PCM Int16 LE data.
@@ -358,5 +358,3 @@ struct VoiceWaveformView: View {
   .frame(width: 280)
   .padding()
 }
-
-#endif

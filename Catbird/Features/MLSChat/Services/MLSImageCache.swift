@@ -1,6 +1,9 @@
-#if os(iOS)
 import Foundation
+#if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// LRU disk cache for decrypted MLS images.
 /// Keyed by blob_id, 200MB max, app sandbox.
@@ -16,14 +19,14 @@ actor MLSImageCache {
     try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
   }
 
-  func get(blobId: String) -> UIImage? {
+  func get(blobId: String) -> PlatformImage? {
     let fileURL = cacheDir.appendingPathComponent(blobId)
     guard let data = try? Data(contentsOf: fileURL) else { return nil }
     // Touch file to update access time for LRU
     try? FileManager.default.setAttributes(
       [.modificationDate: Date()], ofItemAtPath: fileURL.path
     )
-    return UIImage(data: data)
+    return PlatformImage(data: data)
   }
 
   func put(blobId: String, imageData: Data) {
@@ -61,5 +64,3 @@ actor MLSImageCache {
     }
   }
 }
-
-#endif

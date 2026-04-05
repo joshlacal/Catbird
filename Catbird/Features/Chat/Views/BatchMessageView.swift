@@ -2,8 +2,6 @@ import SwiftUI
 import OSLog
 import Petrel
 
-#if os(iOS)
-
 struct BatchMessageView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
@@ -232,4 +230,3 @@ struct ConversationSelectionRow: View {
   }
   .previewWithAuthenticatedState()
 }
-#endif

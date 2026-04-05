@@ -8,8 +8,6 @@ import CatbirdMLSCore
 
 import SwiftUI
 
-#if os(iOS)
-
 /// View component for displaying system messages (membership changes, etc.)
 /// Displayed centered in the chat with a minimal, unobtrusive style
 struct MLSSystemMessageView: View {
@@ -149,4 +147,3 @@ struct MLSSystemMessageView: View {
 //  .padding()
 //}
 //
-#endif

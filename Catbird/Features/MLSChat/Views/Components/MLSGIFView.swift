@@ -3,8 +3,6 @@ import SwiftUI
 import OSLog
 import Petrel
 
-#if os(iOS)
-
 /// Renders Tenor GIFs as videos in MLS messages (similar to ExternalEmbedView video player)
 struct MLSGIFView: View {
   let gifEmbed: MLSGIFEmbed
@@ -212,5 +210,3 @@ struct MLSGIFView: View {
   }
 }
 
-
-#endif

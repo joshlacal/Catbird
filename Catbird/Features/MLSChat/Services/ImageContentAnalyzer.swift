@@ -1,6 +1,4 @@
-#if os(iOS)
 import SensitiveContentAnalysis
-import UIKit
 
 /// On-device content analysis for incoming MLS images.
 /// Verdicts are local-only and never transmitted off-device.
@@ -38,5 +36,3 @@ enum ImageAnalysisResult: Sendable {
   case sensitive(policy: SCSensitivityAnalysisPolicy)
   case notAvailable
 }
-
-#endif

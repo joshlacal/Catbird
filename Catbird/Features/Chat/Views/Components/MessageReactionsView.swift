@@ -1,4 +1,3 @@
-#if os(iOS)
 import Petrel
 import SwiftUI
 import OSLog
@@ -112,4 +111,3 @@ struct MessageReactionsView: View {
       convoId: convoId, messageId: messageId, emoji: emoji)
   }
 }
-#endif

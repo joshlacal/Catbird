@@ -5,8 +5,6 @@ import Foundation
 import OSLog
 import Petrel
 
-#if os(iOS)
-
 private let mlsVoiceSenderLogger = Logger(subsystem: "blue.catbird", category: "MLSVoiceSender")
 
 @Observable
@@ -32,7 +30,9 @@ final class MLSVoiceSender {
   private var audioRecorder: AVAudioRecorder?
   private var recordingURL: URL?
   private var recordingStartTime: Date?
+  #if os(iOS)
   private var displayLink: CADisplayLink?
+  #endif
   private let client: ATProtoClient
 
   init(client: ATProtoClient) {
@@ -48,9 +48,11 @@ final class MLSVoiceSender {
   // MARK: - Recording
 
   func startRecording() async throws {
+    #if os(iOS)
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
     try session.setActive(true)
+    #endif
 
     let tempDir = FileManager.default.temporaryDirectory
     let url = tempDir.appendingPathComponent("voice_\(UUID().uuidString).wav")
@@ -183,6 +185,7 @@ final class MLSVoiceSender {
 
   // MARK: - Display Link for Duration Updates
 
+  #if os(iOS)
   private func startDisplayLink() {
     let link = CADisplayLink(target: DisplayLinkTarget { [weak self] in
       guard let self, let start = self.recordingStartTime else { return }
@@ -198,6 +201,10 @@ final class MLSVoiceSender {
     displayLink?.invalidate()
     displayLink = nil
   }
+  #else
+  private func startDisplayLink() {}
+  private func stopDisplayLink() {}
+  #endif
 
   private func cleanupRecording() {
     if let url = recordingURL {
@@ -219,6 +226,7 @@ final class MLSVoiceSender {
   }
 }
 
+#if os(iOS)
 // MARK: - DisplayLink Target Helper
 
 private final class DisplayLinkTarget: NSObject {
@@ -230,5 +238,4 @@ private final class DisplayLinkTarget: NSObject {
     callback()
   }
 }
-
 #endif

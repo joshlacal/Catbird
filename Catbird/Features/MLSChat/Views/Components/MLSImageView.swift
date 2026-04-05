@@ -3,15 +3,13 @@ import Petrel
 import SensitiveContentAnalysis
 import SwiftUI
 
-#if os(iOS)
-
 /// Renders an image embed in an MLS chat message.
 /// Handles: placeholder -> download -> decrypt -> cache -> display.
 struct MLSImageView: View {
   let imageEmbed: MLSImageEmbed
 
   @Environment(AppState.self) private var appState
-  @State private var image: UIImage?
+  @State private var image: PlatformImage?
   @State private var loadState: LoadState = .idle
   @State private var analysisResult: ImageAnalysisResult = .notAvailable
   @State private var isRevealed = false
@@ -92,16 +90,16 @@ struct MLSImageView: View {
   // MARK: - Loaded Image
 
   @ViewBuilder
-  private func loadedImageView(_ uiImage: UIImage) -> some View {
+  private func loadedImageView(_ platformImg: PlatformImage) -> some View {
     switch analysisResult {
     case .sensitive(let policy):
       if policy == .simpleInterventions {
-        sensitiveBlurView(uiImage)
+        sensitiveBlurView(platformImg)
       } else {
-        sensitiveModalView(uiImage)
+        sensitiveModalView(platformImg)
       }
     default:
-      Image(uiImage: uiImage)
+      platformSwiftUIImage(platformImg)
         .resizable()
         .aspectRatio(aspectRatio, contentMode: .fit)
         .frame(maxWidth: maxImageWidth, maxHeight: maxImageHeight)
@@ -111,19 +109,35 @@ struct MLSImageView: View {
           source.clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .onTapGesture { showFullscreen = true }
+        #if os(iOS)
         .fullScreenCover(isPresented: $showFullscreen) {
-          MLSFullscreenImageView(image: uiImage, altText: imageEmbed.altText)
+          MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
             .navigationTransition(.zoom(sourceID: imageEmbed.blobId, in: imageTransition))
         }
+        #else
+        .sheet(isPresented: $showFullscreen) {
+          MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
+        }
+        #endif
     }
+  }
+
+  // MARK: - Platform Image Helper
+
+  private func platformSwiftUIImage(_ img: PlatformImage) -> Image {
+    #if os(iOS)
+    Image(uiImage: img)
+    #else
+    Image(nsImage: img)
+    #endif
   }
 
   // MARK: - Sensitive Content (Simple Interventions)
 
   @ViewBuilder
-  private func sensitiveBlurView(_ uiImage: UIImage) -> some View {
+  private func sensitiveBlurView(_ platformImg: PlatformImage) -> some View {
     ZStack {
-      Image(uiImage: uiImage)
+      platformSwiftUIImage(platformImg)
         .resizable()
         .aspectRatio(aspectRatio, contentMode: .fit)
         .frame(maxWidth: maxImageWidth, maxHeight: maxImageHeight)
@@ -156,16 +170,22 @@ struct MLSImageView: View {
         showFullscreen = true
       }
     }
+    #if os(iOS)
     .fullScreenCover(isPresented: $showFullscreen) {
-      MLSFullscreenImageView(image: uiImage, altText: imageEmbed.altText)
+      MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
         .navigationTransition(.zoom(sourceID: imageEmbed.blobId, in: imageTransition))
     }
+    #else
+    .sheet(isPresented: $showFullscreen) {
+      MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
+    }
+    #endif
   }
 
   // MARK: - Sensitive Content (Descriptive Interventions)
 
   @ViewBuilder
-  private func sensitiveModalView(_ uiImage: UIImage) -> some View {
+  private func sensitiveModalView(_ platformImg: PlatformImage) -> some View {
     Button {
       showSensitiveModal = true
     } label: {
@@ -184,7 +204,7 @@ struct MLSImageView: View {
     }
     .sheet(isPresented: $showSensitiveModal) {
       SensitiveContentModalView(
-        image: uiImage,
+        image: platformImg,
         canReveal: canRevealSensitiveContent,
         onReveal: { isRevealed = true; showSensitiveModal = false },
         onDismiss: { showSensitiveModal = false }
@@ -238,7 +258,12 @@ struct MLSImageView: View {
     if let cached = await MLSImageCache.shared.get(blobId: imageEmbed.blobId) {
       image = cached
       // Run SCA on cached image too (respects app-level toggle)
-      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = cached.cgImage {
+      #if os(iOS)
+      let cgImage = cached.cgImage
+      #else
+      let cgImage = cached.cgImage(forProposedRect: nil, context: nil, hints: nil)
+      #endif
+      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage {
         analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
       }
       loadState = .loaded
@@ -273,7 +298,7 @@ struct MLSImageView: View {
       )
 
       // Validate image format
-      guard let uiImage = UIImage(data: plaintext) else {
+      guard let decodedImage = PlatformImage(data: plaintext) else {
         loadState = .error("Invalid image data")
         return
       }
@@ -282,11 +307,18 @@ struct MLSImageView: View {
       await MLSImageCache.shared.put(blobId: imageEmbed.blobId, imageData: plaintext)
 
       // SensitiveContentAnalysis check (respects app-level toggle)
-      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = uiImage.cgImage {
+      #if os(iOS)
+      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = decodedImage.cgImage {
         analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
       }
+      #else
+      if appState.appSettings.sensitiveContentScanningEnabled,
+         let cgImage = decodedImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
+      }
+      #endif
 
-      image = uiImage
+      image = decodedImage
       loadState = .loaded
     } catch is BlobCryptoError {
       loadState = .error("Image could not be verified")
@@ -295,5 +327,3 @@ struct MLSImageView: View {
     }
   }
 }
-
-#endif

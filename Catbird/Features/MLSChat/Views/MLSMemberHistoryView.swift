@@ -6,7 +6,6 @@ import CatbirdMLSCore
 //  Created by Claude on 2025-12-02.
 //
 
-#if os(iOS)
 import SwiftUI
 import OSLog
 
@@ -64,7 +63,11 @@ struct MLSMemberHistoryView: View {
                 }
             }
             .padding(8)
+            #if os(iOS)
             .background(Color(.systemGray6))
+            #else
+            .background(Color(nsColor: .controlBackgroundColor))
+            #endif
             .cornerRadius(8)
             .padding()
 
@@ -91,7 +94,9 @@ struct MLSMemberHistoryView: View {
             }
         }
         .navigationTitle("Member History")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button {
@@ -123,7 +128,11 @@ struct MLSMemberHistoryView: View {
                 }
             }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #else
+        .listStyle(.inset)
+        #endif
     }
 
     private var emptyStateView: some View {
@@ -399,5 +408,3 @@ private struct MembershipEventRow: View {
     // Preview requires mock database - use empty view for preview
     Text("MLSMemberHistoryView Preview")
 }
-
-#endif

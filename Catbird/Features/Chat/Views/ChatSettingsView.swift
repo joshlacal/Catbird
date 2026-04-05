@@ -2,8 +2,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 /// Settings view for chat-related options and actions
 struct ChatSettingsView: View {
   @Environment(AppState.self) private var appState
@@ -56,6 +54,7 @@ struct ChatSettingsView: View {
           }
           
           // Show MLS privacy settings link when opted in
+          #if os(iOS)
           if isOptedIn && !isLoadingOptInStatus {
             NavigationLink {
               MLSChatSettingsView()
@@ -67,6 +66,7 @@ struct ChatSettingsView: View {
               }
             }
           }
+          #endif
         } header: {
           Text("Privacy")
         } footer: {
@@ -429,11 +429,13 @@ struct ChatDataExportView: View {
           }
         }
       }
+      #if os(iOS)
       .sheet(isPresented: $showingShareSheet) {
         if let data = exportedData {
           ChatShareSheet(items: [data])
         }
       }
+      #endif
     }
   }
 }
@@ -444,5 +446,3 @@ struct ChatDataExportView: View {
         .environment(AppStateManager.shared)
   }
 }
-
-#endif

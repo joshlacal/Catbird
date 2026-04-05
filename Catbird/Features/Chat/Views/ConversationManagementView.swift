@@ -1,5 +1,3 @@
-#if os(iOS)
-
 import OSLog
 import SwiftUI
 import Petrel
@@ -405,6 +403,3 @@ struct ConversationInvitationView: View {
         .environment(AppStateManager.shared)
   }
 }
-
-
-#endif

@@ -2,8 +2,6 @@ import CatbirdMLSCore
 import OSLog
 import SwiftUI
 
-#if os(iOS)
-
 /// Compact MLS opt-in gate displayed inline when Catbird Groups aren't enabled.
 struct MLSOptInGateView: View {
   @Environment(AppState.self) private var appState
@@ -87,5 +85,3 @@ struct MLSOptInGateView: View {
     }
   }
 }
-
-#endif

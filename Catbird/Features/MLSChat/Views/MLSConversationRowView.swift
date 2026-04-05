@@ -1,8 +1,6 @@
 import CatbirdMLSCore
 import SwiftUI
 
-#if os(iOS)
-
 // MARK: - MLS Conversation Row View
 
 struct MLSConversationRowView: View {
@@ -208,5 +206,3 @@ struct MemberChangeInfo {
     }
   }
 }
-
-#endif

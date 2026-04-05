@@ -241,10 +241,10 @@ final class DeviceManagementViewModel {
         do {
             logger.info("Deleting device: \(device.deviceId)")
 
-            let input = BlueCatbirdMlsChatCommitGroupChange.Input(convoId: "", action: "removeDevice", deviceId: device.deviceId)
-            let (_, output) = try await client.blue.catbird.mlschat.commitGroupChange(input: input)
+            let input = BlueCatbirdMlsChatRemoveDevice.Input(deviceId: device.deviceId)
+            let (_, output) = try await client.blue.catbird.mlschat.removeDevice(input: input)
 
-            let deleted = output?.success ?? false
+            let deleted = output?.deleted ?? false
             logger.info("Device deleted: \(deleted)")
 
             #if os(iOS)

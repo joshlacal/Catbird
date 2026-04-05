@@ -4,8 +4,6 @@ import OSLog
 import Petrel
 import SwiftUI
 
-#if os(iOS)
-
 /// Search and add members to an MLS group conversation.
 /// Pushed within MLSGroupDetailView's NavigationStack — does not wrap itself in another one.
 struct MLSAddMemberView: View {
@@ -29,7 +27,9 @@ struct MLSAddMemberView: View {
       }
     }
     .navigationTitle("Add Members")
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
+    #endif
     .searchable(text: $searchText, prompt: "Search by name or handle")
     .onChange(of: searchText) { _, newValue in
       viewModel?.searchQuery = newValue
@@ -145,7 +145,11 @@ struct MLSAddMemberView: View {
             .foregroundStyle(.green)
             .background(
               Circle()
+                #if os(iOS)
                 .fill(Color(.systemBackground))
+                #else
+                .fill(Color(nsColor: .windowBackgroundColor))
+                #endif
                 .frame(width: 16, height: 16)
             )
             .offset(x: 2, y: 2)
@@ -234,5 +238,3 @@ struct MLSAddMemberView: View {
     }
   }
 }
-
-#endif

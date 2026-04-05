@@ -2,8 +2,6 @@ import Foundation
 import Petrel
 import CatbirdMLSCore
 
-#if os(iOS)
-
 /// Optimistic message shown immediately before server confirmation
 struct OptimisticMessage: Identifiable, Sendable {
   /// Temporary ID for optimistic message
@@ -226,5 +224,3 @@ extension SystemMessageType {
         }
     }
 }
-
-#endif

@@ -8,7 +8,6 @@ import SwiftUI
 
 // PostEmbedData is now defined in UnifiedChat/Models/UnifiedEmbed.swift
 
-#if os(iOS)
 /// Manages chat operations for the Bluesky chat feature
 @Observable
 final class ChatManager: StateInvalidationSubscriber {
@@ -2093,6 +2092,3 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 }
-#endif
-
-

@@ -117,6 +117,7 @@ struct ExternalEmbedView: View {
             model: videoModel,
             postID: postID
         )
+        .aspectRatio(videoModel.aspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .frame(maxHeight: PlatformScreenInfo.height * 0.6)
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
