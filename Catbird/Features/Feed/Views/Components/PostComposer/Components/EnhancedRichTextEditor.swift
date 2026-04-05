@@ -1007,7 +1007,8 @@ struct KeyboardToolbarView: View {
 
 #else
 
-// macOS stub for EnhancedRichTextEditor
+// MARK: - macOS EnhancedRichTextEditor (NSTextView-based)
+
 struct EnhancedRichTextEditor: View {
   @Binding var attributedText: NSAttributedString
   @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
@@ -1034,8 +1035,175 @@ struct EnhancedRichTextEditor: View {
   var onHeightChange: ((CGFloat) -> Void)? = nil
 
   var body: some View {
-    Text("Rich text editing not available on macOS")
-      .foregroundColor(.secondary)
+    VStack(spacing: 0) {
+      MacOSTextEditorBridge(
+        attributedText: $attributedText,
+        placeholder: placeholder,
+        focusOnAppear: focusOnAppear,
+        focusActivationID: focusActivationID,
+        onTextChanged: onTextChanged,
+        onTextViewCreated: onTextViewCreated
+      )
+      .frame(minHeight: 140)
+
+      macOSActionBar
+    }
+  }
+
+  private var macOSActionBar: some View {
+    HStack(spacing: 4) {
+      if let onPhotosAction {
+        Button { onPhotosAction() } label: {
+          Image(systemName: "photo")
+        }
+        .help("Add photo")
+      }
+      if let onVideoAction {
+        Button { onVideoAction() } label: {
+          Image(systemName: "video")
+        }
+        .help("Add video")
+      }
+      if let onGifAction {
+        Button { onGifAction() } label: {
+          Image(systemName: "gift")
+        }
+        .help("Add GIF")
+      }
+      if let onThreadAction {
+        Button { onThreadAction() } label: {
+          Image(systemName: "text.append")
+        }
+        .help("Add thread post")
+      }
+      if let onLanguageAction {
+        Button { onLanguageAction() } label: {
+          Image(systemName: "globe")
+        }
+        .help("Set language")
+      }
+      if let onLabelsAction {
+        Button { onLabelsAction() } label: {
+          Image(systemName: "tag")
+        }
+        .help("Add content label")
+      }
+      Spacer()
+    }
+    .buttonStyle(.borderless)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 6)
+  }
+}
+
+// MARK: - NSTextView bridge
+
+struct MacOSTextEditorBridge: NSViewRepresentable {
+  @Binding var attributedText: NSAttributedString
+  let placeholder: String
+  let focusOnAppear: Bool
+  let focusActivationID: UUID
+  let onTextChanged: (NSAttributedString, Int) -> Void
+  var onTextViewCreated: ((Any) -> Void)?
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let scrollView = NSTextView.scrollableTextView()
+    guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
+
+    textView.delegate = context.coordinator
+    textView.isRichText = false
+    textView.allowsUndo = true
+    textView.isAutomaticSpellingCorrectionEnabled = true
+    textView.isAutomaticQuoteSubstitutionEnabled = false
+    textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    textView.textColor = NSColor.labelColor
+    textView.drawsBackground = false
+    textView.isVerticallyResizable = true
+    textView.isHorizontallyResizable = false
+    textView.autoresizingMask = [.width]
+    textView.textContainer?.widthTracksTextView = true
+
+    scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = false
+    scrollView.hasHorizontalScroller = false
+
+    context.coordinator.placeholderLabel = makePlaceholderLabel()
+    if let placeholderLabel = context.coordinator.placeholderLabel {
+      textView.addSubview(placeholderLabel)
+    }
+
+    if attributedText.length > 0 {
+      textView.textStorage?.setAttributedString(attributedText)
+      context.coordinator.updatePlaceholder(textView: textView)
+    }
+
+    onTextViewCreated?(textView)
+
+    if focusOnAppear {
+      DispatchQueue.main.async {
+        textView.window?.makeFirstResponder(textView)
+      }
+    }
+
+    return scrollView
+  }
+
+  func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    guard let textView = scrollView.documentView as? NSTextView else { return }
+
+    // Sync attributedText only when it differs to avoid cursor jumps
+    if textView.attributedString() != attributedText {
+      let selectedRange = textView.selectedRange()
+      textView.textStorage?.setAttributedString(attributedText)
+      let safeRange = NSRange(
+        location: min(selectedRange.location, textView.string.count),
+        length: 0
+      )
+      textView.setSelectedRange(safeRange)
+    }
+
+    // Focus when activation ID changes
+    if context.coordinator.lastFocusID != focusActivationID, focusOnAppear {
+      context.coordinator.lastFocusID = focusActivationID
+      DispatchQueue.main.async {
+        textView.window?.makeFirstResponder(textView)
+      }
+    }
+
+    context.coordinator.updatePlaceholder(textView: textView)
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+  private func makePlaceholderLabel() -> NSTextField {
+    let label = NSTextField(labelWithString: placeholder)
+    label.textColor = NSColor.placeholderTextColor
+    label.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    label.frame = CGRect(x: 4, y: 0, width: 300, height: 20)
+    label.isHidden = false
+    return label
+  }
+
+  final class Coordinator: NSObject, NSTextViewDelegate {
+    var parent: MacOSTextEditorBridge
+    var placeholderLabel: NSTextField?
+    var lastFocusID: UUID = UUID()
+
+    init(_ parent: MacOSTextEditorBridge) {
+      self.parent = parent
+    }
+
+    func textDidChange(_ notification: Notification) {
+      guard let textView = notification.object as? NSTextView else { return }
+      let attrStr = NSAttributedString(attributedString: textView.attributedString())
+      parent.attributedText = attrStr
+      parent.onTextChanged(attrStr, textView.selectedRange().location)
+      updatePlaceholder(textView: textView)
+    }
+
+    func updatePlaceholder(textView: NSTextView) {
+      placeholderLabel?.isHidden = !textView.string.isEmpty
+    }
   }
 }
 
