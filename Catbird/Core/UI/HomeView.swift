@@ -95,7 +95,7 @@ struct HomeView: View {
       NavigationStack(path: navigationPath) {
         feedContentView(navigationPath: navigationPath)
           .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-          .platformIgnoresSafeArea()
+          .ignoresSafeArea(.container, edges: .bottom)
           .navigationTitle(currentFeedName)
           .ensureNavigationFonts()
           .toolbar {

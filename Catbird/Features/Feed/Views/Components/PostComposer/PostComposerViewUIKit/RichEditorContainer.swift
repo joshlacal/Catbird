@@ -41,6 +41,23 @@ struct RichEditorContainer: View {
   @State private var editorHeight: CGFloat = 140
 
   var body: some View {
+    #if os(macOS)
+    // macOS: use the native SwiftUI TextEditor path (available macOS 26+)
+    // EnhancedRichTextEditor is UIKit-only; ModernEnhancedRichTextEditor works on both platforms.
+    ModernEnhancedRichTextEditor(
+      attributedText: $attributedText,
+      linkFacets: $linkFacets,
+      placeholder: placeholder,
+      onImagePasted: onImagePasted,
+      onGenmojiDetected: onGenmojiDetected,
+      onTextChanged: nil,
+      onAttributedTextChanged: { attributed in
+        onTextChanged(NSAttributedString(attributed), 0)
+      },
+      onLinkCreationRequested: onLinkCreationRequested
+    )
+    .frame(minHeight: editorHeight)
+    #else
     EnhancedRichTextEditor(
       attributedText: $attributedText,
       linkFacets: $linkFacets,
@@ -78,5 +95,6 @@ struct RichEditorContainer: View {
       }
     )
     .frame(minHeight: editorHeight)
+    #endif
   }
 }
