@@ -832,6 +832,7 @@ struct MainContentView: View {
         // Chat Tab
         macOSChatTab
       }
+      .tabViewStyle(.sidebarAdaptable)
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
