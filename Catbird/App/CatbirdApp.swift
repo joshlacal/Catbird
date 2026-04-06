@@ -1106,6 +1106,26 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       .defaultSize(width: 1200, height: 800)
       #endif
     }
+    #if os(macOS)
+    WindowGroup(id: "compose") {
+      if case .authenticated(let appState) = appStateManager.lifecycle {
+        PostComposerViewUIKit(appState: appState)
+          .frame(minWidth: 500, minHeight: 400)
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
+      }
+    }
+    .defaultSize(width: 600, height: 500)
+
+    Window("Settings", id: "settings") {
+      if case .authenticated(let appState) = appStateManager.lifecycle {
+        SettingsView()
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
+      }
+    }
+    .defaultSize(width: 700, height: 500)
+    #endif
   }
  
 private extension CatbirdApp {
