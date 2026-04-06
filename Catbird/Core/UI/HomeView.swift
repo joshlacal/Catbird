@@ -3,6 +3,7 @@ import OSLog
 import Petrel
 import SwiftUI
 
+#if os(iOS)
 /// The main home view that displays feeds and handles sidebar/drawer functionality
 struct HomeView: View {
   @Environment(AppState.self) private var appState
@@ -254,3 +255,4 @@ struct HomeView: View {
   )
   .previewWithAuthenticatedState()
 }
+#endif
