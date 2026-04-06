@@ -279,7 +279,52 @@ struct PostComposerViewUIKit: View {
         .id("toolbar-\(appState.composerDraftManager.savedDrafts.count)")
     }
     #else
-    mainContent(vm: vm)
+    NavigationStack {
+      mainContent(vm: vm)
+        .navigationTitle(getNavigationTitle(vm: vm))
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button("Cancel") {
+              if !vm.postText.isEmpty || !vm.mediaItems.isEmpty {
+                showingDismissAlert = true
+              } else {
+                dismissReason = .discard
+                appState.composerDraftManager.clearDraft()
+                vm.clearAll()
+                dismiss()
+              }
+            }
+            .confirmationDialog(
+              "Discard post?",
+              isPresented: $showingDismissAlert,
+              titleVisibility: .visible
+            ) {
+              Button("Discard", role: .destructive) {
+                suppressAutoSaveOnDismiss = true
+                dismissReason = .discard
+                appState.composerDraftManager.clearDraft()
+                vm.clearAll()
+                dismiss()
+              }
+              Button("Keep Editing", role: .cancel) { }
+            } message: {
+              Text("You'll lose your post if you discard now.")
+            }
+          }
+          ToolbarItem(placement: .primaryAction) {
+            Button(action: { submitAction(vm: vm) }) {
+              if isSubmitting {
+                ProgressView().progressViewStyle(.circular)
+              } else {
+                Image(systemName: "arrow.up")
+              }
+            }
+            .disabled(!canSubmit(vm: vm) || isSubmitting)
+            .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+          }
+        }
+    }
     #endif
   }
   

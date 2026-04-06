@@ -47,6 +47,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   private var typingCleanupTask: Task<Void, Never>?
   private var localTypingActive: Bool = false
   private var localTypingStopTask: Task<Void, Never>?
+  private var hasReceivedInitialMessages: Bool = false
 
   // Pagination tracking
   private var oldestLoadedEpoch: Int = Int.max
@@ -327,12 +328,22 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     sortMessagesInDisplayOrder(&adapters)
 
     // Clear typing indicators for senders who just sent a message
+    // Also detect new incoming messages for haptic feedback
     let existingIDs = Set(messages.map { $0.id })
+    let maxExistingTimestamp = messages.map { $0.sentAt }.max() ?? .distantPast
+    var hasNewIncomingMessage = false
     for adapter in adapters where !existingIDs.contains(adapter.id) {
       clearTypingForSender(adapter.senderID)
+      if hasReceivedInitialMessages && !adapter.isFromCurrentUser && adapter.sentAt > maxExistingTimestamp {
+        hasNewIncomingMessage = true
+      }
+    }
+    if hasNewIncomingMessage {
+      PlatformHaptics.light()
     }
 
     self.messages = adapters
+    hasReceivedInitialMessages = true
     self.hasMoreMessages = models.count >= 50
     applyRemoteReadCutoffToLoadedMessages()
     scheduleDelayedReactionReload(messageIDs: messageIDs, database: database)
