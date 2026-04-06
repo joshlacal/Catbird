@@ -212,57 +212,7 @@ struct MainContentView: View {
     appState.navigationManager
   }
 
-  #if os(macOS)
-  /// Extracted binding to reduce type-checker complexity in macOS TabView
-  private var macOSTabSelection: Binding<Int> {
-    Binding(
-      get: { selectedTab },
-      set: { newValue in
-        if selectedTab == newValue {
-          logger.debug("📱 TabView: Same tab tapped again: \(newValue)")
-          lastTappedTab = newValue
-        }
-        selectedTab = newValue
-        navigationManager.updateCurrentTab(newValue)
-      }
-    )
-  }
-
-  @TabContentBuilder<Int>
-  private var macOSProfileTab: some TabContent<Int> {
-    Tab("Profile", systemImage: "person", value: 3) {
-      NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
-        UnifiedProfileView(
-          appState: appState,
-          selectedTab: $selectedTab,
-          lastTappedTab: $lastTappedTab,
-          path: appState.navigationManager.pathBinding(for: 3)
-        )
-        .id(appState.userDID)
-        .navigationDestination(for: NavigationDestination.self) { destination in
-          NavigationHandler.viewForDestination(
-            destination,
-            path: appState.navigationManager.pathBinding(for: 3),
-            appState: appState,
-            selectedTab: $selectedTab
-          )
-        }
-      }
-    }
-  }
-
-  @TabContentBuilder<Int>
-  private var macOSChatTab: some TabContent<Int> {
-    Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: 4) {
-      MacOSChatTabView(
-        selectedTab: $selectedTab,
-        lastTappedTab: $lastTappedTab
-      )
-      .id(appState.userDID)
-    }
-    .badge(appState.totalMessagesUnreadCount)
-  }
-  #endif
+  // macOS computed properties removed — MacOSMainView now handles sidebar navigation
   
   // MARK: - Per-Account Feed Memory
   
@@ -789,181 +739,34 @@ struct MainContentView: View {
       }
       
       #elseif os(macOS)
-      // macOS content goes here directly without SideDrawer
-      TabView(
-        selection: macOSTabSelection
-      ) {
-        // Home Tab
-        Tab("Home", systemImage: "house", value: 0) {
-          HomeView(
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab,
-            selectedFeed: $selectedFeed,
-            currentFeedName: $currentFeedName,
-            isDrawerOpen: $isDrawerOpen,
-            isRootView: $isRootView
-          )
-          .id(appState.userDID)
-        }
-
-        // Search Tab
-        Tab(value: 1, role: .search) {
-          RefinedSearchView(
-            appState: appState,
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab
-          )
-          .id(appState.userDID)
-        }
-
-        // Notifications Tab
-        Tab("Notifications", systemImage: "bell", value: 2) {
-          NotificationsView(
-            appState: appState,
-            selectedTab: $selectedTab,
-            lastTappedTab: $lastTappedTab
-          )
-          .id(appState.userDID)
-        }
-        .badge(appState.notificationManager.unreadCount > 0 ? appState.notificationManager.unreadCount : 0)
-
-        // Profile Tab
-        macOSProfileTab
-
-        // Chat Tab
-        macOSChatTab
-      }
-      .tabViewStyle(.sidebarAdaptable)
-      .onAppear {
-        // Theme is already applied during AppState initialization - no need to reapply here
-        
-        // Note: Theme change updates are now handled by @Observable system in AppState
-        // No need for NotificationCenter observers that conflict with SwiftUI observation
-          
-        Task {
-          // Only initialize feed on first load
-          if !hasInitializedFeed {
-            hasInitializedFeed = true
-            
-            // Restore last feed for current account
-            await restoreLastFeedForAccount()
-          }
-        }
-          
-        navigationManager.registerTabSelectionCallback { newTab in
-          selectedTab = newTab
-        }
-      }
-      .overlay(alignment: .bottomTrailing) {
-        if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-          FAB(
-            composeAction: { showingPostComposer = true },
-            feedsAction: {},
-            showFeedsButton: false
-          )
-          .padding(.bottom, 20)
-          .padding(.trailing, 20)
-          // Mark FAB as the source for the iOS 26 morph
-          // Source tagging now occurs inside FAB on the compose button itself
-        }
-      }
-      .sheet(isPresented: $showingPostComposer) {
-        Group {
-          if let draft = composerInitialDraft {
-            PostComposerViewUIKit(
-              restoringFromDraft: draft,
-              appState: appState
-            )
-          } else {
-            PostComposerViewUIKit(
-              appState: appState
-            )
-          }
-        }
-        .applyAppStateEnvironment(appState)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
-        .applyComposerNavigationTransition(
-          enabled: (selectedTab == 0 || (selectedTab == 3 && !PlatformDeviceInfo.isPhone)),
-          sourceID: "compose",
-          namespace: composeTransitionNamespace
-        )
-      }
-      .onChange(of: showingPostComposer) { _, isPresented in
-        composerInitialDraft = isPresented ? appState.composerDraftManager.currentDraft : nil
-      }
-      .sheet(isPresented: $showingOnboarding) {
-        WelcomeOnboardingView()
-          .applyAppStateEnvironment(appState)
-      }
-      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
-        showingOnboarding = newValue
-      }
-      .onChange(of: showingOnboarding) { _, newValue in
-        if !newValue && appState.onboardingManager.showWelcomeSheet {
-          Task { @MainActor in
-            appState.onboardingManager.completeWelcomeOnboarding()
-          }
-        }
-      }
-      .onChange(of: appState.userDID) { oldDID, newDID in
-        // Account switched - restore last feed for this account (macOS version)
-        guard oldDID != newDID else { return }
-        logger.debug("🔄 Account switched from \(oldDID) to \(newDID) - restoring last feed")
-        
-        // Set flag to prevent saving during restoration
-        isRestoringFeed = true
-        
-        // IMMEDIATELY reset feed synchronously to prevent overlay
-        selectedFeed = .timeline
-        currentFeedName = "Timeline"
-        
-        hasInitializedFeed = false
-        isDrawerOpen = false
-        
-        // THEN restore last feed for new account asynchronously
-        Task {
-          await restoreLastFeedForAccount()
-        }
-      }
-      .onChange(of: selectedFeed) { oldFeed, newFeed in
-        if oldFeed.identifier != newFeed.identifier {
-          saveLastFeedForAccount()
-        }
-      }
-      .task(id: selectedFeed) {
-        // Fetch feed name when selectedFeed changes to a custom feed (macOS version)
-        if case .feed(let uri) = selectedFeed {
-          // Fetch feed generator info to get display name
-          if let client = appState.atProtoClient {
-            do {
-              let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
-              if result.responseCode == 200, let data = result.data {
-                await MainActor.run {
-                  currentFeedName = data.view.displayName ?? "Feed"
-                }
-              } else {
-                await MainActor.run {
-                  currentFeedName = "Feed"
-                }
-              }
-            } catch {
-              logger.error("Failed to fetch feed name: \(error.localizedDescription)")
-              await MainActor.run {
-                currentFeedName = "Feed"
-              }
+      MacOSMainView()
+        .id(appState.userDID)
+        .onAppear {
+          Task {
+            if !hasInitializedFeed {
+              hasInitializedFeed = true
+              await restoreLastFeedForAccount()
             }
           }
-        } else if case .timeline = selectedFeed {
-          await MainActor.run {
-            currentFeedName = "Timeline"
-          }
-        } else if case .list(let uri) = selectedFeed {
-          await MainActor.run {
-            currentFeedName = uri.description
+
+          navigationManager.registerTabSelectionCallback { newTab in
+            selectedTab = newTab
           }
         }
-      }
+        .sheet(isPresented: $showingOnboarding) {
+          WelcomeOnboardingView()
+            .applyAppStateEnvironment(appState)
+        }
+        .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+          showingOnboarding = newValue
+        }
+        .onChange(of: showingOnboarding) { _, newValue in
+          if !newValue && appState.onboardingManager.showWelcomeSheet {
+            Task { @MainActor in
+              appState.onboardingManager.completeWelcomeOnboarding()
+            }
+          }
+        }
       #endif
       
       NetworkStatusIndicator()
