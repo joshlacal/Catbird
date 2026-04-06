@@ -572,6 +572,7 @@ struct MLSConversationDetailView: View {
 
               currentUserDID: appState.userDID,
               participantProfiles: participantProfiles,
+              deliveryState: deliveryStates[message.id],
               onAddReaction: { messageId, emoji in
                 addReaction(messageId: messageId, emoji: emoji)
               },

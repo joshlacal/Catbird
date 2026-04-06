@@ -20,6 +20,7 @@ import SwiftUI
 
     let currentUserDID: String?
     let participantProfiles: [String: MLSProfileEnricher.ProfileData]
+    let deliveryState: MessageDeliveryState?  // nil for incoming messages
     let onAddReaction: (String, String) -> Void  // (messageId, emoji)
     let onRemoveReaction: (String, String) -> Void  // (messageId, emoji)
     @Binding var navigationPath: NavigationPath
@@ -154,6 +155,14 @@ import SwiftUI
           }
         }
 
+        // Delivery state badge (outgoing messages only)
+        if message.user.isCurrentUser {
+          HStack {
+            Spacer()
+            deliveryBadge
+          }
+        }
+
         // Reactions display
         if !reactions.isEmpty {
           reactionsView
@@ -219,6 +228,46 @@ import SwiftUI
       }
     }
 
+    // MARK: - Delivery Badge
+
+    @ViewBuilder
+    private var deliveryBadge: some View {
+      if let state = deliveryState, message.user.isCurrentUser {
+        HStack(spacing: 2) {
+          switch state {
+          case .sending:
+            Image(systemName: "clock")
+              .font(.system(size: 10))
+              .foregroundStyle(.secondary)
+
+          case .sent:
+            Image(systemName: "checkmark")
+              .font(.system(size: 10))
+              .foregroundStyle(.secondary)
+
+          case .deliveredPartial(let count, let total):
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 10))
+              .foregroundStyle(.secondary)
+            Text("\(count)/\(total)")
+              .font(.system(size: 9))
+              .foregroundStyle(.secondary)
+
+          case .deliveredAll:
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 10))
+              .foregroundStyle(Color.accentColor)
+
+          case .read:
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 10))
+              .foregroundStyle(.blue)
+          }
+        }
+        .padding(.trailing, DesignTokens.Spacing.xs)
+      }
+    }
+
     // MARK: - Decryption Logic
 
     private func performDecryption() async {
@@ -257,6 +306,7 @@ import SwiftUI
 
             currentUserDID: "did:plc:user1",
             participantProfiles: [:],
+            deliveryState: nil,
             onAddReaction: { _, _ in },
             onRemoveReaction: { _, _ in },
             navigationPath: .constant(NavigationPath())
@@ -277,6 +327,7 @@ import SwiftUI
 
             currentUserDID: "did:plc:me",
             participantProfiles: [:],
+            deliveryState: nil,
             onAddReaction: { _, _ in },
             onRemoveReaction: { _, _ in },
             navigationPath: .constant(NavigationPath())
