@@ -5,6 +5,26 @@ import OSLog
 import Petrel
 import SwiftUI
 
+// MARK: - MLS List Change Observer
+
+/// Bridges StateInvalidationBus MLS events to an AsyncStream
+private final class MacOSMLSListChangeObserver: StateInvalidationSubscriber {
+  let continuation: AsyncStream<Void>.Continuation
+
+  init(continuation: AsyncStream<Void>.Continuation) {
+    self.continuation = continuation
+  }
+
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    if case .mlsConversationListChanged = event { return true }
+    return false
+  }
+
+  func handleStateInvalidation(_ event: StateInvalidationEvent) async {
+    continuation.yield()
+  }
+}
+
 // MARK: - macOS Chat Tab View
 
 /// Full-featured macOS chat tab that merges Bluesky DMs and MLS encrypted
@@ -301,15 +321,36 @@ struct MacOSChatTabView: View {
   private func startMLSPolling() {
     mlsPollingTask?.cancel()
     mlsPollingTask = Task {
-      while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(15))
-        guard !Task.isCancelled else { break }
-        await loadMLSConversations()
-        mlsPollCycleCount += 1
-        if mlsPollCycleCount % 10 == 0 {
-          let userDID = appState.userDID
-          Task.detached(priority: .utility) {
-            try? await MLSGRDBManager.shared.checkpointDatabase(for: userDID)
+      let bus = appState.stateInvalidationBus
+
+      let stream = AsyncStream<Void> { continuation in
+        let observer = MacOSMLSListChangeObserver(continuation: continuation)
+        bus.subscribe(observer)
+        continuation.onTermination = { _ in
+          bus.unsubscribe(observer)
+        }
+      }
+
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask {
+          for await _ in stream {
+            guard !Task.isCancelled else { break }
+            await self.loadMLSConversations()
+          }
+        }
+        group.addTask {
+          var cycleCount = 0
+          while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(120))
+            guard !Task.isCancelled else { break }
+            await self.loadMLSConversations()
+            cycleCount += 1
+            if cycleCount % 5 == 0 {
+              let userDID = self.appState.userDID
+              Task.detached(priority: .utility) {
+                try? await MLSGRDBManager.shared.checkpointDatabase(for: userDID)
+              }
+            }
           }
         }
       }
