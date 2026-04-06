@@ -20,6 +20,7 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private(set) var isLoading: Bool = false
   private(set) var hasMoreMessages: Bool = true
   private(set) var error: Error?
+  private var hasReceivedInitialMessages: Bool = false
 
   var draftText: String = ""
 
@@ -104,7 +105,7 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
 
   private func updateMessagesFromManager() {
     let existingIDs = Set(messages.map { $0.id })
-    let isInitialLoad = messages.isEmpty
+    let maxExistingTimestamp = messages.map { $0.sentAt }.max() ?? .distantPast
 
     // Get original messages from ChatManager (now using native MessageView types)
     let originalMessages = chatManager.originalMessagesMap[convoID] ?? [:]
@@ -150,13 +151,18 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     // Check if there's a cursor for this conversation - if there is, more messages may be available
     hasMoreMessages = chatManager.hasMoreMessages(for: convoID)
 
-    // Trigger haptic feedback for new incoming messages (not on initial load)
-    if !isInitialLoad {
-      let hasNewIncoming = self.messages.contains { !existingIDs.contains($0.id) && !$0.isFromCurrentUser }
+    // Trigger haptic feedback for genuinely new incoming messages.
+    // Guard with hasReceivedInitialMessages to skip the first load, and
+    // sentAt > maxExistingTimestamp to exclude paginated historical messages.
+    if hasReceivedInitialMessages {
+      let hasNewIncoming = self.messages.contains {
+        !existingIDs.contains($0.id) && !$0.isFromCurrentUser && $0.sentAt > maxExistingTimestamp
+      }
       if hasNewIncoming {
         PlatformHaptics.light()
       }
     }
+    hasReceivedInitialMessages = true
   }
   
   private func startObservingChatManager() {
