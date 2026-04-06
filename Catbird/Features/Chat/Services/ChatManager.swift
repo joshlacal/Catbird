@@ -224,6 +224,9 @@ final class ChatManager: StateInvalidationSubscriber {
     case .feedListChanged:
       // Feed list changes don't affect chat content
       break
+    case .mlsConversationListChanged:
+      // MLS conversation list changes don't affect Bluesky chat content
+      break
     }
   }
   

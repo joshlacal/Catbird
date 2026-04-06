@@ -925,6 +925,9 @@ final class FeedModel: StateInvalidationSubscriber {
       // Feed list changes don't affect individual feed content,
       // this is handled at the feeds management level
       break
+    case .mlsConversationListChanged:
+      // MLS conversation list changes don't affect feed content
+      break
     }
   }
   
