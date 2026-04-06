@@ -136,6 +136,7 @@ struct MLSConversationDetailView: View {
 
   // Message state management
   @State private var messages: [Message] = []
+  @State private var deliveryStates: [String: MessageDeliveryState] = [:]
   @State private var messageOrdering: [String: MessageOrderKey] = [:]
   @State private var embedsMap: [String: MLSEmbedData] = [:]
   @State private var messageErrorsMap: [String: MessageErrorInfo] = [:]
@@ -832,6 +833,15 @@ struct MLSConversationDetailView: View {
           }
         }
       }
+      .onReceive(
+        NotificationCenter.default.publisher(
+          for: Notification.Name("MLSDeliveryAckReceived"))
+      ) { notification in
+        guard let convoId = notification.userInfo?["conversationId"] as? String,
+              convoId == conversationId
+        else { return }
+        Task { await refreshDeliveryStates() }
+      }
   }
 
   @ViewBuilder
@@ -1032,6 +1042,9 @@ struct MLSConversationDetailView: View {
 
     // Clear membership change badge
     await clearMembershipChangeBadge()
+
+    // Compute initial delivery states for outgoing messages
+    await refreshDeliveryStates()
   }
 
   /// Setup observer for encrypted MLS state events (reactions, read receipts, typing)
@@ -2383,6 +2396,53 @@ struct MLSConversationDetailView: View {
     } catch {
       logger.error("Failed to load cached messages: \(error.localizedDescription)")
     }
+  }
+
+  // MARK: - Delivery State
+
+  /// Batch-fetches delivery acks for all outgoing messages and computes display states.
+  @MainActor
+  private func refreshDeliveryStates() async {
+    guard let manager = await appState.getMLSConversationManager() else { return }
+    let currentUserDID = appState.userDID
+
+    let outgoingIds = messages.filter { $0.user.isCurrentUser }.map(\.id)
+    guard !outgoingIds.isEmpty else { return }
+
+    let acks: [MLSDeliveryAckModel]
+    do {
+      acks = try await manager.fetchDeliveryAcks(
+        messageIds: outgoingIds,
+        conversationId: conversationId,
+        currentUserDID: currentUserDID
+      )
+    } catch {
+      logger.error("Failed to fetch delivery acks: \(error.localizedDescription)")
+      return
+    }
+
+    let count = await manager.memberCount(for: conversationId) ?? 0
+
+    // Group acks by messageId for O(1) lookup
+    var acksByMessageId: [String: [MLSDeliveryAckModel]] = [:]
+    for ack in acks {
+      acksByMessageId[ack.messageId, default: []].append(ack)
+    }
+
+    var updatedStates: [String: MessageDeliveryState] = [:]
+    for message in messages where message.user.isCurrentUser {
+      let isSent = message.status != .sending
+      let messageAcks = acksByMessageId[message.id] ?? []
+      updatedStates[message.id] = MessageDeliveryState.compute(
+        isSent: isSent,
+        acks: messageAcks,
+        hasReadReceipt: false,
+        memberCount: count,
+        readReceiptsEnabled: false
+      )
+    }
+
+    deliveryStates = updatedStates
   }
 
   private func loadMoreMessages() async {
