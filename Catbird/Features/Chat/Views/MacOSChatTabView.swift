@@ -25,15 +25,13 @@ private final class MacOSMLSListChangeObserver: StateInvalidationSubscriber {
   }
 }
 
-// MARK: - macOS Chat Tab View
+// MARK: - macOS Chat Content View
 
-/// Full-featured macOS chat tab that merges Bluesky DMs and MLS encrypted
+/// Full-featured macOS chat view that merges Bluesky DMs and MLS encrypted
 /// conversations into a unified sidebar + detail NavigationSplitView.
 @available(macOS 13.0, *)
-struct MacOSChatTabView: View {
+struct MacOSChatContentView: View {
   @Environment(AppState.self) private var appState
-  @Binding var selectedTab: Int
-  @Binding var lastTappedTab: Int?
 
   @State private var selectedConvoId: String?
   @State private var searchText = ""
@@ -64,17 +62,12 @@ struct MacOSChatTabView: View {
       MacOSChatDetailRouter(
         coordinator: coordinator,
         selectedConvoId: selectedConvoId,
-        selectedTab: $selectedTab
+        selectedTab: .constant(4)
       )
     }
     .navigationSubtitle(selectedConversationSubtitle)
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
-    .onChange(of: lastTappedTab) { _, newValue in
-      if newValue == 4 {
-        selectedConvoId = nil
-      }
-    }
     .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
       coordinator.blueskyConversations = newValue
     }

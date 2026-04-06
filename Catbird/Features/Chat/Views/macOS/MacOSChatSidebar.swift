@@ -47,7 +47,7 @@ struct MacOSChatSidebar: View {
         Button {
           onNewConversation()
         } label: {
-          Image(systemName: "square.and.pencil")
+          Image(systemName: "plus")
         }
         .keyboardShortcut("n", modifiers: .command)
         .help("New Conversation")
