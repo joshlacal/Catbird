@@ -1176,7 +1176,7 @@ struct MLSConversationListView: View {
                                 }
                             case .reaction:
                                 previews[convoID] = (senderDID: message.senderID, text: "Reacted to a message")
-                            case .readReceipt, .typing, .adminRoster, .adminAction:
+                            case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest:
                                 continue
                             }
                         } else {

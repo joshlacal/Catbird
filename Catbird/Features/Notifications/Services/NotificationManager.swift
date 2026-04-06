@@ -1901,7 +1901,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                 return ("\(verb) \(reaction.emoji)", sender)
               }
               return ("Reaction update", sender)
-            case .readReceipt:
+            case .readReceipt, .deliveryAck, .recoveryRequest:
               return ("Read receipt", sender)
             case .typing:
               return ("Typing...", sender)
@@ -2492,7 +2492,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                     } else {
                       displayText = "Reaction update"
                     }
-                  case .readReceipt:
+                  case .readReceipt, .deliveryAck, .recoveryRequest:
                     displayText = "Read receipt"
                   case .typing:
                     displayText = "Typing..."
@@ -3111,9 +3111,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           return
         }
 
-      case .readReceipt:
-        // Read receipts should not generate notifications
-        notificationLogger.info("📖 [FG] Read receipt - suppressing notification")
+      case .readReceipt, .deliveryAck, .recoveryRequest:
+        // Read receipts, delivery acks, and recovery requests should not generate notifications
+        notificationLogger.info("📖 [FG] Read receipt/delivery ack/recovery - suppressing notification")
         completionHandler([])  // Suppress original notification
         return
 

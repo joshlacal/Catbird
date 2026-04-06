@@ -490,7 +490,7 @@ struct ChatTabView: View {
                 }
               case .reaction:
                 previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
-              case .readReceipt, .typing, .adminRoster, .adminAction:
+              case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest:
                 continue
               }
             } else {

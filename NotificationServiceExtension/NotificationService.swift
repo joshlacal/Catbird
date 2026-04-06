@@ -1588,9 +1588,9 @@ class NotificationService: UNNotificationServiceExtension {
           return false
         }
 
-      case .readReceipt:
-        // Read receipts should not generate notifications
-        logger.info("📖 [NSE] Read receipt - suppressing notification")
+      case .readReceipt, .deliveryAck, .recoveryRequest:
+        // Read receipts, delivery acks, and recovery requests should not generate notifications
+        logger.info("📖 [NSE] Read receipt/delivery ack/recovery - suppressing notification")
         return false
 
       case .typing:

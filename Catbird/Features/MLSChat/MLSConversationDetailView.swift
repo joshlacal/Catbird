@@ -4229,7 +4229,7 @@ struct MLSConversationDetailView: View {
       case .text:
         // Text messages are displayable
         return (payload.text ?? "New Message", false)
-      case .reaction, .readReceipt, .typing:
+      case .reaction, .readReceipt, .typing, .deliveryAck, .recoveryRequest:
         // Control messages should not be displayed in the message list
         return (plaintext, true)
       case .adminRoster, .adminAction:

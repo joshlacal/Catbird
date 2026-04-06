@@ -223,6 +223,45 @@
 			);
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
 		};
+		21A1B3C42F800000DEADBEEF /* Exceptions for "CatbirdTests" folder in "CatbirdTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AgeVerificationTests.swift,
+				AttributedStringBridgeTests.swift,
+				AuthenticationManagerActualTests.swift,
+				CatbirdTests.swift,
+				FeedCollectionUIUpdateLinkTests.swift,
+				FeedManagerActualTests.swift,
+				FeedManagerTests.swift,
+				FeedScrollIntegrationSimpleTests.swift,
+				LinkCreationTests.swift,
+				LinkCreationUITests.swift,
+				MLSAPIClientTests.swift,
+				MLSConversationDetailViewModelTests.swift,
+				MLSConversationInitializationTests.swift,
+				MLSConversationListViewModelTests.swift,
+				MLSConversationManagerTests.swift,
+				MLSCryptoTests.swift,
+				MLSKeyCleanupTests.swift,
+				MLSKeychainManagerTests.swift,
+				MLSMessageOrderingTests.swift,
+				MLSModerationAPITests.swift,
+				MLSModerationIntegrationTests.swift,
+				MLSNewConversationViewModelTests.swift,
+				MLSRecoveryTests.swift,
+				MLSStorageTests.swift,
+				NotificationThumbnailTests.swift,
+				PostComposerAccessibilityTests.swift,
+				PostComposerFixesTests.swift,
+				PostComposerIntegrationTests.swift,
+				ThreadScrollPositionTrackerTests.swift,
+				TopicSummaryServiceTests.swift,
+				URLHandlerActualTests.swift,
+				URLHandlerTests.swift,
+				UnifiedScrollPreservationTests.swift,
+			);
+			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -262,6 +301,9 @@
 		};
 		212E94142D60132A00D3E1DD /* CatbirdTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				21A1B3C42F800000DEADBEEF /* Exceptions for "CatbirdTests" folder in "CatbirdTests" target */,
+			);
 			path = CatbirdTests;
 			sourceTree = "<group>";
 		};
@@ -1598,11 +1640,11 @@
 /* Begin XCLocalSwiftPackageReference section */
 		212D4B642ED265F80036E016 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../CatbirdMLSCore;
+			relativePath = ../../../../CatbirdMLSCore;
 		};
 		21EBFE012EB53AB300E707B6 /* XCLocalSwiftPackageReference "../Petrel" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../Petrel;
+			relativePath = ../../../../Petrel;
 		};
 /* End XCLocalSwiftPackageReference section */
 
