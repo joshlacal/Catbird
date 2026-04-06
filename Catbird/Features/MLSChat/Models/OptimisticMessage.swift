@@ -219,6 +219,8 @@ extension SystemMessageType {
             return "Admin promoted"
         case .deviceAdded:
             return "New device added"
+        case .groupReset:
+            return "Encryption was reset"
         case .infoMessage:
             return "System notification"
         }

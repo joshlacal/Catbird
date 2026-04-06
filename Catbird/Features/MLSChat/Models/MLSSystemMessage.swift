@@ -19,6 +19,7 @@ enum SystemMessageType: String, Codable, Sendable {
   case groupCreated = "group_created"
   case adminPromoted = "admin_promoted"
   case deviceAdded = "device_added"
+  case groupReset = "group_reset"
   case infoMessage = "info_message"
 }
 
@@ -73,6 +74,19 @@ struct MLSSystemMessage: Identifiable, Sendable {
       actorDID: nil,
       targetDID: nil,
       infoText: infoEvent.info
+    )
+  }
+
+  /// Create a system message from a GroupResetEvent
+  static func from(groupResetEvent: BlueCatbirdMlsChatSubscribeEvents.GroupResetEvent) -> MLSSystemMessage {
+    return MLSSystemMessage(
+      id: groupResetEvent.cursor,
+      conversationId: groupResetEvent.convoId,
+      type: .groupReset,
+      timestamp: Date(),
+      actorDID: groupResetEvent.resetBy.description,
+      targetDID: nil,
+      infoText: groupResetEvent.reason
     )
   }
 
@@ -155,6 +169,13 @@ extension MLSSystemMessage {
       }
       return "A new device was added"
 
+    case .groupReset:
+      if let actor = actorName {
+        let reasonInfo = infoText.map { " (\($0))" } ?? ""
+        return "\(actor) reset the encryption for this conversation\(reasonInfo)"
+      }
+      return "Encryption was reset for this conversation"
+
     case .infoMessage:
       return infoText ?? "System message"
     }
@@ -186,6 +207,8 @@ extension MLSSystemMessage {
       return "star.circle"
     case .deviceAdded:
       return "laptopcomputer.and.iphone"
+    case .groupReset:
+      return "arrow.triangle.2.circlepath.circle"
     case .infoMessage:
       return "info.circle"
     }

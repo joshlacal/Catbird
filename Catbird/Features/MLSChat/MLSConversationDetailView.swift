@@ -3344,6 +3344,10 @@ struct MLSConversationDetailView: View {
             await self.handleKickedFromConversation(convoId: convoId, byDID: byDID, reason: reason)
           },
           onConversationNeedsRecovery: nil,
+          onGroupReset: { @MainActor groupResetEvent in
+            self.logger.info("📡 WS: onGroupReset handler called - convo: \(groupResetEvent.convoId.prefix(16))")
+            await self.handleGroupResetEvent(groupResetEvent)
+          },
           onError: { @MainActor error in
             self.logger.error("📡 WS: onError handler called: \(error.localizedDescription)")
           },
@@ -3813,6 +3817,20 @@ struct MLSConversationDetailView: View {
     // Dismiss the view after a delay
     try? await Task.sleep(nanoseconds: 2_000_000_000)
     dismiss()
+  }
+
+  @MainActor
+  private func handleGroupResetEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.GroupResetEvent) async {
+    logger.info(
+      "🔄 [GroupReset] Conversation \(event.convoId.prefix(16)) reset to group \(event.newGroupId.prefix(16)) (gen \(event.resetGeneration))"
+    )
+
+    // Delegate the MLS state management to the conversation manager
+    if let manager = await appState.getMLSConversationManager() {
+      await manager.handleGroupReset(event: event)
+    } else {
+      logger.error("❌ [GroupReset] No conversation manager available")
+    }
   }
 
   private func handleMessageMenuAction(action: CustomMessageMenuAction, message: Message) {
