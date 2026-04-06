@@ -103,6 +103,9 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   // MARK: - Private
 
   private func updateMessagesFromManager() {
+    let existingIDs = Set(messages.map { $0.id })
+    let isInitialLoad = messages.isEmpty
+
     // Get original messages from ChatManager (now using native MessageView types)
     let originalMessages = chatManager.originalMessagesMap[convoID] ?? [:]
 
@@ -146,6 +149,14 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     // Update hasMoreMessages based on ChatManager's cursor system
     // Check if there's a cursor for this conversation - if there is, more messages may be available
     hasMoreMessages = chatManager.hasMoreMessages(for: convoID)
+
+    // Trigger haptic feedback for new incoming messages (not on initial load)
+    if !isInitialLoad {
+      let hasNewIncoming = self.messages.contains { !existingIDs.contains($0.id) && !$0.isFromCurrentUser }
+      if hasNewIncoming {
+        PlatformHaptics.light()
+      }
+    }
   }
   
   private func startObservingChatManager() {

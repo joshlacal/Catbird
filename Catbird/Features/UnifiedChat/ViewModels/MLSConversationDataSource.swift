@@ -327,9 +327,18 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     sortMessagesInDisplayOrder(&adapters)
 
     // Clear typing indicators for senders who just sent a message
+    // Also detect new incoming messages for haptic feedback
     let existingIDs = Set(messages.map { $0.id })
+    let isInitialLoad = messages.isEmpty && !adapters.isEmpty
+    var hasNewIncomingMessage = false
     for adapter in adapters where !existingIDs.contains(adapter.id) {
       clearTypingForSender(adapter.senderID)
+      if !isInitialLoad && !adapter.isFromCurrentUser {
+        hasNewIncomingMessage = true
+      }
+    }
+    if hasNewIncomingMessage {
+      PlatformHaptics.light()
     }
 
     self.messages = adapters
