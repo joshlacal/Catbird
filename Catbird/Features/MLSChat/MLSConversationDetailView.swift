@@ -840,7 +840,7 @@ struct MLSConversationDetailView: View {
         guard let convoId = notification.userInfo?["conversationId"] as? String,
               convoId == conversationId
         else { return }
-        Task { await refreshDeliveryStates() }
+        Task { @MainActor in await refreshDeliveryStates() }
       }
   }
 
@@ -2421,7 +2421,7 @@ struct MLSConversationDetailView: View {
       return
     }
 
-    let count = await manager.memberCount(for: conversationId) ?? 0
+    guard let count = await manager.memberCount(for: conversationId) else { return }
 
     // Group acks by messageId for O(1) lookup
     var acksByMessageId: [String: [MLSDeliveryAckModel]] = [:]
