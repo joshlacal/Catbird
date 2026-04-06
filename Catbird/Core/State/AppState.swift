@@ -2237,11 +2237,61 @@ final class AppState {
           logger.info("MLS: Starting global WebSocket subscription")
           // Subscribe to "all" (nil conversation ID) to receive global events
           let handler = MLSWebSocketManager.EventHandler(
+            onMessage: { [weak self] messageEvent in
+              guard let self else { return }
+              self.logger.info("MLS WS [global]: message in \(messageEvent.message.convoId.prefix(8))")
+              await MainActor.run {
+                self.updateMLSUnreadCount()
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
+              }
+            },
+            onReaction: { [weak self] _ in
+              guard let self else { return }
+              await MainActor.run {
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
+              }
+            },
             onGroupInfoRefreshRequested: { [weak self] event in
               guard let self else { return }
               if let convoId = event.convoId,
                 let manager = await self.getMLSConversationManager() {
                 await manager.handleGroupInfoRefreshRequest(convoId: convoId)
+              }
+            },
+            onMembershipChanged: { [weak self] convoId, did, action in
+              guard let self else { return }
+              self.logger.info("MLS WS [global]: membership \(action.rawValue) for \(did) in \(convoId.prefix(8))")
+              await MainActor.run {
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
+              }
+            },
+            onKickedFromConversation: { [weak self] convoId, byDID, reason in
+              guard let self else { return }
+              self.logger.info("MLS WS [global]: kicked from \(convoId.prefix(8)) by \(byDID)")
+              await MainActor.run {
+                self.updateMLSUnreadCount()
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
+              }
+            },
+            onConversationNeedsRecovery: { [weak self] convoId, reason in
+              guard let self else { return }
+              self.logger.warning("MLS WS [global]: recovery needed for \(convoId.prefix(8)): \(reason.rawValue)")
+            },
+            onGroupReset: { [weak self] event in
+              guard let self else { return }
+              if let manager = await self.getMLSConversationManager() {
+                await manager.handleGroupReset(event: event)
+              }
+              await MainActor.run {
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
+              }
+            },
+            onReconnected: { [weak self] in
+              guard let self else { return }
+              self.logger.info("MLS WS [global]: reconnected — refreshing all conversations")
+              await MainActor.run {
+                self.updateMLSUnreadCount()
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
               }
             }
           )
