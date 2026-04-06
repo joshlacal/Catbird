@@ -983,6 +983,31 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     }
   }
 
+  #if os(macOS)
+  // MARK: - macOS Window Scenes
+  @SceneBuilder
+  private var macOSWindowScenes: some Scene {
+    WindowGroup(id: "compose") {
+      if case .authenticated(let appState) = appStateManager.lifecycle {
+        PostComposerViewUIKit(appState: appState)
+          .frame(minWidth: 500, minHeight: 400)
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
+      }
+    }
+    .defaultSize(width: 600, height: 500)
+
+    Window("Settings", id: "settings") {
+      if case .authenticated(let appState) = appStateManager.lifecycle {
+        SettingsView()
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
+      }
+    }
+    .defaultSize(width: 700, height: 500)
+  }
+  #endif
+
   // MARK: - Body
   var body: some Scene {
     WindowGroup {
@@ -1105,29 +1130,13 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       .windowStyle(.automatic)
       .defaultSize(width: 1200, height: 800)
       #endif
-    }
-    #if os(macOS)
-    WindowGroup(id: "compose") {
-      if case .authenticated(let appState) = appStateManager.lifecycle {
-        PostComposerViewUIKit(appState: appState)
-          .frame(minWidth: 500, minHeight: 400)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
-      }
-    }
-    .defaultSize(width: 600, height: 500)
 
-    Window("Settings", id: "settings") {
-      if case .authenticated(let appState) = appStateManager.lifecycle {
-        SettingsView()
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
-      }
-    }
-    .defaultSize(width: 700, height: 500)
+    #if os(macOS)
+    macOSWindowScenes
     #endif
+    }
   }
- 
+
 private extension CatbirdApp {
   @ViewBuilder
   func sceneRoot() -> some View {

@@ -15,6 +15,13 @@ struct MacOSMainView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSMainView")
 
   var body: some View {
+    mainSplitView
+      .onKeyPress(.escape) { handleEscape() }
+      .background { keyboardShortcutButtons }
+      .modifier(MacOSDeepLinkHandlers(selectedItem: $selectedItem, appState: appState))
+  }
+
+  private var mainSplitView: some View {
     NavigationSplitView {
       MacOSUnifiedSidebar(selection: $selectedItem)
         .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
@@ -25,47 +32,55 @@ struct MacOSMainView: View {
       )
     }
     .navigationTitle(windowTitle)
-    .toolbar(id: "main") {
-      ToolbarItem(id: "compose", placement: .primaryAction) {
-        Button {
-          openWindow(id: "compose")
-        } label: {
-          Image(systemName: "pencil")
-        }
-        .tint(.accentColor)
-        .keyboardShortcut("n", modifiers: .command)
-        .help("New Post (Cmd+N)")
-      }
+    .toolbar {
+      composeToolbarItem
+      settingsToolbarItem
+    }
+  }
 
-      ToolbarItem(id: "avatar", placement: .primaryAction) {
-        SettingsAvatarToolbarButton {
-          openWindow(id: "settings")
-        }
-        .keyboardShortcut(",", modifiers: .command)
-        .help("Settings (Cmd+,)")
-      }
+  // MARK: - Keyboard Shortcut Buttons (hidden, provide Cmd+key navigation)
+
+  @ViewBuilder
+  private var keyboardShortcutButtons: some View {
+    Group {
+      Button("Search") { selectedItem = .search }
+        .keyboardShortcut("f", modifiers: .command)
+      Button("Feeds") { selectedItem = .feed(.timeline) }
+        .keyboardShortcut("1", modifiers: .command)
+      Button("Notifications") { selectedItem = .notifications }
+        .keyboardShortcut("2", modifiers: .command)
+      Button("Chat") { selectedItem = .chat }
+        .keyboardShortcut("3", modifiers: .command)
+      Button("Profile") { selectedItem = .profile }
+        .keyboardShortcut("4", modifiers: .command)
     }
-    // Keyboard shortcuts
-    .onKeyPress(.escape) {
-      handleEscape()
-    }
-    .onKeyPress("f", modifiers: .command) { selectedItem = .search; return .handled }
-    .onKeyPress("1", modifiers: .command) { selectedItem = .search; return .handled }
-    .onKeyPress("2", modifiers: .command) { selectedItem = .notifications; return .handled }
-    .onKeyPress("3", modifiers: .command) { selectedItem = .chat; return .handled }
-    .onKeyPress("4", modifiers: .command) { selectedItem = .profile; return .handled }
-    // Deep link handling
-    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
-      if let _ = newValue {
-        selectedItem = .chat
-        appState.navigationManager.targetConversationId = nil
+    .frame(width: 0, height: 0)
+    .opacity(0)
+    .allowsHitTesting(false)
+  }
+
+  // MARK: - Toolbar Items
+
+  private var composeToolbarItem: some ToolbarContent {
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        openWindow(id: "compose")
+      } label: {
+        Image(systemName: "pencil")
       }
+      .tint(.accentColor)
+      .keyboardShortcut("n", modifiers: .command)
+      .help("New Post (Cmd+N)")
     }
-    .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
-      if let _ = newValue {
-        selectedItem = .chat
-        appState.navigationManager.targetMLSConversationId = nil
+  }
+
+  private var settingsToolbarItem: some ToolbarContent {
+    ToolbarItem(placement: .primaryAction) {
+      SettingsAvatarToolbarButton {
+        openWindow(id: "settings")
       }
+      .keyboardShortcut(",", modifiers: .command)
+      .help("Settings (Cmd+,)")
     }
   }
 
@@ -93,6 +108,29 @@ struct MacOSMainView: View {
       return .handled
     }
     return .ignored
+  }
+}
+
+// MARK: - Deep Link Handlers Modifier
+
+private struct MacOSDeepLinkHandlers: ViewModifier {
+  @Binding var selectedItem: SidebarItem?
+  let appState: AppState
+
+  func body(content: Content) -> some View {
+    content
+      .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
+        if newValue != nil {
+          selectedItem = .chat
+          appState.navigationManager.targetConversationId = nil
+        }
+      }
+      .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
+        if newValue != nil {
+          selectedItem = .chat
+          appState.navigationManager.targetMLSConversationId = nil
+        }
+      }
   }
 }
 #endif
