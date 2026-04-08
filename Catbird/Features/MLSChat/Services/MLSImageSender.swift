@@ -88,7 +88,6 @@ import UIKit
         let (responseCode, output) = try await client.blue.catbird.mlschat.uploadBlob(
           data: encrypted.ciphertext,
           mimeType: "application/octet-stream",
-          convoId: convoId,
           stripMetadata: false
         )
 
