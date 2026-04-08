@@ -1280,11 +1280,11 @@ class NotificationService: UNNotificationServiceExtension {
       throw NSEWelcomeError.httpError(statusCode: responseCode)
     }
 
-    guard let welcome = output.welcome, let welcomeData = Data(base64Encoded: welcome) else {
+    guard let welcome = output.welcome else {
       throw NSEWelcomeError.invalidBase64
     }
 
-    return welcomeData
+    return welcome.data
   }
 
   private func confirmWelcome(

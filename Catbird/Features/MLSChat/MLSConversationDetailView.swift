@@ -3615,6 +3615,11 @@ struct MLSConversationDetailView: View {
       if !messages.contains(where: { $0.id == newMessage.id }) {
         messages.append(newMessage)
         logger.debug("🔍 MLS_OWNERSHIP: Added new message from SSE to UI")
+
+        // Haptic feedback for incoming messages from other users
+        if !isCurrentUser {
+          PlatformHaptics.impact(.light)
+        }
       } else {
         logger.debug("🔍 MLS_OWNERSHIP: SSE message already in UI, skipping")
       }

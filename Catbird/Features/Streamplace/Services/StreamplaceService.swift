@@ -28,7 +28,7 @@ final class StreamplaceService {
       return components.url!
     }
     var formattedDuration: String {
-      let totalSeconds = video.duration / 1_000_000_000
+      let totalSeconds = (video.duration ?? 0) / 1_000_000_000
       let hours = totalSeconds / 3600
       let minutes = (totalSeconds % 3600) / 60
       let seconds = totalSeconds % 60

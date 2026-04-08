@@ -265,10 +265,10 @@ struct MLSAdminDashboardView: View {
                     )
                 }
 
-                if let policy = stats.policy {
+                if let policy = stats.policy, let maxMembers = policy.maxMembers {
                     ActivityRow(
                         label: "Max Members",
-                        value: policy.maxMembers,
+                        value: maxMembers,
                         icon: "person.3.fill",
                         color: .purple
                     )
