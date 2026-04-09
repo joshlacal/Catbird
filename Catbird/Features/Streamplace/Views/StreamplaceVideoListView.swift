@@ -31,6 +31,7 @@ struct StreamplaceVideoListView: View {
     #endif
     .task {
       guard service == nil, let client = appState.atProtoClient else { return }
+    
       let svc = StreamplaceService(client: client)
       service = svc
       await svc.loadVideos(forDID: userDID)

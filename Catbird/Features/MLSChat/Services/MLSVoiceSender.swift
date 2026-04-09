@@ -136,7 +136,8 @@ final class MLSVoiceSender {
       let (responseCode, output) = try await client.blue.catbird.mlschat.uploadBlob(
         data: prepared.encryptedBlob,
         mimeType: "application/octet-stream",
-        stripMetadata: false
+        stripMetadata: false,
+        params: .init(convoId: convoId)
       )
 
       guard (200..<300).contains(responseCode), let blobId = output?.blobId else {

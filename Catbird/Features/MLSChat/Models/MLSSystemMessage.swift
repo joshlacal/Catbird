@@ -84,7 +84,7 @@ struct MLSSystemMessage: Identifiable, Sendable {
       conversationId: groupResetEvent.convoId,
       type: .groupReset,
       timestamp: Date(),
-      actorDID: groupResetEvent.resetBy.description,
+      actorDID: groupResetEvent.resetBy?.description,
       targetDID: nil,
       infoText: groupResetEvent.reason
     )

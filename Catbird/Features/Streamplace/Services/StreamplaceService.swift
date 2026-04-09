@@ -7,7 +7,8 @@ import Petrel
 @Observable
 final class StreamplaceService {
   private static let logger = Logger(subsystem: "blue.catbird", category: "StreamplaceService")
-  private let client: ATProtoClient
+  private var pdsClient: ATProtoClient?
+  private let authenticatedClient: ATProtoClient
 
   private(set) var videos: [VideoRecord] = []
   private(set) var isLoading = false
@@ -45,7 +46,17 @@ final class StreamplaceService {
   }
 
   init(client: ATProtoClient) {
-    self.client = client
+    self.authenticatedClient = client
+  }
+
+  /// Resolves the DID to a PDS URL and creates an unauthenticated client for direct PDS access.
+  private func getOrCreatePDSClient(forDID did: String) async throws -> ATProtoClient {
+    if let existing = pdsClient { return existing }
+    let pdsURL = try await authenticatedClient.resolveDIDToPDSURL(did: did)
+    let client = await ATProtoClient(baseURL: pdsURL)
+    Self.logger.info("Created unauthenticated PDS client for \(pdsURL.absoluteString)")
+    pdsClient = client
+    return client
   }
 
   func loadVideos(forDID did: String) async {
@@ -54,6 +65,7 @@ final class StreamplaceService {
     defer { isLoading = false }
 
     do {
+      let client = try await getOrCreatePDSClient(forDID: did)
       let params = ComAtprotoRepoListRecords.Parameters(
         repo: try ATIdentifier(string: did),
         collection: try NSID(nsidString: "place.stream.video"),
@@ -105,6 +117,7 @@ final class StreamplaceService {
 
   func hasVideos(forDID did: String) async -> Bool {
     do {
+      let client = try await getOrCreatePDSClient(forDID: did)
       let params = ComAtprotoRepoListRecords.Parameters(
         repo: try ATIdentifier(string: did),
         collection: try NSID(nsidString: "place.stream.video"),
@@ -124,6 +137,7 @@ final class StreamplaceService {
     cursor = nil
     hasMore = true
     isLoading = false
+    pdsClient = nil
     for task in thumbnailTasks.values { task.cancel() }
     thumbnailTasks.removeAll()
     thumbnails.removeAll()

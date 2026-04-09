@@ -265,7 +265,8 @@ struct MLSAdminDashboardView: View {
                     )
                 }
 
-                if let policy = stats.policy, let maxMembers = policy.maxMembers {
+                if let policy = stats.policy {
+                    let maxMembers = policy.maxMembers
                     ActivityRow(
                         label: "Max Members",
                         value: maxMembers,
