@@ -1,3 +1,4 @@
+import CatbirdMLSCore
 import Foundation
 import NukeUI
 import OSLog
@@ -29,6 +30,10 @@ struct UnifiedProfileView: View {
   @State private var isShowingBlockConfirmation = false
   @State private var isShowingAddToListSheet = false
   @State private var isBlocking = false
+  /// Conversations the current user would auto-leave if they block this profile.
+  /// Populated just before presenting the block-confirmation alert so the
+  /// dialog can warn "you'll leave N shared conversations".
+  @State private var blockAffectedConvos: [MLSConversationSnapshot] = []
   @State private var isMuting = false
   @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
   @State private var hasAttemptedLoad = false
@@ -594,7 +599,7 @@ struct UnifiedProfileView: View {
       }
 
       Button(role: .destructive) {
-        isShowingBlockConfirmation = true
+        Task { await prepareBlockConfirmation() }
       } label: {
         if isBlocking {
           Label("Unblock User", systemImage: "person.crop.circle.badge.checkmark")
@@ -619,13 +624,37 @@ struct UnifiedProfileView: View {
   private var alertMessage: some View {
     if let profile = viewModel.profile {
       if isBlocking {
-        Text("Unblock @\(profile.handle)? You'll be able to see each other's posts again.")
+        Text(
+          "Unblock @\(profile.handle)? They will be able to interact with you again. Note: previously-left conversations will NOT be rejoined — you'll need a fresh invite."
+        )
+      } else if !blockAffectedConvos.isEmpty {
+        let count = blockAffectedConvos.count
+        Text(
+          "Block @\(profile.handle)? You won't see each other's posts, and you'll leave \(count) shared conversation\(count == 1 ? "" : "s"). This can't be undone — unblocking will not rejoin the conversations."
+        )
       } else {
         Text(
           "Block @\(profile.handle)? You won't see each other's posts, and they won't be able to follow you."
         )
       }
     }
+  }
+
+  /// Compute the list of MLS conversations that would be left when blocking
+  /// the displayed profile, then present the confirmation alert.
+  ///
+  /// When the MLS coordinator isn't available (e.g. user hasn't signed in
+  /// with MLS yet), the list is simply empty and the alert falls back to the
+  /// non-MLS message.
+  private func prepareBlockConfirmation() async {
+    if let profile = viewModel.profile,
+       let coord = appState.mlsBlockCoordinator {
+      let did = profile.did.didString()
+      blockAffectedConvos = await coord.affectedConversations(for: did)
+    } else {
+      blockAffectedConvos = []
+    }
+    isShowingBlockConfirmation = true
   }
 
   // MARK: - Event Handlers
@@ -762,28 +791,35 @@ struct UnifiedProfileView: View {
 
     let did = profile.did.didString()
     Task {
+      let previousState = isBlocking
+
+      // Optimistically update UI
+      isBlocking.toggle()
+
       do {
-        let previousState = isBlocking
-
-        // Optimistically update UI
-        isBlocking.toggle()
-
-        let success: Bool
-        if previousState {
-          // Unblock
-          success = try await appState.unblock(did: did)
+        // Prefer the MLS-aware coordinator when available — it publishes the
+        // block record AND leaves any shared MLS groups in one step. Falls
+        // back to the raw graph-block call on non-MLS installs.
+        if let coord = appState.mlsBlockCoordinator {
+          if previousState {
+            try await coord.unblock(did: did)
+          } else {
+            try await coord.block(did: did)
+          }
         } else {
-          // Block
-          success = try await appState.block(did: did)
-        }
-
-        if !success {
-          // Revert if unsuccessful
-          isBlocking = previousState
+          let success: Bool
+          if previousState {
+            success = try await appState.unblock(did: did)
+          } else {
+            success = try await appState.block(did: did)
+          }
+          if !success {
+            isBlocking = previousState
+          }
         }
       } catch {
         // Revert on error
-        isBlocking = !isBlocking
+        isBlocking = previousState
         logger.error("Failed to toggle block: \(error.localizedDescription)")
       }
     }
@@ -1123,7 +1159,7 @@ struct UnifiedProfileView: View {
           }
           
           Button(role: .destructive) {
-            isShowingBlockConfirmation = true
+            Task { await prepareBlockConfirmation() }
           } label: {
             Label(isBlocking ? "Unblock User" : "Block User",
                   systemImage: isBlocking ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark")

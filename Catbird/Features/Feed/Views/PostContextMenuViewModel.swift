@@ -71,7 +71,34 @@ final class PostContextMenuViewModel {
     }
 
     func blockUser() async {
-         let did = appState.userDID
+        let targetDid = post.author.did.didString()
+
+        // Prefer the MLS-aware coordinator when available — it publishes the
+        // block record AND auto-leaves any shared MLS groups. Falls back to
+        // the raw createRecord path on non-MLS installs so that existing
+        // behavior is preserved.
+        let coordinator = await MainActor.run { appState.mlsBlockCoordinator }
+        if let coord = coordinator {
+            do {
+                try await coord.block(did: targetDid)
+                logger.debug("User blocked successfully via MLSBlockCoordinator")
+                await MainActor.run {
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: "User blocked",
+                            icon: "hand.raised.fill",
+                            duration: 2.5
+                        )
+                    )
+                }
+            } catch {
+                logger.debug("Error blocking user via coordinator: \(error)")
+            }
+            return
+        }
+
+        // Fallback: publish the block record directly.
+        let did = appState.userDID
         let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
         do {
             let input = ComAtprotoRepoCreateRecord.Input(
@@ -83,9 +110,9 @@ final class PostContextMenuViewModel {
             let result = try await appState.atProtoClient?.com.atproto.repo.createRecord(input: input)
             if let (responseCode, _) = result {
                 if responseCode == 200 {
-                    
+
                     logger.debug("User blocked successfully")
-                    
+
                     // Show block toast
                     await MainActor.run {
                         appState.toastManager.show(

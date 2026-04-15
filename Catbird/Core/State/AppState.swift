@@ -316,6 +316,24 @@ final class AppState {
     mlsConversationManagerStorage
   }
 
+  /// Backing storage for the MLS block coordinator (lazy).
+  @ObservationIgnored
+  @MainActor private var mlsBlockCoordinatorStorage: MLSBlockCoordinator?
+
+  /// Bridges Bluesky social blocks and MLS group membership.
+  ///
+  /// Returns nil when the MLS conversation manager hasn't been initialized
+  /// yet (e.g. before the user has signed in or enabled encrypted messaging).
+  /// Callers should treat nil as "MLS isn't active on this device" and fall
+  /// back to publishing the block record directly via `GraphManager`.
+  @MainActor var mlsBlockCoordinator: MLSBlockCoordinator? {
+    if let existing = mlsBlockCoordinatorStorage { return existing }
+    guard let manager = mlsConversationManager else { return nil }
+    let coord = MLSBlockCoordinator(manager: manager, graphManager: graphManager)
+    mlsBlockCoordinatorStorage = coord
+    return coord
+  }
+
   /// Task for initializing MLS conversation manager (prevents concurrent initialization)
   @ObservationIgnored
   private var mlsConversationManagerInitTask: Task<MLSConversationManager?, Never>?
@@ -2370,7 +2388,63 @@ final class AppState {
       // Load existing conversations (this processes pending Welcome messages)
       await loadMLSConversations()
 
+      // Run the block reconciler in the background once per day per user.
+      // Handles cross-device blocks (user blocked someone on their iPad; this
+      // iPhone catches up on next launch) and crash recovery (block was published
+      // but leaves never executed — next launch finishes the job).
+      // Safe to run even when `mlsBlockCoordinator` already leaves groups
+      // proactively, because the reconciler is idempotent.
+      scheduleBlockReconcileIfNeeded()
+
       logger.info("MLS: Successfully initialized")
+    }
+
+    /// Fire-and-forget block reconciliation, guarded to run at most once per
+    /// calendar day per user via UserDefaults.
+    @MainActor
+    private func scheduleBlockReconcileIfNeeded() {
+      let key = "mls.blockReconcile.\(userDID).lastRun"
+      let defaults = UserDefaults.standard
+      let calendar = Calendar.current
+      if let last = defaults.object(forKey: key) as? Date,
+         calendar.isDate(last, inSameDayAs: Date()) {
+        logger.debug("MLS: Block reconcile already ran today, skipping")
+        return
+      }
+
+      Task.detached(priority: .background) { [weak self] in
+        guard let self else { return }
+        guard let manager = await self.getMLSConversationManager() else { return }
+        let graph = await self.graphManager
+
+        // Ensure block cache is populated before reconciling.
+        _ = try? await graph.refreshBlockCache()
+        let blocks = await graph.blockCache
+
+        let reconciler = MLSBlockReconciler()
+        do {
+          let left = try await reconciler.reconcile(
+            blockedDids: blocks,
+            using: manager
+          )
+          if !left.isEmpty {
+            await self.logger.info(
+              "MLS: Block reconciler left \(left.count) group(s) at launch due to existing blocks"
+            )
+            // Notify UI so conversation list refreshes.
+            await MainActor.run {
+              self.stateInvalidationBus.notify(.mlsConversationListChanged)
+            }
+          }
+          await MainActor.run {
+            UserDefaults.standard.set(Date(), forKey: key)
+          }
+        } catch {
+          await self.logger.error(
+            "MLS: Block reconcile failed at launch: \(String(describing: error))"
+          )
+        }
+      }
     }
 
     /// Load MLS conversations from the server
