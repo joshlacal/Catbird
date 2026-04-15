@@ -339,7 +339,6 @@ final class MockATProtoClient: ATProtoClient {
   var mockDemoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
   var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
   var mockGetBlockStatusResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
-  var mockHandleBlockChangeResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
   var mockGetKeyPackageStatsResponse: (Int, BlueCatbirdMlsChatPublishKeyPackages.Output?)?
   var mockGetAdminStatsResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
 
