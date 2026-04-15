@@ -17,6 +17,8 @@ struct MLSAddMemberView: View {
   @State private var viewModel: MLSAddMemberViewModel?
   @State private var searchText = ""
   @State private var showingError = false
+  @State private var showBlockWarning = false
+  @State private var blockWarningMessage = ""
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSAddMemberView")
 
@@ -45,6 +47,11 @@ struct MLSAddMemberView: View {
       if let error = viewModel?.error {
         Text(error.localizedDescription)
       }
+    }
+    .alert("Cannot Add Member", isPresented: $showBlockWarning) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text(blockWarningMessage)
     }
     .task {
       viewModel = MLSAddMemberViewModel(
@@ -232,6 +239,28 @@ struct MLSAddMemberView: View {
   // MARK: - Actions
 
   private func addMember(_ participant: MLSParticipantViewModel) async {
+    // Warn the user up front if the server would reject this add due to
+    // a block edge. Server enforces the same rule with HTTP 403.
+    do {
+      var didStrings = Array(existingMemberDIDs)
+      didStrings.append(participant.id)
+      let dids = didStrings.compactMap { try? DID(didString: $0) }
+      if dids.count >= 2 {
+        let params = BlueCatbirdMlsChatCheckBlocks.Parameters(dids: dids)
+        let (_, output) = try await conversationManager.apiClient.client
+          .blue.catbird.mlschat.checkBlocks(input: params)
+        if let output, !output.blocks.isEmpty {
+          blockWarningMessage = "You can't add @\(participant.handle): a block relationship exists between this user and someone already in the conversation."
+          showBlockWarning = true
+          return
+        }
+      }
+    } catch {
+      // If the check fails (network, server down, etc.), fall through to the actual add.
+      // The server's own block check will still catch a genuine conflict (HTTP 403).
+      logger.warning("checkBlocks failed: \(String(describing: error))")
+    }
+
     await viewModel?.addMember(participant.id)
     if viewModel?.error != nil {
       showingError = true

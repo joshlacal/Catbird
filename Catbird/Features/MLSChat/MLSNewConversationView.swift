@@ -26,6 +26,8 @@ struct MLSNewConversationView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var participantOptInStatus: [String: Bool] = [:]  // Track which participants have opted into MLS
     @State private var isCheckingExistingConversation = false
+    @State private var showCreateBlockWarning = false
+    @State private var createBlockWarningMessage = ""
     let onConversationCreated: (@Sendable () async -> Void)?
     let onNavigateToConversation: ((String) -> Void)?
 
@@ -102,6 +104,11 @@ struct MLSNewConversationView: View {
                 if let errorMessage = errorMessage {
                     Text(errorMessage)
                 }
+            }
+            .alert("Cannot Create Conversation", isPresented: $showCreateBlockWarning) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(createBlockWarningMessage)
             }
         }
         .autocorrectionDisabled()
@@ -707,6 +714,31 @@ struct MLSNewConversationView: View {
             errorMessage = "MLS service not available"
             showingError = true
             return
+        }
+
+        // Pre-check: warn up front if any participants have a block edge.
+        // Server enforces the same rule (HTTP 403) — this is UX only.
+        do {
+            var didStrings = Array(selectedParticipants)
+            if let myDid = conversationManager.userDid {
+                didStrings.append(myDid)
+            }
+            let dids = didStrings.compactMap { try? DID(didString: $0) }
+            if dids.count >= 2 {
+                let params = BlueCatbirdMlsChatCheckBlocks.Parameters(dids: dids)
+                let (_, output) = try await conversationManager.apiClient.client
+                    .blue.catbird.mlschat.checkBlocks(input: params)
+                if let output, !output.blocks.isEmpty {
+                    createBlockWarningMessage = "Can't create this conversation: a block relationship exists between two or more participants."
+                    showCreateBlockWarning = true
+                    currentStep = selectedParticipants.count == 1 ? .selectParticipants : .configure
+                    return
+                }
+            }
+        } catch {
+            // If the check fails (network, server down, etc.), fall through to the actual create.
+            // The server's own block check will still catch a genuine conflict.
+            logger.warning("checkBlocks failed: \(String(describing: error))")
         }
 
         isCreatingConversation = true
