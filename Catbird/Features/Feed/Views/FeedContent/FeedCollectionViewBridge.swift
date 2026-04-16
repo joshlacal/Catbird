@@ -163,6 +163,8 @@ struct FeedCollectionViewWrapper: View {
                             navigationPath: $navigationPath,
                             feedTypeIdentifier: stateManager.currentFeedType.identifier
                         )
+                        .frame(maxWidth: 700)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets())
                         .onAppear {
@@ -184,6 +186,8 @@ struct FeedCollectionViewWrapper: View {
                                 .foregroundStyle(.secondary)
                             Spacer()
                         }
+                        .frame(maxWidth: 700)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets())
                         .padding(.vertical, 8)
@@ -194,8 +198,6 @@ struct FeedCollectionViewWrapper: View {
                 .refreshable {
                     await stateManager.refreshUserInitiated()
                 }
-                .frame(maxWidth: 700)
-                .frame(maxWidth: .infinity)
             }
         }
         .catalystPlainButtons()
