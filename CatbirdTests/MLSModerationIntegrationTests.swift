@@ -206,13 +206,14 @@ struct MLSModerationIntegrationTests {
     manager.conversations[convoId] = conversation
 
     // Mock block relationship - member has blocked violator
-    let blockRelationship = BlueCatbirdMlsChatBlocks.BlockRelationship(
+    let blockRelationship = BlueCatbirdMlsChatCheckBlocks.BlockRelationship(
       blockerDid: try DID(didString: memberDid),
       blockedDid: try DID(didString: violatorDid),
       createdAt: ATProtocolDate(date: Date()),
       blockUri: try? ATProtocolURI(uriString: "at://did:plc:member456/app.bsky.graph.block/abc")
     )
-    let blocksOutput = BlueCatbirdMlsChatBlocks.Output(
+    let blocksOutput = BlueCatbirdMlsChatCheckBlocks.Output(
+      blocked: true,
       blocks: [blockRelationship],
       checkedAt: ATProtocolDate(date: Date())
     )
@@ -322,7 +323,7 @@ final class MockMLSAPIClient: MLSAPIClient {
   var mockRemoveMemberResponse: (Int, BlueCatbirdMlsChatCommitGroupChange.Output?)?
   var mockPromoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
   var mockDemoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
-  var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
+  var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatCheckBlocks.Output?)?
   var mockGetKeyPackageStatsResponse: (Int, BlueCatbirdMlsChatPublishKeyPackages.Output?)?
   var mockGetAdminStatsResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
 

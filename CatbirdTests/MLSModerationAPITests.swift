@@ -171,14 +171,15 @@ struct MLSModerationAPITests {
     let mockClient = createMockATProtoClient()
     let apiClient = MLSAPIClient(atProtoClient: mockClient)
 
-    let blockRelationship = BlueCatbirdMlsChatBlocks.BlockRelationship(
+    let blockRelationship = BlueCatbirdMlsChatCheckBlocks.BlockRelationship(
       blockerDid: try DID(didString: testDid),
       blockedDid: try DID(didString: testTargetDid),
       createdAt: ATProtocolDate(date: Date()),
       blockUri: try? ATProtocolURI(uriString: "at://did:plc:test123/app.bsky.graph.block/xyz")
     )
 
-    let expectedOutput = BlueCatbirdMlsChatBlocks.Output(
+    let expectedOutput = BlueCatbirdMlsChatCheckBlocks.Output(
+      blocked: true,
       blocks: [blockRelationship],
       checkedAt: ATProtocolDate(date: Date())
     )
@@ -189,8 +190,8 @@ struct MLSModerationAPITests {
     )
 
     #expect(responseCode == 200)
-    #expect(output?.blocks?.count == 1)
-    #expect(output?.blocks?.first?.blockerDid.description == testDid)
+    #expect(output?.blocks.count == 1)
+    #expect(output?.blocks.first?.blockerDid.description == testDid)
   }
 
   @Test("checkBlocks - too many DIDs error")
@@ -337,8 +338,8 @@ final class MockATProtoClient: ATProtoClient {
   var mockRemoveMemberResponse: (Int, BlueCatbirdMlsChatCommitGroupChange.Output?)?
   var mockPromoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
   var mockDemoteAdminResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
-  var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
-  var mockGetBlockStatusResponse: (Int, BlueCatbirdMlsChatBlocks.Output?)?
+  var mockCheckBlocksResponse: (Int, BlueCatbirdMlsChatCheckBlocks.Output?)?
+  var mockGetBlockStatusResponse: (Int, BlueCatbirdMlsChatGetBlockStatus.Output?)?
   var mockGetKeyPackageStatsResponse: (Int, BlueCatbirdMlsChatPublishKeyPackages.Output?)?
   var mockGetAdminStatsResponse: (Int, BlueCatbirdMlsChatUpdateConvo.Output?)?
 

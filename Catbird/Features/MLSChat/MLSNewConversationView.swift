@@ -725,7 +725,7 @@ struct MLSNewConversationView: View {
             }
             let dids = didStrings.compactMap { try? DID(didString: $0) }
             if dids.count >= 2 {
-                let params = BlueCatbirdMlsChatCheckBlocks.Parameters(dids: dids)
+                let params = BlueCatbirdMlsChatCheckBlocks.Input(dids: dids)
                 let (_, output) = try await conversationManager.apiClient.client
                     .blue.catbird.mlschat.checkBlocks(input: params)
                 if let output, !output.blocks.isEmpty {
