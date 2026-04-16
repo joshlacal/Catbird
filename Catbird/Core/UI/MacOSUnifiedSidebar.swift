@@ -19,60 +19,78 @@ struct MacOSUnifiedSidebar: View {
   @State private var savedFeeds: [String] = []
   @State private var isLoaded = false
 
+  // Profile state for the pinned header
+  @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
+
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSUnifiedSidebar")
 
   var body: some View {
-    List(selection: $selection) {
-      // MARK: - Functional Items
-      Section {
-        Label("Search", systemImage: "magnifyingglass")
-          .tag(SidebarItem.search)
+    VStack(spacing: 0) {
+      MacOSSidebarProfileHeader(
+        profile: profile,
+        isSelected: selection == .profile,
+        onTap: { selection = .profile }
+      )
+      .padding(.horizontal, 8)
+      .padding(.top, 10)
+      .padding(.bottom, 6)
 
-        notificationsRow
+      List(selection: $selection) {
+        // MARK: - Functional Items
+        Section {
+          Label("Search", systemImage: "magnifyingglass")
+            .tag(SidebarItem.search)
 
-        chatRow
+          notificationsRow
 
-        Label("Profile", systemImage: "person")
-          .tag(SidebarItem.profile)
-      }
+          chatRow
+        }
 
-      // MARK: - Timeline (always first, not draggable)
-      Section {
-        Label("Timeline", systemImage: "house")
-          .tag(SidebarItem.feed(.timeline))
-      }
+        // MARK: - Timeline (always first, not draggable)
+        Section {
+          Label("Timeline", systemImage: "house")
+            .tag(SidebarItem.feed(.timeline))
+        }
 
-      // MARK: - Pinned Feeds
-      if !pinnedFeedsFiltered.isEmpty {
-        Section("Pinned") {
-          ForEach(pinnedFeedsFiltered, id: \.self) { feedURI in
-            feedRow(for: feedURI)
+        // MARK: - Pinned Feeds
+        if !pinnedFeedsFiltered.isEmpty {
+          Section("Pinned") {
+            ForEach(pinnedFeedsFiltered, id: \.self) { feedURI in
+              feedRow(for: feedURI)
+            }
+            .onMove { source, destination in
+              movePinnedFeeds(from: source, to: destination)
+            }
           }
-          .onMove { source, destination in
-            movePinnedFeeds(from: source, to: destination)
+        }
+
+        // MARK: - Saved Feeds
+        if !savedFeedsFiltered.isEmpty {
+          Section("Saved") {
+            ForEach(savedFeedsFiltered, id: \.self) { feedURI in
+              feedRow(for: feedURI)
+            }
+            .onMove { source, destination in
+              moveSavedFeeds(from: source, to: destination)
+            }
           }
         }
       }
-
-      // MARK: - Saved Feeds
-      if !savedFeedsFiltered.isEmpty {
-        Section("Saved") {
-          ForEach(savedFeedsFiltered, id: \.self) { feedURI in
-            feedRow(for: feedURI)
-          }
-          .onMove { source, destination in
-            moveSavedFeeds(from: source, to: destination)
-          }
-        }
-      }
+      .listStyle(.sidebar)
     }
-    .listStyle(.sidebar)
     .task {
-      await initializeFeeds()
+      async let feeds: Void = initializeFeeds()
+      async let userProfile: Void = loadUserProfile()
+      _ = await (feeds, userProfile)
     }
     .onChange(of: appState.userDID) { _, _ in
       isLoaded = false
-      Task { await initializeFeeds() }
+      profile = nil
+      Task {
+        async let feeds: Void = initializeFeeds()
+        async let userProfile: Void = loadUserProfile()
+        _ = await (feeds, userProfile)
+      }
     }
   }
 
@@ -231,6 +249,23 @@ struct MacOSUnifiedSidebar: View {
     savedFeeds = vm.cachedSavedFeeds
     isLoaded = true
     logger.debug("Loaded \(pinnedFeeds.count) pinned, \(savedFeeds.count) saved feeds")
+  }
+
+  private func loadUserProfile() async {
+    guard let client = appState.atProtoClient else { return }
+    let did = appState.userDID
+    guard !did.isEmpty else { return }
+
+    do {
+      let (code, data) = try await client.app.bsky.actor.getProfile(
+        input: .init(actor: ATIdentifier(string: did))
+      )
+      if code == 200, let data {
+        profile = data
+      }
+    } catch {
+      logger.error("Failed to load user profile: \(error)")
+    }
   }
 }
 #endif
