@@ -51,8 +51,6 @@ struct MacOSMainView: View {
         .keyboardShortcut("2", modifiers: .command)
       Button("Chat") { selectedItem = .chat }
         .keyboardShortcut("3", modifiers: .command)
-      Button("Profile") { selectedItem = .profile }
-        .keyboardShortcut("4", modifiers: .command)
     }
     .frame(width: 0, height: 0)
     .opacity(0)
