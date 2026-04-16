@@ -37,7 +37,7 @@ swiftc -typecheck -sdk $(xcrun --show-sdk-path --sdk iphonesimulator) \
 ```
 
 ### Testing
-- **Framework**: Swift Testing (`@Test` attribute, NOT XCTest)
+- **Framework**: Mixed — Swift Testing (`@Test`) for newer tests, XCTest for legacy. Prefer Swift Testing for new tests.
 - **Unit tests**: `CatbirdTests/` mirroring module paths
 - **UI tests**: `CatbirdUITests/`
 - SwiftLint: `.swiftlint.yml`
