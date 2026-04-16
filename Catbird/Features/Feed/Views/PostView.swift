@@ -831,7 +831,21 @@ private struct ThreadSummarySheet: View {
 
   @ViewBuilder
   private var content: some View {
-    if isLoading {
+    if let summaryText {
+      ScrollView {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+          Text(summaryText)
+            .font(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+          if isLoading {
+            ProgressView()
+              .padding(.top, DesignTokens.Spacing.xs)
+          }
+        }
+        .padding(.vertical, DesignTokens.Spacing.sm)
+      }
+    } else if isLoading {
       VStack(alignment: .center, spacing: DesignTokens.Spacing.md) {
         ProgressView()
         Text("Summarizing thread…")
@@ -840,13 +854,6 @@ private struct ThreadSummarySheet: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, DesignTokens.Spacing.lg)
-    } else if let summaryText {
-      ScrollView {
-        Text(summaryText)
-          .font(.body)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.vertical, DesignTokens.Spacing.sm)
-      }
     } else if let errorText {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
         Image(systemName: "exclamationmark.triangle")

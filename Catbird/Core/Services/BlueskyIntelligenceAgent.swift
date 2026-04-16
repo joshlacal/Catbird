@@ -111,10 +111,10 @@ actor BlueskyIntelligenceAgent {
                         continuation.finish(throwing: BlueskyAgentError.missingClient)
                         return
                     }
-                    
+
                     let threadData = try await fetchFullThread(uri: uri, using: client)
                     let posts = flattenThreadForSummary(threadData)
-                    
+
                     guard !posts.isEmpty else {
                         continuation.finish(throwing: BlueskyAgentError.emptyResult("thread (no valid posts)"))
                         return
@@ -124,35 +124,29 @@ actor BlueskyIntelligenceAgent {
                         continuation.finish(throwing: BlueskyAgentError.notAThread)
                         return
                     }
-                    
-                        let session = try await ensureSummarizationSession(using: client)
-                    
+
                     let parents = posts.filter { $0.isParent }
                     let mainPost = posts.first { $0.isMain }
                     let replies = posts.filter { !$0.isParent && !$0.isMain }
-                    
+
                     var cumulativeSummary = ""
-                    
+
                     if !parents.isEmpty {
                         logger.debug("Summarizing \(parents.count) parent posts")
-                        let batchSummary = try await summarizeBatch(
+                        cumulativeSummary = try await summarizeBatch(
                             posts: parents,
                             context: nil,
-                            phase: "context",
-                            session: session
+                            phase: "context"
                         )
-                        cumulativeSummary = batchSummary
                     }
 
                     if let mainPost {
                         logger.debug("Summarizing main post")
-                        let batchSummary = try await summarizeBatch(
+                        cumulativeSummary = try await summarizeBatch(
                             posts: [mainPost],
                             context: cumulativeSummary.isEmpty ? nil : cumulativeSummary,
-                            phase: "main post",
-                            session: session
+                            phase: "main post"
                         )
-                        cumulativeSummary = batchSummary
                     }
 
                     if !replies.isEmpty {
@@ -160,23 +154,21 @@ actor BlueskyIntelligenceAgent {
                         let batchSize = 10
                         for (index, batch) in replies.chunked(into: batchSize).enumerated() {
                             logger.debug("Processing reply batch \(index + 1), size: \(batch.count)")
-                            let batchSummary = try await summarizeBatch(
+                            cumulativeSummary = try await summarizeBatch(
                                 posts: batch,
                                 context: cumulativeSummary,
-                                phase: "replies",
-                                session: session
+                                phase: "replies"
                             )
-                            cumulativeSummary = batchSummary
                         }
                     }
-                    
-                    let finalSummary = try await polishSummaryStreaming(
+
+                    // Stream the final polished summary into the continuation
+                    _ = try await polishSummaryStreaming(
                         cumulativeSummary,
                         maxSentences: maxSentences,
-                        session: session,
                         continuation: continuation
                     )
-                    
+
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -205,256 +197,131 @@ actor BlueskyIntelligenceAgent {
     private func summarizeBatch(
         posts: [FormattedThreadPost],
         context: String?,
-        phase: String,
-        session: LanguageModelSession
+        phase: String
     ) async throws -> String {
         let postsText = posts.map { $0.text }.joined(separator: "\n")
-        
+
         let prompt: String
         if let context, !context.isEmpty {
             prompt = """
             Current summary: \(context)
-            
-            New \(phase): 
+
+            New \(phase):
             \(postsText)
-            
+
             Update the summary to incorporate these new posts. Keep it concise (2-3 sentences) and factual. Reference participants by @handle.
             """
         } else {
             prompt = """
             Summarize these posts from a Bluesky thread (\(phase)):
             \(postsText)
-            
+
             Provide a concise summary (2-3 sentences) that captures the key points. Reference participants by @handle.
             """
         }
-        
+
         let options = GenerationOptions(
             temperature: 0.3,
             maximumResponseTokens: 300
         )
-        
+
+        // Fresh session per batch to avoid context accumulation —
+        // the cumulative summary is already embedded in the prompt.
+        let batchSession = try await makeSummarizationSession()
+
         var lastError: Error?
         for attempt in 1...3 {
             do {
-                let response = try await session.respond(to: Prompt(prompt), options: options)
+                let response = try await batchSession.respond(to: Prompt(prompt), options: options)
                 let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                    if Self.isMeaningfulModelOutput(content) {
+                if Self.isMeaningfulModelOutput(content) {
                     return content
                 }
 
                 logger.warning("Batch summarization attempt \(attempt) returned empty content")
                 lastError = BlueskyAgentError.emptyResult("batch summary (attempt \(attempt))")
-                
+
                 if attempt < 3 {
                     try await Task.sleep(for: .milliseconds(300 * attempt))
                 }
             } catch {
                 logger.warning("Batch summarization attempt \(attempt) failed: \(error.localizedDescription)")
                 lastError = error
-                
+
                 if attempt < 3 {
                     try await Task.sleep(for: .milliseconds(300 * attempt))
                 }
             }
         }
-        
+
         throw lastError ?? BlueskyAgentError.emptyResult("batch summary after 3 attempts")
-    }
-    
-    private func summarizeBatchStreaming(
-        posts: [FormattedThreadPost],
-        context: String?,
-        phase: String,
-        session: LanguageModelSession,
-        continuation: AsyncThrowingStream<String, Error>.Continuation
-    ) async throws -> String {
-        let postsText = posts.map { $0.text }.joined(separator: "\n")
-        
-        let prompt: String
-        if let context, !context.isEmpty {
-            prompt = """
-            Current summary: \(context)
-            
-            New \(phase): 
-            \(postsText)
-            
-            Update the summary to incorporate these new posts. Keep it concise (2-3 sentences) and factual. Reference participants by @handle.
-            """
-        } else {
-            prompt = """
-            Summarize these posts from a Bluesky thread (\(phase)):
-            \(postsText)
-            
-            Provide a concise summary (2-3 sentences) that captures the key points. Reference participants by @handle.
-            """
-        }
-        
-        let options = GenerationOptions(
-            temperature: 0.3,
-            maximumResponseTokens: 300
-        )
-        
-        var lastError: Error?
-        for attempt in 1...3 {
-            do {
-                var latestContent = ""
-                var previousContent = ""
-                let stream = session.streamResponse(options: options, prompt: { Prompt(prompt) })
-                
-                for try await snapshot in stream {
-                    latestContent = snapshot.content
-                    
-                    // Only yield the new delta
-                    if latestContent.count > previousContent.count {
-                        let delta = String(latestContent.dropFirst(previousContent.count))
-                            if !(previousContent.isEmpty
-                                && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    .lowercased() == "null")
-                            {
-                                continuation.yield(delta)
-                            }
-                        previousContent = latestContent
-                    }
-                }
-
-                let content = latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                    if Self.isMeaningfulModelOutput(content) {
-                    return content
-                }
-
-                logger.warning("Batch summarization attempt \(attempt) returned empty content")
-                lastError = BlueskyAgentError.emptyResult("batch summary (attempt \(attempt))")
-                
-                if attempt < 3 {
-                    try await Task.sleep(for: .milliseconds(300 * attempt))
-                }
-            } catch {
-                logger.warning("Batch summarization attempt \(attempt) failed: \(error.localizedDescription)")
-                lastError = error
-                
-                if attempt < 3 {
-                    try await Task.sleep(for: .milliseconds(300 * attempt))
-                }
-            }
-        }
-        
-        throw lastError ?? BlueskyAgentError.emptyResult("batch summary after 3 attempts")
-    }
-    
-    private func polishSummary(
-        _ summary: String,
-        maxSentences: Int,
-        session: LanguageModelSession
-    ) async throws -> String {
-        let prompt = """
-        Refine this summary to exactly \(maxSentences) sentence\(maxSentences == 1 ? "" : "s"). Keep it factual and concise:
-        
-        \(summary)
-        
-        Return plain text only — no headings, bullet points, or markdown.
-        """
-        
-        let options = GenerationOptions(
-            temperature: 0.2,
-            maximumResponseTokens: 400
-        )
-        
-        var lastError: Error?
-        for attempt in 1...3 {
-            do {
-                let response = try await session.respond(to: Prompt(prompt), options: options)
-                let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                    if Self.isMeaningfulModelOutput(content) {
-                    return content
-                }
-
-                logger.warning("Polish attempt \(attempt) returned empty content")
-                lastError = BlueskyAgentError.emptyResult("polish (attempt \(attempt))")
-                
-                if attempt < 3 {
-                    try await Task.sleep(for: .milliseconds(300 * attempt))
-                }
-            } catch {
-                logger.warning("Polish attempt \(attempt) failed: \(error.localizedDescription)")
-                lastError = error
-                
-                if attempt < 3 {
-                    try await Task.sleep(for: .milliseconds(300 * attempt))
-                }
-            }
-        }
-        
-        throw lastError ?? BlueskyAgentError.emptyResult("polish after 3 attempts")
     }
     
     private func polishSummaryStreaming(
         _ summary: String,
         maxSentences: Int,
-        session: LanguageModelSession,
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) async throws -> String {
         let prompt = """
         Refine this summary to exactly \(maxSentences) sentence\(maxSentences == 1 ? "" : "s"). Keep it factual and concise:
-        
+
         \(summary)
-        
+
         Return plain text only — no headings, bullet points, or markdown.
         """
-        
+
         let options = GenerationOptions(
             temperature: 0.2,
             maximumResponseTokens: 400
         )
-        
+
+        let polishSession = try await makeSummarizationSession()
+
         var lastError: Error?
         for attempt in 1...3 {
             do {
                 var latestContent = ""
                 var previousContent = ""
-                let stream = session.streamResponse(options: options, prompt: { Prompt(prompt) })
-                
+                let stream = polishSession.streamResponse(options: options, prompt: { Prompt(prompt) })
+
                 for try await snapshot in stream {
                     latestContent = snapshot.content
-                    
-                    // Only yield the new delta
+
                     if latestContent.count > previousContent.count {
                         let delta = String(latestContent.dropFirst(previousContent.count))
-                            if !(previousContent.isEmpty
-                                && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    .lowercased() == "null")
-                            {
-                                continuation.yield(delta)
-                            }
+                        if !(previousContent.isEmpty
+                            && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                                .lowercased() == "null")
+                        {
+                            continuation.yield(delta)
+                        }
                         previousContent = latestContent
                     }
                 }
 
                 let content = latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                    if Self.isMeaningfulModelOutput(content) {
+                if Self.isMeaningfulModelOutput(content) {
                     return content
                 }
 
                 logger.warning("Polish attempt \(attempt) returned empty content")
                 lastError = BlueskyAgentError.emptyResult("polish (attempt \(attempt))")
-                
+
                 if attempt < 3 {
                     try await Task.sleep(for: .milliseconds(300 * attempt))
                 }
             } catch {
                 logger.warning("Polish attempt \(attempt) failed: \(error.localizedDescription)")
                 lastError = error
-                
+
                 if attempt < 3 {
                     try await Task.sleep(for: .milliseconds(300 * attempt))
                 }
             }
         }
-        
+
         throw lastError ?? BlueskyAgentError.emptyResult("polish after 3 attempts")
     }
     
@@ -541,28 +408,19 @@ actor BlueskyIntelligenceAgent {
         return newSession
     }
     
-        /// Creates or returns a session strictly for text processing without tools
-        /// This prevents the model from hallucinating tool calls during summarization loops
-        private func ensureSummarizationSession(using client: ATProtoClient) async throws
-            -> LanguageModelSession
-        {
-            // We don't cache this session in the main `session` property to avoid overwriting the general-purpose one
-            // but we could cache it separately if needed. For now, we'll create it on demand or check if the main session
-            // is already strictly configured (which it usually isn't).
-
-            guard let model = prepareModel() else {
-                throw BlueskyAgentError.modelUnavailable
-            }
-
-            // No tools for summarization to prevent 502 errors from redundant fetch_thread calls
-            let newSession = LanguageModelSession(
-                model: model,
-                tools: [],  // Explicitly empty tools
-                instructions: { Instructions { Self.summarizationInstructionsText } }
-            )
-
-            return newSession
+    /// Creates a fresh session for text-only summarization (no tools, no history).
+    /// Each batch gets its own session to avoid context accumulation.
+    private func makeSummarizationSession() async throws -> LanguageModelSession {
+        guard let model = prepareModel() else {
+            throw BlueskyAgentError.modelUnavailable
         }
+
+        return LanguageModelSession(
+            model: model,
+            tools: [],
+            instructions: { Instructions { Self.summarizationInstructionsText } }
+        )
+    }
 
     private func prepareModel() -> SystemLanguageModel? {
         if let model { return model }
