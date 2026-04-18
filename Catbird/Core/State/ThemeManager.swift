@@ -1,10 +1,26 @@
 import SwiftUI
+import CatbirdBrand
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
 import AppKit
 #endif
 import OSLog
+
+/// 6-digit hex → SwiftUI Color. Used to materialize CatbirdBrand
+/// palette strings (e.g. `"#143F9C"`) into Colors at enum-property
+/// read time. Returns nil for malformed input so the caller can
+/// substitute a sane fallback.
+private func brandColor(fromHex hex: String) -> Color? {
+    let s = hex.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+    return Color(
+        .displayP3,
+        red:   Double((v >> 16) & 0xff) / 255,
+        green: Double((v >>  8) & 0xff) / 255,
+        blue:  Double( v        & 0xff) / 255
+    )
+}
 
 /// Catbird brand accent palettes. The raw value "default" is
 /// preserved for the renamed-from-`bluesky` case so existing
@@ -32,32 +48,45 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Light-mode accent. Values mirror `docs/brand/tokens/Color.pkl`.
-    /// When CatbirdBrand is wired into the Xcode project, replace these
-    /// literals with `Brand.color.<palette>.accentLight` reads.
-    var color: Color {
+    /// Palette as decoded from the generated CatbirdBrand tokens.
+    /// Mode-adaptive Color accessors derive from these strings.
+    private var brandPalette: catbird_Color.Palette {
         switch self {
-        case .catbird:  return Color(red: 0x14/255.0, green: 0x3F/255.0, blue: 0x9C/255.0)   // #143F9C
-        case .twilight: return Color(red: 0x58/255.0, green: 0x56/255.0, blue: 0xD6/255.0)   // #5856D6
-        case .lavender: return Color(red: 0x9B/255.0, green: 0x72/255.0, blue: 0xCF/255.0)   // #9B72CF
-        case .sunrise:  return Color(red: 0xFF/255.0, green: 0x95/255.0, blue: 0x5E/255.0)   // #FF955E
-        case .aurora:   return Color(red: 0x30/255.0, green: 0xB0/255.0, blue: 0xAE/255.0)   // #30B0AE
-        case .dusk:     return Color(red: 0xD6/255.0, green: 0x60/255.0, blue: 0x91/255.0)   // #D66091
-        case .midnight: return Color(red: 0x31/255.0, green: 0x54/255.0, blue: 0xA5/255.0)   // #3154A5
+        case .catbird:  return Brand.color.catbird
+        case .twilight: return Brand.color.twilight
+        case .lavender: return Brand.color.lavender
+        case .sunrise:  return Brand.color.sunrise
+        case .aurora:   return Brand.color.aurora
+        case .dusk:     return Brand.color.dusk
+        case .midnight: return Brand.color.midnight
         }
     }
 
-    /// Dark-mode accent. Lighter stop of the palette's gradient pair.
+    /// Chrome / fill accent for light mode. Use for buttons, FAB, tab
+    /// indicator backgrounds, selected-state fills, display-size icons.
+    /// On the Catbird palette this is `#5192FF`, which passes WCAG
+    /// AA-large but not AA-normal — avoid for inline body-size text.
+    var color: Color {
+        brandColor(fromHex: brandPalette.accentLight) ?? .blue
+    }
+
+    /// Chrome / fill accent for dark mode. Same role as `color`, lifted
+    /// for contrast against dark surfaces.
     var darkColor: Color {
-        switch self {
-        case .catbird:  return Color(red: 0x5C/255.0, green: 0x8A/255.0, blue: 0xE8/255.0)   // #5C8AE8
-        case .twilight: return Color(red: 0x9A/255.0, green: 0x98/255.0, blue: 0xEA/255.0)   // #9A98EA
-        case .lavender: return Color(red: 0xC5/255.0, green: 0xA8/255.0, blue: 0xE5/255.0)   // #C5A8E5
-        case .sunrise:  return Color(red: 0xFF/255.0, green: 0xB6/255.0, blue: 0x8C/255.0)   // #FFB68C
-        case .aurora:   return Color(red: 0x6F/255.0, green: 0xD0/255.0, blue: 0xCE/255.0)   // #6FD0CE
-        case .dusk:     return Color(red: 0xE8/255.0, green: 0x9A/255.0, blue: 0xB6/255.0)   // #E89AB6
-        case .midnight: return Color(red: 0x74/255.0, green: 0x90/255.0, blue: 0xC9/255.0)   // #7490C9
-        }
+        brandColor(fromHex: brandPalette.accentDark) ?? .blue
+    }
+
+    /// Text-safe accent for light mode. Use for inline links, @mentions,
+    /// hashtags, and any accent-colored text at body size / regular
+    /// weight. On the Catbird palette this is `#005EFF`, which clears
+    /// WCAG AA-normal (5.19:1 on white).
+    var textColor: Color {
+        brandColor(fromHex: brandPalette.accentText) ?? .blue
+    }
+
+    /// Text-safe accent for dark mode.
+    var textDarkColor: Color {
+        brandColor(fromHex: brandPalette.accentTextDark) ?? .blue
     }
 
     #if os(iOS)
@@ -206,12 +235,12 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
                     window.overrideUserInterfaceStyle = .unspecified
                 }
                 
-                // Set window tint color based on accent color selection
-                if currentAccentColor == .catbird {
-                    window.tintColor = nil  // System default blue
-                } else {
-                    window.tintColor = currentAccentColor.uiColor
-                }
+                // Set window tint from the selected Catbird palette.
+                // Every palette — including the default .catbird (#143F9C)
+                // — has its own brand-owned value, so we never fall through
+                // to UIKit's systemBlue. `nil` here was a legacy path from
+                // when the default mirrored iOS system blue.
+                window.tintColor = currentAccentColor.uiColor
             }
             
             logger.info("Theme applied to \(windowScene.windows.count) windows")
@@ -691,7 +720,7 @@ struct ThemeModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .preferredColorScheme(themeManager.colorSchemeOverride)
-            .tint(themeManager.currentAccentColor == .catbird ? nil : themeManager.currentAccentColor.color)
+            .tint(themeManager.currentAccentColor.color)
             .environment(\.themeManager, themeManager)
     }
 }
