@@ -6,9 +6,11 @@ import AppKit
 #endif
 import OSLog
 
-/// Sky-themed accent color options
+/// Catbird brand accent palettes. The raw value "default" is
+/// preserved for the renamed-from-`bluesky` case so existing
+/// UserDefaults entries continue to resolve correctly.
 enum AccentColorOption: String, CaseIterable, Identifiable {
-    case bluesky = "default"
+    case catbird = "default"
     case twilight = "twilight"
     case lavender = "lavender"
     case sunrise = "sunrise"
@@ -20,7 +22,7 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .bluesky: return "Bluesky"
+        case .catbird: return "Catbird"
         case .twilight: return "Twilight"
         case .lavender: return "Lavender"
         case .sunrise: return "Sunrise"
@@ -30,15 +32,31 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Light-mode accent. Values mirror `docs/brand/tokens/Color.pkl`.
+    /// When CatbirdBrand is wired into the Xcode project, replace these
+    /// literals with `Brand.color.<palette>.accentLight` reads.
     var color: Color {
         switch self {
-        case .bluesky: return Color(red: 0.0, green: 0.478, blue: 1.0)
-        case .twilight: return Color(red: 0.345, green: 0.337, blue: 0.839)
-        case .lavender: return Color(red: 0.608, green: 0.447, blue: 0.812)
-        case .sunrise: return Color(red: 1.0, green: 0.584, blue: 0.369)
-        case .aurora: return Color(red: 0.188, green: 0.690, blue: 0.682)
-        case .dusk: return Color(red: 0.839, green: 0.376, blue: 0.569)
-        case .midnight: return Color(red: 0.192, green: 0.329, blue: 0.647)
+        case .catbird:  return Color(red: 0x14/255.0, green: 0x3F/255.0, blue: 0x9C/255.0)   // #143F9C
+        case .twilight: return Color(red: 0x58/255.0, green: 0x56/255.0, blue: 0xD6/255.0)   // #5856D6
+        case .lavender: return Color(red: 0x9B/255.0, green: 0x72/255.0, blue: 0xCF/255.0)   // #9B72CF
+        case .sunrise:  return Color(red: 0xFF/255.0, green: 0x95/255.0, blue: 0x5E/255.0)   // #FF955E
+        case .aurora:   return Color(red: 0x30/255.0, green: 0xB0/255.0, blue: 0xAE/255.0)   // #30B0AE
+        case .dusk:     return Color(red: 0xD6/255.0, green: 0x60/255.0, blue: 0x91/255.0)   // #D66091
+        case .midnight: return Color(red: 0x31/255.0, green: 0x54/255.0, blue: 0xA5/255.0)   // #3154A5
+        }
+    }
+
+    /// Dark-mode accent. Lighter stop of the palette's gradient pair.
+    var darkColor: Color {
+        switch self {
+        case .catbird:  return Color(red: 0x5C/255.0, green: 0x8A/255.0, blue: 0xE8/255.0)   // #5C8AE8
+        case .twilight: return Color(red: 0x9A/255.0, green: 0x98/255.0, blue: 0xEA/255.0)   // #9A98EA
+        case .lavender: return Color(red: 0xC5/255.0, green: 0xA8/255.0, blue: 0xE5/255.0)   // #C5A8E5
+        case .sunrise:  return Color(red: 0xFF/255.0, green: 0xB6/255.0, blue: 0x8C/255.0)   // #FFB68C
+        case .aurora:   return Color(red: 0x6F/255.0, green: 0xD0/255.0, blue: 0xCE/255.0)   // #6FD0CE
+        case .dusk:     return Color(red: 0xE8/255.0, green: 0x9A/255.0, blue: 0xB6/255.0)   // #E89AB6
+        case .midnight: return Color(red: 0x74/255.0, green: 0x90/255.0, blue: 0xC9/255.0)   // #7490C9
         }
     }
 
@@ -63,7 +81,7 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     var darkThemeMode: DarkThemeMode = .dim
 
     /// Current accent color
-    var currentAccentColor: AccentColorOption = .bluesky
+    var currentAccentColor: AccentColorOption = .catbird
     
     // MARK: - Caching Properties
     
@@ -101,7 +119,7 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     ///   - forceImmediateNavigationTypography: when true, navigation title fonts are applied right away to avoid the initial width flicker before the debounced pass runs
     func applyTheme(theme: String, darkThemeMode: String, accentColor: String = "default", forceImmediateNavigationTypography: Bool = false) {
         // Update accent color
-        let newAccent = AccentColorOption(rawValue: accentColor) ?? .bluesky
+        let newAccent = AccentColorOption(rawValue: accentColor) ?? .catbird
         let accentChanged = newAccent != currentAccentColor
         currentAccentColor = newAccent
 
@@ -189,7 +207,7 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
                 }
                 
                 // Set window tint color based on accent color selection
-                if currentAccentColor == .bluesky {
+                if currentAccentColor == .catbird {
                     window.tintColor = nil  // System default blue
                 } else {
                     window.tintColor = currentAccentColor.uiColor
@@ -673,7 +691,7 @@ struct ThemeModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .preferredColorScheme(themeManager.colorSchemeOverride)
-            .tint(themeManager.currentAccentColor == .bluesky ? nil : themeManager.currentAccentColor.color)
+            .tint(themeManager.currentAccentColor == .catbird ? nil : themeManager.currentAccentColor.color)
             .environment(\.themeManager, themeManager)
     }
 }

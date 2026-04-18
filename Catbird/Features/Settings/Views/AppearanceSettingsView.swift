@@ -304,7 +304,7 @@ struct ColorSchemePreview: View {
     var accentColorKey: String = "default"
 
     private var accent: Color {
-        (AccentColorOption(rawValue: accentColorKey) ?? .bluesky).color
+        (AccentColorOption(rawValue: accentColorKey) ?? .catbird).color
     }
     
     var isDarkMode: Bool {
