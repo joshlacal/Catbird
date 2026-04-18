@@ -101,7 +101,7 @@ struct MLSGIFView: View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
       Label("Tenor GIF", systemImage: "play.rectangle.fill")
         .appBody()
-        .foregroundColor(.accentColor)
+        .foregroundColor(Color("AccentTextColor"))
 
       if let title = gifEmbed.title {
         Text(title)

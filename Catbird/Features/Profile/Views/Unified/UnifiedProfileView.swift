@@ -1683,7 +1683,7 @@ struct ProfileHeader: View {
                             .lineLimit(1)
                     }
                     .appFont(AppTextRole.subheadline)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color("AccentTextColor"))
                 }
                 .buttonStyle(.plain)
             }
@@ -1867,7 +1867,7 @@ struct ProfileHeader: View {
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .foregroundColor(.accentColor)
+                .foregroundColor(Color("AccentTextColor"))
         }
         .background(
             Capsule()
@@ -1964,7 +1964,7 @@ struct ProfileHeader: View {
                 .fontWeight(.medium)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .foregroundColor(.accentColor)
+                .foregroundColor(Color("AccentTextColor"))
                 .cornerRadius(16)
             }
             .background(
@@ -2051,7 +2051,7 @@ struct ProfileHeader: View {
                     .fontWeight(.medium)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(Color("AccentTextColor"))
                     .cornerRadius(16)
                 }
                 .background(

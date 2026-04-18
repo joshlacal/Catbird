@@ -441,12 +441,12 @@ var id: String {
           Text("you")
             .appBody()
             .offset(y: -1)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(Color("AccentTextColor"))
         } else if let grandparentAuthor = grandparentAuthor {
           Text(verbatim: "@\(grandparentAuthor.handle)")
             .appBody()
             .offset(y: -1)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(Color("AccentTextColor"))
             .onTapGesture {
               path.append(NavigationDestination.profile(grandparentAuthor.did.didString()))
             }

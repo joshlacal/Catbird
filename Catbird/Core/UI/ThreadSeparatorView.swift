@@ -71,7 +71,7 @@ struct ThreadSeparatorView: View {
     HStack {
       Text("View full thread")
         .appFont(AppTextRole.subheadline)
-        .foregroundColor(.accentColor)
+        .foregroundColor(Color("AccentTextColor"))
       Image(systemName: "chevron.right")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.accentColor)

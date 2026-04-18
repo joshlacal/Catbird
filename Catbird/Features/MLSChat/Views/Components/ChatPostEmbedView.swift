@@ -334,7 +334,7 @@ struct ChatPostEmbedView: View {
         Task { await fetchPost() }
       }
       .designCaption()
-      .foregroundColor(.accentColor)
+      .foregroundColor(Color("AccentTextColor"))
     }
     .chatEmbedCardStyle(colorScheme: colorScheme, isError: true)
   }
@@ -346,7 +346,7 @@ struct ChatPostEmbedView: View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
       Label("Bluesky Post", systemImage: "quote.bubble")
         .designCaption()
-        .foregroundColor(.accentColor)
+        .foregroundColor(Color("AccentTextColor"))
 
       if let text = postEmbed.text {
         Text(text)
