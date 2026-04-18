@@ -235,12 +235,20 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
                     window.overrideUserInterfaceStyle = .unspecified
                 }
                 
-                // Set window tint from the selected Catbird palette.
-                // Every palette — including the default .catbird (#143F9C)
-                // — has its own brand-owned value, so we never fall through
-                // to UIKit's systemBlue. `nil` here was a legacy path from
-                // when the default mirrored iOS system blue.
-                window.tintColor = currentAccentColor.uiColor
+                // Set window tint based on accent color selection.
+                // For the default .catbird palette we leave tint = nil so
+                // UIKit inherits from the asset catalog's AccentColor
+                // (#5192FF); this preserves iOS's contextual tint
+                // resolution, which determines when a given glyph or text
+                // uses tint vs label color. Forcing the tint here bled
+                // accent color into spots UIKit treats as non-tint by
+                // default (some text styles, list chevrons, etc.).
+                // Only custom palettes override.
+                if currentAccentColor == .catbird {
+                    window.tintColor = nil
+                } else {
+                    window.tintColor = currentAccentColor.uiColor
+                }
             }
             
             logger.info("Theme applied to \(windowScene.windows.count) windows")
@@ -720,7 +728,14 @@ struct ThemeModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .preferredColorScheme(themeManager.colorSchemeOverride)
-            .tint(themeManager.currentAccentColor.color)
+            // Default .catbird palette leaves tint unresolved so SwiftUI
+            // uses its contextual `.tint` resolution (asset-catalog
+            // AccentColor, which is already #5192FF). Forcing an explicit
+            // tint here caused the accent to propagate into spots SwiftUI
+            // treats as non-tint by default — visible as text/glyphs that
+            // should have been primary/secondary label color showing as
+            // the accent. Only custom palettes override.
+            .tint(themeManager.currentAccentColor == .catbird ? nil : themeManager.currentAccentColor.color)
             .environment(\.themeManager, themeManager)
     }
 }
