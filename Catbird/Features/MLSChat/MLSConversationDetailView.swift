@@ -1773,45 +1773,29 @@ struct MLSConversationDetailView: View {
         return
       }
 
-            // Use MLSStorage helper method (avoids direct db.read on main thread)
-
-            let lastCachedCursor = try? await withTimeout(seconds: 5.0, operationName: "checking cache") {
-
-              try await MLSStorage.shared.fetchLastMessageCursor(
-
+            // Prefer sequence-state table over row-max to avoid optimisticSeq inflation
+            // when updateMessageMetadata silently fails; see overnight-diagnosis.md Branch B.
+            let rawProcessedSeq: Int64 = (try? await withTimeout(
+              seconds: 5.0, operationName: "checking sequence state"
+            ) {
+              try await MLSStorage.shared.getLastProcessedSeq(
                 conversationID: conversationId,
-
                 currentUserDID: currentUserDID,
-
                 database: database
-
               )
+            }) ?? -1
 
-            }
+            let lastCachedSeq: Int? = rawProcessedSeq >= 0 ? Int(rawProcessedSeq) : nil
 
-      
-
-            if let cursor = lastCachedCursor {
-
+            if let seq = lastCachedSeq {
               logger.debug(
-
-                "📍 Last cached message epoch=\(cursor.epoch), seq=\(cursor.seq), will fetch messages after this"
-
+                "📍 Last processed seq=\(seq) (from sequence-state), will fetch messages after this"
               )
-
             } else {
-
               logger.debug(
-
                 "📍 No cached messages, will fetch all from server"
-
               )
-
             }
-
-      
-
-            let lastCachedSeq = lastCachedCursor.map { Int($0.seq) }
 
       
 
