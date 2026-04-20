@@ -2584,8 +2584,25 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                 )
               }
             }
-          } else if case .stagedCommit = processResult {
-            notificationLogger.debug("🔄 [FG] Processed commit message \(message.id.prefix(8))")
+          } else if case .stagedCommit(let newEpoch, _) = processResult {
+            // Task #46: processMessage stages the commit; we must explicitly
+            // merge to advance the local epoch. On failure, best-effort
+            // discard so OpenMLS's staged handle doesn't linger.
+            do {
+              let mergedEpoch = try context.mergeIncomingCommit(
+                groupId: groupIdData, targetEpoch: newEpoch
+              )
+              notificationLogger.debug(
+                "🔄 [FG] Merged staged commit \(message.id.prefix(8)) → epoch \(mergedEpoch)"
+              )
+            } catch {
+              notificationLogger.warning(
+                "⚠️ [FG] mergeIncomingCommit failed for \(message.id.prefix(8)) epoch=\(newEpoch): \(error.localizedDescription) — discarding stage"
+              )
+              try? context.discardIncomingCommit(
+                groupId: groupIdData, targetEpoch: newEpoch
+              )
+            }
           }
 
           notificationLogger.debug(
