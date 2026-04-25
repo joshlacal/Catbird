@@ -1259,7 +1259,8 @@ private extension CatbirdApp {
       #endif
 
       // Block new MLS FFI work immediately while we transition to background.
-      // (MLSClient + MLSCoreContext each maintain their own UniFFI MlsContext caches.)
+      // MLSClient delegates UniFFI MlsContext ownership to MLSCoreContext; both
+      // gates are set because callers enter through both surfaces.
       MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
       MLSCoreContext.markSuspensionInProgress()
 

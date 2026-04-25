@@ -27,6 +27,7 @@
 		219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58022EBC27F500C8D6F2 /* Security.framework */; };
 		219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58042EBC27FF00C8D6F2 /* Foundation.framework */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
+		21BAB3512F9775AF00C94C69 /* CatbirdBrand in Frameworks */ = {isa = PBXBuildFile; productRef = 21BAB3502F9775AF00C94C69 /* CatbirdBrand */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A87CAC2D94390D0062F8E9 /* Petrel */; };
@@ -361,6 +362,7 @@
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
 				219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */,
 				217ECDA92EB4268100BD113B /* Mantis in Frameworks */,
+				21BAB3512F9775AF00C94C69 /* CatbirdBrand in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -519,6 +521,7 @@
 				219DA5B82EED838E00F717FA /* EmojiKit */,
 				210BF26A2F841D6400C27A4B /* CatbirdMLSCore */,
 				210BF26D2F841D7700C27A4B /* Petrel */,
+				21BAB3502F9775AF00C94C69 /* CatbirdBrand */,
 			);
 			productName = Catbird;
 			productReference = 21EBFE092EB53D9300E707B6 /* Catbird.app */;
@@ -661,6 +664,7 @@
 				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
 				210BF2692F841D6400C27A4B /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */,
 				210BF26C2F841D7700C27A4B /* XCLocalSwiftPackageReference "../Petrel" */,
+				21BAB34F2F9775AF00C94C69 /* XCLocalSwiftPackageReference "../CatbirdBrand" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 212E93F42D60132700D3E1DD;
@@ -1643,6 +1647,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Petrel;
 		};
+		21BAB34F2F9775AF00C94C69 /* XCLocalSwiftPackageReference "../CatbirdBrand" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../CatbirdBrand;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -1777,6 +1785,10 @@
 		21A87CAC2D94390D0062F8E9 /* Petrel */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Petrel;
+		};
+		21BAB3502F9775AF00C94C69 /* CatbirdBrand */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CatbirdBrand;
 		};
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
 			isa = XCSwiftPackageProductDependency;
