@@ -1965,6 +1965,12 @@ private extension CatbirdApp {
     case "request-keypackage-replenish":
       await handleRequestKeyPackageReplenish(params: params, manager: manager, logger: e2eLogger)
 
+    case "wipe-mls-state", "wipe_mls_state":
+      await handleWipeMLSState(params: params, manager: manager, logger: e2eLogger)
+
+    case "get-recovery-state", "get_recovery_state":
+      await handleGetRecoveryState(params: params, manager: manager, logger: e2eLogger)
+
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
       await writeE2EResult(command: command, success: false, error: "Unknown command")
@@ -2490,6 +2496,205 @@ private extension CatbirdApp {
     } catch {
       e2eLogger.error("[E2E] Failed to get epoch: \(error.localizedDescription)")
       await writeE2EResult(command: "get-epoch", success: false, error: error.localizedDescription)
+    }
+  }
+
+  /// E2E: wipe local MLS state for a conversation so the deferred recovery
+  /// loop treats it as needing rejoin.
+  ///
+  /// Used by `scripts/e2e_mls_auto_reset_ios.sh` to deterministically push a
+  /// client into the `groupMissing`/`needsRejoin` cohort without resorting to
+  /// filesystem corruption. Sequence:
+  ///   1. FFI `deleteGroup` to drop OpenMLS state for the convo's groupId.
+  ///   2. Evict the in-memory conversation cache + group state.
+  ///   3. Set `needsRejoin = 1` in GRDB (clears `isUnrecoverable`/`needsReset`)
+  ///      so the next deferred-recovery tick re-enters the rejoin path.
+  ///
+  /// Accepts `conversationId` (canonical iOS param name) or `convoId` (the
+  /// e2e script's shorthand).
+  private func handleWipeMLSState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"] ?? params["convoId"] else {
+      e2eLogger.error("[E2E-WIPE] requires conversationId or convoId parameter")
+      await writeE2EResult(command: "wipe-mls-state", success: false, error: "Missing conversationId")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E-WIPE] Not authenticated")
+      await writeE2EResult(command: "wipe-mls-state", success: false, error: "Not authenticated")
+      return
+    }
+
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      e2eLogger.error("[E2E-WIPE] MLS not initialized")
+      await writeE2EResult(command: "wipe-mls-state", success: false, error: "MLS not initialized")
+      return
+    }
+
+    guard let userDid = conversationManager.userDid else {
+      e2eLogger.error("[E2E-WIPE] No user DID")
+      await writeE2EResult(command: "wipe-mls-state", success: false, error: "No user DID")
+      return
+    }
+
+    do {
+      let model = try await conversationManager.storage.fetchConversation(
+        conversationID: conversationId,
+        currentUserDID: userDid,
+        database: conversationManager.database
+      )
+      let groupIdData: Data? = model?.groupID
+        ?? conversationManager.conversations[conversationId].flatMap { Data(hexEncoded: $0.groupId) }
+
+      if let groupIdData {
+        try? await conversationManager.mlsClient.deleteGroup(for: userDid, groupId: groupIdData)
+        e2eLogger.info("[E2E-WIPE] Deleted FFI group state for \(conversationId.prefix(16))")
+      } else {
+        e2eLogger.warning("[E2E-WIPE] No groupId found for \(conversationId.prefix(16)) — proceeding with DB-only wipe")
+      }
+
+      conversationManager.conversations.removeValue(forKey: conversationId)
+      conversationManager.groupStates.removeValue(forKey: conversationId)
+
+      try await conversationManager.database.write { db in
+        try db.execute(
+          sql: """
+                UPDATE MLSConversationModel
+                SET needsRejoin = 1,
+                    needsReset = 0,
+                    isUnrecoverable = 0,
+                    pendingNewGroupId = NULL,
+                    pendingResetGeneration = NULL,
+                    updatedAt = ?
+                WHERE conversationID = ? AND currentUserDID = ?;
+            """,
+          arguments: [Date(), conversationId, userDid]
+        )
+      }
+
+      if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
+        await recoveryManager.clearRejoinTracking(convoId: conversationId)
+      }
+
+      e2eLogger.info("[E2E-WIPE] Wipe complete for \(conversationId.prefix(16))")
+      await writeE2EResult(command: "wipe-mls-state", success: true, data: [
+        "conversationId": conversationId,
+        "groupIdPresent": groupIdData != nil ? "true" : "false"
+      ])
+    } catch {
+      e2eLogger.error("[E2E-WIPE] Failed: \(error.localizedDescription)")
+      await writeE2EResult(command: "wipe-mls-state", success: false, error: error.localizedDescription)
+    }
+  }
+
+  /// E2E: report MLS recovery state for a conversation.
+  ///
+  /// Returns the spec §8.1 recovery state (`Active` / `EpochBehind` /
+  /// `GroupMissing` / `NeedsRejoin` / `Recovering` / `UnrecoverableLocal` /
+  /// `ResetPending`), the FFI epoch, and the `pendingResetGeneration` if
+  /// staged. Used by `scripts/e2e_mls_auto_reset_ios.sh` to assert the
+  /// auto-reset pyramid drove a client to the expected recovery state.
+  ///
+  /// Accepts `conversationId` (canonical) or `convoId` (e2e script
+  /// shorthand).
+  private func handleGetRecoveryState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let conversationId = params["conversationId"] ?? params["convoId"] else {
+      e2eLogger.error("[E2E-RECOVERY] requires conversationId or convoId parameter")
+      await writeE2EResult(command: "get-recovery-state", success: false, error: "Missing conversationId")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      await writeE2EResult(command: "get-recovery-state", success: false, error: "Not authenticated")
+      return
+    }
+
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      await writeE2EResult(command: "get-recovery-state", success: false, error: "MLS not initialized")
+      return
+    }
+
+    guard let userDid = conversationManager.userDid else {
+      await writeE2EResult(command: "get-recovery-state", success: false, error: "No user DID")
+      return
+    }
+
+    do {
+      let model = try await conversationManager.storage.fetchConversation(
+        conversationID: conversationId,
+        currentUserDID: userDid,
+        database: conversationManager.database
+      )
+
+      let state: ConversationRecoveryState
+      if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
+        state = await recoveryManager.recoveryState(for: conversationId, model: model)
+      } else {
+        state = model?.persistedRecoveryState ?? .healthy
+      }
+
+      // Map spec §8.1 enum to the names the e2e script asserts on.
+      // Keep the script's vocabulary (`Active` for `.healthy`) on top of the
+      // canonical Swift case names so consumers can pick whichever matches.
+      let stateName: String
+      let externalName: String
+      switch state {
+      case .healthy:
+        stateName = "healthy"; externalName = "Active"
+      case .epochBehind:
+        stateName = "epochBehind"; externalName = "EpochBehind"
+      case .groupMissing:
+        stateName = "groupMissing"; externalName = "GroupMissing"
+      case .needsRejoin:
+        stateName = "needsRejoin"; externalName = "NeedsRejoin"
+      case .recovering:
+        stateName = "recovering"; externalName = "Recovering"
+      case .unrecoverableLocal:
+        stateName = "unrecoverableLocal"; externalName = "UnrecoverableLocal"
+      case .resetPending:
+        stateName = "resetPending"; externalName = "ResetPending"
+      }
+
+      // FFI-actual epoch is authoritative (mirrors handleGetEpoch). Falls
+      // back to the model's last-known epoch if the local group is gone.
+      var epoch: UInt64 = 0
+      if let groupIdData = model?.groupID {
+        epoch = (try? await conversationManager.mlsClient.getEpoch(
+          for: userDid, groupId: groupIdData)) ?? UInt64(model?.epoch ?? 0)
+      } else if let convo = conversationManager.conversations[conversationId],
+                let groupIdData = Data(hexEncoded: convo.groupId) {
+        epoch = (try? await conversationManager.mlsClient.getEpoch(
+          for: userDid, groupId: groupIdData)) ?? UInt64(convo.epoch)
+      } else if let model {
+        epoch = UInt64(model.epoch)
+      }
+
+      let generation = model?.pendingResetGeneration
+
+      e2eLogger.info(
+        "[E2E-RECOVERY] \(conversationId.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
+      )
+
+      var data: [String: String] = [
+        "conversationId": conversationId,
+        "state": externalName,
+        "stateRaw": stateName,
+        "epoch": "\(epoch)"
+      ]
+      if let generation {
+        data["generation"] = "\(generation)"
+      }
+      if let model {
+        data["needsRejoin"] = model.needsRejoin ? "true" : "false"
+        data["needsReset"] = model.needsReset ? "true" : "false"
+        data["isUnrecoverable"] = model.isUnrecoverable ? "true" : "false"
+      } else {
+        data["modelPresent"] = "false"
+      }
+      await writeE2EResult(command: "get-recovery-state", success: true, data: data)
+    } catch {
+      e2eLogger.error("[E2E-RECOVERY] Failed: \(error.localizedDescription)")
+      await writeE2EResult(command: "get-recovery-state", success: false, error: error.localizedDescription)
     }
   }
 
