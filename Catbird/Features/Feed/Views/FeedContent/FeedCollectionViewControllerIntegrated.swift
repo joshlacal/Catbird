@@ -54,6 +54,10 @@ import os
     private var updateTask: Task<Void, Never>?
     private var isPerformingUpdate = false
 
+    /// Initial load serialization - de-dupes overlapping loadInitialData calls
+    /// (viewWillAppear, account-switch observer, updateStateManager can race)
+    private var initialLoadTask: Task<Void, Never>?
+
     /// State observation with proper @Observable integration
     var stateObserver: UIKitStateObserver<FeedStateManager>?
 
@@ -289,6 +293,7 @@ import os
       tabTapObserver?.stopObserving()
       cancelPendingLoadMoreRequest()
       updateTask?.cancel()
+      initialLoadTask?.cancel()
 
       if let backgroundObserver = backgroundObserver {
         NotificationCenter.default.removeObserver(backgroundObserver)
@@ -668,9 +673,21 @@ import os
 
     @MainActor
     func loadInitialData() async {
-      controllerLogger.debug("📥 Loading initial data")
-      await stateManager.loadInitialData()
-      await performUpdate()
+      if let existing = initialLoadTask {
+        controllerLogger.debug("⏭️ Initial load already in flight, awaiting existing task")
+        await existing.value
+        return
+      }
+
+      let task = Task { @MainActor [weak self] in
+        guard let self else { return }
+        defer { self.initialLoadTask = nil }
+        self.controllerLogger.debug("📥 Loading initial data")
+        await self.stateManager.loadInitialData()
+        await self.performUpdate()
+      }
+      initialLoadTask = task
+      await task.value
     }
 
     // MARK: - Header API
@@ -951,6 +968,8 @@ import os
 
       // Cancel ongoing operations
       cancelPendingLoadMoreRequest()
+      initialLoadTask?.cancel()
+      initialLoadTask = nil
       stateObserver?.stopObserving()
       themeObserver?.stopObserving()
       feedbackObserver?.stopObserving()
