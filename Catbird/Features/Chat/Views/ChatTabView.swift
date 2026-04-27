@@ -380,6 +380,28 @@ struct ChatTabView: View {
     if mlsChatEnabledForCurrentAccount {
       Task { await loadMLSConversations() }
       startMLSPolling()
+
+      // B8: kick off the full MLS init so the global WebSocket subscription
+      // starts. Without this, `appState.initializeMLS()` only runs from
+      // Settings or `MLSConversationListView`, so the global WS — which is
+      // the ONLY transport that delivers `groupResetEvent` for convos the
+      // user hasn't manually opened — never connects on a normal Chat-tab
+      // launch. Effect: server-side auto-resets (Phase 2 sweep, quorum)
+      // never reach `handleGroupReset` for any convo unless the user taps
+      // into it, so the post-reset bootstrap path can't fire and the convo
+      // stays broken in the UI.
+      //
+      // initializeMLS() is idempotent — its inner gate
+      // (`mlsGlobalWebSocketSubscriptionStarted`) makes the subscribe call
+      // a no-op after the first success in this AppState lifetime, so
+      // calling it on every Chat-tab appearance is safe.
+      Task {
+        do {
+          try await appState.initializeMLS()
+        } catch {
+          logger.error("MLS init failed from ChatTabView.onAppear: \(error.localizedDescription)")
+        }
+      }
     }
   }
 
