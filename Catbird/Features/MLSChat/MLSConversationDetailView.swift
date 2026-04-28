@@ -3393,6 +3393,10 @@ struct MLSConversationDetailView: View {
             self.logger.info("📡 WS: onGroupReset handler called - convo: \(groupResetEvent.convoId.prefix(16))")
             await self.handleGroupResetEvent(groupResetEvent)
           },
+          onResetRequested: { @MainActor resetRequestedEvent in
+            self.logger.info("📡 WS: onResetRequested handler called - convo: \(resetRequestedEvent.convoId.prefix(16)), gen: \(resetRequestedEvent.generation), trigger: \(resetRequestedEvent.trigger)")
+            await self.handleResetRequestedEvent(resetRequestedEvent)
+          },
           onError: { @MainActor error in
             self.logger.error("📡 WS: onError handler called: \(error.localizedDescription)")
           },
@@ -3880,6 +3884,28 @@ struct MLSConversationDetailView: View {
       await manager.handleGroupReset(event: event)
     } else {
       logger.error("❌ [GroupReset] No conversation manager available")
+    }
+  }
+
+  /// Handle a Phase 2.5 indirect-trigger `resetRequestedEvent`.
+  ///
+  /// Mirrors `handleGroupResetEvent` shape: log the event, then delegate to
+  /// `MLSConversationManager.handleResetRequested(event:)` which deletes the
+  /// stale group, flags `RESET_PENDING`, and lets deferred recovery race-
+  /// bootstrap a fresh crypto session via the chokepoint UNIQUE constraint.
+  /// See `docs/plans/phase-2-5-indirect-funneling.md` §3.
+  @MainActor
+  private func handleResetRequestedEvent(
+    _ event: BlueCatbirdMlsChatSubscribeEvents.ResetRequestedEvent
+  ) async {
+    logger.info(
+      "🔄 [ResetRequested] Conversation \(event.convoId.prefix(16)) reset requested (gen \(event.generation), trigger=\(event.trigger), eventId=\(event.requestEventId.prefix(16)))"
+    )
+
+    if let manager = await appState.getMLSConversationManager() {
+      await manager.handleResetRequested(event: event)
+    } else {
+      logger.error("❌ [ResetRequested] No conversation manager available")
     }
   }
 

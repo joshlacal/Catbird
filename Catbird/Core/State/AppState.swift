@@ -2304,6 +2304,18 @@ final class AppState {
                 self.stateInvalidationBus.notify(.mlsConversationListChanged)
               }
             },
+            onResetRequested: { [weak self] event in
+              guard let self else { return }
+              self.logger.warning(
+                "MLS WS [global]: reset requested for \(event.convoId.prefix(8)) (gen \(event.generation), trigger=\(event.trigger))"
+              )
+              if let manager = await self.getMLSConversationManager() {
+                await manager.handleResetRequested(event: event)
+              }
+              await MainActor.run {
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
+              }
+            },
             onReconnected: { [weak self] in
               guard let self else { return }
               self.logger.info("MLS WS [global]: reconnected — refreshing all conversations")
