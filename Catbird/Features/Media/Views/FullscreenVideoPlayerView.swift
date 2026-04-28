@@ -113,11 +113,12 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         private var isAdjustingProgrammatically = false
         private var isMutedObservation: NSKeyValueObservation?
         private var outputVolumeObservation: NSKeyValueObservation?
-        
+        private var loopObservation: NSObjectProtocol?
+
         init(_ parent: AVPlayerViewControllerWrapper) {
             self.parent = parent
         }
-        
+
         deinit {
             stopObserving()
         }
@@ -145,6 +146,26 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
                     }
                 }
             }
+
+            // Loop on item end. PlayerLayerView's observer is torn down when the
+            // feed view dismantles, so without this fullscreen videos freeze on
+            // the last frame instead of looping.
+            if let item = player.currentItem {
+                player.actionAtItemEnd = .none
+                loopObservation = NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: item,
+                    queue: .main
+                ) { [weak player] _ in
+                    guard let player = player else { return }
+                    player.seek(
+                        to: .zero,
+                        toleranceBefore: .positiveInfinity,
+                        toleranceAfter: .positiveInfinity
+                    )
+                    player.play()
+                }
+            }
         }
 
         func stopObserving() {
@@ -152,6 +173,10 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             isMutedObservation = nil
             outputVolumeObservation?.invalidate()
             outputVolumeObservation = nil
+            if let observation = loopObservation {
+                NotificationCenter.default.removeObserver(observation)
+                loopObservation = nil
+            }
         }
 
         @MainActor private func handleMuteStateChange(player: AVPlayer, isMuted: Bool) {

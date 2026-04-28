@@ -148,7 +148,12 @@ struct ModernVideoPlayerView: View {
         }
       }
       .onDisappear {
-        cleanupPlayer()
+        // Fullscreen presents over this view, firing onDisappear while the same
+        // AVPlayer is still playing in the cover. Skipping cleanup keeps the
+        // coordinator from muting/pausing the shared player.
+        if !showFullscreen {
+          cleanupPlayer()
+        }
       }
 #if os(iOS)
       .fullScreenCover(isPresented: $showFullscreen) {

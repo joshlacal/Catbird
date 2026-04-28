@@ -11,20 +11,33 @@ import SwiftUI
 import Mantis
 import UIKit
 
+/// Bridge that lets the SwiftUI Done button drive the underlying Mantis CropViewController.
+/// In customizable mode Mantis omits its own Done button, so we trigger the crop ourselves.
+@MainActor
+private final class CropController {
+  weak var cropViewController: CropViewController?
+
+  func performCrop() {
+    cropViewController?.crop()
+  }
+}
+
 /// A sheet that presents Mantis crop editor for editing images with custom toolbar
 struct PhotoEditorSheet: View {
   let image: UIImage
   let onComplete: (UIImage) -> Void
   @Environment(\.dismiss) private var dismiss
-  @State private var croppedImage: UIImage?
+  @State private var cropController = CropController()
 
   var body: some View {
     ZStack {
       // Mantis crop view controller
       MantisWrapper(
         image: image,
+        controller: cropController,
         onCrop: { cropped in
-          croppedImage = cropped
+          onComplete(cropped)
+          dismiss()
         },
         onCancel: {
           dismiss()
@@ -56,12 +69,9 @@ struct PhotoEditorSheet: View {
 
           Spacer()
 
-          // Done button with checkmark
+          // Done button with checkmark — drives Mantis's crop() so the delegate fires.
           Button(action: {
-            if let cropped = croppedImage {
-              onComplete(cropped)
-            }
-            dismiss()
+            cropController.performCrop()
           }) {
             HStack(spacing: 8) {
               Image(systemName: "checkmark")
@@ -87,23 +97,26 @@ struct PhotoEditorSheet: View {
 /// Internal wrapper for Mantis crop controller
 private struct MantisWrapper: UIViewControllerRepresentable {
   let image: UIImage
+  let controller: CropController
   let onCrop: (UIImage) -> Void
   let onCancel: () -> Void
 
   func makeUIViewController(context: Context) -> some UIViewController {
     var config = Mantis.Config()
 
-    // Enable rotation
+    // Enable rotation dial
     config.showRotationDial = true
 
-    // Set up preset ratios for Mantis 1.9.0
+    // Allow user to pick from preset ratios; defaultRatio: 0 = free aspect
     config.presetFixedRatioType = .canUseMultiplePresetFixedRatio(defaultRatio: 0)
 
-    let cropViewController = Mantis.cropViewController(image: image, config: config)
+    // Use the customizable variant so Mantis's built-in Cancel/Done bar is suppressed
+    // (cropToolbarConfig.mode becomes .simple in customizable mode). We supply our
+    // own Cancel/Done buttons via the SwiftUI overlay, while Mantis still shows the
+    // rotation dial + ratio/reset option buttons.
+    let cropViewController = Mantis.cropCustomizableViewController(image: image, config: config)
     cropViewController.delegate = context.coordinator
-
-    // Hide Mantis default toolbar since we're using our own
-      cropViewController.config.cropToolbarConfig.toolbarButtonOptions = ToolbarButtonOptions.all.subtracting([.all])
+    controller.cropViewController = cropViewController
 
     return cropViewController
   }

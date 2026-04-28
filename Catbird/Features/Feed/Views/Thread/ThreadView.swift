@@ -130,50 +130,54 @@ private struct SwiftUIThreadView: View {
 
     private var modernThreadView: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
-                parentsSection
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                LazyVStack(spacing: 0) {
+                    parentsSection
 
-                if let post = mainPost {
-                    mainPostSection(post)
+                    if let post = mainPost {
+                        mainPostSection(post)
+                            .id(SwiftUIThreadView.mainPostID)
+                            .padding(.bottom, 12)
+                    } else if mainItemIsBlocked {
+                        HStack {
+                            Image(systemName: "hand.raised")
+                                .foregroundColor(.red)
+                            Text("This post is from a blocked account.")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(8)
                         .id(SwiftUIThreadView.mainPostID)
                         .padding(.bottom, 12)
-                } else if mainItemIsBlocked {
-                    HStack {
-                        Image(systemName: "hand.raised")
-                            .foregroundColor(.red)
-                        Text("This post is from a blocked account.")
-                            .foregroundColor(.secondary)
-                        Spacer()
+                    } else if mainItemIsNotFound {
+                        HStack {
+                            Image(systemName: "questionmark.circle")
+                                .foregroundColor(.orange)
+                            Text("Post not found")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(8)
+                        .id(SwiftUIThreadView.mainPostID)
+                        .padding(.bottom, 12)
                     }
-                    .padding()
-                    .background(Color.red.opacity(0.1))
-                    .cornerRadius(8)
-                    .id(SwiftUIThreadView.mainPostID)
-                    .padding(.bottom, 12)
-                } else if mainItemIsNotFound {
-                    HStack {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundColor(.orange)
-                        Text("Post not found")
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                    .padding()
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(8)
-                    .id(SwiftUIThreadView.mainPostID)
-                    .padding(.bottom, 12)
+
+                    repliesSection
+
+                    Spacer(minLength: 200)
                 }
-
-                repliesSection
-
-                // Extra space at bottom for comfortable scrolling
-                Spacer(minLength: 200)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: 700)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
         }
+        .contentMargins(.top, 8, for: .scrollContent)
         .scrollPosition($scrollPosition, anchor: .top)
     }
 

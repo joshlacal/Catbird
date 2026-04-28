@@ -12,12 +12,10 @@ import UIKit
 #endif
 
 extension AVPlayer {
-    /// Safely plays video without activating the audio session
+    /// Plays video while preserving the caller's mute/audio-session state.
+    /// Mute is the caller's responsibility — `VideoCoordinator` and `setUnmuted`
+    /// own that decision. Forcing mute here breaks the in-feed unmute on loop.
     func safePlay() {
-        // Ensure muted to prevent audio interruption (avoid redundant sets)
-        if self.isMuted == false { self.isMuted = true }
-        
-        // Prevent automatic audio session activation
         self.preventsDisplaySleepDuringVideoPlayback = false
         // Respect existing buffering strategy configured by the coordinator
         if self.rate == 0 {

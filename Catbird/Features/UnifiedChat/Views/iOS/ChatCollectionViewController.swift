@@ -500,7 +500,17 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     snapshot.appendItems(items, toSection: .messages)
     
     if !reconfiguringMessageIDs.isEmpty {
-      snapshot.reconfigureItems(reconfiguringMessageIDs.map { .message(id: $0) })
+      let itemsToReconfigure = items.filter { item in
+        switch item {
+        case .message(let id), .historyBoundary(let id, _):
+          return reconfiguringMessageIDs.contains(id)
+        case .dateSeparator, .typingIndicator:
+          return false
+        }
+      }
+      if !itemsToReconfigure.isEmpty {
+        snapshot.reconfigureItems(itemsToReconfigure)
+      }
     }
     
     // When prepending older messages or performing initial load, disable animation.

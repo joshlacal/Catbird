@@ -363,9 +363,15 @@ final class VideoCoordinator {
 
       // Update players based on visibility
       for (id, (model, player, lastPlaybackTime)) in activeVideos {
-        // CRITICALLY IMPORTANT: Always ensure videos are muted during auto-playback
-        if player.isMuted == false { player.isMuted = true }
-        if player.volume != 0 { player.volume = 0 }
+        // Mirror model.isMuted onto the player. Forcing mute here regardless
+        // of intent re-silenced unmuted videos on every state change.
+        if model.isMuted {
+          if player.isMuted == false { player.isMuted = true }
+          if player.volume != 0 { player.volume = 0 }
+        } else {
+          if player.isMuted { player.isMuted = false }
+          if player.volume == 0 { player.volume = 1.0 }
+        }
 
         if id == topVideoId {
           // Elevate quality/buffering for the actively watched/top video
@@ -408,9 +414,12 @@ final class VideoCoordinator {
     player.pause()
     model.isPlaying = false
 
-    // IMPORTANT: Always ensure audio is muted when pausing
-    player.isMuted = true
-    player.volume = 0
+    // Mute only if the model says so. Force-muting on pause discarded the
+    // user's unmute intent the next time the video resumed.
+    if model.isMuted {
+      player.isMuted = true
+      player.volume = 0
+    }
 
     // Update the last playback time
     let currentTime = player.currentTime()
