@@ -3088,6 +3088,9 @@ struct MLSConversationDetailView: View {
       return
     }
 
+    // 🔒 [CLIENT H] Refresh pool before capture; closeAndDrain during
+    // account switch can invalidate manager.database mid-call.
+    try? await manager.refreshDatabaseIfNeeded()
     let storage = manager.storage
     let database = manager.database
 
