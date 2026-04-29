@@ -32,6 +32,7 @@ struct ChatTabView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.composerTransitionNamespace) private var composerNamespace
+  @Environment(\.scenePhase) private var scenePhase
 
   private var contentMaxWidth: CGFloat {
     horizontalSizeClass == .compact ? .infinity : 600
@@ -49,7 +50,18 @@ struct ChatTabView: View {
   @State private var coordinator = UnifiedChatCoordinator()
   @State private var mlsPollingTask: Task<Void, Never>?
   @State private var mlsPollCycleCount: Int = 0
+  // Eager-fetch coalescing: prevents redundant batches when mount + scene-active fire close together
+  @State private var lastEagerRefreshAt: Date?
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
+
+  /// Maximum convos to fetch in a single eager-refresh batch.
+  /// Bounds battery + network cost; remaining convos catch up via per-convo WS on open
+  /// or via the existing fallback poll loop.
+  private let eagerRefreshTopN: Int = 10
+
+  /// Throttle window for eager refresh — avoids double-firing when onAppear and scenePhase
+  /// transitions happen close together (e.g. tab focus + foreground).
+  private let eagerRefreshThrottle: TimeInterval = 5
 
   /// Per-account MLS chat enabled state
   private var mlsChatEnabledForCurrentAccount: Bool {
@@ -93,6 +105,9 @@ struct ChatTabView: View {
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
+    .onChange(of: scenePhase) { oldPhase, newPhase in
+      handleScenePhaseChange(from: oldPhase, to: newPhase)
+    }
     .onChange(of: selectedConvoId) { oldValue, newValue in
       handleConversationChange(oldValue: oldValue, newValue: newValue)
       if !shouldUseSplitView {
@@ -378,7 +393,14 @@ struct ChatTabView: View {
     // MLS
     coordinator.mlsEnabled = mlsChatEnabledForCurrentAccount
     if mlsChatEnabledForCurrentAccount {
-      Task { await loadMLSConversations() }
+      Task {
+        // Initial DB-backed load paints the list from local cache.
+        await loadMLSConversations()
+        // After cache paints, eagerly fetch + decrypt the latest message for the
+        // top-N most-recently-active convos so previews + unread counts reflect
+        // server state without requiring the user to tap into each convo.
+        await performEagerRefreshIfNeeded(reason: "mount")
+      }
       startMLSPolling()
 
       // B8: kick off the full MLS init so the global WebSocket subscription
@@ -407,6 +429,18 @@ struct ChatTabView: View {
 
   private func handleOnDisappear() {
     stopMLSPolling()
+  }
+
+  private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+    // Only react when transitioning into the active phase; ignore inactive/background.
+    guard newPhase == .active, oldPhase != .active else { return }
+    guard mlsChatEnabledForCurrentAccount else { return }
+    Task {
+      // Reload from DB first so any messages decrypted by NSE while we were
+      // backgrounded are reflected, then eagerly refresh top-N from server.
+      await loadMLSConversations()
+      await performEagerRefreshIfNeeded(reason: "foreground")
+    }
   }
 
   private func handleConversationChange(oldValue: String?, newValue: String?) {
@@ -615,6 +649,92 @@ struct ChatTabView: View {
       updatedState.participants = enrichedParticipants
       coordinator.mlsState = updatedState
     }
+  }
+
+  // MARK: - MLS Eager Refresh
+
+  /// Eagerly fetch + decrypt the latest message for the top-N most-recently-active
+  /// convos so previews + unread counts reflect server state when the list mounts
+  /// or the app returns to foreground. Bounded to `eagerRefreshTopN` to keep the
+  /// network/battery cost predictable.
+  ///
+  /// Invariants:
+  /// - No-op when MLS disabled, conversations cache empty (cold-start), or
+  ///   manager is unavailable (account switch / shutdown / maintenance).
+  /// - Skips the currently-open convo since its detail VM and per-convo WS already
+  ///   keep state fresh.
+  /// - Coalesces calls within `eagerRefreshThrottle`.
+  /// - Errors per-convo are swallowed inside `triggerCatchup`; the outer batch
+  ///   logs once and continues.
+  @MainActor
+  private func performEagerRefreshIfNeeded(reason: String) async {
+    guard mlsChatEnabledForCurrentAccount else { return }
+
+    // Cold-start guard: if local cache hasn't populated yet, the existing
+    // initial-load path will fire `loadMLSConversations` again on its own;
+    // we skip this frame rather than racing against it.
+    let allConversations = coordinator.mlsState.conversations
+    guard !allConversations.isEmpty else {
+      logger.debug("Eager refresh (\(reason)): skipped — conversation cache empty")
+      return
+    }
+
+    // Throttle: avoid redundant fetches when mount + scene-active fire close together.
+    if let last = lastEagerRefreshAt, Date().timeIntervalSince(last) < eagerRefreshThrottle {
+      logger.debug("Eager refresh (\(reason)): throttled (last fired \(Date().timeIntervalSince(last))s ago)")
+      return
+    }
+    lastEagerRefreshAt = Date()
+
+    // Wait briefly for the manager to be available; bail on account switch / shutdown.
+    guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
+      logger.debug("Eager refresh (\(reason)): manager unavailable")
+      return
+    }
+
+    // Pick top-N most-recently-active convos (by latest message timestamp,
+    // falling back to convo createdAt for empty conversations). Exclude the
+    // currently-open convo — its detail VM keeps state fresh.
+    let latestActivity = coordinator.mlsState.latestActivity
+    let openConvoId = selectedConvoId
+    let candidates = allConversations
+      .filter { $0.conversationID != openConvoId }
+      .sorted { lhs, rhs in
+        let lhsDate = latestActivity[lhs.conversationID] ?? lhs.createdAt
+        let rhsDate = latestActivity[rhs.conversationID] ?? rhs.createdAt
+        return lhsDate > rhsDate
+      }
+      .prefix(eagerRefreshTopN)
+      .map { $0.conversationID }
+
+    guard !candidates.isEmpty else {
+      logger.debug("Eager refresh (\(reason)): no candidates after filtering")
+      return
+    }
+
+    let started = Date()
+    let convoCount = candidates.count
+
+    // Fan out concurrent catchups. `triggerCatchup` is non-throwing; per-convo
+    // failures are logged inside it. The bound on concurrency is implicit —
+    // we only enqueue `eagerRefreshTopN` tasks. Each subtask hops to MainActor
+    // for compatibility with the manager's isolation expectations (matches the
+    // existing `manager.triggerCatchup` call sites in CatbirdApp/onReconnected).
+    await withTaskGroup(of: Void.self) { group in
+      for convoId in candidates {
+        group.addTask { @MainActor in
+          await manager.triggerCatchup(for: convoId)
+        }
+      }
+    }
+
+    let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+    logger.info("Eagerly refreshed \(convoCount) convo(s) (\(reason)) in \(elapsedMs)ms")
+
+    // Refresh the list from DB so newly-decrypted messages reflect in previews
+    // and unread counts, then update the tab badge.
+    await loadMLSConversations()
+    appState.updateMLSUnreadCount()
   }
 
   // MARK: - MLS Polling & Actions
