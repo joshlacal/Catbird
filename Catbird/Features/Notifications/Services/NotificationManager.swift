@@ -2712,28 +2712,32 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   /// Signal cross-process MLS mutations for non-active account foreground decoding.
   ///
-  /// This keeps lightweight decoding for inactive users while coordinating state
-  /// changes with monotonic versioning and Darwin notifications.
+  /// Darwin self-loop fix (2026-04): The cross-process `stateChanged` Darwin
+  /// notification and the disk version counter are NSE→app signals only. When
+  /// the main app posts/bumps them on its own mutations, the receiver-side
+  /// reload (and the in-process stale-context check) fires against ourselves —
+  /// causing a full MLSCoreContext teardown after every send/receive. We retain
+  /// the audit log via `publishMutation`, but pass `incrementVersion: false`
+  /// and `postStateChanged: false` regardless of the caller's request.
+  ///
+  /// Cross-process correctness for inactive users is preserved by SQLite WAL
+  /// persistence — NSE recreates `MLSCoreContext.shared` per invocation and
+  /// reads disk state from scratch, so it never consults the in-memory version.
   private func signalInactiveAccountStateMutation(
     for userDid: String,
     source: String,
-    incrementVersion: Bool
+    incrementVersion _: Bool
   ) {
-    let newVersion = CatbirdMLSCore.MLSNotificationCoordinator.publishMutation(
+    _ = CatbirdMLSCore.MLSNotificationCoordinator.publishMutation(
       userDID: userDid,
       source: source,
       decryptionOwner: .appNotification,
-      incrementVersion: incrementVersion
+      incrementVersion: false,
+      postStateChanged: false
     )
-    if let versionAfter = newVersion {
-      notificationLogger.info(
-        "📡 [FG] Signaled inactive-account MLS mutation (source=\(source), decryption_owner=app_notification, version_after=\(versionAfter))"
-      )
-    } else {
-      notificationLogger.info(
-        "📡 [FG] Signaled inactive-account MLS mutation (source=\(source), decryption_owner=app_notification, version_after=unchanged)"
-      )
-    }
+    notificationLogger.info(
+      "📡 [FG] Signaled inactive-account MLS mutation (source=\(source), decryption_owner=app_notification)"
+    )
   }
 
   // MARK: - Group Join Helpers
