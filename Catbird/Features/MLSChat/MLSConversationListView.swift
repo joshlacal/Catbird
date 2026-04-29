@@ -1074,9 +1074,13 @@ struct MLSConversationListView: View {
     private func loadRecentMemberChanges() async {
         guard let manager = await appState.getMLSConversationManager(timeout: 5.0)
                else { return }
+        // 🔒 [CLIENT H] Refresh the pool before capturing — closeAndDrain
+        // during account switch can invalidate `manager.database` between
+        // here and the read below, surfacing as "Connection is closed".
+        try? await manager.refreshDatabaseIfNeeded()
         let storage = manager.storage
         let database = manager.database
-        
+
         do {
             let recentEvents = try await storage.fetchRecentMembershipChanges(
                 currentUserDID: appState.userDID,
