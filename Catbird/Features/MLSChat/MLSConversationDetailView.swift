@@ -3394,7 +3394,7 @@ struct MLSConversationDetailView: View {
             await self.handleGroupResetEvent(groupResetEvent)
           },
           onResetRequested: { @MainActor resetRequestedEvent in
-            self.logger.info("📡 WS: onResetRequested handler called - convo: \(resetRequestedEvent.convoId.prefix(16)), gen: \(resetRequestedEvent.generation), trigger: \(resetRequestedEvent.trigger)")
+            self.logger.warning("📡 WS: onResetRequested handler called - convo: \(resetRequestedEvent.convoId.prefix(16)), gen: \(resetRequestedEvent.generation), trigger: \(resetRequestedEvent.trigger)")
             await self.handleResetRequestedEvent(resetRequestedEvent)
           },
           onError: { @MainActor error in
@@ -3898,7 +3898,7 @@ struct MLSConversationDetailView: View {
   private func handleResetRequestedEvent(
     _ event: BlueCatbirdMlsChatSubscribeEvents.ResetRequestedEvent
   ) async {
-    logger.info(
+    logger.warning(
       "🔄 [ResetRequested] Conversation \(event.convoId.prefix(16)) reset requested (gen \(event.generation), trigger=\(event.trigger), eventId=\(event.requestEventId.prefix(16)))"
     )
 

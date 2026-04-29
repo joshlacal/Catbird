@@ -2307,7 +2307,7 @@ final class AppState {
             onResetRequested: { [weak self] event in
               guard let self else { return }
               self.logger.warning(
-                "MLS WS [global]: reset requested for \(event.convoId.prefix(8)) (gen \(event.generation), trigger=\(event.trigger))"
+                "MLS WS [global]: reset requested for \(event.convoId.prefix(8)) (gen \(event.generation), trigger=\(event.trigger), requestEventId=\(event.requestEventId.prefix(16)), cryptoSessionId=\(event.cryptoSessionId.prefix(16)))"
               )
               if let manager = await self.getMLSConversationManager() {
                 await manager.handleResetRequested(event: event)
