@@ -595,10 +595,12 @@ struct MLSGroupDetailView: View {
     defer { isSaving = false }
 
     do {
-      try await conversationManager.updateGroupMetadata(
+      try await conversationManager.updateGroupMetadataEncrypted(
         conversationId: conversationId,
-        name: trimmed,
-        description: nil
+        title: trimmed,
+        description: nil,
+        avatarBlobLocator: nil,
+        avatarContentType: nil
       )
       logger.info("Group name updated to: \(trimmed)")
     } catch {
