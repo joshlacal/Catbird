@@ -121,7 +121,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         .filter(MLSMessageModel.Columns.conversationID == convoId)
         .filter(MLSMessageModel.Columns.currentUserDID == userDID)
         .filter(MLSMessageModel.Columns.payloadExpired == false)
-        .order(MLSMessageModel.Columns.epoch.asc, MLSMessageModel.Columns.sequenceNumber.asc)
+        .order(
+          MLSMessageModel.Columns.sequenceNumber.asc,
+          MLSMessageModel.Columns.timestamp.asc,
+          MLSMessageModel.Columns.messageID.asc
+        )
         .fetchAll(db)
     }
 
@@ -138,6 +142,34 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       }
     )
     observedDatabase = database
+  }
+
+  private func fetchDisplayableMessageModels(database: DatabasePool) async throws -> [MLSMessageModel] {
+    let convoId = conversationId
+    let userDID = currentUserDID
+
+    return try await database.read { db in
+      try MLSMessageModel
+        .filter(MLSMessageModel.Columns.conversationID == convoId)
+        .filter(MLSMessageModel.Columns.currentUserDID == userDID)
+        .filter(MLSMessageModel.Columns.payloadExpired == false)
+        .order(
+          MLSMessageModel.Columns.sequenceNumber.asc,
+          MLSMessageModel.Columns.timestamp.asc,
+          MLSMessageModel.Columns.messageID.asc
+        )
+        .fetchAll(db)
+    }
+  }
+
+  private func reloadObservedMessages(database: DatabasePool) async {
+    do {
+      let models = try await fetchDisplayableMessageModels(database: database)
+      await handleObservedModels(models)
+    } catch {
+      self.error = error
+      logger.error("Failed to reload observed MLS messages: \(error.localizedDescription)")
+    }
   }
 
   /// Stop the current database observation and release references.
@@ -220,6 +252,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     // Convert models to adapters
     var adapters: [MLSMessageAdapter] = []
     var unknownDIDs: Set<String> = []
+    var oldestDisplayEpoch = Int.max
+    var oldestDisplaySeq = Int.max
 
     for model in models {
       guard let payload = model.parsedPayload, !model.payloadExpired else {
@@ -319,11 +353,14 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       // Track oldest for pagination
       let epoch = Int(model.epoch)
       let seq = Int(model.sequenceNumber)
-      if epoch < oldestLoadedEpoch || (epoch == oldestLoadedEpoch && seq < oldestLoadedSeq) {
-        oldestLoadedEpoch = epoch
-        oldestLoadedSeq = seq
+      if seq > 0 && seq < oldestDisplaySeq {
+        oldestDisplayEpoch = epoch
+        oldestDisplaySeq = seq
       }
     }
+
+    oldestLoadedEpoch = oldestDisplayEpoch
+    oldestLoadedSeq = oldestDisplaySeq
 
     sortMessagesInDisplayOrder(&adapters)
 
@@ -365,10 +402,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     candidate: (epoch: Int64, sequenceNumber: Int64)
   ) -> Bool {
     guard let existing else { return true }
-    if candidate.epoch != existing.epoch {
-      return candidate.epoch > existing.epoch
+    if candidate.sequenceNumber != existing.sequenceNumber {
+      return candidate.sequenceNumber > existing.sequenceNumber
     }
-    return candidate.sequenceNumber > existing.sequenceNumber
+    return candidate.epoch > existing.epoch
   }
 
   private func resolveRemoteReadCutoff(
@@ -404,11 +441,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     sequenceNumber: Int?,
     cutoff: (epoch: Int64, sequenceNumber: Int64)?
   ) -> Bool {
-    guard let cutoff, let epoch, let sequenceNumber else { return false }
-    let epochValue = Int64(epoch)
+    guard let cutoff, let sequenceNumber else { return false }
     let sequenceValue = Int64(sequenceNumber)
-    return epochValue < cutoff.epoch
-      || (epochValue == cutoff.epoch && sequenceValue <= cutoff.sequenceNumber)
+    return sequenceValue <= cutoff.sequenceNumber
   }
 
   private func updateSendState(
@@ -722,6 +757,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       logger.error("Cannot load messages: database not available")
       return
     }
+
+    if observedDatabase === database {
+      await reloadObservedMessages(database: database)
+      return
+    }
+
     startObserving(database: database)
   }
 
@@ -734,6 +775,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     guard let appState = appState,
       let database = appState.mlsDatabase
     else {
+      return
+    }
+
+    guard oldestLoadedSeq != Int.max else {
+      hasMoreMessages = false
       return
     }
 
@@ -879,7 +925,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         // Update oldest
         let epoch = Int(model.epoch)
         let seq = Int(model.sequenceNumber)
-        if epoch < oldestLoadedEpoch || (epoch == oldestLoadedEpoch && seq < oldestLoadedSeq) {
+        if seq > 0 && seq < oldestLoadedSeq {
           oldestLoadedEpoch = epoch
           oldestLoadedSeq = seq
         }

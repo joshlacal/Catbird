@@ -177,13 +177,22 @@ struct MLSConversationDetailView: View {
     let timestamp: Date
 
     static func < (lhs: MessageOrderKey, rhs: MessageOrderKey) -> Bool {
+      let lhsHasServerSequence = lhs.sequence > 0
+      let rhsHasServerSequence = rhs.sequence > 0
+
+      if lhsHasServerSequence && rhsHasServerSequence && lhs.sequence != rhs.sequence {
+        return lhs.sequence < rhs.sequence
+      }
+      if lhs.timestamp != rhs.timestamp {
+        return lhs.timestamp < rhs.timestamp
+      }
+      if lhsHasServerSequence != rhsHasServerSequence {
+        return lhsHasServerSequence
+      }
       if lhs.epoch != rhs.epoch {
         return lhs.epoch < rhs.epoch
       }
-      if lhs.sequence != rhs.sequence {
-        return lhs.sequence < rhs.sequence
-      }
-      return lhs.timestamp < rhs.timestamp
+      return lhs.sequence < rhs.sequence
     }
   }
 
@@ -1141,6 +1150,13 @@ struct MLSConversationDetailView: View {
       )
 
     // Read receipts and typing indicators have been removed
+
+    case .messagesUpdated(let eventConvoId, _):
+      guard eventConvoId == convoId else { return }
+      if let dataSource = unifiedDataSource {
+        await dataSource.loadMessages()
+      }
+      await reloadConversationMetadata(userDID: userDID)
 
     case .syncCompleted:
       await reloadConversationMetadata(userDID: userDID)
@@ -2463,10 +2479,10 @@ struct MLSConversationDetailView: View {
     do {
       // Get the oldest message currently displayed
       let oldestEpoch = await MainActor.run {
-        messages.first.flatMap { messageOrdering[$0.id]?.epoch } ?? 0
+        messages.first.flatMap { messageOrdering[$0.id]?.epoch } ?? Int.max
       }
       let oldestSeq = await MainActor.run {
-        messages.first.flatMap { messageOrdering[$0.id]?.sequence } ?? 0
+        messages.first.flatMap { messageOrdering[$0.id]?.sequence } ?? Int.max
       }
 
       logger.debug("Loading messages older than epoch=\(oldestEpoch), seq=\(oldestSeq)")

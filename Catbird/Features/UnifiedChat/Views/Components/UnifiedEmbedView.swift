@@ -174,15 +174,19 @@ private struct UnifiedGIFView: View {
 
   @Environment(\.scenePhase) private var scenePhase
 
-  private let minBubbleHeight: CGFloat = 140
+  /// Bubble width when the media bubble fills edge-to-edge (no padding).
+  private let bubbleWidth: CGFloat = 280
+  /// Corner radius matches the bubble in `UnifiedMessageBubble`.
+  private let bubbleCornerRadius: CGFloat = 18
 
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedGIFView")
 
   /// Pre-calculated height for deterministic sizing in self-sizing cells.
+  /// Honors the GIF's actual aspect ratio (no minimum height floor — short/wide GIFs
+  /// stay short/wide instead of getting padded vertically into the bubble background).
   private var calculatedHeight: CGFloat {
     let ratio = calculateAspectRatio()
-    let availableWidth: CGFloat = 272
-    return min(max(availableWidth / ratio, minBubbleHeight), 400)
+    return min(bubbleWidth / ratio, 400)
   }
 
   var body: some View {
@@ -245,7 +249,7 @@ private struct UnifiedGIFView: View {
     .frame(maxWidth: .infinity)
     .frame(height: calculatedHeight)
     .clipped()
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
 
   // MARK: - Loading State
@@ -253,7 +257,7 @@ private struct UnifiedGIFView: View {
   @ViewBuilder
   private var loadingView: some View {
     ZStack {
-      RoundedRectangle(cornerRadius: 12)
+      RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
         .fill(Color.gray.opacity(0.1))
 
       if let previewURL = gif.previewURL {
@@ -274,7 +278,7 @@ private struct UnifiedGIFView: View {
     .frame(maxWidth: .infinity)
     .frame(height: calculatedHeight)
     .clipped()
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
 
   // MARK: - Error State
@@ -282,7 +286,7 @@ private struct UnifiedGIFView: View {
   @ViewBuilder
   private func errorView(_ error: String) -> some View {
     ZStack {
-      RoundedRectangle(cornerRadius: 12)
+      RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
         .fill(Color.red.opacity(0.1))
 
       VStack(spacing: 8) {
@@ -305,7 +309,7 @@ private struct UnifiedGIFView: View {
     .frame(maxWidth: .infinity)
     .frame(height: calculatedHeight)
     .clipped()
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
 
   // MARK: - Placeholder State
@@ -324,7 +328,7 @@ private struct UnifiedGIFView: View {
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.gray.opacity(0.1))
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
     .onTapGesture {
       Task { await setupPlayerIfNeeded(force: true) }
     }
@@ -358,6 +362,11 @@ private struct UnifiedGIFView: View {
       loopingPlayer = wrapper
       isLoading = false
 
+      // Tenor MP4s are videos that may have audio tracks. Without ambient +
+      // mixWithOthers, AVPlayer activation interrupts background audio (Music).
+      #if os(iOS)
+      AudioSessionManager.shared.configureForSilentPlayback()
+      #endif
       wrapper.player.configureForFeedPreview()
       installDiagnostics(for: wrapper.player, url: url)
       wrapper.player.safePlay()

@@ -43,16 +43,22 @@ final class MLSConversationDetailViewModel {
     var displayMessages: [DisplayMessage] {
       let optimistic = optimisticMessages.map { DisplayMessage.optimistic($0) }
       let confirmed = messages.map { DisplayMessage.confirmed($0) }
-      // Sort by (epoch, sequenceNumber) for correct MLS message ordering
-      // Prevents messages from appearing out of order during epoch transitions
-      // Treat seq=0 as "not yet assigned" (pre-cached, awaiting server response) → sort last within epoch
+      // Sort by stable conversation sequence. MLS epoch is crypto state and can
+      // reset when recovery rotates the underlying group.
+      // Treat seq=0 as "not yet assigned" (pre-cached, awaiting server response) → sort last.
       return (optimistic + confirmed).sorted {
+        let lhsSeq = $0.sequenceNumber > 0 ? $0.sequenceNumber : Int.max
+        let rhsSeq = $1.sequenceNumber > 0 ? $1.sequenceNumber : Int.max
+        if lhsSeq != rhsSeq {
+          return lhsSeq < rhsSeq
+        }
+        if $0.timestamp != $1.timestamp {
+          return $0.timestamp < $1.timestamp
+        }
         if $0.epoch != $1.epoch {
           return $0.epoch < $1.epoch
         }
-        let lhsSeq = $0.sequenceNumber == 0 ? Int.max : $0.sequenceNumber
-        let rhsSeq = $1.sequenceNumber == 0 ? Int.max : $1.sequenceNumber
-        return lhsSeq < rhsSeq
+        return $0.id < $1.id
       }
     }
 
@@ -226,8 +232,8 @@ final class MLSConversationDetailViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            // Server guarantees messages are already sorted by (epoch ASC, seq ASC)
-            // No need to reverse - server returns in correct chronological order
+            // Server guarantees messages are already sorted by stable conversation sequence.
+            // No need to reverse - server returns in correct chronological order.
             messages = messageViews
             messagesCursor = lastSeq
             hasMoreMessages = lastSeq != nil
@@ -273,7 +279,7 @@ final class MLSConversationDetailViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            // Server returns messages in (epoch ASC, seq ASC) order
+            // Server returns messages in stable conversation sequence order.
             // Append newer messages to the end
             messages.append(contentsOf: messageViews)
             messagesCursor = lastSeq

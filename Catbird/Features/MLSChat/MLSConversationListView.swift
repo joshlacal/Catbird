@@ -433,7 +433,7 @@ struct MLSConversationListView: View {
         guard !isAppStateStale else { return }
 
         switch event {
-        case .syncCompleted:
+        case .syncCompleted, .messagesUpdated:
             await loadMLSConversations()
         default:
             break
@@ -1405,7 +1405,11 @@ struct MLSConversationListView: View {
                         let latestMessage = try MLSMessageModel
                             .filter(MLSMessageModel.Columns.conversationID == convoID)
                             .filter(MLSMessageModel.Columns.currentUserDID == appState.userDID)
-                            .order(MLSMessageModel.Columns.epoch.desc, MLSMessageModel.Columns.sequenceNumber.desc)
+                            .order(
+                                MLSMessageModel.Columns.sequenceNumber.desc,
+                                MLSMessageModel.Columns.timestamp.desc,
+                                MLSMessageModel.Columns.messageID.desc
+                            )
                             .limit(1)
                             .fetchOne(db)
 

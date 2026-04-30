@@ -304,17 +304,12 @@ struct ModernVideoPlayerView: View {
         newPlayer.isMuted = true
         newPlayer.volume = 0
 
-        switch model.type {
-        case .hlsStream:
-          model.isMuted = true
-          model.volume = 0
-          // Ensure audio session is configured for silent playback only
-          AudioSessionManager.shared.configureForSilentPlayback()
-        case .tenorGif, .giphyGif, .bskyGif:
-          model.isMuted = true
-          model.volume = 0
-          // GIFs don't need audio session configuration
-        }
+        model.isMuted = true
+        model.volume = 0
+        // Tenor/Giphy GIFs are MP4 videos that can have audio tracks; without
+        // ambient + mixWithOthers, AVPlayer activation can interrupt background
+        // audio (e.g. Music). Configure the same as HLS for all video types.
+        AudioSessionManager.shared.configureForSilentPlayback()
         VideoCoordinator.shared.register(model, player: newPlayer)
       }
     } catch {

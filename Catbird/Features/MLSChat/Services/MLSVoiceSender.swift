@@ -41,18 +41,18 @@ final class MLSVoiceSender {
 
   deinit {
     stopDisplayLink()
+    let wasRecording = audioRecorder != nil
     audioRecorder?.stop()
+    if wasRecording {
+      AudioSessionManager.shared.resetAfterRecording()
+    }
     cleanupRecording()
   }
 
   // MARK: - Recording
 
   func startRecording() async throws {
-    #if os(iOS)
-    let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-    try session.setActive(true)
-    #endif
+    AudioSessionManager.shared.configureForRecording()
 
     let tempDir = FileManager.default.temporaryDirectory
     let url = tempDir.appendingPathComponent("voice_\(UUID().uuidString).wav")
@@ -78,6 +78,7 @@ final class MLSVoiceSender {
     stopDisplayLink()
     audioRecorder?.stop()
     audioRecorder = nil
+    AudioSessionManager.shared.resetAfterRecording()
     cleanupRecording()
     state = .idle
   }
@@ -88,6 +89,7 @@ final class MLSVoiceSender {
     stopDisplayLink()
     audioRecorder?.stop()
     audioRecorder = nil
+    AudioSessionManager.shared.resetAfterRecording()
     state = .processing
 
     guard let url = recordingURL else {

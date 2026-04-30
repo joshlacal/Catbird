@@ -50,6 +50,18 @@ import UIKit
         let originalHeight = Int(platformImage.imageSize.height * platformImage.imageScale)
         let detectedType = Self.detectMimeType(from: imageData)
 
+        #if os(iOS)
+        let orientation = platformImage.imageOrientation.rawValue
+        let cgW = platformImage.cgImage?.width ?? -1
+        let cgH = platformImage.cgImage?.height ?? -1
+        let sourceLog = "Source image: orientation=\(orientation) " +
+          "cgImage=\(cgW)x\(cgH)px " +
+          "size=\(platformImage.imageSize.width)x\(platformImage.imageSize.height)pt " +
+          "@\(platformImage.imageScale)x → reportedPixels=\(originalWidth)x\(originalHeight) " +
+          "type=\(detectedType) bytes=\(imageData.count)"
+        mlsImageSenderLogger.info("\(sourceLog, privacy: .public)")
+        #endif
+
         let finalData: Data
         let contentType: String
         var finalWidth = originalWidth
@@ -79,6 +91,36 @@ import UIKit
           finalHeight = result.height
           contentType = "image/jpeg"
         }
+
+        // Decode the bytes we're about to ship and compare against the metadata
+        // we're about to write — this catches scale/orientation drift in the
+        // resize path (where reported point dimensions ≠ actual JPEG pixels).
+        #if os(iOS)
+        if let shipped = PlatformImage(data: finalData) {
+          let shippedPixelW = Int(shipped.imageSize.width * shipped.imageScale)
+          let shippedPixelH = Int(shipped.imageSize.height * shipped.imageScale)
+          let shippedRatio = shipped.imageSize.width / max(shipped.imageSize.height, 1)
+          let metaRatio = CGFloat(finalWidth) / CGFloat(max(finalHeight, 1))
+          let mismatched = abs(shippedRatio - metaRatio) > 0.05 ||
+                           shippedPixelW != finalWidth ||
+                           shippedPixelH != finalHeight
+          let prefix = mismatched ? "SHIPPED MISMATCH" : "Shipped image"
+          let metaRatioStr = String(format: "%.3f", metaRatio)
+          let shippedRatioStr = String(format: "%.3f", shippedRatio)
+          let shippedPointW = Int(shipped.imageSize.width)
+          let shippedPointH = Int(shipped.imageSize.height)
+          let shippedScale = shipped.imageScale
+          let shippedOrient = shipped.imageOrientation.rawValue
+          let shippedBytes = finalData.count
+          let shippedLog = "\(prefix): meta=\(finalWidth)x\(finalHeight) ratio=\(metaRatioStr) " +
+            "actual=\(shippedPixelW)x\(shippedPixelH)px " +
+            "(\(shippedPointW)x\(shippedPointH)pt @\(shippedScale)x) " +
+            "ratio=\(shippedRatioStr) " +
+            "orientation=\(shippedOrient) " +
+            "type=\(contentType) bytes=\(shippedBytes)"
+          mlsImageSenderLogger.info("\(shippedLog, privacy: .public)")
+        }
+        #endif
 
         mlsImageSenderLogger.info(
           "Image ready: \(finalWidth)x\(finalHeight), \(finalData.count) bytes, \(contentType)")

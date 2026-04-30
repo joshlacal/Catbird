@@ -94,6 +94,20 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     return message.isFromCurrentUser ? "mls.messageText.outgoing" : "mls.messageText.incoming"
   }
 
+  /// True when the message is just a media embed (image or GIF) with no text and no MLS error.
+  /// Media-only bubbles drop the bubble chrome — the media surface IS the bubble.
+  private var isMediaOnly: Bool {
+    guard message.text.isEmpty else { return false }
+    if (message as? MLSMessageAdapter)?.debugInfo != nil { return false }
+    guard let embed = message.embed else { return false }
+    switch embed {
+    case .image, .gif:
+      return true
+    default:
+      return false
+    }
+  }
+
   var body: some View {
     HStack(alignment: .bottom, spacing: 8) {
       if message.isFromCurrentUser {
@@ -176,8 +190,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         .bubbleBackground(
           isCurrentUser: message.isFromCurrentUser,
           cornerRadius: cornerRadius,
-          colorScheme: colorScheme
+          colorScheme: colorScheme,
+          showFill: !isMediaOnly
         )
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
 
       if onLongPress != nil {
         bubbleSurface
@@ -232,13 +248,16 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   private var bubbleContent: some View {
     let mlsDebugInfo = (message as? MLSMessageAdapter)?.debugInfo
 
-    let isImageOnly: Bool = {
-      if message.text.isEmpty, mlsDebugInfo == nil {
-        if case .image = message.embed { return true }
-        if case .audio = message.embed { return true }
-      }
+    // Audio bubbles still want compact padding (the voice player has its own chrome),
+    // but image/gif bubbles drop padding entirely so the media fills the bubble.
+    let isAudioOnly: Bool = {
+      guard message.text.isEmpty, mlsDebugInfo == nil else { return false }
+      if case .audio = message.embed { return true }
       return false
     }()
+
+    let horizontalPadding: CGFloat = isMediaOnly ? 0 : (isAudioOnly ? 4 : 14)
+    let verticalPadding: CGFloat = isMediaOnly ? 0 : (isAudioOnly ? 4 : 10)
 
     let bubble = BubbleWidthLimiter(maxWidth: maxBubbleWidth) {
       VStack(alignment: .leading, spacing: 8) {
@@ -281,8 +300,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           }
         }
       }
-      .padding(.horizontal, isImageOnly ? 4 : 14)
-      .padding(.vertical, isImageOnly ? 4 : 10)
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, verticalPadding)
     }
     .contentShape(Rectangle())
 
@@ -436,17 +455,18 @@ private struct BubbleWidthLimiter: Layout {
       width = effectiveMaxWidth
     }
 
-    // Use the constrained height as the primary measurement. Only fall back to
-    // natural height when the content naturally fits within the max width — this
-    // handles fixedSize(vertical: true) text that needs its ideal height. When
-    // content exceeds the max width (e.g. images at full pixel dimensions), the
-    // natural height would be the raw pixel height, which is wildly wrong.
+    // Trust the constrained measurement. Only fall back to natural height when the
+    // content is *strictly* narrower than the max width — that means the content
+    // didn't need to wrap and its natural height is its ideal height (e.g. short
+    // text with fixedSize(vertical: true)). When natural width *equals* the max
+    // width, the content is either filling the cap (a wide image) or wrapping —
+    // in both cases natural height is unreliable and constrained height is correct.
     var height: CGFloat = 0
     if constrainedSize.height.isFinite {
       height = max(constrainedSize.height, 0)
     }
     if naturalSize.width.isFinite,
-       naturalSize.width <= effectiveMaxWidth,
+       naturalSize.width < effectiveMaxWidth,
        naturalSize.height.isFinite
     {
       height = max(height, naturalSize.height)
@@ -584,16 +604,21 @@ private extension View {
   func bubbleBackground(
     isCurrentUser: Bool,
     cornerRadius: CGFloat,
-    colorScheme: ColorScheme
+    colorScheme: ColorScheme,
+    showFill: Bool = true
   ) -> some View {
-    self.background(
-      RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        .fill(
-          isCurrentUser
-            ? Color.accentColor
-            : (colorScheme == .dark ? Color(white: 0.22) : Color(white: 0.93))
-        )
-    )
+    if showFill {
+      self.background(
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+          .fill(
+            isCurrentUser
+              ? Color.accentColor
+              : (colorScheme == .dark ? Color(white: 0.22) : Color(white: 0.93))
+          )
+      )
+    } else {
+      self
+    }
   }
 }
 

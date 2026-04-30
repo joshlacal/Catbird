@@ -21,7 +21,7 @@
 - **Message Decryption**: Decrypt received ciphertext messages (guaranteed in-order by server)
 - **Content Types**: Support for different content types (text/plain, etc.)
 - **Attachments**: Handle encrypted message attachments via blob references
-- **Message Ordering**: Server guarantees messages arrive in (epoch ASC, seq ASC) order
+- **Message Ordering**: Server guarantees messages arrive in stable conversation sequence order (seq ASC)
 - **Sequence Numbers**: Real server-assigned seq immediately available (no placeholder seq=0)
 - **Gap Detection**: Server provides authoritative gap detection metadata
 

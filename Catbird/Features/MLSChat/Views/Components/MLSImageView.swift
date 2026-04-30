@@ -1,7 +1,10 @@
 import CatbirdMLSCore
+import OSLog
 import Petrel
 import SensitiveContentAnalysis
 import SwiftUI
+
+private let mlsImageViewLogger = Logger(subsystem: "blue.catbird", category: "MLSImageView")
 
 /// Renders an image embed in an MLS chat message.
 /// Handles: placeholder -> download -> decrypt -> cache -> display.
@@ -24,23 +27,51 @@ struct MLSImageView: View {
     appState.ageVerificationManager.currentAgeGroup == .adult && appState.isAdultContentEnabled
   }
 
-  private var aspectRatio: CGFloat {
+  /// Aspect ratio from the embed metadata. Used only for the placeholder —
+  /// the loaded image uses its actual decoded dimensions, since metadata is
+  /// occasionally wrong (e.g. EXIF rotation not applied at upload time).
+  private var metadataAspectRatio: CGFloat {
     let w = CGFloat(max(imageEmbed.width, 1))
     let h = CGFloat(max(imageEmbed.height, 1))
-    return w / h
+    let raw = w / h
+    // Clamp absurd ratios so a wrong-metadata placeholder doesn't reserve a
+    // 400pt-tall cell that the self-sizing collection view fails to shrink
+    // when the actual image arrives at a much smaller height.
+    return min(max(raw, 0.5), 2.5)
   }
 
-  /// Maximum image dimensions within the bubble (280 - 8 padding).
-  private let maxImageWidth: CGFloat = 272
+  /// Maximum image dimensions within the bubble. Bubble width is 280 and
+  /// media-only bubbles draw the image edge-to-edge (no padding), so the
+  /// image fills the full bubble width.
+  private let maxImageWidth: CGFloat = 280
   private let maxImageHeight: CGFloat = 400
+  /// Corner radius matches the bubble in `UnifiedMessageBubble` so the image
+  /// surface IS the bubble surface (no padding ring).
+  private let bubbleCornerRadius: CGFloat = 18
 
-  /// Pre-calculated image height based on aspect ratio, clamped to max dimensions.
-  private var calculatedImageHeight: CGFloat {
-    let fitHeight = maxImageWidth / aspectRatio
-    if fitHeight <= maxImageHeight {
-      return fitHeight
+  /// Placeholder dimensions derived from (clamped) metadata.
+  private var placeholderSize: CGSize {
+    fittedSize(forAspectRatio: metadataAspectRatio)
+  }
+
+  /// Display size for a loaded image — uses the image's *actual* aspect ratio
+  /// from its decoded pixel dimensions, ignoring (potentially wrong) metadata.
+  private func loadedDisplaySize(for image: PlatformImage) -> CGSize {
+    let w = max(image.size.width, 1)
+    let h = max(image.size.height, 1)
+    return fittedSize(forAspectRatio: w / h)
+  }
+
+  /// Fits an aspect ratio inside the (maxImageWidth × maxImageHeight) box,
+  /// returning the exact display dimensions (no SwiftUI aspectRatio trickery).
+  private func fittedSize(forAspectRatio ratio: CGFloat) -> CGSize {
+    let safeRatio = ratio > 0 ? ratio : 1.0
+    let widthBound = maxImageWidth
+    let heightForWidth = widthBound / safeRatio
+    if heightForWidth <= maxImageHeight {
+      return CGSize(width: widthBound, height: heightForWidth)
     }
-    return maxImageHeight
+    return CGSize(width: maxImageHeight * safeRatio, height: maxImageHeight)
   }
 
   enum LoadState {
@@ -81,10 +112,10 @@ struct MLSImageView: View {
 
   @ViewBuilder
   private var placeholder: some View {
-    RoundedRectangle(cornerRadius: 12)
+    let size = placeholderSize
+    RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
       .fill(.quaternary)
-      .frame(maxWidth: maxImageWidth)
-      .frame(height: calculatedImageHeight)
+      .frame(width: size.width, height: size.height)
   }
 
   // MARK: - Loaded Image
@@ -99,14 +130,14 @@ struct MLSImageView: View {
         sensitiveModalView(platformImg)
       }
     default:
+      let size = loadedDisplaySize(for: platformImg)
       platformSwiftUIImage(platformImg)
         .resizable()
-        .aspectRatio(aspectRatio, contentMode: .fit)
-        .frame(maxWidth: maxImageWidth, maxHeight: maxImageHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
         .matchedTransitionSource(id: imageEmbed.blobId, in: imageTransition) { source in
-          source.clipShape(RoundedRectangle(cornerRadius: 12))
+          source.clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
         }
         .onTapGesture { showFullscreen = true }
         #if os(iOS)
@@ -136,12 +167,12 @@ struct MLSImageView: View {
 
   @ViewBuilder
   private func sensitiveBlurView(_ platformImg: PlatformImage) -> some View {
+    let size = loadedDisplaySize(for: platformImg)
     ZStack {
       platformSwiftUIImage(platformImg)
         .resizable()
-        .aspectRatio(aspectRatio, contentMode: .fit)
-        .frame(maxWidth: maxImageWidth, maxHeight: maxImageHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
         .blur(radius: isRevealed ? 0 : 30)
 
       if !isRevealed {
@@ -161,9 +192,9 @@ struct MLSImageView: View {
         .foregroundStyle(.white)
       }
     }
-    .contentShape(RoundedRectangle(cornerRadius: 12))
+    .contentShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
     .matchedTransitionSource(id: imageEmbed.blobId, in: imageTransition) { source in
-      source.clipShape(RoundedRectangle(cornerRadius: 12))
+      source.clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
     }
     .onTapGesture {
       if isRevealed {
@@ -186,6 +217,7 @@ struct MLSImageView: View {
 
   @ViewBuilder
   private func sensitiveModalView(_ platformImg: PlatformImage) -> some View {
+    let size = loadedDisplaySize(for: platformImg)
     Button {
       showSensitiveModal = true
     } label: {
@@ -198,9 +230,8 @@ struct MLSImageView: View {
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
-      .frame(maxWidth: maxImageWidth)
-      .frame(height: calculatedImageHeight)
-      .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+      .frame(width: size.width, height: size.height)
+      .background(.quaternary, in: RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
     }
     .sheet(isPresented: $showSensitiveModal) {
       SensitiveContentModalView(
@@ -216,6 +247,7 @@ struct MLSImageView: View {
 
   @ViewBuilder
   private var expiredView: some View {
+    let size = placeholderSize
     VStack(spacing: 4) {
       Image(systemName: "photo.badge.exclamationmark")
         .font(.title2)
@@ -229,15 +261,15 @@ struct MLSImageView: View {
           .foregroundStyle(.tertiary)
       }
     }
-    .frame(maxWidth: maxImageWidth)
-    .frame(height: calculatedImageHeight)
-    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    .frame(width: size.width, height: size.height)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
 
   // MARK: - Error
 
   @ViewBuilder
   private func errorView(_ message: String) -> some View {
+    let size = placeholderSize
     VStack(spacing: 4) {
       Image(systemName: "exclamationmark.triangle")
         .font(.title2)
@@ -246,9 +278,46 @@ struct MLSImageView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     }
-    .frame(maxWidth: maxImageWidth)
-    .frame(height: calculatedImageHeight)
-    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    .frame(width: size.width, height: size.height)
+    .background(.quaternary, in: RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
+  }
+
+  // MARK: - Diagnostics
+
+  /// Logs metadata-vs-actual dimensions for an image. If the aspect ratios
+  /// disagree the bubble will mis-size — that's the empty-space-below symptom.
+  private func logImageDimensions(decoded: PlatformImage, source: String, payloadBytes: Int? = nil) {
+    let metaW = imageEmbed.width
+    let metaH = imageEmbed.height
+    let metaRatio = CGFloat(max(metaW, 1)) / CGFloat(max(metaH, 1))
+
+    let actualPointW = decoded.size.width
+    let actualPointH = decoded.size.height
+    let scale = decoded.imageScale
+    let actualPixelW = actualPointW * scale
+    let actualPixelH = actualPointH * scale
+    let actualRatio = actualPointW / max(actualPointH, 1)
+
+    let placeholder = placeholderSize
+    let display = loadedDisplaySize(for: decoded)
+
+    let mismatched = abs(metaRatio - actualRatio) > 0.05
+    let bytesNote = payloadBytes.map { " bytes=\($0)" } ?? ""
+
+    let message =
+      "blob=\(imageEmbed.blobId) src=\(source)\(bytesNote) " +
+      "meta=\(metaW)x\(metaH) ratio=\(String(format: "%.3f", metaRatio)) " +
+      "actual=\(Int(actualPixelW))x\(Int(actualPixelH))px (\(Int(actualPointW))x\(Int(actualPointH))pt @\(scale)x) " +
+      "ratio=\(String(format: "%.3f", actualRatio)) " +
+      "placeholder=\(Int(placeholder.width))x\(Int(placeholder.height)) " +
+      "display=\(Int(display.width))x\(Int(display.height)) " +
+      "contentType=\(imageEmbed.contentType)"
+
+    if mismatched {
+      mlsImageViewLogger.warning("ASPECT MISMATCH \(message, privacy: .public)")
+    } else {
+      mlsImageViewLogger.debug("\(message, privacy: .public)")
+    }
   }
 
   // MARK: - Loading
@@ -257,6 +326,7 @@ struct MLSImageView: View {
     // Check cache first
     if let cached = await MLSImageCache.shared.get(blobId: imageEmbed.blobId) {
       image = cached
+      logImageDimensions(decoded: cached, source: "cache")
       // Run SCA on cached image too (respects app-level toggle)
       #if os(iOS)
       let cgImage = cached.cgImage
@@ -302,6 +372,8 @@ struct MLSImageView: View {
         loadState = .error("Invalid image data")
         return
       }
+
+      logImageDimensions(decoded: decodedImage, source: "network", payloadBytes: plaintext.count)
 
       // Cache
       await MLSImageCache.shared.put(blobId: imageEmbed.blobId, imageData: plaintext)

@@ -267,6 +267,10 @@ final class MLSConversationListViewModel {
             // Optionally refresh conversation to show updated state
             await refreshSpecificConversation(convoId)
 
+        case .messagesUpdated(let convoId, let count):
+            logger.debug("Messages updated in \(convoId): \(count)")
+            await refreshSpecificConversation(convoId)
+
         case .conversationCreated(let convo):
             // Add new conversation to the list
             addConversation(convo)

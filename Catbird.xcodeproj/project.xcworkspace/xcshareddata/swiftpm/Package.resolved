@@ -1,5 +1,5 @@
 {
-  "originHash" : "c8e36fcf0f756a2067df4c62f27901ad6db98aff0943474dd46a28f41619aee3",
+  "originHash" : "ba16c91c70cfe38134f1cd6615b9e69ffd6e3e2cae2bfe3269b9b460262fc851",
   "pins" : [
     {
       "identity" : "cryptoswift",
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/getsentry/sentry-cocoa",
       "state" : {
-        "revision" : "7238c483dca47b5419e42dec1906f6f2d5cd3630",
-        "version" : "8.58.1"
+        "revision" : "cf44aa8cb4147f39e698c1f28be0b6b2c89f79d2",
+        "version" : "8.58.2"
       }
     },
     {
@@ -105,8 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sqlcipher/SQLCipher.swift.git",
       "state" : {
-        "revision" : "180be9a4dd130d838765a156b709e02f3bc3e7cd",
-        "version" : "4.14.0"
+        "revision" : "967b937db0b24508d5674c46ddd4d064a888a304",
+        "version" : "4.15.0"
       }
     },
     {

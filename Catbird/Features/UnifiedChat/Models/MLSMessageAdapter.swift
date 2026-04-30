@@ -9,14 +9,20 @@ struct MLSMessageDisplayOrderKey: Comparable, Sendable {
   let messageID: String
 
   static func < (lhs: MLSMessageDisplayOrderKey, rhs: MLSMessageDisplayOrderKey) -> Bool {
-    if lhs.epoch != rhs.epoch {
-      return lhs.epoch < rhs.epoch
-    }
-    if lhs.sequence != rhs.sequence {
+    let lhsHasServerSequence = lhs.sequence > 0
+    let rhsHasServerSequence = rhs.sequence > 0
+
+    if lhsHasServerSequence && rhsHasServerSequence && lhs.sequence != rhs.sequence {
       return lhs.sequence < rhs.sequence
     }
     if lhs.sentAt != rhs.sentAt {
       return lhs.sentAt < rhs.sentAt
+    }
+    if lhsHasServerSequence != rhsHasServerSequence {
+      return lhsHasServerSequence
+    }
+    if lhs.epoch != rhs.epoch {
+      return lhs.epoch < rhs.epoch
     }
     return lhs.messageID < rhs.messageID
   }
@@ -194,8 +200,8 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     metadata.sequence
   }
 
-  /// Use a low, timestamp-tiebroken fallback so messages with temporarily missing
-  /// ordering metadata do not get stranded at the end of the transcript.
+  /// The server sequence is scoped to the stable conversation, while MLS epoch is
+  /// scoped to the current group and may reset when recovery rotates the group.
   var displayOrderKey: MLSMessageDisplayOrderKey {
     MLSMessageDisplayOrderKey(
       epoch: metadata.epoch ?? 0,

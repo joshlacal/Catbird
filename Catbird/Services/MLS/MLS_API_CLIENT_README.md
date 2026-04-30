@@ -192,7 +192,7 @@ let newEpoch = response.epoch
 
 Retrieve messages from a conversation with flexible filtering.
 
-**⚡ Server-Guaranteed Ordering**: Messages are **always** returned pre-sorted by `(epoch ASC, seq ASC)`. No client-side sorting needed.
+**⚡ Server-Guaranteed Ordering**: Messages are returned in stable conversation timeline order (`seq ASC`). MLS `epoch` is crypto state and must not be used as the primary UI sort key.
 
 ```swift
 // Basic usage
@@ -233,12 +233,12 @@ if let gaps = gapInfo, gaps.hasGaps {
 - `epoch`: Filter by specific epoch number (optional)
 
 **Returns:**
-- Array of `MLSMessageView` objects (**guaranteed sorted** by epoch ASC, seq ASC)
+- Array of `MLSMessageView` objects (**guaranteed sorted** by stable conversation `seq ASC`)
 - `lastSeq`: Last sequence number for pagination cursor
 - `gapInfo`: Server-provided gap detection metadata (detects missing messages)
 
 **Message Ordering Guarantees:**
-- Messages are **always** returned in strict order: `(epoch ASC, seq ASC)`
+- Messages are returned in strict stable conversation order: `seq ASC`
 - No client-side sorting required
 - Server provides authoritative gap detection
 - Sequence numbers are monotonically increasing per conversation
