@@ -47,15 +47,10 @@ final class MLSConversationListViewModel {
         guard !searchQuery.isEmpty else { return conversations }
         let query = searchQuery.lowercased()
         return conversations.filter { convo in
-            // Check conversation name
-            if let name = convo.metadata?.name, name.lowercased().contains(query) {
-                return true
-            }
-            // Check conversation description
-            if let description = convo.metadata?.description, description.lowercased().contains(query) {
-                return true
-            }
-            // Check member DIDs
+            // Phase F: ConvoView.metadata removed from the lexicon. Search
+            // by member DIDs only here; for title-based search, query the
+            // local GRDB cache (MLSConversationModel.title) — list views
+            // that show titles already render from that cache.
             return convo.members.contains { member in
                 member.did.description.lowercased().contains(query)
             }

@@ -114,7 +114,9 @@ extension BlueCatbirdMlsChatDefs.ConvoView {
 
     return MLSConversationViewModel(
       id: groupId,
-      name: metadata?.name,
+      // Phase F: ConvoView.metadata removed. Display title comes from
+      // local GRDB cache populated by MLSConversationManager+Metadata.
+      name: nil,
       participants: participants,
       lastMessagePreview: nil,
       lastMessageTimestamp: lastMessageDate,
