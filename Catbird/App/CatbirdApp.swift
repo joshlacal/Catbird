@@ -2822,59 +2822,25 @@ private extension CatbirdApp {
   }
 
   /// E2E: Explicitly request peer key package replenishment signal.
+  ///
+  /// **Phase F: retired.** The `requestReplenish` action / targetDids /
+  /// replenishResult fields were removed from the
+  /// `blue.catbird.mlsChat.publishKeyPackages` lexicon as part of the
+  /// MLS metadata cutover; there is no peer-replenish RPC anymore.
+  /// This E2E handler stays to keep the URL-scheme contract stable
+  /// (so external test scripts that still POST `e2e/request-keypackage-replenish`
+  /// don't 404) but it now returns a not-supported result and logs.
   private func handleRequestKeyPackageReplenish(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    let rawTargets = params["targetDIDs"] ?? params["targetDID"] ?? ""
-    let targetStrings = rawTargets
-      .split(separator: ",")
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-
-    guard !targetStrings.isEmpty else {
-      await writeE2EResult(
-        command: "request-keypackage-replenish",
-        success: false,
-        error: "Missing targetDID or targetDIDs"
-      )
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      await writeE2EResult(
-        command: "request-keypackage-replenish",
-        success: false,
-        error: "Not authenticated"
-      )
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let targetDIDs = try targetStrings.map { try DID(didString: $0) }
-      let reason = params["reason"] ?? "e2e"
-      let convoId = params["conversationId"]
-      let result = try await conversationManager.apiClient.requestKeyPackageReplenish(
-        dids: targetDIDs,
-        reason: reason,
-        convoId: convoId
-      )
-
-      await writeE2EResult(command: "request-keypackage-replenish", success: true, data: [
-        "targetCount": "\(result.targetCount)",
-        "deviceCount": "\(result.deviceCount)",
-        "deliveredCount": "\(result.deliveredCount)",
-        "requested": "\(result.requested)"
-      ])
-    } catch {
-      e2eLogger.error("[E2E] request-keypackage-replenish failed: \(error.localizedDescription)")
-      await writeE2EResult(
-        command: "request-keypackage-replenish",
-        success: false,
-        error: error.localizedDescription
-      )
-    }
+    _ = params
+    _ = manager
+    e2eLogger.warning(
+      "[E2E] request-keypackage-replenish is no longer supported (Phase F: peer-replenish RPC retired)"
+    )
+    await writeE2EResult(
+      command: "request-keypackage-replenish",
+      success: false,
+      error: "Phase F: peer-replenish RPC was removed from the publishKeyPackages lexicon. There is no replacement endpoint; rely on normal local replenish on bundle-low."
+    )
   }
 
   /// Write E2E command result to a file the harness can read
